@@ -142,6 +142,23 @@ public final class LocalRules implements IModule, IConfigurable, RuleContext {
         save();
     }
 
+    /**
+     * Replaces the rule with {@code id} by {@code edited}'s condition, action and cooldown, keeping id, enabled flag
+     * and list position.
+     *
+     * @return false when no rule has that id
+     */
+    public boolean replaceRule(String id, Rule edited) {
+        List<Rule> next = RuleEdits.replace(rules, id, edited);
+        if (next == null) {
+            return false;
+        }
+        rules.clear();
+        rules.addAll(next);
+        save();
+        return true;
+    }
+
     public void removeRule(String id) {
         rules.removeIf(r -> r.id().equals(id));
         save();
@@ -293,6 +310,26 @@ public final class LocalRules implements IModule, IConfigurable, RuleContext {
             }
         }
         return n;
+    }
+
+    @Override
+    public int mainHandDurability() {
+        LocalPlayer p = Minecraft.getInstance().player;
+        if (p == null) {
+            return -1;
+        }
+        ItemStack st = p.getMainHandItem();
+        return st.isDamageableItem() ? st.getMaxDamage() - st.getDamageValue() : -1;
+    }
+
+    @Override
+    public int mainHandMaxDurability() {
+        LocalPlayer p = Minecraft.getInstance().player;
+        if (p == null) {
+            return 0;
+        }
+        ItemStack st = p.getMainHandItem();
+        return st.isDamageableItem() ? st.getMaxDamage() : 0;
     }
 
     private static Item resolve(String id) {

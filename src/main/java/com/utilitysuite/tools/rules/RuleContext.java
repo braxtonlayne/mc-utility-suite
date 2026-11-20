@@ -19,4 +19,14 @@ public interface RuleContext {
 
     /** Count of an item id ("minecraft:coal") across the inventory. */
     int itemCount(String itemId);
+
+    /** Remaining durability points of the main-hand item, or -1 when it has no durability. */
+    default int mainHandDurability() {
+        return -1;
+    }
+
+    /** Max durability of the main-hand item, or 0 when it has no durability. */
+    default int mainHandMaxDurability() {
+        return 0;
+    }
 }

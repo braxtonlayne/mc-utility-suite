@@ -81,6 +81,15 @@ public final class RuleEngine {
             case HUNGER -> c.comparison().test(ctx.hunger(), c.value());
             case TIME_OF_DAY -> c.comparison().test(ctx.timeOfDay(), c.value());
             case ITEM_COUNT -> !c.arg().isEmpty() && c.comparison().test(ctx.itemCount(c.arg()), c.value());
+            case TOOL_DURABILITY -> {
+                int max = ctx.mainHandMaxDurability();
+                int left = ctx.mainHandDurability();
+                if (max <= 0 || left < 0) {
+                    yield false;
+                }
+                double actual = c.durabilityPercent() ? left * 100.0 / max : left;
+                yield c.comparison().test(actual, c.value());
+            }
             case JOB_STATUS -> {
                 boolean same = ctx.jobStatus().equalsIgnoreCase(c.arg().toUpperCase(Locale.ROOT));
                 yield c.comparison() == Rule.Comparison.NOT_EQUALS ? !same : same;

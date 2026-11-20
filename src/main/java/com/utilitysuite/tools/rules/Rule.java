@@ -22,6 +22,20 @@ public record Rule(String id, boolean enabled, Condition condition, Action actio
         return new Rule(id, value, condition, action, cooldownTicks);
     }
 
+    /** Same id and enabled flag, everything else from {@code edited}. */
+    public Rule withContentOf(Rule edited) {
+        return new Rule(id, enabled, edited.condition(), edited.action(), edited.cooldownTicks());
+    }
+
+    /** True when both rules do the same thing (condition, action, cooldown), ignoring id and enabled. */
+    public boolean sameContent(Rule other) {
+        return condition.type() == other.condition.type() && condition.comparison() == other.condition.comparison()
+                && condition.value() == other.condition.value()
+                && condition.arg().equalsIgnoreCase(other.condition.arg())
+                && action.type() == other.action.type() && action.arg().equalsIgnoreCase(other.action.arg())
+                && action.flag() == other.action.flag() && cooldownTicks == other.cooldownTicks;
+    }
+
     /** "If inventory >= 90% full, deposit at Base Chest and resume". */
     public String describe() {
         return "If " + condition.describe() + ", " + action.describe();
@@ -39,7 +53,16 @@ public record Rule(String id, boolean enabled, Condition condition, Action actio
         /** Active job status ({@code JobStatus} name, or NONE when no job is active). Uses {@link Condition#arg}. */
         JOB_STATUS("job status"),
         /** Count of an item id in the inventory. Uses {@link Condition#arg}. */
-        ITEM_COUNT("count of");
+        ITEM_COUNT("count of"),
+        /**
+         * Remaining durability of the main-hand item. {@link Condition#arg} = {@link #UNIT_PERCENT} for percent of
+         * max durability, anything else (normally {@link #UNIT_POINTS}) for absolute points. Never true when the
+         * main-hand item has no durability.
+         */
+        TOOL_DURABILITY("main-hand durability");
+
+        public static final String UNIT_POINTS = "points";
+        public static final String UNIT_PERCENT = "percent";
 
         private final String label;
 
@@ -57,7 +80,7 @@ public record Rule(String id, boolean enabled, Condition condition, Action actio
     }
 
     public enum Comparison {
-        AT_LEAST(">="), AT_MOST("<="), EQUALS("="), NOT_EQUALS("!=");
+        AT_LEAST(">="), AT_MOST("<="), BELOW("<"), ABOVE(">"), EQUALS("="), NOT_EQUALS("!=");
 
         private final String symbol;
 
@@ -73,6 +96,8 @@ public record Rule(String id, boolean enabled, Condition condition, Action actio
             return switch (this) {
                 case AT_LEAST -> actual >= value;
                 case AT_MOST -> actual <= value;
+                case BELOW -> actual < value;
+                case ABOVE -> actual > value;
                 case EQUALS -> Math.abs(actual - value) < 1e-9;
                 case NOT_EQUALS -> Math.abs(actual - value) >= 1e-9;
             };
@@ -90,12 +115,19 @@ public record Rule(String id, boolean enabled, Condition condition, Action actio
             arg = arg == null ? "" : arg.trim();
         }
 
+        /** For TOOL_DURABILITY: whether {@link #value} is a percent of max durability rather than points. */
+        public boolean durabilityPercent() {
+            return ConditionType.UNIT_PERCENT.equalsIgnoreCase(arg);
+        }
+
         public String describe() {
             return switch (type) {
                 case JOB_STATUS -> "job status " + (comparison == Comparison.NOT_EQUALS ? "is not " : "is ")
                         + arg.toUpperCase(Locale.ROOT);
                 case ITEM_COUNT -> "count of " + arg + " " + comparison.symbol() + " " + fmt(value);
                 case INVENTORY_FULL_PCT -> "inventory " + comparison.symbol() + " " + fmt(value) + "% full";
+                case TOOL_DURABILITY -> type.label() + " " + comparison.symbol() + " " + fmt(value)
+                        + (durabilityPercent() ? "%" : "");
                 default -> type.label() + " " + comparison.symbol() + " " + fmt(value);
             };
         }
