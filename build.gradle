@@ -14,10 +14,21 @@ base {
 
 java.toolchain.languageVersion = JavaLanguageVersion.of(21)
 
+// Dev-only scripted in-game playtest harness (separate mod `utilitysuite_devtest`). Loaded only by `runPlaytest`,
+// never part of the jar (the jar task packs sourceSets.main only).
+sourceSets {
+    devtest {
+        compileClasspath += sourceSets.main.output
+        runtimeClasspath += sourceSets.main.output
+    }
+}
+
 configurations {
     // Dev-only runtime mods (Baritone in the dev client). Never packed into the jar.
     localRuntime
     runtimeClasspath.extendsFrom localRuntime
+    devtestCompileOnly.extendsFrom compileOnly
+    devtestRuntimeClasspath.extendsFrom localRuntime
 }
 
 neoForge {
@@ -31,21 +42,42 @@ neoForge {
     // Unit tests compile against Minecraft classes (BlockPos etc.). Planning logic is kept engine-agnostic so tests
     // never need the registry bootstrap.
     addModdingDependenciesTo(sourceSets.test)
+    addModdingDependenciesTo(sourceSets.devtest)
+
+    // Declared before `runs` so the runs can name the mods they load.
+    mods {
+        "${mod_id}" {
+            sourceSet(sourceSets.main)
+        }
+        utilitysuite_devtest {
+            sourceSet(sourceSets.devtest)
+        }
+    }
 
     runs {
         client {
             client()
             // Dev only: force-apply every mixin at startup and log failures (UtilitySuiteMod.auditMixins).
             systemProperty 'utilitysuite.mixinAudit', 'true'
+            loadedMods = [mods.utilitysuite]
+        }
+        // `./gradlew runPlaytest`: dev client + the scripted harness (src/devtest). Creates a fresh fixed-seed world,
+        // runs the scenarios, writes run/playtest/report.md (+ report.json) and exits on its own.
+        playtest {
+            client()
+            sourceSet = sourceSets.devtest
+            loadedMods = [mods.utilitysuite, mods.utilitysuite_devtest]
+            systemProperty 'utilitysuite.mixinAudit', 'true'
+            systemProperty 'utilitysuite.playtest', 'true'
+            systemProperty 'utilitysuite.moduleTiming', 'true'
+            // ./gradlew runPlaytest -PplaytestJfr: also record a Java Flight Recording (CPU + allocation samples) to
+            // run/playtest/playtest.jfr for digging into the perf scenario (`jfr view allocation-by-site ...`).
+            if (project.hasProperty('playtestJfr')) {
+                jvmArguments.add("-XX:StartFlightRecording=filename=${file('run/playtest/playtest.jfr')},settings=profile,dumponexit=true")
+            }
         }
         configureEach {
             logLevel = org.slf4j.event.Level.INFO
-        }
-    }
-
-    mods {
-        "${mod_id}" {
-            sourceSet(sourceSets.main)
         }
     }
 }

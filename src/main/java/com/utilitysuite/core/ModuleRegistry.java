@@ -25,9 +25,17 @@ public final class ModuleRegistry implements IModuleRegistry {
     public static final String ENABLED_KEY = "enabled";
     private static final Logger LOG = LoggerFactory.getLogger("utilitysuite/modules");
 
+    /**
+     * Dev-only per-module tick timing ({@code -Dutilitysuite.moduleTiming=true}, set by the playtest run). A static
+     * final flag, so the JIT drops the timing branch entirely in normal play.
+     */
+    private static final boolean TIMING = Boolean.getBoolean("utilitysuite.moduleTiming");
+
     private IModule[] modules = new IModule[0];
     private boolean[] defaults = new boolean[0];
     private List<IModule> view = List.of();
+    /** Cumulative onTick nanoseconds per module (same index as {@link #all()}); only advances when TIMING is on. */
+    private long[] tickNanos = new long[0];
 
     @Override
     public synchronized void register(IModule module) {
@@ -40,9 +48,15 @@ public final class ModuleRegistry implements IModuleRegistry {
         next[modules.length] = module;
         boolean[] nextDefaults = Arrays.copyOf(defaults, defaults.length + 1);
         nextDefaults[defaults.length] = module.isEnabled();
+        tickNanos = Arrays.copyOf(tickNanos, next.length);
         modules = next;
         defaults = nextDefaults;
         view = List.of(next);
+    }
+
+    /** Cumulative per-module onTick nanoseconds (index matches {@link #all()}); all zero unless timing is enabled. */
+    public long[] tickNanos() {
+        return tickNanos;
     }
 
     @Override
@@ -84,12 +98,20 @@ public final class ModuleRegistry implements IModuleRegistry {
     /** Ticks every enabled module. Hot path: array iteration, no allocation. */
     public void tick() {
         IModule[] ms = modules;
-        for (IModule m : ms) {
+        long[] timing = tickNanos;
+        for (int i = 0; i < ms.length; i++) {
+            IModule m = ms[i];
             if (!m.isEnabled()) {
                 continue;
             }
             try {
-                m.onTick();
+                if (TIMING && i < timing.length) {
+                    long t0 = System.nanoTime();
+                    m.onTick();
+                    timing[i] += System.nanoTime() - t0;
+                } else {
+                    m.onTick();
+                }
             } catch (RuntimeException e) {
                 LOG.error("Module {} threw in onTick; disabling it", m.id(), e);
                 try {

@@ -1,0 +1,16 @@
+modLoader="javafml"
+loaderVersion="[1,)"
+license="All Rights Reserved"
+
+# Dev-only scripted playtest harness for Utility Suite. Loaded by `./gradlew runPlaytest` only; never shipped.
+[[mods]]
+modId="utilitysuite_devtest"
+version="0.0.0"
+displayName="Utility Suite playtest harness (dev only)"
+
+[[dependencies.utilitysuite_devtest]]
+    modId="utilitysuite"
+    type="required"
+    versionRange="*"
+    ordering="AFTER"
+    side="CLIENT"
