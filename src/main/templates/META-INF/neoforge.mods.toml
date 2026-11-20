@@ -1,0 +1,37 @@
+modLoader="javafml"
+loaderVersion="${loader_version_range}"
+license="${mod_license}"
+
+[[mods]]
+modId="${mod_id}"
+version="${mod_version}"
+displayName="${mod_name}"
+description='''
+Client-side automation, resource-planning and accessibility utilities: a goal planner on top of Baritone, schematic
+bill-of-materials planning, world overlays, terrain and travel assists, and input accessibility helpers.
+'''
+
+[[dependencies.${mod_id}]]
+    modId="neoforge"
+    type="required"
+    versionRange="[${neo_version},)"
+    ordering="NONE"
+    side="CLIENT"
+
+[[dependencies.${mod_id}]]
+    modId="minecraft"
+    type="required"
+    versionRange="${minecraft_version_range}"
+    ordering="NONE"
+    side="CLIENT"
+
+# Baritone is optional: without it, navigation-backed jobs report "Baritone not installed" and stay paused.
+[[dependencies.${mod_id}]]
+    modId="baritoe"
+    type="optional"
+    versionRange="*"
+    ordering="AFTER"
+    side="CLIENT"
+
+[[mixins]]
+config="utilitysuite.mixins.json"
