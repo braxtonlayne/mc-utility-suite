@@ -376,6 +376,13 @@ public final class JobExecutor implements LeaseListener {
         j.origin = deps.actions().playerPos();
         setStatus(j, JobStatus.PLANNING, "Planning from current inventory and known storage");
         if (j.request instanceof GoalRequest.Travel t) {
+            String here = deps.actions().dimension();
+            if (t.dimension() != null && !t.dimension().isEmpty() && !t.dimension().equals(here)) {
+                // Coordinates are only meaningful in their own dimension; portal routing is a later milestone.
+                fail(j, "Travel target is in " + GoalParser.shortDim(t.dimension()) + " but you are in "
+                        + GoalParser.shortDim(here) + "; cross-dimension routing is not supported yet");
+                return;
+            }
             j.pendingPlan = travelPlan(t);
             return;
         }
