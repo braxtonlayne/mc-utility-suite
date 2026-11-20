@@ -49,6 +49,7 @@ final class GoalScenario {
         String[] lastDesc = {""};
         boolean[] sawHud = new boolean[1];
         boolean[] sawMoving = new boolean[1];
+        List<String> steps = new java.util.ArrayList<>();
 
         // --- plan preview on a fresh spawn (empty inventory) ---
         s.run("back to spawn", () -> Harness.command("spreadplayers " + (int) BootScenario.spawn[0] + " "
@@ -98,9 +99,17 @@ final class GoalScenario {
                             + H.count("minecraft:oak_planks") + " logs=" + H.count("minecraft:oak_log"));
         });
 
-        // --- gather 4 coal with Baritone ---
-        s.cmd("give @s minecraft:iron_pickaxe");
-        s.cmd("give @s minecraft:bread 16");
+        // --- gather 4 coal from nothing: the planner must bootstrap logs -> planks -> table -> pickaxe -> coal ---
+        // Empty inventory and no unlocked recipes, like a fresh survival spawn; the only input is the goal text.
+        s.run("back to spawn for coal", () -> Harness.command("spreadplayers " + (int) BootScenario.spawn[0] + " "
+                + (int) BootScenario.spawn[2] + " 0 1 false @s"));
+        s.waitTicks(40);
+        s.cmd("clear @s");
+        // Take recipes first, then revoke advancements: vanilla unlocks recipes through advancements (the crafting
+        // table on the first tick, planks when a log is picked up), so this re-creates a fresh player's recipe book.
+        s.cmd("recipe take @s *");
+        s.cmd("advancement revoke @s everything");
+        s.cmd("effect give @s minecraft:saturation 600 0 true");
         s.waitTicks(5);
         s.run("submit gather coal", () -> {
             before[0] = H.count("minecraft:coal");
@@ -113,6 +122,12 @@ final class GoalScenario {
         });
         s.step("gather job runs", t -> {
             String d = describe(jobId[0]);
+            job(jobId[0]).ifPresent(j -> {
+                String st = j.currentStep();
+                if (st != null && !st.isEmpty() && (steps.isEmpty() || !steps.get(steps.size() - 1).equals(st))) {
+                    steps.add(st);
+                }
+            });
             if (!d.equals(lastDesc[0])) {
                 s.note("t=" + t + " " + d + " at " + H.posStr());
                 lastDesc[0] = d;
@@ -120,6 +135,12 @@ final class GoalScenario {
             if (!sawHud[0] && !UiBootstrap.hud().text().isEmpty()) {
                 sawHud[0] = true;
                 s.check("HUD shows one status line while the job runs", true, "'" + UiBootstrap.hud().text() + "'");
+            }
+            if (t == 30) {
+                Shots.clearChat();
+            }
+            if (t == 40) {
+                Shots.take(s, "goal-gather-hud");
             }
             if (!sawMoving[0] && H.dist(start[0], H.pos()) > 2) {
                 sawMoving[0] = true;
@@ -133,8 +154,8 @@ final class GoalScenario {
                 s.note("job paused: " + d);
                 return true;
             }
-            if (t > 20 * 240) {
-                throw new Scenario.StepTimeout("gather job did not finish in 240 s: " + d);
+            if (t > 20 * 600) {
+                throw new Scenario.StepTimeout("gather job did not finish in 600 s: " + d);
             }
             return false;
         });
@@ -147,6 +168,12 @@ final class GoalScenario {
                 s.check("Baritone pathing moves the player", false, "player never moved > 2 blocks");
             }
             Optional<JobSnapshot> j = job(jobId[0]);
+            String seq = String.join(" > ", steps).toLowerCase();
+            s.note("step sequence: " + String.join(" > ", steps));
+            s.check("started from an empty inventory and bootstrapped its own tools (log + pickaxe steps)",
+                    seq.contains("log") && seq.contains("pickaxe"), "steps: " + seq);
+            s.note("ends with: pickaxes " + H.count("minecraft:wooden_pickaxe") + " wooden / "
+                    + H.count("minecraft:stone_pickaxe") + " stone, cobblestone " + H.count("minecraft:cobblestone"));
             s.check("gather 4 coal: inventory delta >= 4 and job completes", delta >= 4
                             && j.map(x -> x.status() == com.utilitysuite.core.api.JobStatus.COMPLETED).orElse(true),
                     "coal delta " + delta + "; job: " + describe(jobId[0]));

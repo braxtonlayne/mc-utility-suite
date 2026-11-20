@@ -91,6 +91,8 @@ final class WorldScenario {
                             || WorldBootstrap.runtime().scanner().caves != null,
                     "fluid pockets " + WorldBootstrap.runtime().scanner().fluids.size());
         });
+        s.run("look down for overlay shot", () -> H.p().setXRot(40f));
+        Shots.add(s, "world-overlays");
         // --- freecam ---
         s.run("freecam on", () -> {
             saved[0] = H.pos();
@@ -111,6 +113,7 @@ final class WorldScenario {
             ((ScoutCameraModule) H.module(ScoutCameraModule.ID)).toggleFreecam();
         });
         s.waitTicks(3);
+        Shots.add(s, "world-freecam");
         s.run("freecam off", () -> {
             ScoutCameraModule cam = H.module(ScoutCameraModule.ID);
             Vec3 c = H.mc().gameRenderer.getMainCamera().getPosition();

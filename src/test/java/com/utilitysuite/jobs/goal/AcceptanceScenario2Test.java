@@ -292,6 +292,22 @@ class AcceptanceScenario2Test {
         assertEquals(5, driver.mineCalls);
     }
 
+    /** Playtest 2026-11-20: a craft that kept failing replanned 35 times because each repair made new step objects. */
+    @Test
+    void repeatedCraftFailureStillPausesAfterTheReplanBudget() {
+        inv.add("minecraft:oak_log", 4);
+        actions.craftFails = "Recipe minecraft:oak_planks is not unlocked in your recipe book";
+        long id = exec.submit(new GoalRequest.Craft("minecraft:oak_planks", 4, CostProfile.FASTEST,
+                DataSourceMode.OBSERVED_ONLY));
+        tick(300);
+        JobSnapshot s = snap(id);
+        assertEquals(JobStatus.PAUSED, s.status(), s.reason());
+        assertTrue(s.replanCount() <= 3, "replans " + s.replanCount());
+        assertTrue(s.reason().contains("replan budget (3) exhausted"), s.reason());
+        assertTrue(s.reason().contains("not unlocked"), s.reason());
+        assertTrue(actions.craftCalls <= 4, "craft attempts " + actions.craftCalls);
+    }
+
     @Test
     void stuckWithoutProgressTriggersAReplan() {
         inv.add("minecraft:iron_pickaxe", 1);

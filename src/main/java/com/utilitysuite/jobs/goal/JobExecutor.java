@@ -841,6 +841,14 @@ public final class JobExecutor implements LeaseListener {
     }
 
     private void replaceCurrent(Job j, List<PlanStep> replacement) {
+        // Replacement steps inherit the replaced step's replan count: the counter is keyed by step identity, so
+        // without this a repair that keeps failing the same way would reset the budget every time and loop forever.
+        int used = j.replans.getOrDefault(j.steps.get(j.index), 0);
+        if (used > 0) {
+            for (PlanStep s : replacement) {
+                j.replans.merge(s, used, Math::max);
+            }
+        }
         j.steps.remove(j.index);
         j.steps.addAll(j.index, replacement);
         j.phase = Phase.START;

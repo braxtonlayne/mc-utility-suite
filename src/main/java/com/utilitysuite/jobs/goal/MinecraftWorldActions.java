@@ -72,6 +72,10 @@ public final class MinecraftWorldActions implements WorldActions {
     private String message = "";
     private ControlLease lease;
     private int timer;
+    /** Timer value when the recipe was placed for the current craft; -1 until placed. */
+    private int placedAt = -1;
+    /** Ticks to wait for a recipe unlock packet before giving up on a locked recipe. */
+    private static final int RECIPE_UNLOCK_WAIT = 20;
     private PlanStep step;
     private RecipeHolder<?> recipe;
     private String station;
@@ -152,6 +156,7 @@ public final class MinecraftWorldActions implements WorldActions {
         result = Result.RUNNING;
         message = "";
         timer = 0;
+        placedAt = -1;
         stationPos = Long.MIN_VALUE;
         transferred = Map.of();
     }
@@ -298,23 +303,34 @@ public final class MinecraftWorldActions implements WorldActions {
                     finish(player, "Crafted " + step.itemId());
                     return;
                 }
-                if (timer == 1) {
+                if (placedAt < 0) {
                     if (mc.gameMode == null) {
                         fail("No game mode");
+                        return;
+                    }
+                    if (!player.getRecipeBook().contains(recipe.id())) {
+                        // Vanilla unlocks a recipe through an advancement when an ingredient reaches the inventory;
+                        // the unlock packet can arrive a few ticks after the ingredient was crafted, so wait briefly.
+                        // The server refuses recipe-book placement for locked recipes; replanning cannot fix that.
+                        if (timer > RECIPE_UNLOCK_WAIT) {
+                            fail("Recipe " + recipe.id() + " is not unlocked in your recipe book");
+                        }
                         return;
                     }
                     if (!Services.clicker().placeRecipe(lease, recipe.id().toString(), false)) {
                         fail("Could not place recipe " + recipe.id());
                         return;
                     }
-                } else if (timer >= 6) {
+                    placedAt = timer;
+                } else if (timer >= placedAt + 5) {
                     Slot result = menu.getSlot(0);
                     if (result.getItem().isEmpty()) {
-                        fail("Missing ingredients (or recipe not unlocked) for " + step.itemId());
+                        fail("Missing ingredients for " + step.itemId());
                         return;
                     }
                     Services.clicker().queueClick(lease, 0, 0, IContainerClicker.Click.QUICK_MOVE);
                     craftsLeft--;
+                    placedAt = -1;
                     phase = Phase.WAIT_CLICKS;
                     timer = 0;
                 }
@@ -558,26 +574,34 @@ public final class MinecraftWorldActions implements WorldActions {
     }
 
     /** An air block next to the player (not its own column) with a solid block below. */
+    /** Y offsets tried for a station spot, in order: foot level, one lower, one higher. */
+    private static final int[] PLACE_DY = {0, -1, 1};
+
     private long findPlacementSpot(Minecraft mc) {
         LocalPlayer p = mc.player;
         Level level = mc.level;
         BlockPos c = p.blockPosition();
-        for (int ring = 1; ring <= 2; ring++) {
-            for (int dx = -ring; dx <= ring; dx++) {
-                for (int dz = -ring; dz <= ring; dz++) {
-                    if (Math.max(Math.abs(dx), Math.abs(dz)) != ring) {
-                        continue;
-                    }
-                    probe.set(c.getX() + dx, c.getY(), c.getZ() + dz);
-                    BlockState at = level.getBlockState(probe);
-                    if (!at.canBeReplaced()) {
-                        continue;
-                    }
-                    long spot = probe.asLong();
-                    probe.set(c.getX() + dx, c.getY() - 1, c.getZ() + dz);
-                    BlockState below = level.getBlockState(probe);
-                    if (below.isFaceSturdy(level, probe, Direction.UP)) {
-                        return spot;
+        // Uneven ground (tree roots, slopes, a Baritone pit) often has no free spot at foot level, so also try one
+        // block lower and higher; nearer rings and foot level first. Ring 3 stays inside the 4.5-block reach.
+        for (int ring = 1; ring <= 3; ring++) {
+            for (int dyi = 0; dyi < PLACE_DY.length; dyi++) {
+                int y = c.getY() + PLACE_DY[dyi];
+                for (int dx = -ring; dx <= ring; dx++) {
+                    for (int dz = -ring; dz <= ring; dz++) {
+                        if (Math.max(Math.abs(dx), Math.abs(dz)) != ring) {
+                            continue;
+                        }
+                        probe.set(c.getX() + dx, y, c.getZ() + dz);
+                        BlockState at = level.getBlockState(probe);
+                        if (!at.canBeReplaced() || !at.getFluidState().isEmpty()) {
+                            continue;
+                        }
+                        long spot = probe.asLong();
+                        probe.set(c.getX() + dx, y - 1, c.getZ() + dz);
+                        BlockState below = level.getBlockState(probe);
+                        if (below.isFaceSturdy(level, probe, Direction.UP)) {
+                            return spot;
+                        }
                     }
                 }
             }

@@ -97,6 +97,7 @@ final class SchematicScenario {
             Harness.command(Arena.tp(-4.5, -6.5, 90f));
         });
         s.waitTicks(10);
+        int[] midShot = new int[1];
         s.run("submit build", () -> {
             ParseResult r = g.parse("build schematic pt_hut anchor=" + anchor[0] + "," + anchor[1] + "," + anchor[2]);
             s.check("parse build command", r.isOk(), r.isOk() ? r.request().label() : r.error());
@@ -120,6 +121,12 @@ final class SchematicScenario {
                 Harness.command(Arena.tp(sp[0], sp[1], (float) sp[2]));
                 s.note("t=" + t + ": " + placed(anchor) + "/" + HUT.length + " placed; moving the player to spot "
                         + moves[0] + " (" + H.posStr() + ")");
+            }
+            if (midShot[0] == 0 && placed(anchor) * 2 >= HUT.length) {
+                midShot[0] = t;
+                Shots.clearChat();
+            } else if (midShot[0] > 0 && t == midShot[0] + 3) {
+                Shots.take(s, "schematic-building");
             }
             if (placed(anchor) == HUT.length && t > 20) {
                 return true;
@@ -157,6 +164,7 @@ final class SchematicScenario {
             }
             return false;
         });
+        Shots.add(s, "schematic-done");
         s.run("build result", () -> {
             int n = placed(anchor);
             s.check("Build Assist placed every block", n == HUT.length, n + "/" + HUT.length

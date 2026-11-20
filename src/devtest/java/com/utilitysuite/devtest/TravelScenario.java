@@ -71,6 +71,7 @@ final class TravelScenario {
                     "deck blocks east of the edge: " + placed + ", cobblestone used " + used + ", running="
                             + TravelBootstrap.bridge().isRunning() + ", player " + H.posStr() + "; " + H.arbiterState());
         });
+        Shots.add(s, "travel-bridge");
         // --- Water walk ---
         s.cmd(() -> Arena.tp(6.5, -6.5, 0f));
         s.run("surface mode", () -> {
@@ -89,6 +90,7 @@ final class TravelScenario {
                     Harness.fmt("y=%.3f (water top at %d+1), inWater=%s, onGround=%s, block below %s", y, Arena.FLOOR,
                             H.p().isInWater(), H.p().onGround(), H.blockId(H.floorX(), Arena.FLOOR, H.floorZ())));
         });
+        Shots.add(s, "travel-waterwalk");
         s.always("cleanup", () -> {
             if (lease[0] != null) {
                 lease[0].close();

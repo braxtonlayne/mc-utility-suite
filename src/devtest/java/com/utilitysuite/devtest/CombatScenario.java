@@ -79,6 +79,12 @@ final class CombatScenario {
                 CountingGraphics g = CountingGraphics.render(new FightCoachHud(CombatBootstrap.coach()));
                 coachDrew[0] = g.calls() > 0;
             }
+            if (t == 1) {
+                Shots.clearChat();
+            }
+            if (t == 6) {
+                Shots.take(s, "combat-engaged");
+            }
             if (!target[0].isAlive() || target[0].isRemoved()) {
                 return true;
             }

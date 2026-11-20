@@ -147,9 +147,19 @@ final class Fakes {
             this.inv = inv;
         }
 
+        /** When set, every craft fails with this message and produces nothing. */
+        String craftFails;
+        int craftCalls;
+
         @Override
         public void beginCraft(PlanStep step, ControlLease lease) {
             log.add("craft " + step.itemId());
+            craftCalls++;
+            if (craftFails != null) {
+                message = craftFails;
+                pending = Result.FAILED;
+                return;
+            }
             inv.add(step.itemId(), step.count());
             pending = Result.DONE;
         }
