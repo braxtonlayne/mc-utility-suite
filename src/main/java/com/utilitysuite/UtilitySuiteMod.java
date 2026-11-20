@@ -26,8 +26,8 @@ public final class UtilitySuiteMod {
         CoreBootstrap.init(modBus);
 
         // ---- Feature bootstraps (later milestones) go here, after the core, e.g.: ----
+        com.utilitysuite.jobs.JobsBootstrap.init(modBus);
         com.utilitysuite.jobs.schematic.SchematicBootstrap.init(modBus);
-        // JobsBootstrap.init(modBus);
         // WorldBootstrap.init(modBus);
         TravelBootstrap.init(modBus);
         CombatBootstrap.init(modBus);

@@ -59,5 +59,9 @@
   "message.utilitysuite.bridge.need_marks": "Bridge: mark point A and point B first",
   "message.utilitysuite.bridge.off_line": "Bridge: stand on point A or on the marked line",
   "message.utilitysuite.bridge.mark_a": "Bridge point A: %s %s %s",
-  "message.utilitysuite.bridge.mark_b": "Bridge point B: %s %s %s"
+  "message.utilitysuite.bridge.mark_b": "Bridge point B: %s %s %s",
+  "module.utilitysuite.goal_engine": "Goal Engine",
+  "module.utilitysuite.storage_memory": "Storage Memory",
+  "module.utilitysuite.survival_autopilot": "Survival Autopilot",
+  "message.utilitysuite.tool_low_durability": "Tool below %s%% durability: not switching%s"
 }
