@@ -95,22 +95,7 @@ public final class LatencySimulator implements IModule, IConfigurable {
 
     /** Pure: whether {@code address} (host or host:port) matches an allow-list entry ("host" or "host:port"). */
     public static boolean isAllowedServer(String address, String allowList) {
-        if (address == null || address.isBlank() || allowList == null) {
-            return false;
-        }
-        String a = address.trim().toLowerCase(Locale.ROOT);
-        String host = a;
-        int colon = a.lastIndexOf(':');
-        if (colon > 0 && a.indexOf(':') == colon) {
-            host = a.substring(0, colon);
-        }
-        for (String entry : allowList.split(",")) {
-            String e = entry.trim().toLowerCase(Locale.ROOT);
-            if (!e.isEmpty() && (e.equals(a) || e.equals(host))) {
-                return true;
-            }
-        }
-        return false;
+        return com.utilitysuite.core.ServerAllowList.isAllowedServer(address, allowList);
     }
 
     private void install() {

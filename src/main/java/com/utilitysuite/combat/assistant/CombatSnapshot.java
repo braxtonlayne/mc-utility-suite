@@ -24,6 +24,13 @@ public final class CombatSnapshot {
     /** Hotbar indices 0..8, or -1. */
     public int gappleSlot = -1, axeSlot = -1, maceSlot = -1, windChargeSlot = -1;
     public boolean gappleOnCooldown, windChargeOnCooldown;
+    /**
+     * Best sustain consumable (golden apple, enchanted golden apple, drinkable healing/regeneration potion) in the
+     * main inventory (index 9..35), or -1. {@link #gappleSlot} is the same for the hotbar.
+     */
+    public int sustainInvSlot = -1;
+    /** First empty hotbar index 0..8, or -1. */
+    public int emptyHotbarSlot = -1;
 
     // ---- target ---------------------------------------------------------------------------------------------------
     public double tx, ty, tz;

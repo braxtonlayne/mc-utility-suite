@@ -3,7 +3,14 @@ package com.utilitysuite.combat.assistant.mc;
 import com.utilitysuite.combat.assistant.CombatSnapshot;
 import com.utilitysuite.combat.assistant.CombatWorld;
 import com.utilitysuite.combat.assistant.LineOfSight;
+import com.utilitysuite.combat.assistant.SustainExtras;
+import com.utilitysuite.core.ServerAllowList;
+import com.utilitysuite.core.api.Services;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.multiplayer.ServerData;
+import net.minecraft.core.component.DataComponents;
+import net.minecraft.world.item.alchemy.PotionContents;
+import net.minecraft.world.item.alchemy.Potions;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
@@ -78,6 +85,53 @@ public final class MinecraftCombatWorld implements CombatWorld, LineOfSight.Soli
         LocalPlayer p = Minecraft.getInstance().player;
         Entity e = entity(entityId);
         return p == null || e == null ? Double.MAX_VALUE : p.distanceToSqr(e);
+    }
+
+    @Override
+    public int totemRefillSlot() {
+        Minecraft mc = Minecraft.getInstance();
+        LocalPlayer p = mc.player;
+        if (p == null || mc.screen != null || !p.isAlive()) {
+            return -1;
+        }
+        Inventory inv = p.getInventory();
+        if (inv.offhand.get(0).is(Items.TOTEM_OF_UNDYING)) {
+            return -1;
+        }
+        for (int i = 0; i < inv.items.size(); i++) {
+            if (inv.items.get(i).is(Items.TOTEM_OF_UNDYING)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    // allow-list cache: recomputed only when the server entry or the list text changes
+    private Object allowServer;
+    private String allowList;
+    private boolean allowSingle;
+    private boolean allowResult;
+
+    @Override
+    public boolean extrasAllowedHere() {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.getConnection() == null) {
+            return false;
+        }
+        boolean single = mc.hasSingleplayerServer();
+        if (single) {
+            return true;
+        }
+        ServerData server = mc.getCurrentServer();
+        String list = Services.modState().profile().getString(ServerAllowList.SOURCE_MODULE_ID,
+                ServerAllowList.SETTING_KEY, ServerAllowList.DEFAULT_LIST);
+        if (server != allowServer || single != allowSingle || !list.equals(allowList)) {
+            allowServer = server;
+            allowSingle = single;
+            allowList = list;
+            allowResult = server != null && ServerAllowList.isAllowedServer(server.ip, list);
+        }
+        return allowResult;
     }
 
     @Override
@@ -169,20 +223,36 @@ public final class MinecraftCombatWorld implements CombatWorld, LineOfSight.Soli
         int axe = -1;
         int mace = -1;
         int wind = -1;
+        int gappleKind = SustainExtras.KIND_NONE;
+        int invSustain = -1;
+        int invSustainKind = SustainExtras.KIND_NONE;
+        int empty = -1;
         for (int i = 0; i < inv.items.size(); i++) {
             ItemStack st = inv.items.get(i);
             if (st.isEmpty()) {
+                if (empty < 0 && i < Inventory.getSelectionSize()) {
+                    empty = i;
+                }
                 continue;
             }
             Item it = st.getItem();
+            int kind = consumableKind(st, it);
             if (it == Items.TOTEM_OF_UNDYING) {
                 if (totem < 0) {
                     totem = i;
                 }
+            } else if (kind != SustainExtras.KIND_NONE) {
+                if (i < Inventory.getSelectionSize()) {
+                    if (SustainExtras.better(kind, gappleKind)) {
+                        gapple = i;
+                        gappleKind = kind;
+                    }
+                } else if (SustainExtras.better(kind, invSustainKind)) {
+                    invSustain = i;
+                    invSustainKind = kind;
+                }
             } else if (i < Inventory.getSelectionSize()) {
-                if ((it == Items.GOLDEN_APPLE || it == Items.ENCHANTED_GOLDEN_APPLE) && gapple < 0) {
-                    gapple = i;
-                } else if (it instanceof AxeItem && axe < 0) {
+                if (it instanceof AxeItem && axe < 0) {
                     axe = i;
                 } else if (it == Items.MACE && mace < 0) {
                     mace = i;
@@ -199,6 +269,31 @@ public final class MinecraftCombatWorld implements CombatWorld, LineOfSight.Soli
         out.offhandTotem = inv.offhand.get(0).is(Items.TOTEM_OF_UNDYING);
         out.gappleOnCooldown = gapple >= 0 && p.getCooldowns().isOnCooldown(inv.items.get(gapple).getItem());
         out.windChargeOnCooldown = p.getCooldowns().isOnCooldown(Items.WIND_CHARGE);
+        out.sustainInvSlot = invSustain;
+        out.emptyHotbarSlot = empty;
+    }
+
+    /** Sustain kind of a stack: golden apples, or a drinkable (not splash) healing/regeneration potion. */
+    private static int consumableKind(ItemStack st, Item it) {
+        if (it == Items.ENCHANTED_GOLDEN_APPLE) {
+            return SustainExtras.KIND_ENCHANTED_GOLDEN_APPLE;
+        }
+        if (it == Items.GOLDEN_APPLE) {
+            return SustainExtras.KIND_GOLDEN_APPLE;
+        }
+        if (it == Items.POTION) {
+            PotionContents pc = st.get(DataComponents.POTION_CONTENTS);
+            if (pc != null) {
+                if (pc.is(Potions.HEALING) || pc.is(Potions.STRONG_HEALING)) {
+                    return SustainExtras.KIND_HEALING_POTION;
+                }
+                if (pc.is(Potions.REGENERATION) || pc.is(Potions.LONG_REGENERATION)
+                        || pc.is(Potions.STRONG_REGENERATION)) {
+                    return SustainExtras.KIND_REGEN_POTION;
+                }
+            }
+        }
+        return SustainExtras.KIND_NONE;
     }
 
     /** Lava/fire/harmful blocks at or under the probe column, or a drop deeper than {@value #CLIFF_DEPTH} blocks. */

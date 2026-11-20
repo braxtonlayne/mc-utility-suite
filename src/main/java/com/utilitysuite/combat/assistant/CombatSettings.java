@@ -31,6 +31,10 @@ public final class CombatSettings {
     public static final String LOW_HEALTH = "low_health";
     public static final String TOTEMS = "totems";
     public static final String GAPPLES = "golden_apples";
+    public static final String WHOLE_INVENTORY = "whole_inventory_consumables";
+    public static final String SWAP_BACK = "swap_back_pulled";
+    public static final String KEEP_TOTEM = "keep_offhand_totem";
+    public static final String JUMP_RESET = "jump_reset";
 
     public double disengageRadius = 16.0;
     public double allyDefenseRange = 12.0;
@@ -50,8 +54,16 @@ public final class CombatSettings {
     public float lowHealth = 8f;
     public boolean totems = true;
     public boolean gapples = true;
+    public boolean wholeInventory = true;
+    public boolean swapBack = true;
+    public boolean keepTotem = true;
+    public boolean jumpReset = false;
 
     public void read(ProfileConfig p, String id) {
+        wholeInventory = p.getBool(id, WHOLE_INVENTORY, true);
+        swapBack = p.getBool(id, SWAP_BACK, true);
+        keepTotem = p.getBool(id, KEEP_TOTEM, true);
+        jumpReset = p.getBool(id, JUMP_RESET, false);
         disengageRadius = p.getDouble(id, DISENGAGE_RADIUS, 16.0);
         allyDefenseRange = p.getDouble(id, ALLY_DEFENSE_RANGE, 12.0);
         losTimeoutTicks = p.getInt(id, LOS_TIMEOUT_TICKS, 100);
@@ -118,6 +130,17 @@ public final class CombatSettings {
                 SettingSpec.bool(TOTEMS, "Totem to offhand", true, "Emergency",
                         "Move a totem to the offhand when lethal damage is imminent.").asAdvanced(),
                 SettingSpec.bool(GAPPLES, "Golden apples", true, "Emergency",
-                        "Eat a hotbar golden apple at low health.").asAdvanced());
+                        "Eat a hotbar golden apple at low health.").asAdvanced(),
+                SettingSpec.bool(WHOLE_INVENTORY, "Use items from whole inventory", true, "Emergency",
+                        "Pull golden apples or healing/regeneration potions from the main inventory into the hotbar"
+                                + " (single-player or allow-listed servers only).").asAdvanced(),
+                SettingSpec.bool(SWAP_BACK, "Swap pulled items back", true, "Emergency",
+                        "Return a pulled item to its inventory slot after use.").asAdvanced(),
+                SettingSpec.bool(KEEP_TOTEM, "Keep a totem in offhand", true, "Emergency",
+                        "While armed, move a totem to an empty offhand right away (single-player or allow-listed"
+                                + " servers only).").asAdvanced(),
+                SettingSpec.bool(JUMP_RESET, "Jump reset on knockback", false, "Spacing",
+                        "Tap jump when hit while engaged and on the ground (single-player or allow-listed servers"
+                                + " only).").asAdvanced());
     }
 }

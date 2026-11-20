@@ -108,6 +108,19 @@ public final class FakeCombatWorld implements CombatWorld {
         return dx * dx + dy * dy + dz * dz;
     }
 
+    /** Single-player / allow-listed server. */
+    public boolean allowed = true;
+
+    @Override
+    public int totemRefillSlot() {
+        return self.offhandTotem || self.screenOpen ? -1 : self.totemInvSlot;
+    }
+
+    @Override
+    public boolean extrasAllowedHere() {
+        return allowed;
+    }
+
     @Override
     public int crosshairEntityId() {
         return crosshairId;
@@ -147,6 +160,8 @@ public final class FakeCombatWorld implements CombatWorld {
         out.windChargeSlot = s.windChargeSlot;
         out.gappleOnCooldown = s.gappleOnCooldown;
         out.windChargeOnCooldown = s.windChargeOnCooldown;
+        out.sustainInvSlot = s.sustainInvSlot;
+        out.emptyHotbarSlot = s.emptyHotbarSlot;
         out.hazardFront = s.hazardFront;
         out.hazardBack = s.hazardBack;
         out.hazardLeft = s.hazardLeft;
