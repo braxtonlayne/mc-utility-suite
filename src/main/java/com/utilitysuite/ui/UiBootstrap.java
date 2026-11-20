@@ -30,6 +30,9 @@ public final class UiBootstrap {
         modBus.addListener(UiBootstrap::onRegisterLayers);
         TravelTab.registerPanels();
         ToolsTab.registerPanels();
+        if (UiPreview.enabled()) {
+            UiPreview.install(); // dev only: -Dutilitysuite.uiPreview=true (gradlew runUiPreview)
+        }
     }
 
     private static void onRegisterLayers(RegisterGuiLayersEvent event) {

@@ -76,6 +76,13 @@ neoForge {
                 jvmArguments.add("-XX:StartFlightRecording=filename=${file('run/playtest/playtest.jfr')},settings=profile,dumponexit=true")
             }
         }
+        // Dev only: opens the menu at the title screen, saves every tab to run/ui-preview/*.png, then quits
+        // (com.utilitysuite.ui.UiPreview). ./gradlew runUiPreview
+        uiPreview {
+            client()
+            systemProperty 'utilitysuite.uiPreview', 'true'
+            programArguments.addAll('--width', '1760', '--height', '990')
+        }
         configureEach {
             logLevel = org.slf4j.event.Level.INFO
         }

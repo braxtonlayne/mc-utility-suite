@@ -22,12 +22,13 @@ import com.utilitysuite.ui.ProfileCopier;
 import com.utilitysuite.ui.SettingWidgetMapper;
 import com.utilitysuite.ui.SettingsAccess;
 import com.utilitysuite.ui.SettingsRenderer;
+import com.utilitysuite.ui.SuiteHud;
 import com.utilitysuite.ui.TimelineScreen;
+import com.utilitysuite.ui.kit.CardNode;
+import com.utilitysuite.ui.kit.PillButton;
+import com.utilitysuite.ui.kit.UiTheme;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.components.Button;
-import net.minecraft.client.gui.components.CycleButton;
-import net.minecraft.network.chat.Component;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -35,12 +36,14 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.stream.Stream;
 
 /**
- * Tools tab: Smart Inventory (settings + pinned slots), Packet Lab (toggle, live rates, timeline viewer), the latency
- * simulator, Local Rules (list + builder), HUD settings, Profiles (active id, copy from global or another saved profile),
- * hotkeys, core settings and Resume automation.
+ * Tools tab: Smart Inventory (settings + pinned hotbar slots), Packet Lab (switch, live rates, timeline viewer), the
+ * latency simulator, Local Rules (list + builder), HUD settings, Profiles (active id, copy from global or another
+ * saved profile), hotkeys, core settings, and a Resume card while Stop-All is active.
  */
 public final class ToolsTab {
 
@@ -84,20 +87,20 @@ public final class ToolsTab {
 
     public static void build(Panel p) {
         if (Services.arbiter().isAutomationStopped()) {
-            p.heading("Automation stopped");
-            p.text("Stop-All is active: no module may take control until you resume.", Panel.RED);
-            p.button("Resume automation", 0, 160, b -> {
+            p.card("Automation stopped", "Stop-All is active", 90, CardNode.Tone.DANGER);
+            p.headerNode(new PillButton(p.font(), "Resume", 70, PillButton.Style.SUCCESS, b -> {
                 Services.arbiter().resumeAutomation();
                 p.toast("Automation resumed");
                 p.rebuild();
-            });
-            p.nextRow();
+            }).pill(true), 0);
+            p.text("No module may take control until you resume.", UiTheme.DANGER_TEXT);
         }
         List<IModule> mods = Services.modules().byCategory(ModuleCategory.TOOLS);
         for (IModule m : mods) {
             SettingsRenderer.module(p, m);
         }
-        Services.modules().byId(com.utilitysuite.ui.SuiteHud.ID).ifPresent(m -> SettingsRenderer.module(p, m));
+        p.section("Suite");
+        Services.modules().byId(SuiteHud.ID).ifPresent(m -> SettingsRenderer.module(p, m));
         profiles(p);
         hotkeys(p);
         coreSettings(p);
@@ -110,18 +113,16 @@ public final class ToolsTab {
             if (!(m instanceof SmartInventory inv)) {
                 return;
             }
-            p.text("Pinned hotbar slots (never overwritten or dumped):", Panel.GRAY);
-            int bw = Math.min(24, (p.width() - 8 * 2) / 9);
+            p.text("Pinned hotbar slots (never overwritten or dumped)", Panel.DIM);
+            int bw = Math.min(26, (p.width() - 8 * 4) / 9);
             for (int i = 0; i < 9; i++) {
                 int slot = i;
                 boolean pinned = PinnedSlots.isPinned(inv.pinnedMask(), i);
-                Button b = p.button((pinned ? "■" : "") + (i + 1), i * (bw + 2), bw, btn -> {
-                    inv.togglePinned(slot);
-                    p.rebuild();
-                });
-                if (pinned) {
-                    b.setMessage(Component.literal(String.valueOf(i + 1)).withStyle(net.minecraft.ChatFormatting.GOLD));
-                }
+                p.button(String.valueOf(i + 1), pinned ? "Pinned: click to unpin" : "Click to pin", i * (bw + 4), bw,
+                        b -> {
+                            inv.togglePinned(slot);
+                            p.rebuild();
+                        }).selected(pinned);
             }
             p.nextRow();
             p.dynamic(() -> inv.lastResult().isEmpty() ? "" : "Last: " + inv.lastResult(), Panel.GRAY);
@@ -130,14 +131,7 @@ public final class ToolsTab {
             if (!(m instanceof PacketLab lab)) {
                 return;
             }
-            p.text("Read-only: records packet types, sizes and times only (no contents).", Panel.GRAY);
-            p.button("Open timeline", 0, 120, b -> Minecraft.getInstance().setScreen(
-                    new TimelineScreen(Minecraft.getInstance().screen, lab)));
-            p.button("Clear", 124, 60, b -> {
-                lab.clearTimeline();
-                p.toast("Timeline cleared");
-            });
-            p.nextRow();
+            p.text("Read-only: records packet types, sizes and times only (no contents).", Panel.DIM);
             p.dynamic(() -> {
                 if (!lab.isEnabled()) {
                     return "Capture is off.";
@@ -148,13 +142,21 @@ public final class ToolsTab {
                         + lab.packetRates().get(s, PacketLab.RATE_IN_BYTES) / 1024 + " KiB in"
                         + (lab.bursts().bursts() > 0 ? "  |  repeated corrections: " + lab.bursts().bursts() : "");
             }, Panel.WHITE);
+            p.gap(2);
+            p.button("Open timeline", null, 0, 100, PillButton.Style.PRIMARY, b -> Minecraft.getInstance().setScreen(
+                    new TimelineScreen(Minecraft.getInstance().screen, lab)));
+            p.button("Clear", null, 106, 60, PillButton.Style.SECONDARY, b -> {
+                lab.clearTimeline();
+                p.toast("Timeline cleared");
+            });
+            p.nextRow();
         });
         ModulePanels.register(LatencySimulator.ID, (p, m) -> {
             if (!(m instanceof LatencySimulator sim)) {
                 return;
             }
-            p.text("Test tool: delays your own packets. Single-player or allowed test servers only;", Panel.YELLOW);
-            p.text("off by default and switched off automatically when you disconnect.", Panel.YELLOW);
+            p.paragraph("Test tool: delays your own packets. Single-player or allowed test servers only; off by "
+                    + "default and switched off automatically when you disconnect.", Panel.YELLOW);
             p.dynamic(() -> "Status: " + sim.status(), sim.isEnabled() ? Panel.GREEN : Panel.GRAY);
         });
         ModulePanels.register(LocalRules.ID, (p, m) -> {
@@ -168,16 +170,18 @@ public final class ToolsTab {
         int w = p.width();
         List<Rule> list = rules.rules();
         if (list.isEmpty()) {
-            p.text("No rules yet. Example: If inventory >= 90% full, deposit at Base Chest and resume.", Panel.GRAY);
+            p.paragraph("No rules yet. Example: If inventory >= 90% full, deposit at Base Chest and resume.",
+                    Panel.GRAY);
         }
         for (Rule r : list) {
             String id = r.id();
-            p.rowLabel(r.describe(), 4, w - 128, r.enabled() ? Panel.WHITE : Panel.GRAY);
-            p.toggle("On", r.enabled(), w - 120, 56, v -> {
+            p.listRow(null);
+            p.rowLabel(r.describe(), 4, w - 112, r.enabled() ? Panel.WHITE : Panel.GRAY);
+            p.place(new com.utilitysuite.ui.kit.ToggleSwitch(r.enabled(), v -> {
                 rules.setRuleEnabled(id, v);
                 p.rebuild();
-            });
-            p.button("Delete", w - 60, 60, b -> {
+            }).animKey("rule." + id), w - 96);
+            p.button("Delete", null, w - 58, 56, PillButton.Style.DANGER_SOFT, b -> {
                 rules.removeRule(id);
                 p.rebuild();
             });
@@ -185,53 +189,66 @@ public final class ToolsTab {
         }
         p.dynamic(rules::lastMessage, Panel.GRAY);
 
-        p.text("New rule:", Panel.GRAY);
+        p.subheading("New rule");
         Rule.ConditionType ct = enumState(p, K_COND, Rule.ConditionType.INVENTORY_FULL_PCT);
         Rule.Comparison cmp = enumState(p, K_CMP, Rule.Comparison.AT_LEAST);
         Rule.ActionType at = enumState(p, K_ACTION, Rule.ActionType.DEPOSIT_AT);
-        int c1 = w * 34 / 100;
-        p.place(cycle(Rule.ConditionType.values(), ct, Rule.ConditionType::label, c1, v -> {
+        int lab = 36;
+        int c1 = (w - lab) * 40 / 100;
+        int x1 = lab;
+        int x2 = x1 + c1 + 4;
+        p.rowLabel("If", 0, lab - 4, Panel.DIM);
+        cycle(p, List.of(Rule.ConditionType.values()), ct, Rule.ConditionType::label, x1, c1, v -> {
             p.setState(K_COND, v.name());
             p.rebuild();
-        }), 0);
+        });
         boolean jobStatus = ct == Rule.ConditionType.JOB_STATUS;
-        Rule.Comparison[] cmps = jobStatus ? new Rule.Comparison[]{Rule.Comparison.EQUALS, Rule.Comparison.NOT_EQUALS}
-                : Rule.Comparison.values();
+        List<Rule.Comparison> cmps = jobStatus ? List.of(Rule.Comparison.EQUALS, Rule.Comparison.NOT_EQUALS)
+                : List.of(Rule.Comparison.values());
         if (jobStatus && cmp != Rule.Comparison.EQUALS && cmp != Rule.Comparison.NOT_EQUALS) {
             cmp = Rule.Comparison.EQUALS;
         }
-        p.place(cycle(cmps, cmp, Rule.Comparison::symbol, 34, v -> p.setState(K_CMP, v.name())), c1 + 4);
-        int rest = w - c1 - 42;
+        int cmpW = 50;
+        cycle(p, cmps, cmp, Rule.Comparison::symbol, x2, cmpW, v -> p.setState(K_CMP, v.name()));
+        int x3 = x2 + cmpW + 4;
+        int rest = w - x3;
         if (ct.usesText() && !jobStatus) {
             int half = (rest - 4) / 2;
-            p.textField(K_COND_ARG, "item id", c1 + 42, half);
-            p.textField(K_VALUE, "count", c1 + 46 + half, rest - half - 4);
+            p.textField(K_COND_ARG, "item id", x3, half);
+            p.textField(K_VALUE, "count", x3 + half + 4, rest - half - 4);
         } else if (jobStatus) {
-            p.textField(K_COND_ARG, "RUNNING, PAUSED, NONE...", c1 + 42, rest);
+            p.textField(K_COND_ARG, "RUNNING, PAUSED, NONE...", x3, rest);
         } else {
-            p.textField(K_VALUE, valueHint(ct), c1 + 42, rest);
+            p.textField(K_VALUE, valueHint(ct), x3, rest);
         }
         p.nextRow();
-        p.place(cycle(Rule.ActionType.values(), at, Rule.ActionType::label, c1, v -> {
+        p.rowLabel("Then", 0, lab - 4, Panel.DIM);
+        cycle(p, List.of(Rule.ActionType.values()), at, Rule.ActionType::label, x1, c1, v -> {
             p.setState(K_ACTION, v.name());
             p.rebuild();
-        }), 0);
-        int flagW = at == Rule.ActionType.DEPOSIT_AT || at == Rule.ActionType.TOGGLE_MODULE ? 86 : 0;
+        });
+        int flagW = at == Rule.ActionType.DEPOSIT_AT || at == Rule.ActionType.TOGGLE_MODULE ? 84 : 0;
         if (at.usesText()) {
-            p.textField(K_ACTION_ARG, actionHint(at), c1 + 4, w - c1 - 8 - flagW);
+            p.textField(K_ACTION_ARG, actionHint(at), x2, w - x2 - (flagW > 0 ? flagW + 4 : 0));
         }
         if (flagW > 0) {
             boolean flag = !"0".equals(p.state(K_FLAG, "1"));
             String label = at == Rule.ActionType.DEPOSIT_AT ? (flag ? "+ resume" : "no resume") : (flag ? "on" : "off");
-            p.button(label, w - flagW, flagW, b -> {
+            p.button(label, null, w - flagW, flagW, PillButton.Style.SECONDARY, b -> {
                 p.setState(K_FLAG, flag ? "0" : "1");
                 p.rebuild();
-            });
+            }).selected(flag);
         }
         p.nextRow();
-        p.textField(K_COOLDOWN, "cooldown ticks (200)", 0, c1);
-        p.button("Add rule", c1 + 4, w - c1 - 4, b -> addRule(p, rules));
+        p.rowLabel("Every", 0, lab - 4, Panel.DIM);
+        p.textField(K_COOLDOWN, "cooldown ticks (200)", x1, c1);
+        p.button("Add rule", null, w - 90, 90, PillButton.Style.PRIMARY, b -> addRule(p, rules));
         p.nextRow();
+    }
+
+    private static <E> void cycle(Panel p, List<E> values, E current, Function<E, String> label, int dx, int w,
+                                  Consumer<E> set) {
+        p.cycle(values, current, label, dx, w, set);
     }
 
     private static void addRule(Panel p, LocalRules rules) {
@@ -308,37 +325,29 @@ public final class ToolsTab {
         }
     }
 
-    private static <E> CycleButton<E> cycle(E[] values, E current, java.util.function.Function<E, String> label, int w,
-                                            java.util.function.Consumer<E> set) {
-        return CycleButton.<E>builder(v -> Component.literal(label.apply(v)))
-                .withValues(values)
-                .withInitialValue(current)
-                .displayOnlyValue()
-                .create(0, 0, w, Panel.WIDGET_H, Component.literal(""), (b, v) -> set.accept(v));
-    }
-
     // ---- profiles ---------------------------------------------------------------------------------------------------
 
     private static void profiles(Panel p) {
-        p.heading("Profiles");
         ProfileConfig active = Services.modState().profile();
         boolean inWorld = !ProfileIds.GLOBAL.equals(active.profileId());
-        p.text("Active profile: " + active.profileId() + (inWorld ? "" : " (no world loaded: global defaults)"),
-                Panel.WHITE);
+        p.card("Profiles", "active: " + active.profileId());
         if (!inWorld) {
+            p.text("No world loaded: editing the global defaults.", Panel.GRAY);
             return;
         }
-        p.button("Copy settings from global", "Replaces this world's module settings with the global profile's", 0,
-                200, b -> copyFrom(p, Services.modState().global()));
+        int w = p.width();
+        p.rowLabel("Replace this world's module settings with the global profile's", 0, w - 130, Panel.WHITE);
+        p.button("Copy from global", null, w - 120, 120, PillButton.Style.SECONDARY,
+                b -> copyFrom(p, Services.modState().global()));
         p.nextRow();
         List<String> others = savedProfiles(active.profileId());
         if (!others.isEmpty()) {
-            p.text("Copy settings from another saved profile:", Panel.GRAY);
+            p.subheading("Copy settings from another saved profile");
         }
-        int w = p.width();
         for (String id : others) {
+            p.listRow(null);
             p.rowLabel(id, 4, w - 96, Panel.WHITE);
-            p.button("Copy from", w - 90, 90, b -> {
+            p.button("Copy from", null, w - 84, 82, PillButton.Style.SECONDARY, b -> {
                 ProfileConfig src = CoreBootstrap.configStore().load(id);
                 copyFrom(p, src);
             });
@@ -378,17 +387,23 @@ public final class ToolsTab {
     // ---- hotkeys + core ---------------------------------------------------------------------------------------------
 
     private static void hotkeys(Panel p) {
-        p.heading("Hotkeys");
-        p.text("Open menu: " + keyName(KeybindManager.mapping(KeybindManager.KeyId.OPEN_MENU)), Panel.WHITE);
-        p.text("Stop-All (stops every automation at once): "
-                + keyName(KeybindManager.mapping(KeybindManager.KeyId.STOP_ALL)), Panel.WHITE);
-        p.text("Clean-Screen (hides every overlay and the HUD line): "
-                + keyName(KeybindManager.mapping(KeybindManager.KeyId.CLEAN_SCREEN)), Panel.WHITE);
+        p.card("Hotkeys", "Options > Controls > Key Binds > Utility Suite");
+        hotkey(p, "Open this menu", KeybindManager.mapping(KeybindManager.KeyId.OPEN_MENU));
+        hotkey(p, "Stop-All (stops every automation at once)", KeybindManager.mapping(KeybindManager.KeyId.STOP_ALL));
+        hotkey(p, "Clean-Screen (hides overlays and the HUD pill)",
+                KeybindManager.mapping(KeybindManager.KeyId.CLEAN_SCREEN));
         if (ToolsBootstrap.containerButtons() != null) {
-            p.text("Quick deposit in a chest: " + keyName(ToolsBootstrap.containerButtons().quickDepositKey())
-                    + " (Shift = dump all)", Panel.WHITE);
+            hotkey(p, "Quick deposit in a chest (Shift = dump all)",
+                    ToolsBootstrap.containerButtons().quickDepositKey());
         }
-        p.text("Change them in Options > Controls > Key Binds > Utility Suite.", Panel.GRAY);
+    }
+
+    private static void hotkey(Panel p, String what, KeyMapping key) {
+        int w = p.width();
+        com.utilitysuite.ui.kit.ChipNode cap = com.utilitysuite.ui.kit.ChipNode.keycap(p.font(), keyName(key));
+        p.rowLabel(what, 0, w - cap.w - 10, Panel.WHITE);
+        p.place(cap, w - cap.w);
+        p.nextRow();
     }
 
     private static String keyName(KeyMapping m) {
@@ -396,16 +411,16 @@ public final class ToolsTab {
     }
 
     private static void coreSettings(Panel p) {
-        p.heading("Core settings");
+        p.card("Core settings", "shared by every world (global profile)");
         ProfileConfig global = Services.modState().global();
         SettingsRenderer.settings(p, ModState.CORE, CORE_SPECS, new SettingsAccess(global, ModState.CORE,
                 k -> CoreBootstrap.applyCoreSettings(), Services.modState()::markDirty));
-        p.text("Clean-Screen is " + (Services.modState().isCleanScreen() ? "ON" : "off") + ".", Panel.GRAY);
+        p.text("Clean-Screen is " + (Services.modState().isCleanScreen() ? "on" : "off")
+                + " (switch it in the top bar).", Panel.GRAY);
     }
 
     /** Lower-case enum label helper for other tabs. */
     static String pretty(Enum<?> e) {
         return SettingWidgetMapper.prettyEnum(e.name()).toLowerCase(Locale.ROOT);
     }
-
 }

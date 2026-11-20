@@ -11,19 +11,19 @@ import com.utilitysuite.core.api.Waypoint;
 import com.utilitysuite.ui.Panel;
 import com.utilitysuite.ui.SettingWidgetMapper;
 import com.utilitysuite.ui.SettingsRenderer;
+import com.utilitysuite.ui.kit.PillButton;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.components.CycleButton;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
-import net.minecraft.network.chat.Component;
 
 import java.util.List;
+import java.util.function.Consumer;
 
 /**
  * World tab: Observed / Simulated / Hybrid selectors for overlays and for the miner's routing (independent), every
- * WORLD-category module rendered generically (custom panels via {@code ModulePanels}), and the waypoint manager
- * (list, add here, delete, Take Me Back along the breadcrumb trail). Everything degrades gracefully while the world
- * module is not installed.
+ * WORLD-category module as a settings card (custom panels via {@code ModulePanels}), and the waypoint manager (list,
+ * add here, go, delete, Take Me Back along the breadcrumb trail). Everything degrades gracefully while the world
+ * module is not installed or no world is loaded.
  */
 public final class WorldTab {
 
@@ -42,44 +42,40 @@ public final class WorldTab {
 
     public static void build(Panel p) {
         knowledge(p);
+        waypoints(p);
         List<IModule> mods = Services.modules().byCategory(ModuleCategory.WORLD);
+        p.section("World modules");
         if (mods.isEmpty()) {
-            p.heading("World modules");
-            p.text("No world modules are installed.", Panel.GRAY);
+            p.card("No world modules are installed", "");
         }
         for (IModule m : mods) {
             SettingsRenderer.module(p, m);
         }
-        waypoints(p);
     }
 
     private static void knowledge(Panel p) {
-        p.heading("Data sources");
+        p.card("Data sources", "where overlays and the miner get block data");
         IWorldKnowledgeService wk = Services.worldKnowledgeOrNull();
         if (wk == null) {
             p.text("World knowledge is not available (world module not loaded).", Panel.GRAY);
             return;
         }
-        int labelW = p.width() * 52 / 100;
-        p.rowLabel("Overlays show", 4, labelW - 6, Panel.WHITE);
-        p.place(sourceButton(wk.overlayMode(), p.width() - labelW - 4, v -> wk.setOverlayMode(v)), labelW + 4);
+        int w = p.width();
+        int cw = Math.min(240, w * 58 / 100);
+        p.rowLabel("Overlays show", 0, w - cw - 10, Panel.WHITE);
+        source(p, wk.overlayMode(), w - cw, cw, wk::setOverlayMode);
         p.nextRow();
-        p.rowLabel("Miner / routing uses", 4, labelW - 6, Panel.WHITE);
-        p.place(sourceButton(wk.routingMode(), p.width() - labelW - 4, v -> wk.setRoutingMode(v)), labelW + 4);
+        p.rowLabel("Miner / routing uses", 0, w - cw - 10, Panel.WHITE);
+        source(p, wk.routingMode(), w - cw, cw, wk::setRoutingMode);
         p.nextRow();
-        p.text("Observed = seen blocks only, Simulated = seed predictions, Hybrid = both.", Panel.GRAY);
+        p.paragraph("Observed = blocks you have seen. Simulated = seed predictions. Hybrid = both.", Panel.GRAY);
     }
 
-    private static CycleButton<DataSourceMode> sourceButton(DataSourceMode current, int w,
-                                                           java.util.function.Consumer<DataSourceMode> set) {
-        return CycleButton.<DataSourceMode>builder(m -> Component.literal(label(m)))
-                .withValues(DataSourceMode.values())
-                .withInitialValue(current)
-                .displayOnlyValue()
-                .create(0, 0, w, Panel.WIDGET_H, Component.literal("Source"), (b, v) -> {
-                    set.accept(v);
-                    Services.modState().markDirty();
-                });
+    private static void source(Panel p, DataSourceMode current, int dx, int w, Consumer<DataSourceMode> set) {
+        p.cycle(List.of(DataSourceMode.values()), current, WorldTab::label, dx, w, v -> {
+            set.accept(v);
+            Services.modState().markDirty();
+        });
     }
 
     static String label(DataSourceMode m) {
@@ -91,19 +87,25 @@ public final class WorldTab {
     }
 
     private static void waypoints(Panel p) {
-        p.heading("Waypoints");
         IWaypointService wps = Services.waypointsOrNull();
         if (wps == null) {
+            p.card("Waypoints", "not available");
             p.text("Waypoints are not available (world module not loaded).", Panel.GRAY);
             return;
         }
+        List<Waypoint> all = wps.all();
+        p.card("Waypoints", all.isEmpty() ? "none yet" : all.size() + " saved", 100,
+                com.utilitysuite.ui.kit.CardNode.Tone.NORMAL);
+        p.headerNode(new PillButton(p.font(), "Take Me Back", 92, PillButton.Style.SECONDARY,
+                b -> takeMeBack(p, wps)).tooltip("Walk back along the recorded breadcrumb trail"), 0);
         int w = p.width();
-        p.textField(K_WP_NAME, "Waypoint name", 0, w - 184);
-        p.button("Add here", w - 180, 86, b -> {
+        p.textField(K_WP_NAME, "New waypoint name", 0, w - 92);
+        p.button("Add here", "Saves your current position", w - 86, 86, PillButton.Style.PRIMARY, b -> {
             Minecraft mc = Minecraft.getInstance();
             LocalPlayer pl = mc.player;
             String name = p.state(K_WP_NAME, "").trim();
             if (pl == null || mc.level == null) {
+                p.toast("Join a world to add waypoints");
                 return;
             }
             if (name.isEmpty()) {
@@ -116,21 +118,25 @@ public final class WorldTab {
             p.toast("Waypoint '" + name + "' added");
             p.rebuild();
         });
-        p.button("Take Me Back", "Walk back along the recorded breadcrumb trail", w - 90, 90, b -> takeMeBack(p, wps));
         p.nextRow();
-        List<Waypoint> all = wps.all();
         if (all.isEmpty()) {
-            p.text("No waypoints yet.", Panel.GRAY);
+            p.text("No waypoints yet. Type a name and press Add here.", Panel.GRAY);
+            return;
         }
+        p.gap(4);
         int n = Math.min(MAX_WAYPOINTS, all.size());
         for (int i = 0; i < n; i++) {
             Waypoint wp = all.get(i);
             String id = wp.id();
-            p.rowLabel(wp.name() + "  " + wp.x() + " " + wp.y() + " " + wp.z() + "  " + shortDim(wp.dimension())
-                    + (wp.group() == null || wp.group().isEmpty() ? "" : "  [" + wp.group() + "]"), 4, w - 134,
-                    Panel.WHITE);
-            p.button("Go", w - 126, 60, b -> goTo(p, wps, wp));
-            p.button("Delete", w - 62, 62, b -> {
+            p.listRow(null);
+            int textW = w - 120;
+            int nameW = Math.min(textW / 2, p.font().width(wp.name()) + 4);
+            p.rowLabel(wp.name(), 4, nameW, Panel.WHITE);
+            p.rowLabel(wp.x() + " " + wp.y() + " " + wp.z() + "  ·  " + shortDim(wp.dimension())
+                            + (wp.group() == null || wp.group().isEmpty() ? "" : "  ·  " + wp.group()),
+                    nameW + 12, textW - nameW - 12, Panel.GRAY);
+            p.button("Go", null, w - 110, 48, PillButton.Style.SECONDARY, b -> goTo(p, wps, wp));
+            p.button("Delete", null, w - 58, 56, PillButton.Style.DANGER_SOFT, b -> {
                 wps.remove(id);
                 p.rebuild();
             });

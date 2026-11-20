@@ -7,8 +7,10 @@ import java.util.Locale;
 import java.util.Objects;
 
 /**
- * The HUD's one status pill, e.g. {@code [Goal] Gathering 32 Diamonds (18/32) — Mining at Y=-54}. The text is rebuilt
- * only when one of its inputs changed; an unchanged update compares fields and allocates nothing. Pure Java.
+ * The HUD's one status pill. {@link #text()} is the full line, e.g.
+ * {@code [Goal] Gathering 32 Diamonds (18/32) — Mining at Y=-54}; the pill itself draws the parts
+ * ({@link #progressText()}, {@link #detailText()}, {@link #itemId()}, {@link #status()}). Everything is rebuilt only
+ * when one of its inputs changed; an unchanged update compares fields and allocates nothing. Pure Java.
  */
 public final class HudStatusLine {
 
@@ -19,6 +21,9 @@ public final class HudStatusLine {
     private String step;
     private String schematic;
     private String text = "";
+    private String progressText = "";
+    private String detailText = "";
+    private String itemId = "";
     private int rebuilds;
 
     /** Updates from a job snapshot. Returns true when the text changed. */
@@ -40,6 +45,10 @@ public final class HudStatusLine {
         current = cur;
         target = tgt;
         step = now;
+        progressText = tgt > 0 ? Math.max(0, cur) + "/" + tgt : "";
+        String d = detail(st, now);
+        detailText = d.isEmpty() ? prettyLabel(goalLabel == null ? "" : goalLabel) : d;
+        itemId = itemIdOf(goalLabel);
         return set(format(goalLabel, st, cur, tgt, now));
     }
 
@@ -54,6 +63,9 @@ public final class HudStatusLine {
         schematic = statusLine;
         label = null;
         status = null;
+        progressText = "";
+        detailText = statusLine;
+        itemId = "";
         return set("[Build] " + statusLine);
     }
 
@@ -65,6 +77,9 @@ public final class HudStatusLine {
         schematic = null;
         current = Integer.MIN_VALUE;
         target = Integer.MIN_VALUE;
+        progressText = "";
+        detailText = "";
+        itemId = "";
         return set("");
     }
 
@@ -86,9 +101,39 @@ public final class HudStatusLine {
         return text.isEmpty();
     }
 
-    /** How often the text was rebuilt (tests: change detection). */
+    /** How often the text was rebuilt (tests: change detection; the pill re-measures when it moves). */
     public int rebuilds() {
         return rebuilds;
+    }
+
+    /** Status of the goal job, or null for a schematic line / nothing. */
+    public JobStatus status() {
+        return status;
+    }
+
+    /** True when the line comes from the schematic toolkit rather than a goal job. */
+    public boolean isSchematic() {
+        return schematic != null;
+    }
+
+    /** "18/32", or empty without a count target. */
+    public String progressText() {
+        return progressText;
+    }
+
+    /** The current step (Paused / Planning / Replanning; the readable goal label when the step is empty). */
+    public String detailText() {
+        return detailText;
+    }
+
+    /** Registry id of the goal's target item ("minecraft:diamond"), or empty. */
+    public String itemId() {
+        return itemId;
+    }
+
+    /** The raw goal label of the current job, or null. */
+    public String goalLabel() {
+        return label;
     }
 
     public static String format(String goalLabel, JobStatus st, int cur, int tgt, String now) {
@@ -97,20 +142,40 @@ public final class HudStatusLine {
         if (tgt > 0) {
             sb.append(" (").append(Math.max(0, cur)).append('/').append(tgt).append(')');
         }
-        String detail;
-        if (st == JobStatus.PAUSED) {
-            detail = "Paused";
-        } else if (st == JobStatus.QUEUED || st == JobStatus.PLANNING) {
-            detail = "Planning";
-        } else if (st == JobStatus.REPLANNING) {
-            detail = "Replanning";
-        } else {
-            detail = now == null ? "" : now.trim();
-        }
+        String detail = detail(st, now);
         if (!detail.isEmpty()) {
             sb.append(" — ").append(detail);
         }
         return sb.toString();
+    }
+
+    /** What the pill shows as the step: Paused / Planning / Replanning, else the trimmed current step. */
+    public static String detail(JobStatus st, String now) {
+        if (st == JobStatus.PAUSED) {
+            return "Paused";
+        } else if (st == JobStatus.QUEUED || st == JobStatus.PLANNING) {
+            return "Planning";
+        } else if (st == JobStatus.REPLANNING) {
+            return "Replanning";
+        }
+        return now == null ? "" : now.trim();
+    }
+
+    /**
+     * The first registry-id-looking word of a goal label ("Gather 32 minecraft:diamond" → "minecraft:diamond"), or
+     * empty. File paths ("C:\schem\house.litematic") are not item ids.
+     */
+    public static String itemIdOf(String label) {
+        if (label == null) {
+            return "";
+        }
+        for (String w : label.trim().split("\\s+")) {
+            int c = w.indexOf(':');
+            if (c > 0 && c < w.length() - 1 && w.indexOf('/') < 0 && w.indexOf('\\') < 0 && w.indexOf('.') < 0) {
+                return w;
+            }
+        }
+        return "";
     }
 
     /**

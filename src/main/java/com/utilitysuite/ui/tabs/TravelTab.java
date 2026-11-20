@@ -8,13 +8,16 @@ import com.utilitysuite.travel.bridge.BridgeAssist;
 import com.utilitysuite.ui.ModulePanels;
 import com.utilitysuite.ui.Panel;
 import com.utilitysuite.ui.SettingsRenderer;
+import com.utilitysuite.ui.kit.PillButton;
+import com.utilitysuite.ui.kit.UiTheme;
 
 import java.util.List;
+import java.util.Locale;
 
 /**
  * Travel tab: TerrainAssist, TravelAutopilot (destination entry: coordinates or a waypoint name, mode in its settings,
- * Start/Stop) and BridgeAssist (Start/Stop), each with its toggle and settings. The custom rows are registered as
- * {@link ModulePanels} by {@link #registerPanels()}.
+ * Start/Stop with a live status line) and BridgeAssist (Start/Stop, Mark point), each as a settings card. The custom
+ * rows are registered as {@link ModulePanels} by {@link #registerPanels()}.
  */
 public final class TravelTab {
 
@@ -33,7 +36,7 @@ public final class TravelTab {
     public static void build(Panel p) {
         List<IModule> mods = Services.modules().byCategory(ModuleCategory.TRAVEL);
         if (mods.isEmpty()) {
-            p.text("No travel modules are installed.", Panel.GRAY);
+            p.card("No travel modules are installed", "");
         }
         for (IModule m : mods) {
             SettingsRenderer.module(p, m);
@@ -47,34 +50,38 @@ public final class TravelTab {
                 return;
             }
             int w = p.width();
-            p.textField(K_DEST, "x y z, x z or waypoint name (stops: a > b)", 0, w - 128);
             boolean running = a.isRunning();
-            p.button(running ? "Stop" : "Start", w - 124, 124, b -> {
-                if (a.isRunning()) {
-                    a.stop();
-                } else {
-                    String dest = p.state(K_DEST, "").trim();
-                    boolean ok = dest.isEmpty() ? a.start() : a.start(dest);
-                    if (!ok) {
-                        p.toast("Autopilot did not start (see the message above the hotbar)");
-                    }
-                }
-                p.rebuild();
-            });
+            p.textField(K_DEST, "x y z, x z or waypoint name (stops: a > b)", 0, w - 84);
+            p.button(running ? "Stop" : "Start", null, w - 78, 78,
+                    running ? PillButton.Style.DANGER : PillButton.Style.PRIMARY, b -> {
+                        if (a.isRunning()) {
+                            a.stop();
+                        } else {
+                            String dest = p.state(K_DEST, "").trim();
+                            boolean ok = dest.isEmpty() ? a.start() : a.start(dest);
+                            if (!ok) {
+                                p.toast("Autopilot did not start (see the message above the hotbar)");
+                            }
+                        }
+                        p.rebuild();
+                    });
             p.nextRow();
-            p.dynamic(() -> a.isRunning() ? "Running: " + a.runName().toLowerCase(java.util.Locale.ROOT) : "Idle",
-                    a.isRunning() ? Panel.GREEN : Panel.GRAY);
+            p.dynamic(() -> a.isRunning() ? "Running: " + a.runName().toLowerCase(Locale.ROOT) : "Idle",
+                    a.isRunning() ? UiTheme.RUNNING : Panel.GRAY).bullet(a.isRunning() ? UiTheme.RUNNING
+                    : UiTheme.TRACK_OFF);
+            p.gap(2);
         });
         ModulePanels.register(BridgeAssist.ID, (p, m) -> {
             if (!(m instanceof BridgeAssist b)) {
                 return;
             }
             boolean running = b.isRunning();
-            p.button(running ? "Stop bridging" : "Start bridging", 0, 140, btn -> {
-                b.toggle();
-                p.rebuild();
-            });
-            p.button("Mark point", "Marks the current block as a line point (MARKED mode)", 144, 100, btn -> b.mark());
+            p.button(running ? "Stop bridging" : "Start bridging", null, 0, 108,
+                    running ? PillButton.Style.DANGER : PillButton.Style.PRIMARY, btn -> {
+                        b.toggle();
+                        p.rebuild();
+                    });
+            p.button("Mark point", "Marks the current block as a line point (MARKED mode)", 114, 84, btn -> b.mark());
             p.nextRow();
         });
     }

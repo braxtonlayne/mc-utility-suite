@@ -1,0 +1,72 @@
+package com.utilitysuite.ui.kit;
+
+import net.minecraft.client.gui.Font;
+import net.minecraft.client.gui.GuiGraphics;
+
+/**
+ * A content card: rounded surface with a hairline border that lightens on hover, an optional header row (title in
+ * primary text, a short muted description after it) and a divider between header and body. Header controls such as
+ * the enable switch are separate nodes placed on top by the panel. Its height is set when the panel closes the card.
+ */
+public final class CardNode extends UiNode {
+
+    public static final int HEADER_H = 30;
+
+    public enum Tone { NORMAL, HERO, DANGER }
+
+    private final String title;
+    private final String subtitle;
+    private final int titleW;
+    private final Tone tone;
+    private String shownSubtitle = "";
+    private int dividerY = -1;
+
+    public CardNode(Font font, String title, String subtitle, int w, int reserveRight, Tone tone) {
+        super(w, HEADER_H);
+        this.tone = tone;
+        int room = w - 2 * UiTheme.CARD_PAD - reserveRight;
+        this.title = UiRenderUtils.ellipsize(font, title == null ? "" : title, room);
+        this.titleW = font.width(this.title);
+        if (subtitle != null && !subtitle.isEmpty()) {
+            int left = room - titleW - 8;
+            this.subtitle = left > 30 ? UiRenderUtils.ellipsize(font, subtitle, left) : "";
+        } else {
+            this.subtitle = "";
+        }
+        shownSubtitle = this.subtitle;
+    }
+
+    public boolean hasHeader() {
+        return !title.isEmpty();
+    }
+
+    /** Draws the header divider at this offset from the card top. */
+    public void divider(int offset) {
+        dividerY = offset;
+    }
+
+    @Override
+    public void render(GuiGraphics g, Font font, int sx, int sy, int mouseX, int mouseY) {
+        boolean hover = inside(mouseX, mouseY, sx, sy, w, h);
+        int bg = hover ? UiTheme.CARD_HOVER : UiTheme.CARD;
+        int border = switch (tone) {
+            case HERO -> hover ? 0xFF2E5A75 : 0xFF274A60;
+            case DANGER -> UiTheme.DANGER_BORDER;
+            default -> hover ? 0xFF2F3442 : UiTheme.BORDER;
+        };
+        UiRenderUtils.panel(g, sx, sy, w, h, UiTheme.RADIUS, bg, border);
+        if (tone == Tone.HERO) {
+            UiRenderUtils.hLine(g, sx + UiTheme.RADIUS, sx + w - UiTheme.RADIUS, sy, 0xFF38BDF8);
+        }
+        if (!title.isEmpty()) {
+            int ty = sy + (HEADER_H - 8) / 2;
+            UiRenderUtils.text(g, font, title, sx + UiTheme.CARD_PAD, ty, UiTheme.TEXT);
+            if (!shownSubtitle.isEmpty()) {
+                UiRenderUtils.text(g, font, shownSubtitle, sx + UiTheme.CARD_PAD + titleW + 8, ty, UiTheme.TEXT_MUTED);
+            }
+        }
+        if (dividerY > 0) {
+            UiRenderUtils.hLine(g, sx + 1, sx + w - 1, sy + dividerY, 0xFF22262F);
+        }
+    }
+}

@@ -6,17 +6,19 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Extension point for custom module panels. The menu renders every module generically (enable toggle + settings from
- * {@code IConfigurable.settings()}); a module that needs more (a destination box, a table, a Start button) registers a
- * factory here from its bootstrap:
+ * Extension point for custom module panels. The menu renders every module generically as a card (header with the enable
+ * switch + settings from {@code IConfigurable.settings()}); a module that needs more (a destination box, a table, a
+ * Start button) registers a factory here from its bootstrap:
  * <pre>{@code
  * ModulePanels.register("seed_workbench", (panel, module) -> {
- *     panel.textField("seed.value", "World seed", 0, 200);
- *     panel.button("Apply", 204, 60, b -> ...);
+ *     int w = panel.width();                       // inner width of the module's card
+ *     panel.textField("seed.value", "World seed", 0, w - 66);
+ *     panel.button("Apply", w - 60, 60, b -> ...);  // custom-drawn pill button
  *     panel.nextRow();
  * });
  * }</pre>
- * The factory runs after the module's header row and before its generic settings, every time the tab is (re)built.
+ * The factory runs inside the module's card, after its header and before its generic settings, every time the tab is
+ * (re)built.
  */
 public final class ModulePanels {
 
