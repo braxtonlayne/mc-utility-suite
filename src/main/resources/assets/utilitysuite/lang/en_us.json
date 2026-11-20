@@ -6,5 +6,11 @@
   "key.utilitysuite.toggle_terrain_surface": "Toggle Terrain Assist (Surface)",
   "key.utilitysuite.toggle_world_overlays": "Toggle World Overlays",
   "key.utilitysuite.toggle_scout_camera": "Toggle Scout Camera",
-  "message.utilitysuite.stop_all": "Utility Suite: all automation stopped"
+  "message.utilitysuite.stop_all": "Utility Suite: all automation stopped",
+  "key.utilitysuite.combat_retreat": "Combat Assistant: Retreat / Cancel",
+  "key.utilitysuite.combat_toggle": "Combat Assistant: Arm / Disarm",
+  "message.utilitysuite.combat_armed": "Combat Assistant armed",
+  "message.utilitysuite.combat_disarmed": "Combat Assistant disarmed",
+  "message.utilitysuite.ally_added": "Ally added: %s (never targeted)",
+  "message.utilitysuite.ally_removed": "Ally removed: %s"
 }
