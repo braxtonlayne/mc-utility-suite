@@ -46,8 +46,8 @@ import java.util.function.Supplier;
  * right-click via the input smoother), places a crafting table or furnace from the inventory when none is nearby, and
  * moves items with {@link IContainerClicker} QUICK_MOVE clicks under the executor's lease.
  * <p>
- * Recipe placement uses the vanilla recipe-book request ({@code MultiPlayerGameMode.handlePlaceRecipe}), gated on an
- * active lease with HOTBAR, because the click API has no place-recipe operation; the crafted result is then taken with
+ * Recipe placement uses the vanilla recipe-book request through {@code IContainerClicker.placeRecipe} (needs an
+ * active lease with HOTBAR); the crafted result is then taken with
  * a clicker QUICK_MOVE. The server only places recipes the player has unlocked in the recipe book.
  */
 public final class MinecraftWorldActions implements WorldActions {
@@ -303,7 +303,10 @@ public final class MinecraftWorldActions implements WorldActions {
                         fail("No game mode");
                         return;
                     }
-                    mc.gameMode.handlePlaceRecipe(menu.containerId, recipe, false);
+                    if (!Services.clicker().placeRecipe(lease, recipe.id().toString(), false)) {
+                        fail("Could not place recipe " + recipe.id());
+                        return;
+                    }
                 } else if (timer >= 6) {
                     Slot result = menu.getSlot(0);
                     if (result.getItem().isEmpty()) {

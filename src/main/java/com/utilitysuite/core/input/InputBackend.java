@@ -36,4 +36,7 @@ public interface InputBackend {
 
     /** Performs a click on the open menu (or the inventory menu). Returns false if it could not be performed. */
     boolean clickContainerSlot(int slot, int button, IContainerClicker.Click click);
+
+    /** Recipe-book placement into the open crafting menu. Returns false if no menu is open or the recipe is unknown. */
+    boolean placeRecipe(String recipeId, boolean craftAll);
 }

@@ -294,6 +294,14 @@ public final class InputSmoother implements IInputSmoother, IContainerClicker {
     }
 
     @Override
+    public boolean placeRecipe(ControlLease lease, String recipeId, boolean craftAll) {
+        if (recipeId == null || !valid(lease, ControlChannel.HOTBAR) || !backend.isReady()) {
+            return false;
+        }
+        return backend.placeRecipe(recipeId, craftAll);
+    }
+
+    @Override
     public int pending() {
         return clickSize;
     }

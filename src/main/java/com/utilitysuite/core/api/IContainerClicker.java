@@ -18,6 +18,15 @@ public interface IContainerClicker {
      */
     boolean queueClick(ControlLease lease, int slotIndex, int button, Click click);
 
+    /**
+     * Asks the server to fill the open crafting grid from the recipe book ({@code recipeId} like
+     * {@code minecraft:hopper}). Performed immediately (one request, like a recipe-book click). Needs HOTBAR.
+     *
+     * @param craftAll fill as many crafts as the inventory allows (shift-click in the recipe book)
+     * @return false when the lease is inactive or lacks HOTBAR, no menu is open, or the recipe is unknown
+     */
+    boolean placeRecipe(ControlLease lease, String recipeId, boolean craftAll);
+
     /** Clicks still waiting for their delay. */
     int pending();
 

@@ -87,4 +87,12 @@ public final class FakeInputBackend implements InputBackend {
         containerClicks.add(new int[]{slot, button, click.ordinal()});
         return true;
     }
+
+    public final java.util.List<String> placedRecipes = new java.util.ArrayList<>();
+
+    @Override
+    public boolean placeRecipe(String recipeId, boolean craftAll) {
+        placedRecipes.add(recipeId);
+        return true;
+    }
 }

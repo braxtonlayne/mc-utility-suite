@@ -165,4 +165,20 @@ public final class MinecraftInputBackend implements InputBackend {
         mc.gameMode.handleInventoryMouseClick(menu.containerId, slot, button, CLICK_TYPES[click.ordinal()], p);
         return true;
     }
+
+    @Override
+    public boolean placeRecipe(String recipeId, boolean craftAll) {
+        Minecraft mc = Minecraft.getInstance();
+        LocalPlayer p = mc.player;
+        net.minecraft.resources.ResourceLocation id = net.minecraft.resources.ResourceLocation.tryParse(recipeId);
+        if (p == null || mc.gameMode == null || mc.level == null || id == null) {
+            return false;
+        }
+        var recipe = mc.level.getRecipeManager().byKey(id);
+        if (recipe.isEmpty()) {
+            return false;
+        }
+        mc.gameMode.handlePlaceRecipe(p.containerMenu.containerId, recipe.get(), craftAll);
+        return true;
+    }
 }
