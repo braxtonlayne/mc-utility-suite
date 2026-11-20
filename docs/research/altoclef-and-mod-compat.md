@@ -22,6 +22,9 @@ with modded content and JEI.
 | [Mineflayer](https://npmjs.com/package/mineflayer), Voyager, Mindcraft | External JS bots | A headless JS bot, not a mod. Voyager and Mindcraft put an LLM on top to plan and build up skills. |
 
 None of these run on NeoForge 1.21.1, and none of them know modded content beyond what Baritone can path through.
+Scope: this is a client-side utility for one player, the user. Features that let other players control it (altoclef's
+"butler" whisper commands and similar) are out of scope.
+
 **Conclusion:** keep building our own suite (it already has the goal engine, planner and Baritone adapter) and borrow
 altoclef's design ideas, not its code. Its license and Fabric-only mixins make a straight port a poor fit anyway.
 
@@ -57,9 +60,7 @@ altoclef's design ideas, not its code. Its license and Fabric-only mixins make a
    - Conservative mode: the bot takes fewer risks.
 
    These map onto our Local Rules and cost profiles.
-6. **Butler mode.** Allow-listed players can give the bot commands by whispering in chat. It could be fun on the
-   friend's server, but it should be opt-in and limited to the allow list.
-7. **"Beat the game".** A speedrun task: overworld progression → nether (blaze rods, pearls) → stronghold → dragon. This
+6. **"Beat the game".** A speedrun task: overworld progression → nether (blaze rods, pearls) → stronghold → dragon. This
    is a long-term stretch goal that sits on top of everything above.
 
 ## Full mod compatibility: what's possible on a 1.21.1 client

@@ -143,6 +143,5 @@ chain, and it works with modded content and JEI. The research and design notes a
       - Xaero/JourneyMap waypoint import/export;
       - modded storage indexing.
 - [ ] Compatibility playtest: JEI plus one content mod; `gather <modded item>` plans and runs.
-- [ ] Butler mode (opt-in): allow-listed players give the bot commands by whispering in chat.
 - [ ] Stretch: "beat the game" chain (nether → blaze rods/pearls → stronghold → dragon).
 - Optional: natural-language goals turned into GoalParser commands by the local LFM3 1.7B tool-calling server.
