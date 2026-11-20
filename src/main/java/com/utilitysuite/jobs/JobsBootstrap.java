@@ -60,6 +60,8 @@ public final class JobsBootstrap {
         ProtectedAreas protectedAreas = new ProtectedAreas();
         adapter = new BaritoneAdapter(protectedAreas::isProtected);
         Services.registerNavigator(adapter.navigator());
+        // Stop-All cancels every Baritone process unconditionally, leased or not.
+        adapter.subscribeStopAll(Services.eventsOrNull());
 
         MinecraftInventoryView inventory = new MinecraftInventoryView();
         MinecraftWorldActions actions = new MinecraftWorldActions(() -> adapter, inventory);

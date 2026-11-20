@@ -1,6 +1,7 @@
 package com.utilitysuite.world.waypoints;
 
 import com.utilitysuite.UtilitySuiteMod;
+import com.utilitysuite.core.api.ControlPriority;
 import com.utilitysuite.core.api.INavigator;
 import com.utilitysuite.core.api.ISuiteEventBus;
 import com.utilitysuite.core.api.ProfileConfig;
@@ -170,7 +171,10 @@ public final class WaypointsModule extends WorldModule {
             message(player, "Take Me Back needs the pathing module (not available)");
             return;
         }
-        nav.followPath(path);
+        if (nav.followPathLeased(ID, ControlPriority.TRAVEL, path).isEmpty()) {
+            message(player, "Take Me Back: movement is busy or automation is stopped");
+            return;
+        }
         message(player, "Taking you back along " + path.length + " breadcrumbs");
     }
 

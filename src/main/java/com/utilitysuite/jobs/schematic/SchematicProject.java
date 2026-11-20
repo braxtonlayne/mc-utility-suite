@@ -1,5 +1,6 @@
 package com.utilitysuite.jobs.schematic;
 
+import com.utilitysuite.core.api.ControlPriority;
 import com.utilitysuite.core.api.GoalRequest;
 import com.utilitysuite.core.api.IGoalEngine;
 import com.utilitysuite.core.api.INavigator;
@@ -35,6 +36,8 @@ import java.util.concurrent.CompletableFuture;
 final class SchematicProject {
 
     private static final Logger LOG = LoggerFactory.getLogger("utilitysuite/schematic");
+    /** Lease owner of the walk to a distant build site. */
+    static final String WALK_OWNER = SchematicToolkit.ID + ".walk";
 
     enum Phase { LOADING, SCANNING, READY, COMPLETE, FAILED }
 
@@ -197,8 +200,14 @@ final class SchematicProject {
             INavigator nav = Services.navigatorOrNull();
             if (dx * dx + dz * dz > 32 * 32 && nav != null && nav.isAvailable()) {
                 navigationRequested = true;
-                nav.goTo((int) cx, scan.originY(), (int) cz, Math.max(4, Math.max(volume.sizeX(), volume.sizeZ()) / 2));
-                notes.add("Navigating to the build site");
+                // Leased walk (GOAL, its own owner id so it neither replaces nor is replaced by BuildAssist's lease):
+                // cancelled by manual input, higher-priority automation and Stop-All.
+                if (nav.goToLeased(WALK_OWNER, ControlPriority.GOAL, (int) cx, scan.originY(), (int) cz,
+                        Math.max(4, Math.max(volume.sizeX(), volume.sizeZ()) / 2)).isPresent()) {
+                    notes.add("Navigating to the build site");
+                } else {
+                    notes.add("Could not walk to the build site: movement is busy or automation is stopped");
+                }
             }
         }
     }

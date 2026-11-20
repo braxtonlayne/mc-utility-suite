@@ -146,6 +146,7 @@ public final class TravelAutopilot implements IModule, IConfigurable {
 
     @Override
     public void onWorldUnload() {
+        overland.cancel();
         cancelNavigator();
         run = Run.IDLE;
         route = null;
@@ -306,6 +307,8 @@ public final class TravelAutopilot implements IModule, IConfigurable {
         switch (overland.tick(player, route, nav)) {
             case ARRIVED -> finish("message.utilitysuite.autopilot.arrived");
             case FAILED -> finish("message.utilitysuite.autopilot.path_failed");
+            // Lease refused, preempted, overridden by the user or revoked: the run already cancelled the pathfinder.
+            case INTERRUPTED -> finish("message.utilitysuite.autopilot.stopped");
             default -> {
             }
         }
@@ -362,7 +365,7 @@ public final class TravelAutopilot implements IModule, IConfigurable {
         } else if (run == Run.ELYTRA || run == Run.BOUNCE) {
             elytra.release(input, lease);
         } else if (run == Run.OVERLAND) {
-            cancelNavigator();
+            overland.cancel();
         }
         if (lease != null) {
             input.clearRotation(lease);

@@ -1,7 +1,12 @@
 package com.utilitysuite.jobs.baritone;
 
 import com.utilitysuite.core.api.ControlLease;
+import com.utilitysuite.core.api.ControlPriority;
+import com.utilitysuite.core.api.LeasedNavigation;
+import com.utilitysuite.core.api.NavigationRun;
 import com.utilitysuite.core.api.INavigator;
+import com.utilitysuite.core.api.ISuiteEventBus;
+import com.utilitysuite.core.api.SuiteEvent;
 import com.utilitysuite.core.api.IInputSmoother;
 import com.utilitysuite.core.api.NavigationStatus;
 import com.utilitysuite.core.api.RotationTarget;
@@ -20,6 +25,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.List;
+import java.util.Optional;
 import com.utilitysuite.jobs.planner.PositionPredicate;
 import java.util.function.LongPredicate;
 
@@ -32,6 +38,12 @@ import java.util.function.LongPredicate;
  * Baritone drives the player's input itself, so callers must hold a GOAL (or TRAVEL) lease on MOVEMENT, CAMERA and
  * WORLD_INTERACT while a command runs and call {@link #pause()} when preempted. {@link #pause()} cancels Baritone and
  * remembers the command; {@link #resume()} re-issues it.
+ * <p>
+ * Navigator runs started through {@link INavigator#goToLeased} / {@link INavigator#followPathLeased} (waypoints,
+ * schematic walk, travel autopilot) hold a {@link LeasedNavigation} lease on MOVEMENT, CAMERA and WORLD_INTERACT;
+ * the adapter tracks the current run and releases its lease when the command ends or is superseded, and the run
+ * cancels Baritone when its lease is preempted, overridden by the user or revoked. Independently of leases, Stop-All
+ * ({@link #cancelAll()}, wired by the jobs bootstrap) cancels every Baritone process unconditionally.
  * <p>
  * Protected areas: Baritone 1.11.3 only offers block-type avoidance lists ({@code blocksToAvoidBreaking}), not
  * positional ones, so every 10 ticks the adapter inspects the planned path and cancels (status FAILED) when it would
@@ -68,6 +80,17 @@ public final class BaritoneAdapter implements MiningDriver {
     private ControlLease interactLease;
     private InteractPhase interactPhase = InteractPhase.PATH;
     private long interactStart;
+    /** Leased navigator run whose command is currently executing, or null. */
+    private LeasedNavigation currentRun;
+    /** True while a leased navigator run issues its command (see {@link #start}). */
+    private boolean startingRun;
+    // Goal-engine command that was paused when a leased navigator run replaced it; re-issued by resume().
+    private Mode savedMode = Mode.NONE;
+    private List<String> savedMineBlocks = List.of();
+    private long savedGoal;
+    private int savedRange;
+    private long[] savedPath = new long[0];
+    private int savedPathIndex;
 
     private final BlockPos.MutableBlockPos probe = new BlockPos.MutableBlockPos();
     private ResourceKey<Level> dimKey;
@@ -77,6 +100,20 @@ public final class BaritoneAdapter implements MiningDriver {
     /** @param isProtected (dimension, packed pos) -> inside a PROTECTED_NO_MINE box */
     public BaritoneAdapter(PositionPredicate isProtected) {
         this.isProtected = isProtected;
+    }
+
+    /** Test seam: an adapter over the given backend (no Baritone or ModList lookup). */
+    BaritoneAdapter(PositionPredicate isProtected, PathBackend backend) {
+        this.isProtected = isProtected;
+        this.backend = backend;
+        this.checked = true;
+    }
+
+    /** Wires Stop-All: every {@link SuiteEvent.StopAll} cancels every Baritone process ({@link #cancelAll()}). */
+    public void subscribeStopAll(ISuiteEventBus events) {
+        if (events != null) {
+            events.subscribe(SuiteEvent.StopAll.class, e -> cancelAll());
+        }
     }
 
     private PathBackend backend() {
@@ -148,13 +185,41 @@ public final class BaritoneAdapter implements MiningDriver {
             failure = "Baritone is not installed";
             return false;
         }
+        endCurrentRun();
         backend.cancel();
+        if (startingRun) {
+            // A leased navigator run preempted the goal engine: keep its paused command so resume() can re-issue it.
+            if (paused && mode != Mode.NONE && mode != Mode.INTERACT) {
+                saveSuspended();
+            }
+        } else {
+            savedMode = Mode.NONE;
+        }
         mode = m;
         status = Status.RUNNING;
         failure = "";
         paused = false;
         issuedAt = ticks;
         return true;
+    }
+
+    private void saveSuspended() {
+        savedMode = mode;
+        savedMineBlocks = mineBlocks;
+        savedGoal = PackedPos.pack(gx, gy, gz);
+        savedRange = range;
+        savedPath = path;
+        savedPathIndex = pathIndex;
+    }
+
+    private void restoreSuspended() {
+        mode = savedMode;
+        mineBlocks = savedMineBlocks;
+        setGoal(savedGoal, savedRange);
+        path = savedPath;
+        pathIndex = savedPathIndex;
+        savedMode = Mode.NONE;
+        paused = true;
     }
 
     private void setGoal(long packed, int r) {
@@ -175,8 +240,17 @@ public final class BaritoneAdapter implements MiningDriver {
 
     @Override
     public void resume() {
-        if (backend() == null || !paused) {
+        if (backend() == null) {
             return;
+        }
+        if (!paused) {
+            if (savedMode == Mode.NONE) {
+                return;
+            }
+            // The goal engine resumes after a leased navigator run replaced its paused command.
+            endCurrentRun();
+            backend.cancel();
+            restoreSuspended();
         }
         paused = false;
         issuedAt = ticks;
@@ -195,6 +269,13 @@ public final class BaritoneAdapter implements MiningDriver {
 
     @Override
     public void cancel() {
+        savedMode = Mode.NONE;
+        cancelCommand();
+    }
+
+    /** Cancels the current command and run; keeps a goal command suspended by a navigator run (see resume()). */
+    private void cancelCommand() {
+        endCurrentRun();
         if (backend() != null) {
             backend.cancel();
         }
@@ -202,6 +283,36 @@ public final class BaritoneAdapter implements MiningDriver {
         paused = false;
         status = backend == null ? Status.UNAVAILABLE : Status.IDLE;
         interactLease = null;
+    }
+
+    /**
+     * Stop-All: cancels every Baritone process (Baritone's cancel-everything, including processes the suite did not
+     * start) and ends the current navigator run, whatever state the adapter believes it is in.
+     */
+    public void cancelAll() {
+        cancel();
+    }
+
+    private void endCurrentRun() {
+        LeasedNavigation run = currentRun;
+        if (run != null) {
+            currentRun = null;
+            run.detach();
+        }
+    }
+
+    private Optional<NavigationRun> beginRun(String moduleId, ControlPriority priority, Runnable command) {
+        Optional<LeasedNavigation> run;
+        startingRun = true;
+        try {
+            run = LeasedNavigation.begin(Services.arbiter(), navigatorView, moduleId, priority, command);
+        } finally {
+            startingRun = false;
+        }
+        if (run.isPresent() && !run.get().isEnded()) {
+            currentRun = run.get();
+        }
+        return run.map(r -> r);
     }
 
     @Override
@@ -255,7 +366,27 @@ public final class BaritoneAdapter implements MiningDriver {
 
         @Override
         public void cancel() {
-            BaritoneAdapter.this.cancel();
+            cancelCommand();
+        }
+
+        @Override
+        public Optional<NavigationRun> goToLeased(String moduleId, ControlPriority priority, int x, int y, int z,
+                                                  int range) {
+            return beginRun(moduleId, priority, () -> gotoCoord(PackedPos.pack(x, y, z), range));
+        }
+
+        @Override
+        public Optional<NavigationRun> followPathLeased(String moduleId, ControlPriority priority,
+                                                        long[] packedPositions) {
+            if (packedPositions == null || packedPositions.length == 0) {
+                return Optional.empty();
+            }
+            return beginRun(moduleId, priority, () -> BaritoneAdapter.this.followPath(packedPositions));
+        }
+
+        @Override
+        public void cancelAll() {
+            BaritoneAdapter.this.cancelAll();
         }
     };
 
@@ -269,6 +400,13 @@ public final class BaritoneAdapter implements MiningDriver {
     /** Called once per client tick (post) by the jobs bootstrap. Cheap when idle; no allocation. */
     public void tick() {
         ticks++;
+        LeasedNavigation run = currentRun;
+        if (run != null) {
+            run.update();
+            if (run.isEnded() && currentRun == run) {
+                currentRun = null;
+            }
+        }
         if (!checked || backend == null || paused || mode == Mode.NONE || status != Status.RUNNING) {
             return;
         }
