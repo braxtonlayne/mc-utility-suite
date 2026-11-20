@@ -87,7 +87,14 @@ public final class OreSimService {
         }
         pending.add(BlockPosPacking.chunk(chunkX, chunkZ));
         int gen = generation;
-        executor.execute(() -> completed.add(compute(c, gen, chunkX, chunkZ, terrain, biomes, uncertainChunk)));
+        executor.execute(() -> {
+            // Work queued before a reconfigure/disable is obsolete: skip it instead of burning the shared world
+            // thread (each chunk samples the generator's noise for its surface heights).
+            if (gen != generation) {
+                return;
+            }
+            completed.add(compute(c, gen, chunkX, chunkZ, terrain, biomes, uncertainChunk));
+        });
         return true;
     }
 
