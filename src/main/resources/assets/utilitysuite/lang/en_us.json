@@ -12,5 +12,7 @@
   "message.utilitysuite.combat_armed": "Combat Assistant armed",
   "message.utilitysuite.combat_disarmed": "Combat Assistant disarmed",
   "message.utilitysuite.ally_added": "Ally added: %s (never targeted)",
-  "message.utilitysuite.ally_removed": "Ally removed: %s"
+  "message.utilitysuite.ally_removed": "Ally removed: %s",
+  "module.utilitysuite.schematic_toolkit": "Schematic Toolkit",
+  "module.utilitysuite.schematic_toolkit.description": "Import schematics, count materials, survey the site and assist building"
 }
