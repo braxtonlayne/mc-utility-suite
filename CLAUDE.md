@@ -12,7 +12,15 @@ worlds and their own whitelisted server. Mod id `utilitysuite`, root package `co
   artifact. It is `compileOnly` + dev runtime (`localRuntime`) and **optional** for players. Baritone's mod id is
   `baritoe` (sic). Only `com.utilitysuite.jobs.baritone` may import `baritone.*`, and only after checking
   `ModList.get().isLoaded("baritoe")`.
-- `./gradlew runClient` starts a dev client with Baritone loaded.
+- `./gradlew runClient` starts a dev client with Baritone loaded. The dev run sets `-Dutilitysuite.mixinAudit=true`,
+  which force-applies every mixin after load (`UtilitySuiteMod.auditMixins`) so broken mixin targets fail at startup,
+  not the first time a class loads in a world. Unit tests run in a SERVER-dist FML env, so client mixins never apply
+  there: the audit is the mixin check.
+- Acceptance scenarios (spec Step 8): 1 and 2 in `jobs/goal/AcceptanceScenario{1,2}Test`, 3 in
+  `core/AcceptanceScenario3Test`, 4 in `combat/AcceptanceScenario4Test`, 5 under `jobs/schematic/`.
+- Static input-rule check: `grep -rnE 'options\.key|setYRot|setXRot|\.setDown\(|\.selected *=|handleInventoryMouseClick|handlePlaceRecipe' src/main/java`
+  must only hit `core/input/` and `mixin/` (read-only `inv.selected` reads are allowed). Direct `gameMode.useItemOn`
+  (silent-mode placement) must re-check the WORLD_INTERACT lease right before the call.
 
 ## Architecture rules (non-negotiable)
 
