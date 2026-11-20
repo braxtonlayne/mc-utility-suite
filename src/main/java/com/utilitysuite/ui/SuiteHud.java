@@ -55,9 +55,22 @@ public final class SuiteHud implements IModule, IConfigurable, LayeredDraw.Layer
     private int stoppedW = -1;
     private int cleanW;
     private boolean pollNow;
+    private int usedTop;
+    private final InfoStrip infoStrip = new InfoStrip(this);
+
+    public static final String K_INFO = "info_strip";
+    public static final String K_INFO_POSITION = "info_position";
+    public static final String K_INFO_COORDS = "info_coords";
+    public static final String K_INFO_CONVERT = "info_conversion";
+    public static final String K_INFO_BIOME = "info_biome";
+    public static final String K_INFO_TPS = "info_tps";
+    public static final String K_INFO_PING = "info_ping";
+    public static final String K_INFO_DURABILITY = "info_durability";
+    private static final String INFO_GROUP = "Info strip";
 
     public void subscribe() {
         Services.events().subscribe(SuiteEvent.JobChanged.class, e -> pollNow = true);
+        infoStrip.subscribe();
     }
 
     // ---- IModule ----------------------------------------------------------------------------------------------------
@@ -140,6 +153,7 @@ public final class SuiteHud implements IModule, IConfigurable, LayeredDraw.Layer
             stoppedW = font.width(STOPPED);
             cleanW = font.width(CLEAN);
         }
+        usedTop = 0;
         if (clean) {
             if (cleanBadge) {
                 HudPill.badge(g, font, CLEAN, cleanW, sw - HudPill.badgeWidth(cleanW) - 6, 6, false);
@@ -162,7 +176,22 @@ public final class SuiteHud implements IModule, IConfigurable, LayeredDraw.Layer
             int w = HudPill.badgeWidth(stoppedW);
             int x = position == Position.TOP_RIGHT ? sw - w - 6 : position == Position.TOP_LEFT ? 6 : (sw - w) / 2;
             HudPill.badge(g, font, STOPPED, stoppedW, x, y, true);
+            y += 14 + 4;
         }
+        usedTop = y - 6;
+    }
+
+    /**
+     * Vertical space (px) the pill and badges took at the top of the screen on {@code side} in the last frame, so the
+     * info strip can sit below them instead of overlapping.
+     */
+    int topUsed(Position side) {
+        return position == side ? usedTop : 0;
+    }
+
+    /** The optional info strip (settings live on this module). */
+    InfoStrip infoStrip() {
+        return infoStrip;
     }
 
     /** The status line driving the pill (preview harness feeds it a fake snapshot). */
@@ -185,7 +214,21 @@ public final class SuiteHud implements IModule, IConfigurable, LayeredDraw.Layer
                 SettingSpec.bool(K_STOPPED_BADGE, "\"Automation stopped\" badge", true, "",
                         "Small badge while Stop-All is active."),
                 SettingSpec.bool(K_CLEAN_BADGE, "Clean-Screen indicator", false, "",
-                        "Small badge while Clean-Screen hides everything else."));
+                        "Small badge while Clean-Screen hides everything else."),
+                SettingSpec.bool(K_INFO, "Info strip", false, INFO_GROUP,
+                        "Compact strip with coordinates, biome, TPS, ping and durability. Hidden with F1, F3, "
+                                + "open screens and Clean-Screen."),
+                SettingSpec.choice(K_INFO_POSITION, "Strip position", InfoStrip.Position.TOP_LEFT, INFO_GROUP,
+                        "Corner the info strip is drawn in."),
+                SettingSpec.bool(K_INFO_COORDS, "Coordinates", true, INFO_GROUP, "X Y Z block coordinates."),
+                SettingSpec.bool(K_INFO_CONVERT, "Nether/Overworld conversion", true, INFO_GROUP,
+                        "Matching coordinates in the other dimension (x/8 or x*8). Not shown in the End."),
+                SettingSpec.bool(K_INFO_BIOME, "Biome", true, INFO_GROUP, "Biome at your feet."),
+                SettingSpec.bool(K_INFO_TPS, "TPS", true, INFO_GROUP,
+                        "Server ticks per second (exact in single-player, estimated on servers)."),
+                SettingSpec.bool(K_INFO_PING, "Ping", true, INFO_GROUP, "Your latency to the server."),
+                SettingSpec.bool(K_INFO_DURABILITY, "Durability bars", true, INFO_GROUP,
+                        "Bars for the main-hand item and worn armor (damageable items only)."));
     }
 
     @Override
@@ -201,6 +244,19 @@ public final class SuiteHud implements IModule, IConfigurable, LayeredDraw.Layer
         } catch (IllegalArgumentException e) {
             position = Position.TOP_CENTER;
         }
+        InfoStrip s = infoStrip;
+        s.enabled = p.getBool(ID, K_INFO, false);
+        try {
+            s.position = InfoStrip.Position.valueOf(p.getString(ID, K_INFO_POSITION, InfoStrip.Position.TOP_LEFT.name()));
+        } catch (IllegalArgumentException e) {
+            s.position = InfoStrip.Position.TOP_LEFT;
+        }
+        s.showCoords = p.getBool(ID, K_INFO_COORDS, true);
+        s.showConversion = p.getBool(ID, K_INFO_CONVERT, true);
+        s.showBiome = p.getBool(ID, K_INFO_BIOME, true);
+        s.showTps = p.getBool(ID, K_INFO_TPS, true);
+        s.showPing = p.getBool(ID, K_INFO_PING, true);
+        s.showDurability = p.getBool(ID, K_INFO_DURABILITY, true);
     }
 
     /** Current status text (tests, diagnostics). */
