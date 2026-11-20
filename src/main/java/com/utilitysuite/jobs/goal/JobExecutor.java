@@ -312,7 +312,7 @@ public final class JobExecutor implements LeaseListener {
             if (!j.resumeRequested) {
                 return;
             }
-            if (!ensureLease(channelsFor(j.current()))) {
+            if (needsLease(j.current()) && !ensureLease(channelsFor(j.current()))) {
                 return;
             }
             j.resumeRequested = false;
@@ -341,7 +341,7 @@ public final class JobExecutor implements LeaseListener {
             complete(j);
             return;
         }
-        if (!ensureLease(channelsFor(step))) {
+        if (needsLease(step) && !ensureLease(channelsFor(step))) {
             return;
         }
         if (j.status == JobStatus.REPLANNING) {
@@ -917,6 +917,14 @@ public final class JobExecutor implements LeaseListener {
     }
 
     // ---- leases -----------------------------------------------------------------------------------------------------
+
+    /**
+     * A BUILD step is carried out by the schematic toolkit, which requests its own leases (BuildHandler contract):
+     * holding ours there would lock its Build Assist out of WORLD_INTERACT / CAMERA for the whole build.
+     */
+    private static boolean needsLease(PlanStep step) {
+        return step == null || step.kind() != StepKind.BUILD;
+    }
 
     private Set<ControlChannel> channelsFor(PlanStep step) {
         if (step == null) {

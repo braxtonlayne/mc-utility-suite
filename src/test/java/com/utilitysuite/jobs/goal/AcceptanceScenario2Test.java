@@ -90,6 +90,46 @@ class AcceptanceScenario2Test {
         throw new AssertionError("no JobChanged for job " + id);
     }
 
+
+    /** The schematic toolkit's Build Assist leases its own channels; the goal job must not hold them meanwhile. */
+    @Test
+    void buildStepLeavesTheChannelsToTheToolkit() {
+        JobStatus[] status = {JobStatus.RUNNING};
+        exec.setBuildHandler(new BuildHandler() {
+            @Override
+            public Map<String, Integer> missingMaterials(GoalRequest.Build request) {
+                return Map.of();
+            }
+
+            @Override
+            public void startBuild(long jobId, GoalRequest.Build request) {
+            }
+
+            @Override
+            public JobStatus buildStatus(long jobId) {
+                return status[0];
+            }
+
+            @Override
+            public void cancelBuild(long jobId) {
+            }
+        });
+        long id = exec.submit(new GoalRequest.Build("hut.nbt", 0L, false, CostProfile.CHEAPEST,
+                DataSourceMode.OBSERVED_ONLY));
+        tick(10);
+        assertEquals(JobStatus.RUNNING, snap(id).status());
+        for (ControlChannel c : ControlChannel.all()) {
+            assertFalse(arbiter.isHeldBy(c, JobExecutor.MODULE_ID), "goal job holds " + c + " during the build");
+        }
+        LeaseListener none = (lease, reason, by) -> {
+        };
+        assertTrue(arbiter.request(new LeaseRequest("schematic_toolkit", ControlPriority.GOAL, java.util.EnumSet.of(
+                ControlChannel.WORLD_INTERACT, ControlChannel.CAMERA, ControlChannel.HOTBAR), 0, none)).isPresent(),
+                "Build Assist gets its lease");
+        status[0] = JobStatus.COMPLETED;
+        tick(5);
+        assertEquals(JobStatus.COMPLETED, lastPosted(id).status());
+    }
     @Test
     void brokenPickaxeRepairsOnlyTheToolBranchAndResumes() {
         inv.add("minecraft:iron_pickaxe", 1);
