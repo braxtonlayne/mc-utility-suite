@@ -268,6 +268,11 @@ public final class BridgeAssist implements IModule, IConfigurable {
             return;
         }
         if (rotationMode == RotationMode.SILENT) {
+            // Direct game call, so re-check the lease here (it may have been revoked earlier this tick).
+            if (lease == null || !lease.isActive()
+                    || !lease.covers(com.utilitysuite.core.api.ControlChannel.WORLD_INTERACT)) {
+                return;
+            }
             BlockHitResult hit = new BlockHitResult(new Vec3(hitX, hitY, hitZ), face, new BlockPos(qx, baseY, qz),
                     false);
             InteractionResult r = mc.gameMode.useItemOn(player, InteractionHand.MAIN_HAND, hit);

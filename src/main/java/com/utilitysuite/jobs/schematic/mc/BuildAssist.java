@@ -466,6 +466,11 @@ public final class BuildAssist implements LeaseListener {
             }
         } else {
             // Silent rotation: the crosshair follows the user's camera, so build the hit result from the target face.
+            // Direct game call, so re-check the lease here (it may have been revoked earlier this tick).
+            if (lease == null || !lease.isActive()
+                    || !lease.covers(com.utilitysuite.core.api.ControlChannel.WORLD_INTERACT)) {
+                return;
+            }
             Vec3 hit = new Vec3(targetX + 0.5 + toSupport.getStepX() * 0.5, targetY + 0.5 + toSupport.getStepY() * 0.5,
                     targetZ + 0.5 + toSupport.getStepZ() * 0.5);
             mc.gameMode.useItemOn(player, InteractionHand.MAIN_HAND,
