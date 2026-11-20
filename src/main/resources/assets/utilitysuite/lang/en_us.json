@@ -63,5 +63,14 @@
   "module.utilitysuite.goal_engine": "Goal Engine",
   "module.utilitysuite.storage_memory": "Storage Memory",
   "module.utilitysuite.survival_autopilot": "Survival Autopilot",
-  "message.utilitysuite.tool_low_durability": "Tool below %s%% durability: not switching%s"
+  "message.utilitysuite.tool_low_durability": "Tool below %s%% durability: not switching%s",
+  "key.utilitysuite.zoom": "Scout Camera Zoom (hold)",
+  "key.utilitysuite.add_waypoint": "Add Waypoint Here",
+  "key.utilitysuite.take_me_back": "Take Me Back (Breadcrumbs)",
+  "module.utilitysuite.world_knowledge": "World Knowledge",
+  "module.utilitysuite.world_overlays": "X-Ray Filters",
+  "module.utilitysuite.seed_oresim": "Seed Workbench & OreSim",
+  "module.utilitysuite.world_radar": "World Radar",
+  "module.utilitysuite.scout_camera": "Scout Camera",
+  "module.utilitysuite.waypoints": "Waypoints"
 }

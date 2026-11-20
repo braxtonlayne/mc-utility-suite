@@ -4,6 +4,7 @@ import com.mojang.logging.LogUtils;
 import com.utilitysuite.combat.CombatBootstrap;
 import com.utilitysuite.core.CoreBootstrap;
 import com.utilitysuite.travel.TravelBootstrap;
+import com.utilitysuite.world.WorldBootstrap;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.ModContainer;
@@ -28,7 +29,7 @@ public final class UtilitySuiteMod {
         // ---- Feature bootstraps (later milestones) go here, after the core, e.g.: ----
         com.utilitysuite.jobs.JobsBootstrap.init(modBus);
         com.utilitysuite.jobs.schematic.SchematicBootstrap.init(modBus);
-        // WorldBootstrap.init(modBus);
+        WorldBootstrap.init(modBus);
         TravelBootstrap.init(modBus);
         CombatBootstrap.init(modBus);
         // ToolsBootstrap.init(modBus);
