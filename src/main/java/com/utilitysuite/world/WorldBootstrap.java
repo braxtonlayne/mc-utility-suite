@@ -9,6 +9,7 @@ import com.utilitysuite.world.camera.ScoutCameraModule;
 import com.utilitysuite.world.knowledge.KnowledgeLedger;
 import com.utilitysuite.world.knowledge.WorldKnowledgeModule;
 import com.utilitysuite.world.knowledge.WorldKnowledgeService;
+import com.utilitysuite.world.minimap.MinimapModule;
 import com.utilitysuite.world.oresim.OreSimModule;
 import com.utilitysuite.world.overlays.WorldOverlaysModule;
 import com.utilitysuite.world.overlays.WorldRadarModule;
@@ -21,7 +22,11 @@ import net.neoforged.neoforge.client.event.ClientChatReceivedEvent;
 import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent;
 import net.neoforged.neoforge.client.event.InputEvent;
 import net.neoforged.neoforge.client.event.MovementInputUpdateEvent;
+import net.neoforged.neoforge.client.event.RegisterGuiLayersEvent;
 import net.neoforged.neoforge.client.event.RegisterKeyMappingsEvent;
+import net.neoforged.neoforge.client.gui.VanillaGuiLayers;
+import net.minecraft.resources.ResourceLocation;
+import com.utilitysuite.UtilitySuiteMod;
 import net.neoforged.neoforge.client.event.RenderBlockScreenEffectEvent;
 import net.neoforged.neoforge.client.event.RenderGuiLayerEvent;
 import net.neoforged.neoforge.client.event.RenderHandEvent;
@@ -64,11 +69,14 @@ public final class WorldBootstrap {
         WorldRadarModule radar = new WorldRadarModule(runtime);
         ScoutCameraModule camera = new ScoutCameraModule();
         WaypointsModule waypoints = new WaypointsModule();
+        MinimapModule minimap = new MinimapModule();
+        modBus.addListener(RegisterGuiLayersEvent.class, e -> e.registerBelow(VanillaGuiLayers.CHAT,
+                ResourceLocation.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID, "minimap"), minimap.hud()));
         Services.registerWaypoints(waypoints.store());
         waypoints.subscribe(events);
 
         IModuleRegistry registry = Services.modules();
-        for (WorldModule m : new WorldModule[] {knowledge, overlays, oreSim, radar, camera, waypoints}) {
+        for (WorldModule m : new WorldModule[] {knowledge, overlays, oreSim, radar, camera, waypoints, minimap}) {
             registry.register(m);
             runtime.add(m);
         }

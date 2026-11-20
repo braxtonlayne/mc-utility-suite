@@ -20,6 +20,8 @@ import com.utilitysuite.world.overlays.VisualPresets;
 import com.utilitysuite.ui.SettingsRenderer;
 import com.utilitysuite.ui.kit.PillButton;
 import com.utilitysuite.world.camera.ScoutCameraModule;
+import com.utilitysuite.world.minimap.MinimapModule;
+import com.utilitysuite.ui.ModulePanels;
 import com.utilitysuite.world.overlays.WorldOverlaysModule;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
@@ -51,17 +53,34 @@ public final class WorldTab {
         return (wps == null ? -1 : wps.all().size()) + "/" + (wk == null ? "-" : wk.overlayMode() + ":" + wk.routingMode())
                 + "/" + Services.modules().byCategory(ModuleCategory.WORLD).size()
                 + "/" + Services.modules().find(ScoutCameraModule.class).map(c -> c.isFreecamActive()).orElse(false)
-                + "/" + Services.modules().find(WorldOverlaysModule.class).map(IModule::isEnabled).orElse(false);
+                + "/" + Services.modules().find(WorldOverlaysModule.class).map(IModule::isEnabled).orElse(false)
+                + "/" + Services.modules().find(MinimapModule.class).map(IModule::isEnabled).orElse(false);
+    }
+
+    /** Custom rows inside World module cards (called once from the UI bootstrap). */
+    public static void registerPanels() {
+        ModulePanels.register(MinimapModule.ID, (p, m) -> {
+            if (m instanceof MinimapModule mm) {
+                QuickActions.actionRow(p, "Position and size", "Drag the map to move it, the corner to resize.",
+                        "Edit HUD layout", PillButton.Style.SECONDARY, mm::openLayoutEditor);
+            }
+        });
     }
 
     /** Direct controls for the World features that also have (unbound by default) keys. */
     private static void quickActions(Panel p) {
-        p.card("Quick actions", "freecam, overlays, waypoints");
+        p.card("Quick actions", "freecam, overlays, minimap, waypoints");
         Services.modules().find(ScoutCameraModule.class).ifPresent(cam -> QuickActions.stateRow(p, "Freecam",
                 "Detaches the camera so you can look around; your player stays put. Also on the Scout Camera key.",
                 cam.isFreecamActive(), "Active", "Off", "Start", "Stop", cam::toggleFreecam));
         Services.modules().find(WorldOverlaysModule.class).ifPresent(o -> QuickActions.moduleSwitch(p, o,
                 "Show world overlays", "Ore / block outlines and markers (same as the World Overlays card switch)."));
+        Services.modules().find(MinimapModule.class).ifPresent(mm -> {
+            QuickActions.moduleSwitch(p, mm, "Show minimap",
+                    "Top-down map in the corner (same as the Minimap card switch).");
+            QuickActions.actionRow(p, "Minimap position and size", "Drag the map to move it, the corner to resize.",
+                    "Edit HUD layout", PillButton.Style.SECONDARY, mm::openLayoutEditor);
+        });
         IWaypointService wps = Services.waypointsOrNull();
         if (wps != null) {
             QuickActions.actionRow(p, "Waypoint at your position", "Uses the name typed in the Waypoints card, or "
