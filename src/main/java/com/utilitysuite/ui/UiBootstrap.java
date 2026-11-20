@@ -5,6 +5,7 @@ import com.utilitysuite.core.api.Services;
 import com.utilitysuite.core.input.KeybindManager;
 import com.utilitysuite.ui.tabs.ToolsTab;
 import com.utilitysuite.ui.tabs.TravelTab;
+import com.utilitysuite.ui.tabs.WorldTab;
 import net.minecraft.Util;
 import net.minecraft.client.Minecraft;
 import net.minecraft.resources.ResourceLocation;
@@ -31,6 +32,7 @@ public final class UiBootstrap {
         modBus.addListener(UiBootstrap::onRegisterLayers);
         TravelTab.registerPanels();
         ToolsTab.registerPanels();
+        WorldTab.registerPanels();
         if (UiPreview.enabled()) {
             UiPreview.install(); // dev only: -Dutilitysuite.uiPreview=true (gradlew runUiPreview)
         }
