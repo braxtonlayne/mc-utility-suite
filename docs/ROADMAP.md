@@ -115,3 +115,34 @@ Reference screenshot: `docs/ui/reference/style-target.webp`. Copy its layout and
   list), each with a preview card, on/off and a favourite star; tabs Library / Layouts / Style; "Place overlays" enters
   the drag/resize HUD edit mode (built for the minimap tonight).
 - Keep the existing generic SettingSpec → widget mapping; this is a new renderer for the same data. Keep the HUD pill.
+
+## Direction: altoclef-style autonomy + full mod compatibility (user request 2026-11-20 18:26)
+
+The user's target is the tool to work "basically like altoclef": you give it any goal, it plans and runs the whole
+chain, and it works with modded content and JEI. The research and design notes are in
+`docs/research/altoclef-and-mod-compat.md`.
+
+- [ ] Survival task chains that interrupt a goal and resume it: food, mob defense, MLG bucket, lava/fire/drowning
+      escape, death recovery. They sit on top of ActionArbiter priorities.
+- [ ] Re-decide each tick with stable subtasks (altoclef's `isEqual` rule) instead of only planning up front and
+      repairing the plan.
+- [ ] Block tracker: remember block positions by type within a scan budget. It feeds detours and modded ores
+      (`c:ores/*`).
+- [ ] Planner recipe sources from the live RecipeManager for every type: add stonecutting, smithing, campfire, and
+      generic modded types. Use tags for substitution and choose tools by `mineable/*` and `incorrect_for_*` tags.
+- [ ] Learn drops: record what blocks and mobs drop (loot tables aren't on the client) so "kill/break X for Y" can
+      be planned.
+- [ ] Optional JEI integration (`compat.jei`, compileOnly, gated by ModList):
+      - recipe lookup across all categories as a planner source or as manual steps;
+      - recipe transfer for modded crafting stations;
+      - a "plan this" keybind on the hovered item;
+      - JEI bookmarks become a shopping list.
+- [ ] EMI adapter behind the same `IRecipeIndex` contract.
+- [ ] Compatibility:
+      - Sodium/Embeddium + Iris overlay check;
+      - Xaero/JourneyMap waypoint import/export;
+      - modded storage indexing.
+- [ ] Compatibility playtest: JEI plus one content mod; `gather <modded item>` plans and runs.
+- [ ] Butler mode (opt-in): allow-listed players give the bot commands by whispering in chat.
+- [ ] Stretch: "beat the game" chain (nether → blaze rods/pearls → stronghold → dragon).
+- Optional: natural-language goals turned into GoalParser commands by the local LFM3 1.7B tool-calling server.
