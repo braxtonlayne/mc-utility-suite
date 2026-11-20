@@ -14,6 +14,7 @@ import com.utilitysuite.world.knowledge.PredictionSource;
 import com.utilitysuite.world.knowledge.WorldKnowledgeService;
 import com.utilitysuite.world.overlays.BlockCategories;
 import com.utilitysuite.world.overlays.HighlightIndex;
+import com.utilitysuite.world.overlays.OverlayStyle;
 import com.utilitysuite.world.overlays.WorldScanner;
 import com.utilitysuite.world.render.RenderContext;
 import com.utilitysuite.world.render.WorldRenderKit;
@@ -489,12 +490,14 @@ public final class OreSimModule extends WorldModule {
         if (!ghostsVisible(ctx)) {
             return;
         }
+        // X-Ray Filters focus layer / line opacity (1 = unchanged); a float multiply per ghost, no allocation.
+        float scale = OverlayStyle.predictionScale();
         for (int i = 0; i < ghostCount; i++) {
             float x = ctx.rx(gx[i]);
             float y = ctx.ry(gy[i]);
             float z = ctx.rz(gz[i]);
             WorldRenderKit.dashedBox(ctx.lines, ctx.pose, x + 0.15f, y + 0.15f, z + 0.15f, x + 0.85f, y + 0.85f,
-                    z + 0.85f, gColor[i]);
+                    z + 0.85f, OverlayStyle.scaleAlpha(gColor[i], scale));
         }
     }
 

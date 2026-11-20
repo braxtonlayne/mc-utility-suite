@@ -43,6 +43,9 @@ public final class WorldOverlaysModule extends WorldModule {
     private int renderRadius;
     private int maxBoxes;
     private boolean hideOthers;
+    private OverlayStyle.Focus focus = OverlayStyle.Focus.ALL;
+    private float lineOpacity = 1f;
+    private float caveOpacity = 0.35f;
     private final Int2IntOpenHashMap colorByIdIndex = new Int2IntOpenHashMap();
 
     public WorldOverlaysModule(WorldRuntime runtime, IWorldKnowledgeService knowledge) {
@@ -55,6 +58,11 @@ public final class WorldOverlaysModule extends WorldModule {
 
     @Override
     public List<SettingSpec> settings() {
+        return specs();
+    }
+
+    /** The settings specs (static so presets can be checked against them without a world runtime). */
+    public static List<SettingSpec> specs() {
         return List.of(
                 SettingSpec.choice("preset", "Preset", FilterPreset.VALUABLE_ORES, "Filter",
                         "Which kinds of blocks are outlined. Custom ids are always included."),
@@ -72,6 +80,13 @@ public final class WorldOverlaysModule extends WorldModule {
                         "Outlines farther than this are not drawn."),
                 SettingSpec.integer("max_boxes", "Max outlines", 6000, 100, 50000, "Display",
                         "Upper bound on outlines per frame.").asAdvanced(),
+                SettingSpec.choice("focus", "Focus layer", OverlayStyle.Focus.ALL, "Display",
+                        "Keeps one layer (ores, caves, fluids or OreSim predictions) at full strength and dims the "
+                        + "others to 25%."),
+                SettingSpec.integer("line_opacity", "Line opacity (%)", 100, 10, 100, "Display",
+                        "Strength of every outline drawn by this module and of the OreSim prediction ghosts."),
+                SettingSpec.integer("cave_opacity", "Cave line opacity (%)", 35, 10, 100, "Display",
+                        "Extra fade for the cave wireframe so it does not hide ore outlines."),
                 SettingSpec.bool("hide_others", "Hide other blocks", false, "Display",
                         XRayHiding.rendererIncompatible()
                                 ? "Not available: Sodium/Embeddium replace the chunk renderer this mode hooks into. "
@@ -98,9 +113,19 @@ public final class WorldOverlaysModule extends WorldModule {
         renderRadius = integer(p, "render_radius");
         maxBoxes = integer(p, "max_boxes");
         hideOthers = bool(p, "hide_others");
+        focus = choice(p, "focus", OverlayStyle.Focus.class);
+        lineOpacity = integer(p, "line_opacity") / 100f;
+        caveOpacity = integer(p, "cave_opacity") / 100f;
+        publishPredictionScale();
         colorByIdIndex.clear();
         applyScanOptions();
         applyHiding();
+    }
+
+    /** OreSim ghosts follow this module's focus and line opacity while it is enabled. */
+    private void publishPredictionScale() {
+        OverlayStyle.setPredictionScale(isEnabled()
+                ? OverlayStyle.layerScale(focus, OverlayStyle.Focus.PREDICTIONS, lineOpacity) : 1f);
     }
 
     private void applyScanOptions() {
@@ -126,12 +151,14 @@ public final class WorldOverlaysModule extends WorldModule {
 
     @Override
     protected void onEnable() {
+        publishPredictionScale();
         applyScanOptions();
         applyHiding();
     }
 
     @Override
     protected void onDisable() {
+        OverlayStyle.setPredictionScale(1f);
         applyScanOptions();
         XRayHiding.set(false, Set.of());
     }
@@ -170,6 +197,7 @@ public final class WorldOverlaysModule extends WorldModule {
             return;
         }
         int mask = preset.mask();
+        float oreScale = OverlayStyle.layerScale(focus, OverlayStyle.Focus.ORES, lineOpacity);
         double r2 = WorldRuntime.sq(renderRadius);
         HighlightIndex idx = scanner.observed;
         int drawn = 0;
@@ -188,10 +216,11 @@ public final class WorldOverlaysModule extends WorldModule {
             float rx = ctx.rx(x);
             float ry = ctx.ry(y);
             float rz = ctx.rz(z);
-            WorldRenderKit.box(ctx.lines, ctx.pose, rx, ry, rz, rx + 1, ry + 1, rz + 1, colorFor(v));
+            WorldRenderKit.box(ctx.lines, ctx.pose, rx, ry, rz, rx + 1, ry + 1, rz + 1, OverlayStyle.scaleAlpha(colorFor(v), oreScale));
             drawn++;
         }
         if (fluids) {
+            float fluidScale = OverlayStyle.layerScale(focus, OverlayStyle.Focus.FLUIDS, lineOpacity);
             HighlightIndex f = scanner.fluids;
             for (int i = 0, n = f.renderCount(); i < n && drawn < maxBoxes; i++) {
                 long p = f.renderPos(i);
@@ -199,19 +228,23 @@ public final class WorldOverlaysModule extends WorldModule {
                 float rx = ctx.rx(BlockPosPacking.x(p));
                 float ry = ctx.ry(BlockPosPacking.y(p));
                 float rz = ctx.rz(BlockPosPacking.z(p));
-                int color = (cat & BlockCategories.LAVA) != 0 ? 0x90FF6010 : 0x703070FF;
+                int color = OverlayStyle.scaleAlpha((cat & BlockCategories.LAVA) != 0 ? 0x90FF6010 : 0x703070FF,
+                        fluidScale);
                 WorldRenderKit.square(ctx.lines, ctx.pose, rx, ry + 0.9f, rz, rx + 1, rz + 1, color);
                 drawn++;
             }
         }
         if (caves) {
+            // Base alpha 0x60 times the cave opacity (default 35% = 0x22, fainter than the old fixed 0x30).
+            int caveColor = OverlayStyle.scaleAlpha(0x6080E0A0,
+                    OverlayStyle.layerScale(focus, OverlayStyle.Focus.CAVES, lineOpacity) * caveOpacity);
             CaveCells c = scanner.caves;
             for (int i = 0, n = c.renderCount(); i < n && drawn < maxBoxes; i++) {
                 long p = c.renderCell(i);
                 float rx = ctx.rx(BlockPosPacking.x(p));
                 float ry = ctx.ry(BlockPosPacking.y(p));
                 float rz = ctx.rz(BlockPosPacking.z(p));
-                WorldRenderKit.box(ctx.lines, ctx.pose, rx, ry, rz, rx + 4, ry + 4, rz + 4, 0x3080E0A0);
+                WorldRenderKit.box(ctx.lines, ctx.pose, rx, ry, rz, rx + 4, ry + 4, rz + 4, caveColor);
                 drawn++;
             }
         }
