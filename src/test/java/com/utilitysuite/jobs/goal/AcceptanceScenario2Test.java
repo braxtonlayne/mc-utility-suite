@@ -182,7 +182,9 @@ class AcceptanceScenario2Test {
         assertEquals("goto 10 -58 10", driver.log.get(driver.log.size() - 1));
         tick(1);
         assertEquals(List.of(miss), knowledge.misses);
-        assertEquals(1, bus.of(SuiteEvent.VerifiedMiss.class).size());
+        // The knowledge service owns the VerifiedMiss event (posted once per new miss); the executor only posts it
+        // itself when no knowledge service is registered, so with the fake service it posts nothing.
+        assertEquals(0, bus.of(SuiteEvent.VerifiedMiss.class).size());
         assertTrue(driver.log.contains("goto 20 -58 20"));
         JobSnapshot s = snap(id);
         assertTrue(s.reason().contains("was minecraft:deepslate") || s.reason().contains("Heading"), s.reason());

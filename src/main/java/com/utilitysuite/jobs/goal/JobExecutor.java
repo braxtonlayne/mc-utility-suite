@@ -626,7 +626,7 @@ public final class JobExecutor implements LeaseListener {
             k.recordVerifiedMiss(dim, pos, actual);
         }
         ISuiteEventBus bus = deps.events().get();
-        if (bus != null) {
+        if (bus != null && k == null) { // with a knowledge service, it posts VerifiedMiss itself (once per miss)
             bus.post(new SuiteEvent.VerifiedMiss(deps.millis().getAsLong(), pos, dim, expected));
         }
         driver().cancel();
