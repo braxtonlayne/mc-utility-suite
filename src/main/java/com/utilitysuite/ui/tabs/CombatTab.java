@@ -71,6 +71,28 @@ public final class CombatTab {
             p.paragraph("Engages only after you attack or are attacked, never on its own. Your own keys and mouse "
                     + "always win; Stop-All ends it at once.", Panel.DIM);
             p.gap(2);
+            int w = p.width();
+            int bw = Math.min(QuickActions.BTN_W, Math.max(56, w / 4));
+            p.rowLabel("Arm or retreat now", 0, w - 2 * bw - 16, Panel.WHITE)
+                    .tooltip("Same as the Combat retreat key: ends the current engagement at once");
+            p.button(on ? "Disarm" : "Arm", on ? "Switch Auto-Fight off" : "Switch Auto-Fight on", w - 2 * bw - 6, bw,
+                    on ? PillButton.Style.SECONDARY : PillButton.Style.PRIMARY, b -> {
+                        CoreBootstrap.modules().setModuleEnabled(ASSISTANT, !a.isEnabled(),
+                                Services.modState().profile());
+                        Services.modState().markDirty();
+                        p.rebuild();
+                    });
+            p.button("Retreat", "Ends the current fight and backs off (Combat retreat key)", w - bw, bw,
+                    PillButton.Style.DANGER_SOFT, b -> {
+                        var ca = CombatBootstrap.assistant();
+                        if (ca != null) {
+                            ca.onCancelKey();
+                            p.toast("Disengaged");
+                        } else {
+                            p.toast("Combat assistant is not available");
+                        }
+                    });
+            p.nextRow();
             if (a instanceof IConfigurable c) {
                 SettingsRenderer.settings(p, ASSISTANT, c.settings(), new SettingsAccess(Services.modState().profile(),
                         ASSISTANT, c::onSettingChanged, Services.modState()::markDirty));

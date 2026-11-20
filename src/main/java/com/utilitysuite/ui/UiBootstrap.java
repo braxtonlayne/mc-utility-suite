@@ -5,6 +5,7 @@ import com.utilitysuite.core.api.Services;
 import com.utilitysuite.core.input.KeybindManager;
 import com.utilitysuite.ui.tabs.ToolsTab;
 import com.utilitysuite.ui.tabs.TravelTab;
+import net.minecraft.Util;
 import net.minecraft.client.Minecraft;
 import net.minecraft.resources.ResourceLocation;
 import net.neoforged.bus.api.IEventBus;
@@ -42,10 +43,21 @@ public final class UiBootstrap {
     /** Opens the menu (key handler; also usable from other code on the client thread). */
     public static void openMenu() {
         Minecraft mc = Minecraft.getInstance();
-        if (mc.screen == null) {
-            mc.setScreen(new SuiteMenuScreen(null));
+        if (mc.screen != null) {
+            return; // idempotent: never replaces (or toggles) an open screen
         }
+        long sinceClose = Util.getMillis() - SuiteMenuScreen.lastClosedAt();
+        if (SuiteMenuScreen.lastClosedAt() != 0L && sinceClose < REOPEN_DEBOUNCE_MS) {
+            // A queued click or key-repeat from the press that just closed the menu: ignore it.
+            UtilitySuiteMod.LOGGER.info("Suite menu reopen ignored ({} ms after close)", sinceClose);
+            SuiteMenuScreen.drainOpenKeyClicks();
+            return;
+        }
+        mc.setScreen(new SuiteMenuScreen(null)); // the constructor logs who opened it
+        SuiteMenuScreen.drainOpenKeyClicks();
     }
+
+    private static final long REOPEN_DEBOUNCE_MS = 300L;
 
     public static SuiteHud hud() {
         return hud;

@@ -12,6 +12,8 @@ import com.utilitysuite.ui.Panel;
 import com.utilitysuite.ui.SettingWidgetMapper;
 import com.utilitysuite.ui.SettingsRenderer;
 import com.utilitysuite.ui.kit.PillButton;
+import com.utilitysuite.world.camera.ScoutCameraModule;
+import com.utilitysuite.world.overlays.WorldOverlaysModule;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
@@ -29,6 +31,7 @@ public final class WorldTab {
 
     private static final String K_WP_NAME = "world.wpName";
     private static final int MAX_WAYPOINTS = 30;
+    private static final int WP_ROW = 30;
 
     private WorldTab() {
     }
@@ -37,10 +40,28 @@ public final class WorldTab {
         IWaypointService wps = Services.waypointsOrNull();
         IWorldKnowledgeService wk = Services.worldKnowledgeOrNull();
         return (wps == null ? -1 : wps.all().size()) + "/" + (wk == null ? "-" : wk.overlayMode() + ":" + wk.routingMode())
-                + "/" + Services.modules().byCategory(ModuleCategory.WORLD).size();
+                + "/" + Services.modules().byCategory(ModuleCategory.WORLD).size()
+                + "/" + Services.modules().find(ScoutCameraModule.class).map(c -> c.isFreecamActive()).orElse(false)
+                + "/" + Services.modules().find(WorldOverlaysModule.class).map(IModule::isEnabled).orElse(false);
+    }
+
+    /** Direct controls for the World features that also have (unbound by default) keys. */
+    private static void quickActions(Panel p) {
+        p.card("Quick actions", "freecam, overlays, waypoints");
+        Services.modules().find(ScoutCameraModule.class).ifPresent(cam -> QuickActions.stateRow(p, "Freecam",
+                "Detaches the camera so you can look around; your player stays put. Also on the Scout Camera key.",
+                cam.isFreecamActive(), "Active", "Off", "Start freecam", "Stop freecam", cam::toggleFreecam));
+        Services.modules().find(WorldOverlaysModule.class).ifPresent(o -> QuickActions.moduleSwitch(p, o,
+                "Show world overlays", "Ore / block outlines and markers (same as the World Overlays card switch)."));
+        IWaypointService wps = Services.waypointsOrNull();
+        if (wps != null) {
+            QuickActions.actionRow(p, "Waypoint at your position", "Uses the name typed in the Waypoints card, or "
+                    + "Waypoint N", "Add here", PillButton.Style.SECONDARY, () -> addHere(p, wps));
+        }
     }
 
     public static void build(Panel p) {
+        quickActions(p);
         // Overlay vs routing data sources are edited in the World Knowledge module card below (its settings), so the
         // separate selector card is shown only when that module is missing.
         if (Services.modules().byId("world_knowledge").isEmpty()) {
@@ -104,47 +125,43 @@ public final class WorldTab {
                 b -> takeMeBack(p, wps)).tooltip("Walk back along the recorded breadcrumb trail"), 0);
         int w = p.width();
         p.textField(K_WP_NAME, "New waypoint name", 0, w - 92);
-        p.button("Add here", "Saves your current position", w - 86, 86, PillButton.Style.PRIMARY, b -> {
-            Minecraft mc = Minecraft.getInstance();
-            LocalPlayer pl = mc.player;
-            String name = p.state(K_WP_NAME, "").trim();
-            if (pl == null || mc.level == null) {
-                p.toast("Join a world to add waypoints");
-                return;
-            }
-            if (name.isEmpty()) {
-                p.toast("Type a name first");
-                return;
-            }
-            BlockPos pos = pl.blockPosition();
-            wps.add(name, "Bases", pos.getX(), pos.getY(), pos.getZ(), mc.level.dimension().location().toString());
-            p.setState(K_WP_NAME, "");
-            p.toast("Waypoint '" + name + "' added");
-            p.rebuild();
-        });
+        p.button("Add here", "Saves your current position (unnamed: Waypoint N)", w - 86, 86,
+                PillButton.Style.PRIMARY, b -> addHere(p, wps));
         p.nextRow();
         if (all.isEmpty()) {
-            p.text("No waypoints yet. Type a name and press Add here.", Panel.GRAY);
+            p.text("No waypoints yet. Press Add here (a name is optional).", Panel.GRAY);
             return;
         }
         p.gap(4);
         int n = Math.min(MAX_WAYPOINTS, all.size());
+        // Two-line rows: name on top, compact "x y z · Dimension" under it, buttons right-aligned and centered on the
+        // row, so narrow windows no longer cut both into "Playte..." / "800...".
+        int delW = 50;
+        int goW = 34;
+        int btnGap = 6;
+        int textW = w - delW - goW - btnGap - 12;
         for (int i = 0; i < n; i++) {
             Waypoint wp = all.get(i);
             String id = wp.id();
-            p.listRow(null);
-            int textW = w - 120;
-            int nameW = Math.min(textW / 2, p.font().width(wp.name()) + 4);
-            p.rowLabel(wp.name(), 4, nameW, Panel.WHITE);
-            p.rowLabel(wp.x() + " " + wp.y() + " " + wp.z() + "  ·  " + shortDim(wp.dimension())
-                            + (wp.group() == null || wp.group().isEmpty() ? "" : "  ·  " + wp.group()),
-                    nameW + 12, textW - nameW - 12, Panel.GRAY);
-            p.button("Go", null, w - 110, 48, PillButton.Style.SECONDARY, b -> goTo(p, wps, wp));
-            p.button("Delete", null, w - 58, 56, PillButton.Style.DANGER_SOFT, b -> {
+            String coords = wp.x() + " " + wp.y() + " " + wp.z() + "  ·  " + shortDim(wp.dimension());
+            String group = wp.group() == null || wp.group().isEmpty() ? "" : "  ·  " + wp.group();
+            var row = p.listRow(null);
+            row.h = WP_ROW - 2;
+            row.tooltip(wp.name() + "\n" + wp.x() + ", " + wp.y() + ", " + wp.z() + " · " + shortDim(wp.dimension())
+                    + group);
+            var name = p.rowLabel(wp.name(), 4, textW, Panel.WHITE);
+            name.y -= 3;
+            var pos = p.rowLabel(coords + group, 4, textW, Panel.GRAY);
+            pos.y += 9;
+            int shift = (WP_ROW - Panel.ROW) / 2;
+            p.button("Go", "Path to " + wp.name(), w - delW - btnGap - goW, goW, PillButton.Style.SECONDARY,
+                    b -> goTo(p, wps, wp)).y += shift;
+            p.button("Delete", null, w - delW, delW, PillButton.Style.DANGER_SOFT, b -> {
                 wps.remove(id);
                 p.rebuild();
-            });
+            }).y += shift;
             p.nextRow();
+            p.gap(WP_ROW - Panel.ROW);
         }
         if (all.size() > n) {
             p.text("+ " + (all.size() - n) + " more", Panel.GRAY);
@@ -163,7 +180,26 @@ public final class WorldTab {
         p.toast("Going to " + wp.name());
     }
 
-    private static void takeMeBack(Panel p, IWaypointService wps) {
+    /** Saves the player's position under the typed name, or "Waypoint N" when the name field is empty. */
+    static void addHere(Panel p, IWaypointService wps) {
+        Minecraft mc = Minecraft.getInstance();
+        LocalPlayer pl = mc.player;
+        if (pl == null || mc.level == null) {
+            p.toast("Join a world to add waypoints");
+            return;
+        }
+        String name = p.state(K_WP_NAME, "").trim();
+        if (name.isEmpty()) {
+            name = "Waypoint " + (wps.all().size() + 1);
+        }
+        BlockPos pos = pl.blockPosition();
+        wps.add(name, "Bases", pos.getX(), pos.getY(), pos.getZ(), mc.level.dimension().location().toString());
+        p.setState(K_WP_NAME, "");
+        p.toast("Waypoint '" + name + "' added");
+        p.rebuild();
+    }
+
+    static void takeMeBack(Panel p, IWaypointService wps) {
         INavigator nav = Services.navigatorOrNull();
         if (nav == null || !nav.isAvailable()) {
             p.toast("Pathing is not available (Baritone not installed)");

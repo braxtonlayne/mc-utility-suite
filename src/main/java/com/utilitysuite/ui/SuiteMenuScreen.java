@@ -88,6 +88,11 @@ public final class SuiteMenuScreen extends Screen {
 
     private final Screen parent;
     private final long openedAt = Util.getMillis();
+    /** A press of the open key closes the menu only after the press that opened it was released. */
+    private boolean openKeyReleased = !openKeyHeld();
+    private String closeReason;
+    private static long lastClosedAt;
+    private static final long OPEN_KEY_GRACE_MS = 250L;
     private final Map<EditBox, String> textFieldKeys = new HashMap<>();
     private Tab tab = lastTab;
 
@@ -146,6 +151,19 @@ public final class SuiteMenuScreen extends Screen {
     public SuiteMenuScreen(Screen parent) {
         super(Component.literal("Utility Suite"));
         this.parent = parent;
+        logOpen();
+    }
+
+    /** Diagnostic, once per menu instance (never per tick): who opened the menu and the open key's state. */
+    private void logOpen() {
+        StackTraceElement[] st = new Throwable().getStackTrace();
+        StringBuilder sb = new StringBuilder();
+        for (int i = 2; i < Math.min(st.length, 8); i++) { // skip logOpen and the constructor
+            sb.append("\n    at ").append(st[i]);
+        }
+        var key = KeybindManager.mapping(KeybindManager.KeyId.OPEN_MENU);
+        UtilitySuiteMod.LOGGER.info("Suite menu opened (open key held={}, mapping down={}, release seen={}){}",
+                !openKeyReleased, key != null && key.isDown(), openKeyReleased, sb);
     }
 
     // ---- state used by Panel and the goal console -------------------------------------------------------------------
@@ -228,7 +246,7 @@ public final class SuiteMenuScreen extends Screen {
         // left: title + profile pill
         titleW = f.width("Utility Suite");
         String profile = safeProfile();
-        int leftEnd = wx + 14 + titleW;
+        int leftEnd = wx + 24 + titleW; // the title is drawn at wx + 24 (after the accent dot)
         boolean showProfile = ww >= 470;
         if (showProfile) {
             profileText = UiRenderUtils.ellipsize(f, profile, 96);
@@ -267,7 +285,7 @@ public final class SuiteMenuScreen extends Screen {
         cleanLabelX = narrow ? clean.x : clean.x - 6 - f.width(cleanLabel);
 
         // center: goal bar, centered over the content canvas, clamped between the two groups
-        int regionL = leftEnd + 10;
+        int regionL = leftEnd + 14;
         int regionR = cleanLabelX - 10;
         int gw = Math.max(40, Math.min(320, regionR - regionL));
         int center = viewX + viewW / 2;
@@ -668,7 +686,12 @@ public final class SuiteMenuScreen extends Screen {
                     // Right Shift closes the menu again unless a text box is being typed in.
                     var open = KeybindManager.mapping(KeybindManager.KeyId.OPEN_MENU);
                     if (open != null && open.matches(keyCode, scanCode)) {
-                        onClose();
+                        // Only a fresh press closes: not the key-repeat of the press that opened the menu, and not
+                        // within the first moments after opening.
+                        if (openKeyReleased && Util.getMillis() - openedAt >= OPEN_KEY_GRACE_MS) {
+                            closeReason = "open key";
+                            onClose();
+                        }
                         return true;
                     }
                     return false;
@@ -681,9 +704,57 @@ public final class SuiteMenuScreen extends Screen {
     }
 
     @Override
+    public boolean keyReleased(int keyCode, int scanCode, int modifiers) {
+        var open = KeybindManager.mapping(KeybindManager.KeyId.OPEN_MENU);
+        if (open != null && open.matches(keyCode, scanCode)) {
+            openKeyReleased = true;
+        }
+        return super.keyReleased(keyCode, scanCode, modifiers);
+    }
+
+    @Override
     public void onClose() {
         SCROLL[tab.ordinal()] = scrollTarget;
+        if (closeReason == null) {
+            closeReason = "escape/onClose";
+        }
+        UtilitySuiteMod.LOGGER.info("Suite menu closed ({})", closeReason);
         minecraft.setScreen(parent);
+    }
+
+    @Override
+    public void removed() {
+        super.removed();
+        lastClosedAt = Util.getMillis();
+        drainOpenKeyClicks();
+    }
+
+    /** Millis timestamp of the last time a menu instance was removed (0 = never); used to debounce reopening. */
+    public static long lastClosedAt() {
+        return lastClosedAt;
+    }
+
+    /** Drops queued Open-Menu presses so a stale click count can't reopen (or re-close) the menu later. */
+    public static void drainOpenKeyClicks() {
+        var open = KeybindManager.mapping(KeybindManager.KeyId.OPEN_MENU);
+        if (open != null) {
+            int guard = 0;
+            while (open.consumeClick() && ++guard < 64) {
+                // drain
+            }
+        }
+    }
+
+    /** True when the Open-Menu key is physically held right now (GLFW state, independent of key contexts). */
+    public static boolean openKeyHeld() {
+        var open = KeybindManager.mapping(KeybindManager.KeyId.OPEN_MENU);
+        net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
+        if (open == null || mc == null || mc.getWindow() == null || open.isUnbound()) {
+            return false;
+        }
+        var key = open.getKey();
+        return key.getType() == com.mojang.blaze3d.platform.InputConstants.Type.KEYSYM
+                && com.mojang.blaze3d.platform.InputConstants.isKeyDown(mc.getWindow().getWindow(), key.getValue());
     }
 
     @Override
@@ -743,7 +814,9 @@ public final class SuiteMenuScreen extends Screen {
 
     private void drawWindow(GuiGraphics g) {
         UiRenderUtils.shadow(g, wx, wy, ww, wh, UiTheme.RADIUS, 6);
-        UiRenderUtils.roundedRect(g, wx, wy, ww, wh, UiTheme.RADIUS, UiTheme.WINDOW);
+        // Opaque base: with the 0xE8 glass alpha the chat and other HUD text drawn before the screen showed through
+        // the window as faint ghost text.
+        UiRenderUtils.roundedRect(g, wx, wy, ww, wh, UiTheme.RADIUS, UiTheme.WINDOW | 0xFF000000);
         UiRenderUtils.roundedRect(g, wx, viewY, sidebarW, wy + wh - viewY, UiTheme.RADIUS, UiTheme.SIDEBAR,
                 UiRenderUtils.BL);
         UiRenderUtils.hLine(g, wx + 1, wx + ww - 1, wy + UiTheme.TOP_BAR_H, UiTheme.BORDER);

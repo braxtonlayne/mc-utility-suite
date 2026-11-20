@@ -5,6 +5,8 @@ import com.utilitysuite.core.api.ModuleCategory;
 import com.utilitysuite.core.api.Services;
 import com.utilitysuite.travel.autopilot.TravelAutopilot;
 import com.utilitysuite.travel.bridge.BridgeAssist;
+import com.utilitysuite.travel.terrain.TerrainAssist;
+import com.utilitysuite.core.api.IWaypointService;
 import com.utilitysuite.ui.ModulePanels;
 import com.utilitysuite.ui.Panel;
 import com.utilitysuite.ui.SettingsRenderer;
@@ -30,10 +32,33 @@ public final class TravelTab {
         StringBuilder sb = new StringBuilder();
         Services.modules().find(TravelAutopilot.class).ifPresent(a -> sb.append(a.isRunning()).append(a.runName()));
         Services.modules().find(BridgeAssist.class).ifPresent(b -> sb.append('/').append(b.isRunning()));
+        Services.modules().find(TerrainAssist.class).ifPresent(t -> sb.append('/').append(t.isSurfaceActive()));
         return sb.toString();
     }
 
+    /**
+     * Direct controls for travel features that otherwise live behind (unbound by default) keys or deep in a card:
+     * Water Walk (surface mode on/off + how it works), Step, NoSlowdown and Take Me Back.
+     */
+    private static void quickActions(Panel p) {
+        p.card("Quick actions", "water walk, step, take me back");
+        Services.modules().find(TerrainAssist.class).ifPresent(t -> {
+            QuickActions.stateRow(p, "Water Walk", "Walk on top of water (and lava if allowed in Terrain Assist). "
+                            + "Sneak to sink. Also on the Terrain surface key.", t.isSurfaceActive(), "Active", "Off",
+                    "Start", "Stop", t::toggleSurfaceMode);
+            QuickActions.settingRow(p, t, "surface_mode");
+            QuickActions.settingRow(p, t, "step");
+            QuickActions.settingRow(p, t, "no_slowdown");
+        });
+        IWaypointService wps = Services.waypointsOrNull();
+        if (wps != null) {
+            QuickActions.actionRow(p, "Walk back along your trail", "Take Me Back: follows the recorded breadcrumbs",
+                    "Take Me Back", PillButton.Style.SECONDARY, () -> WorldTab.takeMeBack(p, wps));
+        }
+    }
+
     public static void build(Panel p) {
+        quickActions(p);
         List<IModule> mods = Services.modules().byCategory(ModuleCategory.TRAVEL);
         if (mods.isEmpty()) {
             p.card("No travel modules are installed", "");
