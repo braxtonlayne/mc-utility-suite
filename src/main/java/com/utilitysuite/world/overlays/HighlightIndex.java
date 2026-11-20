@@ -4,6 +4,7 @@ import com.utilitysuite.world.BlockPosPacking;
 import com.utilitysuite.world.knowledge.KnowledgeLedger;
 import com.utilitysuite.world.knowledge.ObservationSource;
 import it.unimi.dsi.fastutil.longs.Long2IntMap;
+import it.unimi.dsi.fastutil.longs.Long2IntMaps;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
@@ -162,7 +163,7 @@ public final class HighlightIndex implements ObservationSource {
             renderVal = new int[cap];
         }
         int i = 0;
-        for (Long2IntMap.Entry e : blocks.long2IntEntrySet()) {
+        for (Long2IntMap.Entry e : Long2IntMaps.fastIterable(blocks)) { // fast: reuses one entry
             renderPos[i] = e.getLongKey();
             renderVal[i] = e.getIntValue();
             i++;
@@ -189,7 +190,7 @@ public final class HighlightIndex implements ObservationSource {
             return;
         }
         long r2 = (long) radius * radius;
-        for (Long2IntMap.Entry e : blocks.long2IntEntrySet()) {
+        for (Long2IntMap.Entry e : Long2IntMaps.fastIterable(blocks)) { // fast: reuses one entry
             String id = idAt(idIndexOf(e.getIntValue()));
             if (id != null && blockIds.contains(id) && BlockPosPacking.distSq(e.getLongKey(), origin) <= r2) {
                 visitor.visit(e.getLongKey(), id);

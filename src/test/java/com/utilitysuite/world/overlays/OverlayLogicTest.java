@@ -4,6 +4,7 @@ import com.utilitysuite.core.AllocationProbe;
 import com.utilitysuite.world.BlockPosPacking;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -153,6 +154,31 @@ class OverlayLogicTest {
         assertEquals(0, idx.size());
     }
 
+
+    @Test
+    void renderListRebuildDoesNotAllocatePerEntry() {
+        Assumptions.assumeTrue(AllocationProbe.supported());
+        HighlightIndex idx = new HighlightIndex();
+        idx.setDimension("minecraft:overworld");
+        int iron = idx.idIndex("minecraft:iron_ore");
+        LongArrayList pos = new LongArrayList();
+        IntArrayList val = new IntArrayList();
+        for (int i = 0; i < 4096; i++) {
+            pos.add(BlockPosPacking.pack(i & 15, i >> 8, (i >> 4) & 15));
+            val.add(HighlightIndex.value(BlockCategories.ORE_COMMON, true, iron));
+        }
+        idx.replaceSection(HighlightIndex.sectionKey(0, 0, 0), pos, val);
+        idx.rebuildRenderListIfDirty(); // grows the render arrays once
+        long p = BlockPosPacking.pack(1, 1, 1);
+        long bytes = AllocationProbe.measure(2_000, () -> {
+            idx.setBlock(p, HighlightIndex.value(BlockCategories.ORE_COMMON, false, iron)); // marks dirty
+            idx.setBlock(p, HighlightIndex.value(BlockCategories.ORE_COMMON, true, iron));
+            idx.rebuildRenderListIfDirty();
+        });
+        assertEquals(4096, idx.renderCount());
+        // One iterator object per rebuild is fine; one entry object per highlighted block (4096 here) is not.
+        assertTrue(bytes < 2_000 * 64, "rebuild allocated " + bytes + " bytes over 2k rebuilds");
+    }
     @Test
     void caveCellsPackOneSectionIntoALong() {
         CaveCells c = new CaveCells();

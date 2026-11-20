@@ -72,6 +72,14 @@ public final class WorldScanner {
     private long nearCenter = Long.MIN_VALUE;
     private boolean trackChunkAge;
     private long gameTime;
+    /** Game time of the last render-list rebuild (see {@link #RENDER_REBUILD_TICKS}). */
+    private long lastRenderRebuild = -RENDER_REBUILD_TICKS;
+    /**
+     * Render lists are rebuilt at most this often. While sections stream in, the indexes change every tick, and
+     * copying tens of thousands of entries each tick showed up in the playtest profile; a quarter second of lag on
+     * the outlines is not visible in practice.
+     */
+    static final int RENDER_REBUILD_TICKS = 5;
 
     public WorldScanner() {
         categoryCache.defaultReturnValue(-1);
@@ -150,6 +158,7 @@ public final class WorldScanner {
     // ---- lifecycle ----------------------------------------------------------------------------------------------
 
     public void reset() {
+        lastRenderRebuild = -RENDER_REBUILD_TICKS;
         level = null;
         dimension = "";
         loadedChunks.clear();
@@ -309,9 +318,12 @@ public final class WorldScanner {
         if (nearCaves || nearFluids) {
             nearSweep(l, px, py, pz, nearScans);
         }
-        observed.rebuildRenderListIfDirty();
-        fluids.rebuildRenderListIfDirty();
-        caves.rebuildRenderListIfDirty();
+        if (time - lastRenderRebuild >= RENDER_REBUILD_TICKS || time < lastRenderRebuild) {
+            lastRenderRebuild = time;
+            observed.rebuildRenderListIfDirty();
+            fluids.rebuildRenderListIfDirty();
+            caves.rebuildRenderListIfDirty();
+        }
     }
 
     /** True while sections are still waiting for their first scan. */

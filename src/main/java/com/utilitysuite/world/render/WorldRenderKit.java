@@ -12,6 +12,7 @@ import net.minecraft.client.renderer.RenderStateShard;
 import net.minecraft.client.renderer.RenderType;
 import org.joml.Matrix4f;
 import org.joml.Quaternionf;
+import org.joml.Vector3f;
 
 import java.util.OptionalDouble;
 
@@ -52,6 +53,8 @@ public final class WorldRenderKit {
         return Types.LINES_NO_DEPTH;
     }
 
+    /** Render thread only (every caller draws inside the world render pass). */
+    private static final Vector3f SCRATCH = new Vector3f();
     private static final int DASHES_PER_EDGE = 3;
     private static final String[] NUMBERS = new String[20_000];
 
@@ -100,8 +103,17 @@ public final class WorldRenderKit {
         int r = (argb >> 16) & 0xFF;
         int g = (argb >> 8) & 0xFF;
         int b = argb & 0xFF;
-        vc.addVertex(pose, x1, y1, z1).setColor(r, g, b, a).setNormal(pose, dx, dy, dz);
-        vc.addVertex(pose, x2, y2, z2).setColor(r, g, b, a).setNormal(pose, dx, dy, dz);
+        // Transform through one scratch vector: vanilla's addVertex(Pose, ..) / setNormal(Pose, ..) allocate a Vector3f
+        // per call, which the playtest measured as the biggest render-thread allocation site with overlays on.
+        Vector3f v = SCRATCH;
+        pose.transformNormal(dx, dy, dz, v);
+        float nx = v.x;
+        float ny = v.y;
+        float nz = v.z;
+        pose.pose().transformPosition(x1, y1, z1, v);
+        vc.addVertex(v.x, v.y, v.z).setColor(r, g, b, a).setNormal(nx, ny, nz);
+        pose.pose().transformPosition(x2, y2, z2, v);
+        vc.addVertex(v.x, v.y, v.z).setColor(r, g, b, a).setNormal(nx, ny, nz);
     }
 
     /** Dashed line: {@code dashes} drawn pieces with equal gaps between them. */
