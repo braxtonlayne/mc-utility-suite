@@ -6,5 +6,9 @@
   "key.utilitysuite.toggle_terrain_surface": "Toggle Terrain Assist (Surface)",
   "key.utilitysuite.toggle_world_overlays": "Toggle World Overlays",
   "key.utilitysuite.toggle_scout_camera": "Toggle Scout Camera",
-  "message.utilitysuite.stop_all": "Utility Suite: all automation stopped"
+  "message.utilitysuite.stop_all": "Utility Suite: all automation stopped",
+  "module.utilitysuite.goal_engine": "Goal Engine",
+  "module.utilitysuite.storage_memory": "Storage Memory",
+  "module.utilitysuite.survival_autopilot": "Survival Autopilot",
+  "message.utilitysuite.tool_low_durability": "Tool below %s%% durability: not switching%s"
 }

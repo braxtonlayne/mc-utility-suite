@@ -47,7 +47,8 @@ public final class FoodSelector {
                 continue;
             }
             int waste = Math.max(0, nutrition[i] - missing);
-            double score = -waste * 2.0 + nutrition[i] + saturation[i] * nutrition[i];
+            int effective = nutrition[i] - waste; // what actually lands in the hunger bar
+            double score = effective * (1.0 + saturation[i]) - waste * 2.0;
             if (score > bestScore) {
                 bestScore = score;
                 best = i;
