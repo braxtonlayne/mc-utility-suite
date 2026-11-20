@@ -211,6 +211,7 @@ public final class OreSimModule extends WorldModule {
     @Override
     protected void onDisable() {
         service.configure(null);
+        ServerWorldgenOracles.clearCaches();
         knowledge.setPredictionSource(PredictionSource.NONE);
         configKey = "";
         ghostCount = 0;
@@ -224,6 +225,7 @@ public final class OreSimModule extends WorldModule {
     @Override
     public void onWorldUnload() {
         service.configure(null);
+        ServerWorldgenOracles.clearCaches();
         configKey = "";
         ghostCount = 0;
         profile = GeneratorProfile.none();
@@ -328,7 +330,10 @@ public final class OreSimModule extends WorldModule {
 
     private void reconfigure(Minecraft mc, ClientLevel level, String dim) {
         profile = resolveProfile(mc, level);
-        OreSpec[] specs = VanillaOreTables.select(dim, resources);
+        // Large (noise-stage) veins need the generator's noises, so only the integrated server's oracle provides them.
+        OreSpec[] specs = mc.getSingleplayerServer() != null
+                ? VanillaOreTables.selectWithLargeVeins(dim, resources)
+                : VanillaOreTables.select(dim, resources);
         String key = profile.seedKnown() + "|" + profile.seed() + "|" + dim + "|" + resources + "|"
                 + profile.uncertain();
         if (key.equals(configKey)) {

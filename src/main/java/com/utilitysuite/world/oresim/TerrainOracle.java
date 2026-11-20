@@ -22,6 +22,22 @@ public interface TerrainOracle {
     /** {@code OCEAN_FLOOR_WG} height at generation time, or {@link #UNKNOWN_HEIGHT}. */
     int surfaceHeight(int x, int z);
 
+    /** Receives the ore blocks of noise-stage large veins. */
+    interface LargeVeinSink {
+        /** @param copper true for a copper vein block ({@code copper_ore}), false for iron ({@code deepslate_iron_ore}) */
+        void acceptVeinOre(boolean copper, int x, int y, int z);
+    }
+
+    /**
+     * Reports every ore block (not raw-ore blocks, not filler) that the noise stage's {@code OreVeinifier} places in
+     * the chunk, if this oracle can evaluate the world's vein noises. Called on the simulation thread.
+     *
+     * @return false when large veins are unknown here (no generator access, veins disabled, failure)
+     */
+    default boolean largeVeins(int chunkX, int chunkZ, LargeVeinSink sink) {
+        return false;
+    }
+
     /** Nothing known: every block is assumed to be a target, every surface check passes. */
     TerrainOracle UNKNOWN_TERRAIN = new TerrainOracle() {
         @Override
