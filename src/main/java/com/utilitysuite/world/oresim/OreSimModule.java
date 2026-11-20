@@ -211,6 +211,7 @@ public final class OreSimModule extends WorldModule {
     @Override
     protected void onDisable() {
         service.configure(null);
+        ServerWorldgenOracles.clearCaches();
         knowledge.setPredictionSource(PredictionSource.NONE);
         configKey = "";
         ghostCount = 0;
@@ -224,6 +225,7 @@ public final class OreSimModule extends WorldModule {
     @Override
     public void onWorldUnload() {
         service.configure(null);
+        ServerWorldgenOracles.clearCaches();
         configKey = "";
         ghostCount = 0;
         profile = GeneratorProfile.none();

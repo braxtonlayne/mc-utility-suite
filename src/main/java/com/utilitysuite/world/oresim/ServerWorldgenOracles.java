@@ -1,15 +1,11 @@
 package com.utilitysuite.world.oresim;
 
-import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import net.minecraft.core.Holder;
 import net.minecraft.core.QuartPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.biome.BiomeSource;
 import net.minecraft.world.level.biome.Climate;
-import net.minecraft.world.level.chunk.ChunkGenerator;
-import net.minecraft.world.level.levelgen.Heightmap;
-import net.minecraft.world.level.levelgen.RandomState;
 
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -20,7 +16,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * <p>
  * Threading: called on the simulation thread. Noise sampling and biome lookups are what the server's own parallel
  * world-generation workers call concurrently (stateless density functions, thread-local R-tree cache), so they are
- * safe off the server thread. Answers are cached per oracle (one oracle per simulated chunk). Any failure (for
+ * safe off the server thread. Surface heights are cached per level ({@link ColumnHeightCache}). Any failure (for
  * example the server shutting down) degrades to "unknown".
  */
 public final class ServerWorldgenOracles {
@@ -30,12 +26,23 @@ public final class ServerWorldgenOracles {
     private ServerWorldgenOracles() {
     }
 
-    public static TerrainOracle terrain(ServerLevel level) {
-        ChunkGenerator generator = level.getChunkSource().getGenerator();
-        RandomState random = level.getChunkSource().randomState();
-        return new TerrainOracle() {
-            private final Long2IntOpenHashMap cache = new Long2IntOpenHashMap();
+    /** One shared height cache per level (the simulation thread is the only user); replaced when the level changes. */
+    private static volatile SharedHeights shared;
 
+    private record SharedHeights(ServerLevel level, ColumnHeightCache cache) {
+    }
+
+    /** About 1 MB: 1024 chunks x 256 ints, enough for the simulation radius plus the 3 x 3 vein-box margin. */
+    private static final int HEIGHT_CACHE_CHUNKS = 1024;
+
+    /**
+     * Surface heights come from a cache shared by every simulated chunk of the level, filled a whole noise cell
+     * (4 x 4 columns) per generator setup, instead of one {@code getBaseHeight} (one full NoiseChunk build) per
+     * column per simulated chunk.
+     */
+    public static TerrainOracle terrain(ServerLevel level) {
+        ColumnHeightCache cache = heightsFor(level);
+        return new TerrainOracle() {
             @Override
             public byte classify(OreSpec spec, int x, int y, int z) {
                 return UNKNOWN;
@@ -43,20 +50,29 @@ public final class ServerWorldgenOracles {
 
             @Override
             public int surfaceHeight(int x, int z) {
-                long key = ((long) x << 32) | (z & 0xFFFFFFFFL);
-                if (cache.containsKey(key)) {
-                    return cache.get(key);
-                }
-                int h;
-                try {
-                    h = generator.getBaseHeight(x, z, Heightmap.Types.OCEAN_FLOOR_WG, level, random);
-                } catch (RuntimeException e) {
-                    h = UNKNOWN_HEIGHT;
-                }
-                cache.put(key, h);
-                return h;
+                return cache.surfaceHeight(x, z);
             }
         };
+    }
+
+    static ColumnHeightCache heightsFor(ServerLevel level) {
+        SharedHeights s = shared;
+        if (s != null && s.level == level) {
+            return s.cache;
+        }
+        synchronized (ServerWorldgenOracles.class) {
+            s = shared;
+            if (s == null || s.level != level) {
+                s = new SharedHeights(level, new ColumnHeightCache(NoiseCellHeights.create(level), HEIGHT_CACHE_CHUNKS));
+                shared = s;
+            }
+            return s.cache;
+        }
+    }
+
+    /** Drop the shared cache (world unload / reconfigure) so the level can be collected. */
+    public static void clearCaches() {
+        shared = null;
     }
 
     public static BiomeOracle biomes(ServerLevel level, long zoomSeed) {
