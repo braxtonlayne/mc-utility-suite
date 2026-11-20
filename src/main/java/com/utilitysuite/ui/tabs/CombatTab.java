@@ -12,19 +12,23 @@ import com.utilitysuite.core.api.Services;
 import com.utilitysuite.ui.Panel;
 import com.utilitysuite.ui.SettingsAccess;
 import com.utilitysuite.ui.SettingsRenderer;
+import com.utilitysuite.ui.kit.CardNode;
+import com.utilitysuite.ui.kit.ChipNode;
+import com.utilitysuite.ui.kit.PillButton;
+import com.utilitysuite.ui.kit.ToggleSwitch;
+import com.utilitysuite.ui.kit.UiTheme;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientPacketListener;
 import net.minecraft.client.multiplayer.PlayerInfo;
-import net.minecraft.network.chat.Component;
 
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 
 /**
- * Combat tab: one prominent Auto-Fight master toggle (the CombatAssistant's enabled flag) with its basic settings and a
- * collapsed Advanced drawer, the Ally Roster table (Never Target / Defend / Remove; add an online player by name), the
- * Fight Coach toggle, then any other COMBAT module.
+ * Combat tab: a prominent Auto-Fight hero card (the CombatAssistant's enabled flag as the master switch, an Armed/Off
+ * chip, its basic settings and a collapsed Advanced section), the Ally Roster (Never target / Defend switches and
+ * Remove per player; add an online player by name), the Fight Coach card, then any other COMBAT module.
  */
 public final class CombatTab {
 
@@ -50,21 +54,23 @@ public final class CombatTab {
 
     public static void build(Panel p) {
         Optional<IModule> assistant = Services.modules().byId(ASSISTANT);
-        p.heading("Auto-Fight");
         if (assistant.isEmpty()) {
+            p.card("Auto-Fight", "not installed", 0, CardNode.Tone.HERO);
             p.text("The combat assistant is not installed.", Panel.GRAY);
         } else {
             IModule a = assistant.get();
             boolean on = a.isEnabled();
-            p.button(on ? "Auto-Fight: ON" : "Auto-Fight: OFF",
-                    "Defensive combat assistance: engages only after you attack or are attacked", 0, p.width(), b -> {
-                        CoreBootstrap.modules().setModuleEnabled(ASSISTANT, !a.isEnabled(),
-                                Services.modState().profile());
-                        Services.modState().markDirty();
-                        p.rebuild();
-                    }).setMessage(Component.literal(on ? "Auto-Fight: ON" : "Auto-Fight: OFF")
-                    .withStyle(on ? net.minecraft.ChatFormatting.GREEN : net.minecraft.ChatFormatting.WHITE));
-            p.nextRow();
+            ChipNode chip = new ChipNode(p.font(), on ? "Armed" : "Off", on ? UiTheme.RUNNING : UiTheme.TEXT_MUTED);
+            p.card("Auto-Fight", "Defensive combat assistance", ToggleSwitch.W + chip.w + 18, CardNode.Tone.HERO);
+            p.cardToggle(on, "module." + ASSISTANT, v -> {
+                CoreBootstrap.modules().setModuleEnabled(ASSISTANT, v, Services.modState().profile());
+                Services.modState().markDirty();
+                p.rebuild();
+            }).tooltip("Defensive combat assistance: engages only after you attack or are attacked");
+            p.headerNode(chip, ToggleSwitch.W + 10);
+            p.paragraph("Engages only after you attack or are attacked, never on its own. Your own keys and mouse "
+                    + "always win; Stop-All ends it at once.", Panel.DIM);
+            p.gap(2);
             if (a instanceof IConfigurable c) {
                 SettingsRenderer.settings(p, ASSISTANT, c.settings(), new SettingsAccess(Services.modState().profile(),
                         ASSISTANT, c::onSettingChanged, Services.modState()::markDirty));
@@ -81,35 +87,47 @@ public final class CombatTab {
     }
 
     private static void allyRoster(Panel p) {
-        p.heading("Ally roster");
         AllyRosterModule mod = CombatBootstrap.allies();
         if (mod == null) {
+            p.card("Ally roster", "not available");
             p.text("The ally roster is not available.", Panel.GRAY);
             return;
         }
         AllyRoster roster = mod.roster();
-        int w = p.width();
         List<AllyEntry> entries = roster.entries();
+        p.card("Ally roster", entries.isEmpty() ? "players you never target" : entries.size()
+                + (entries.size() == 1 ? " ally" : " allies"));
+        int w = p.width();
+        int colW = 74;
+        int removeW = 60;
+        int col2 = w - removeW - 8 - colW;
+        int col1 = col2 - colW;
         if (entries.isEmpty()) {
-            p.text("No allies yet. Add an online player by name, or middle-click a player in game.", Panel.GRAY);
+            p.paragraph("No allies yet. Add an online player by name, or middle-click a player in game.", Panel.GRAY);
         } else {
-            p.textIndented("Name", Panel.GRAY, 4);
+            p.rowLabel("Player", 4, col1 - 8, Panel.GRAY);
+            p.rowLabel("Never target", col1, colW, Panel.GRAY);
+            p.rowLabel("Defend", col2, colW, Panel.GRAY);
+            p.nextRow();
         }
-        int bw = 86;
         for (AllyEntry e : entries) {
-            p.rowLabel(e.name() + (e.global() ? " (all worlds)" : ""), 4, w - 3 * (bw + 4) - 8, Panel.WHITE);
-            p.toggle("Never target", e.neverTarget(), w - 3 * (bw + 4) + 4, bw, v -> roster.setNeverTarget(e.uuid(), v))
-                    .setTooltip(net.minecraft.client.gui.components.Tooltip.create(
-                            Component.literal("Never attack this player, even if they hit you")));
-            p.toggle("Defend", e.defend(), w - 2 * (bw + 4) + 4, bw, v -> roster.setDefend(e.uuid(), v));
-            p.button("Remove", w - bw, bw, b -> {
+            p.listRow(null);
+            p.rowLabel(e.name() + (e.global() ? "  (all worlds)" : ""), 4, col1 - 12, Panel.WHITE);
+            p.place(new ToggleSwitch(e.neverTarget(), v -> roster.setNeverTarget(e.uuid(), v))
+                    .animKey("ally.nt." + e.uuid()), col1 + 2)
+                    .tooltip("Never attack this player, even if they hit you");
+            p.place(new ToggleSwitch(e.defend(), v -> roster.setDefend(e.uuid(), v))
+                    .animKey("ally.def." + e.uuid()), col2 + 2)
+                    .tooltip("Help this player when something attacks them");
+            p.button("Remove", null, w - removeW, removeW, PillButton.Style.DANGER_SOFT, b -> {
                 roster.remove(e.uuid());
                 p.rebuild();
             });
             p.nextRow();
         }
-        p.textField(K_ALLY, "Online player name", 0, w - 90);
-        p.button("Add ally", w - 86, 86, b -> {
+        p.gap(4);
+        p.textField(K_ALLY, "Online player name", 0, w - 86);
+        p.button("Add ally", null, w - 80, 80, PillButton.Style.PRIMARY, b -> {
             String name = p.state(K_ALLY, "").trim();
             PlayerInfo info = findOnline(name);
             if (info == null) {

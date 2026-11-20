@@ -1,77 +1,83 @@
 package com.utilitysuite.ui;
 
+import com.utilitysuite.ui.kit.BoxNode;
+import com.utilitysuite.ui.kit.CardNode;
+import com.utilitysuite.ui.kit.CollapsibleSection;
+import com.utilitysuite.ui.kit.CycleSelector;
+import com.utilitysuite.ui.kit.LabelNode;
+import com.utilitysuite.ui.kit.ListRowNode;
+import com.utilitysuite.ui.kit.ModernSlider;
+import com.utilitysuite.ui.kit.PillButton;
+import com.utilitysuite.ui.kit.StyledTextField;
+import com.utilitysuite.ui.kit.ToggleSwitch;
+import com.utilitysuite.ui.kit.UiNode;
+import com.utilitysuite.ui.kit.UiRenderUtils;
+import com.utilitysuite.ui.kit.UiTheme;
 import net.minecraft.client.gui.Font;
-import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.client.gui.components.AbstractWidget;
-import net.minecraft.client.gui.components.Button;
-import net.minecraft.client.gui.components.CycleButton;
-import net.minecraft.client.gui.components.EditBox;
-import net.minecraft.client.gui.components.Tooltip;
-import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.FormattedText;
+import net.minecraft.network.chat.Style;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.function.Supplier;
 
 /**
- * Scrollable, row-based content area of the menu screen. Tab builders append headings, text lines and widget rows
- * top to bottom; the panel assigns each a logical y, then {@link #applyScroll} positions the widgets and hides the
- * ones outside the viewport (hidden widgets ignore clicks). Text lines are drawn by {@link #renderText}; dynamic
- * lines are re-evaluated by {@link #refreshDynamic} (the screen calls it every few ticks, never per frame).
+ * Builder for the scrolling content canvas of the menu. Tab builders append cards top to bottom; inside a card they
+ * add text lines and rows of custom widgets ({@link PillButton}, {@link ToggleSwitch}, {@link ModernSlider},
+ * {@link CycleSelector}, {@link StyledTextField}, list rows, collapsible sections). Every node gets a fixed layout box
+ * in content coordinates when it is added; the screen only offsets by the eased scroll while drawing, so steady-state
+ * frames allocate nothing. {@link #width()} is the inner width of the open card (or the canvas outside cards), so
+ * {@code dx}/{@code w} arithmetic is relative to the card's content edge.
  * <p>
- * Also the extension surface for {@link ModulePanels}: a custom module panel receives this object.
+ * Also the extension surface for {@link ModulePanels}: a custom module panel receives this object while its module's
+ * card is open.
  */
 public final class Panel {
 
+    /** Row pitch of widget rows. */
     public static final int ROW = 22;
-    public static final int LINE = 11;
-    public static final int WIDGET_H = 20;
+    /** Pitch of text lines. */
+    public static final int LINE = 12;
+    /** Height of text fields; pills, selectors and sliders are 14-16 px and centered in the row. */
+    public static final int WIDGET_H = StyledTextField.H;
 
-    public static final int WHITE = 0xFFFFFFFF;
-    public static final int GRAY = 0xFFA0A0A0;
-    public static final int HEADING = 0xFFFFD866;
-    public static final int RED = 0xFFFF6B6B;
-    public static final int GREEN = 0xFF7CDB7C;
-    public static final int YELLOW = 0xFFFFE066;
+    public static final int WHITE = UiTheme.TEXT_SECONDARY;
+    public static final int GRAY = UiTheme.TEXT_MUTED;
+    public static final int DIM = UiTheme.TEXT_DIM;
+    public static final int HEADING = UiTheme.TEXT;
+    public static final int RED = UiTheme.DANGER;
+    public static final int GREEN = UiTheme.RUNNING;
+    public static final int YELLOW = UiTheme.WARNING;
+    public static final int ACCENT = UiTheme.ACCENT;
 
-    private record Placed(AbstractWidget widget, int logicalY) {
-    }
-
-    private static final class Line {
-        final int logicalY;
-        final int x;
-        final int color;
-        final Supplier<String> source;
-        String text;
-
-        Line(int logicalY, int x, int color, String text, Supplier<String> source) {
-            this.logicalY = logicalY;
-            this.x = x;
-            this.color = color;
-            this.text = text;
-            this.source = source;
-        }
-    }
+    private static final int BODY_PAD = 8;
 
     private final SuiteMenuScreen screen;
     private final Font font;
-    private final int left;
-    private final int top;
-    private final int width;
-    private final int viewHeight;
-    private final List<Placed> widgets = new ArrayList<>();
-    private final List<Line> lines = new ArrayList<>();
+    private final int contentW;
+    private final List<UiNode> nodes = new ArrayList<>();
+    private final List<StyledTextField> fields = new ArrayList<>();
+    private final List<CollapsibleSection> sections = new ArrayList<>();
     private int y;
-    private int scroll;
+    private boolean lastWasSection;
 
-    Panel(SuiteMenuScreen screen, Font font, int left, int top, int width, int viewHeight) {
+    // open card
+    private CardNode card;
+    private int cardTop;
+    private boolean bodyEmpty;
+    private int originX;
+    private int innerW;
+    // open collapsible block
+    private BoxNode inset;
+    private int insetTop;
+
+    Panel(SuiteMenuScreen screen, Font font, int contentW) {
         this.screen = screen;
         this.font = font;
-        this.left = left;
-        this.top = top;
-        this.width = width;
-        this.viewHeight = viewHeight;
+        this.contentW = contentW;
+        this.innerW = contentW;
     }
 
     // ---- geometry ---------------------------------------------------------------------------------------------------
@@ -80,12 +86,14 @@ public final class Panel {
         return font;
     }
 
+    /** Usable width: the open card's inner width, or the canvas width outside cards. */
     public int width() {
-        return width;
+        return card != null ? innerW : contentW;
     }
 
-    public int left() {
-        return left;
+    /** Width of the whole canvas (cards span it). */
+    public int canvasWidth() {
+        return contentW;
     }
 
     /** Logical height of the content so far. */
@@ -93,15 +101,116 @@ public final class Panel {
         return y;
     }
 
-    // ---- content ----------------------------------------------------------------------------------------------------
-
-    public void heading(String text) {
-        if (y > 0) {
-            y += 6;
-        }
-        lines.add(new Line(y + 2, 0, HEADING, clip(text, width), null));
-        y += LINE + 4;
+    /** Current logical y (top of the next row). */
+    public int y() {
+        return y;
     }
+
+    // ---- structure --------------------------------------------------------------------------------------------------
+
+    /** A muted label between cards ("Job modules"). Closes the open card. */
+    public void section(String label) {
+        endCard();
+        if (y > 0) {
+            y += 12;
+        }
+        LabelNode l = new LabelNode(font, label, UiTheme.TEXT_DIM, contentW);
+        add(l, 2, y);
+        y += 14;
+        lastWasSection = true;
+    }
+
+    /** Opens a card with a title (closes the previous one). */
+    public CardNode card(String title, String subtitle) {
+        return card(title, subtitle, 0, CardNode.Tone.NORMAL);
+    }
+
+    /** Opens a card; {@code reserveRight} keeps the header text clear of header controls. */
+    public CardNode card(String title, String subtitle, int reserveRight, CardNode.Tone tone) {
+        endCard();
+        if (y > 0 && !lastWasSection) {
+            y += UiTheme.CARD_GAP;
+        }
+        lastWasSection = false;
+        card = new CardNode(font, title, subtitle, contentW, reserveRight, tone);
+        add(card, 0, y);
+        cardTop = y;
+        originX = UiTheme.CARD_PAD;
+        innerW = contentW - 2 * UiTheme.CARD_PAD;
+        bodyEmpty = true;
+        y += card.hasHeader() ? CardNode.HEADER_H : UiTheme.CARD_PAD - BODY_PAD;
+        return card;
+    }
+
+    /** The legacy section heading: a new card with this title. */
+    public void heading(String text) {
+        card(text, "");
+    }
+
+    /** A switch at the right end of the open card's header row. */
+    public ToggleSwitch cardToggle(boolean value, String animKey, Consumer<Boolean> onChange) {
+        ToggleSwitch t = new ToggleSwitch(value, onChange).animKey(animKey);
+        add(t, contentW - UiTheme.CARD_PAD - ToggleSwitch.W, cardTop + (CardNode.HEADER_H - ToggleSwitch.H) / 2);
+        return t;
+    }
+
+    /** A node placed in the open card's header row, right-aligned before {@code rightInset} px. */
+    public <T extends UiNode> T headerNode(T node, int rightInset) {
+        add(node, contentW - UiTheme.CARD_PAD - rightInset - node.w, cardTop + (CardNode.HEADER_H - node.h) / 2);
+        return node;
+    }
+
+    /** Closes the open card (sets its height). Called automatically by the next card or section. */
+    public void endCard() {
+        if (card == null) {
+            return;
+        }
+        endCollapsible();
+        if (bodyEmpty) {
+            if (!card.hasHeader()) {
+                y += BODY_PAD;
+            }
+        } else {
+            y += BODY_PAD;
+            if (card.hasHeader()) {
+                card.divider(CardNode.HEADER_H);
+            }
+        }
+        card.h = Math.max(card.hasHeader() ? CardNode.HEADER_H : 2 * UiTheme.CARD_PAD, y - cardTop);
+        y = cardTop + card.h;
+        card = null;
+        originX = 0;
+        innerW = contentW;
+    }
+
+    private void body() {
+        if (card != null && bodyEmpty) {
+            bodyEmpty = false;
+            y += BODY_PAD;
+        }
+    }
+
+    /** A node outside cards spanning the canvas (e.g. the goal hero card); returns its top y. */
+    public int block(UiNode node) {
+        endCard();
+        if (y > 0 && !lastWasSection) {
+            y += UiTheme.CARD_GAP;
+        }
+        lastWasSection = false;
+        int top = y;
+        node.w = contentW;
+        add(node, 0, y);
+        y += node.h;
+        return top;
+    }
+
+    /** Places a node at absolute content coordinates (children of a {@link #block}). */
+    public <T extends UiNode> T placeAbs(T node, int x, int yAbs) {
+        add(node, x, yAbs);
+        return node;
+    }
+
+    // ---- content ----------------------------------------------------------------------------------------------------
 
     public void text(String text) {
         text(text, WHITE);
@@ -112,70 +221,169 @@ public final class Panel {
     }
 
     public void textIndented(String text, int color, int indent) {
-        lines.add(new Line(y, indent, color, clip(text, width - indent), null));
+        body();
+        add(new LabelNode(font, text, color, width() - indent), originX + indent, y + 2);
         y += LINE;
     }
 
+    /** Word-wrapped text over as many lines as it needs. */
+    public void paragraph(String text, int color) {
+        body();
+        for (FormattedText line : font.getSplitter().splitLines(text == null ? "" : text, width(), Style.EMPTY)) {
+            add(new LabelNode(font, line.getString(), color, width()), originX, y + 2);
+            y += LINE;
+        }
+        y += 1;
+    }
+
     /** A line whose text is re-read every few ticks (e.g. "Now: Mining at Y=-54"). */
-    public void dynamic(Supplier<String> source, int color) {
-        String t = safe(source);
-        lines.add(new Line(y, 0, color, clip(t, width), source));
+    public LabelNode dynamic(Supplier<String> source, int color) {
+        body();
+        LabelNode l = new LabelNode(font, null, source, color, width());
+        add(l, originX, y + 2);
         y += LINE;
+        return l;
+    }
+
+    /** A small muted group heading inside a card. */
+    public void subheading(String text) {
+        body();
+        y += 6;
+        add(new LabelNode(font, text, UiTheme.ACCENT, width()), originX, y + 2);
+        int tw = font.width(text) + 8;
+        if (tw < width() - 10) {
+            add(new BoxNode(width() - tw, 1, 0, 0xFF262B36, 0, UiRenderUtils.ALL), originX + tw, y + 6);
+        }
+        y += LINE + 2;
     }
 
     public void gap(int pixels) {
         y += pixels;
     }
 
-    /** Places a widget on the current row at {@code dx}; rows advance with {@link #nextRow()}. */
-    public <T extends AbstractWidget> T place(T widget, int dx) {
-        widget.setX(left + dx);
-        widgets.add(new Placed(widget, y));
-        return widget;
+    /** Hairline across the open card. */
+    public void divider() {
+        body();
+        y += 4;
+        add(new BoxNode(width(), 1, 0, 0xFF22262F, 0, UiRenderUtils.ALL), originX, y);
+        y += 5;
     }
 
-    /** A label at the current row's text baseline (left of a widget). */
-    public void rowLabel(String text, int dx, int maxWidth, int color) {
-        lines.add(new Line(y + 6, dx, color, clip(text, maxWidth), null));
+    /** Places a node on the current row at {@code dx}, vertically centered; rows advance with {@link #nextRow()}. */
+    public <T extends UiNode> T place(T node, int dx) {
+        body();
+        add(node, originX + dx, y + (ROW - node.h) / 2);
+        return node;
+    }
+
+    /** A label at the current row's text line (left of a widget). */
+    public LabelNode rowLabel(String text, int dx, int maxWidth, int color) {
+        body();
+        LabelNode l = new LabelNode(font, text, color, Math.max(0, maxWidth));
+        add(l, originX + dx, y + (ROW - 8) / 2);
+        return l;
     }
 
     public void nextRow() {
         y += ROW;
     }
 
+    /** Background of a list row on the current row (hover highlight, separator); {@code onPress} may be null. */
+    public ListRowNode listRow(Consumer<ListRowNode> onPress) {
+        body();
+        ListRowNode r = new ListRowNode(width() + 8, ROW - 2, onPress);
+        add(r, originX - 4, y + 1);
+        return r;
+    }
+
     // ---- widget helpers ---------------------------------------------------------------------------------------------
 
-    public Button button(String label, int dx, int w, Button.OnPress onPress) {
-        return place(Button.builder(Component.literal(label), onPress).bounds(0, 0, w, WIDGET_H).build(), dx);
+    public PillButton button(String label, int dx, int w, Consumer<PillButton> onPress) {
+        return button(label, null, dx, w, PillButton.Style.SECONDARY, onPress);
     }
 
-    public Button button(String label, String tooltip, int dx, int w, Button.OnPress onPress) {
-        Button b = button(label, dx, w, onPress);
-        if (tooltip != null && !tooltip.isEmpty()) {
-            b.setTooltip(Tooltip.create(Component.literal(tooltip)));
+    public PillButton button(String label, String tooltip, int dx, int w, Consumer<PillButton> onPress) {
+        return button(label, tooltip, dx, w, PillButton.Style.SECONDARY, onPress);
+    }
+
+    public PillButton button(String label, String tooltip, int dx, int w, PillButton.Style style,
+                             Consumer<PillButton> onPress) {
+        PillButton b = new PillButton(font, label, w, style, onPress);
+        if (tooltip != null) {
+            b.tooltip(tooltip);
         }
-        return b;
-    }
-
-    /** ON/OFF button showing "label: ON". */
-    public CycleButton<Boolean> toggle(String label, boolean value, int dx, int w, Consumer<Boolean> onChange) {
-        CycleButton<Boolean> b = CycleButton.onOffBuilder(value)
-                .create(0, 0, w, WIDGET_H, Component.literal(label), (btn, v) -> onChange.accept(v));
         return place(b, dx);
     }
 
+    /** A label with a switch at the right end of the {@code w}-wide box starting at {@code dx}. */
+    public ToggleSwitch toggle(String label, boolean value, int dx, int w, Consumer<Boolean> onChange) {
+        if (label != null && !label.isEmpty()) {
+            rowLabel(label, dx, w - ToggleSwitch.W - 6, WHITE);
+        }
+        return place(new ToggleSwitch(value, onChange), dx + w - ToggleSwitch.W);
+    }
+
     /**
-     * An edit box whose text survives rebuilds and reopening the menu (stored in the screen's state under
+     * A styled edit box whose text survives rebuilds and reopening the menu (stored in the screen's state under
      * {@code stateKey}); focus is restored after a rebuild.
      */
-    public EditBox textField(String stateKey, String hint, int dx, int w) {
-        EditBox box = new EditBox(font, 0, 0, w, WIDGET_H, Component.literal(hint));
-        box.setMaxLength(256);
-        box.setValue(screen.state(stateKey, ""));
-        box.setHint(Component.literal(hint).withColor(0xFF707070));
-        box.setResponder(v -> screen.setState(stateKey, v));
-        screen.registerTextField(box, stateKey);
-        return place(box, dx);
+    public StyledTextField textField(String stateKey, String hint, int dx, int w) {
+        StyledTextField f = field(stateKey, hint, dx, w);
+        f.box().setValue(screen.state(stateKey, ""));
+        f.box().setResponder(v -> screen.setState(stateKey, v));
+        return f;
+    }
+
+    /** A styled edit box without stored state; {@code focusKey} restores focus across rebuilds. */
+    public StyledTextField field(String focusKey, String hint, int dx, int w) {
+        StyledTextField f = new StyledTextField(font, focusKey, hint, w, StyledTextField.H);
+        f.box().setMaxLength(256);
+        fields.add(f);
+        return place(f, dx);
+    }
+
+    public <E> CycleSelector<E> cycle(List<E> values, E current, Function<E, String> label, int dx, int w,
+                                      Consumer<E> onChange) {
+        return place(new CycleSelector<>(font, values, current, label, w, onChange), dx);
+    }
+
+    public ModernSlider slider(ModernSlider.Model model, int dx, int w) {
+        return place(new ModernSlider(font, model, w), dx);
+    }
+
+    /**
+     * A collapsible block header ("Advanced settings · n"), collapsed by default; its state is kept under
+     * {@code key}. Returns whether it is open: the caller then adds the block's rows, closed by
+     * {@link #endCollapsible()} (or the end of the card).
+     */
+    public boolean collapsible(String key, String title, int count) {
+        body();
+        endCollapsible();
+        boolean open = flag(key);
+        y += 2;
+        CollapsibleSection s = new CollapsibleSection(font, title, count, open, width() + 8, () -> {
+            setFlag(key, !open);
+            rebuild();
+        });
+        add(s, originX - 4, y);
+        sections.add(s);
+        y += CollapsibleSection.H;
+        if (open) {
+            inset = new BoxNode(width() + 8, 0, UiTheme.RADIUS_SMALL, UiTheme.INSET, 0,
+                    UiRenderUtils.BL | UiRenderUtils.BR);
+            add(inset, originX - 4, y);
+            insetTop = y;
+            y += 2;
+        }
+        return open;
+    }
+
+    public void endCollapsible() {
+        if (inset != null) {
+            y += 4;
+            inset.h = y - insetTop;
+            inset = null;
+        }
     }
 
     // ---- screen state -----------------------------------------------------------------------------------------------
@@ -196,7 +404,7 @@ public final class Panel {
         screen.setState(key, value ? "1" : "");
     }
 
-    /** Rebuilds the screen's widgets on the next tick (after a structural change). */
+    /** Rebuilds the screen's content on the next tick (after a structural change). */
     public void rebuild() {
         screen.requestRebuild();
     }
@@ -206,74 +414,29 @@ public final class Panel {
         screen.setStatus(message);
     }
 
-    // ---- layout -----------------------------------------------------------------------------------------------------
+    // ---- results ----------------------------------------------------------------------------------------------------
 
-    List<AbstractWidget> widgets() {
-        List<AbstractWidget> out = new ArrayList<>(widgets.size());
-        for (Placed p : widgets) {
-            out.add(p.widget());
-        }
-        return out;
+    private void add(UiNode n, int x, int yy) {
+        n.x = x;
+        n.y = yy;
+        nodes.add(n);
     }
 
-    int maxScroll() {
-        return Math.max(0, y - viewHeight + 4);
+    /** Finishes the layout (closes the open card) and returns the content height. */
+    int finish() {
+        endCard();
+        return y;
     }
 
-    int scroll() {
-        return scroll;
+    List<UiNode> nodes() {
+        return nodes;
     }
 
-    void setScroll(int value) {
-        scroll = Math.max(0, Math.min(maxScroll(), value));
-        applyScroll();
+    List<StyledTextField> fields() {
+        return fields;
     }
 
-    void applyScroll() {
-        int bottom = top + viewHeight;
-        for (Placed p : widgets) {
-            AbstractWidget w = p.widget();
-            int wy = top + p.logicalY() - scroll;
-            w.setY(wy);
-            w.visible = wy >= top && wy + w.getHeight() <= bottom;
-        }
-    }
-
-    void refreshDynamic() {
-        for (Line l : lines) {
-            if (l.source != null) {
-                l.text = clip(safe(l.source), width - l.x);
-            }
-        }
-    }
-
-    void renderText(GuiGraphics g) {
-        int bottom = top + viewHeight;
-        for (Line l : lines) {
-            int ly = top + l.logicalY - scroll;
-            if (ly < top || ly + 9 > bottom || l.text.isEmpty()) {
-                continue;
-            }
-            g.drawString(font, l.text, left + l.x, ly, l.color);
-        }
-    }
-
-    private String clip(String s, int maxWidth) {
-        if (s == null) {
-            return "";
-        }
-        if (font.width(s) <= maxWidth) {
-            return s;
-        }
-        return font.plainSubstrByWidth(s, Math.max(0, maxWidth - font.width("…"))) + "…";
-    }
-
-    private static String safe(Supplier<String> s) {
-        try {
-            String v = s.get();
-            return v == null ? "" : v;
-        } catch (RuntimeException e) {
-            return "";
-        }
+    List<CollapsibleSection> sections() {
+        return sections;
     }
 }

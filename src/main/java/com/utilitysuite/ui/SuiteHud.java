@@ -51,7 +51,9 @@ public final class SuiteHud implements IModule, IConfigurable, LayeredDraw.Layer
     private boolean cleanBadge;
     private Position position = Position.TOP_CENTER;
     private int ticks;
-    private int textWidth = -1;
+    private final HudPill pill = new HudPill();
+    private int stoppedW = -1;
+    private int cleanW;
     private boolean pollNow;
 
     public void subscribe() {
@@ -78,8 +80,8 @@ public final class SuiteHud implements IModule, IConfigurable, LayeredDraw.Layer
     @Override
     public void setEnabled(boolean enabled) {
         this.enabled = enabled;
-        if (!enabled && line.clear()) {
-            textWidth = -1;
+        if (!enabled) {
+            line.clear();
         }
     }
 
@@ -92,25 +94,24 @@ public final class SuiteHud implements IModule, IConfigurable, LayeredDraw.Layer
         if (Services.modState().isCleanScreen()) {
             return;
         }
-        boolean changed;
         IGoalEngine goals = Services.goalsOrNull();
         Optional<JobSnapshot> job = goals == null ? Optional.empty() : goals.activeJob();
         if (job.isPresent() && !job.get().status().isTerminal()) {
-            changed = line.update(job.get());
+            line.update(job.get()); // the pill re-measures itself when the line was rebuilt
         } else {
             SchematicToolkit t = SchematicBootstrap.toolkit();
             Optional<SchematicJobCard> card = t == null || !t.isEnabled() ? Optional.empty() : t.jobCard();
-            changed = card.isPresent() ? line.updateSchematic(card.get().statusLine()) : line.clear();
-        }
-        if (changed) {
-            textWidth = -1;
+            if (card.isPresent()) {
+                line.updateSchematic(card.get().statusLine());
+            } else {
+                line.clear();
+            }
         }
     }
 
     @Override
     public void onWorldUnload() {
         line.clear();
-        textWidth = -1;
     }
 
     @Override
@@ -126,40 +127,47 @@ public final class SuiteHud implements IModule, IConfigurable, LayeredDraw.Layer
         if (mc.options.hideGui || mc.player == null) {
             return;
         }
-        Font font = mc.font;
-        int sw = g.guiWidth();
-        if (Services.modState().isCleanScreen()) {
+        renderOverlay(g, mc.font, g.guiWidth(), Services.modState().isCleanScreen(),
+                Services.arbiter().isAutomationStopped());
+    }
+
+    /**
+     * Draws the pill and badges for the given state (also used by the UI preview with a fake job). Allocation-free in
+     * the steady state: the pill re-measures only when the status line was rebuilt.
+     */
+    void renderOverlay(GuiGraphics g, Font font, int sw, boolean clean, boolean stopped) {
+        if (stoppedW < 0) {
+            stoppedW = font.width(STOPPED);
+            cleanW = font.width(CLEAN);
+        }
+        if (clean) {
             if (cleanBadge) {
-                badge(g, font, CLEAN, sw - font.width(CLEAN) - 6, 4, 0xA0303030, 0xFFB0B0B0);
+                HudPill.badge(g, font, CLEAN, cleanW, sw - HudPill.badgeWidth(cleanW) - 6, 6, false);
             }
             return;
         }
-        int y = 4;
+        int y = 6;
         if (enabled && !line.isEmpty()) {
-            if (textWidth < 0) {
-                textWidth = font.width(line.text());
-            }
-            int w = Math.min(textWidth, sw - 16);
+            pill.layout(font, line, sw - 16);
+            int w = pill.width();
             int x = switch (position) {
                 case TOP_LEFT -> 6;
                 case TOP_RIGHT -> sw - w - 6;
                 default -> (sw - w) / 2;
             };
-            g.fill(x - 4, y - 2, x + w + 4, y + 10, 0xA0000000);
-            g.fill(x - 4, y - 2, x - 3, y + 10, 0xFF55AAFF);
-            g.drawString(font, line.text(), x, y, 0xFFFFFFFF, false);
-            y += 15;
+            pill.render(g, font, x, y);
+            y += HudPill.H + 4;
         }
-        if (stoppedBadge && Services.arbiter().isAutomationStopped()) {
-            int w = font.width(STOPPED);
+        if (stoppedBadge && stopped) {
+            int w = HudPill.badgeWidth(stoppedW);
             int x = position == Position.TOP_RIGHT ? sw - w - 6 : position == Position.TOP_LEFT ? 6 : (sw - w) / 2;
-            badge(g, font, STOPPED, x, y, 0xA0401010, 0xFFFF7070);
+            HudPill.badge(g, font, STOPPED, stoppedW, x, y, true);
         }
     }
 
-    private static void badge(GuiGraphics g, Font font, String text, int x, int y, int bg, int fg) {
-        g.fill(x - 3, y - 2, x + font.width(text) + 3, y + 10, bg);
-        g.drawString(font, text, x, y, fg, false);
+    /** The status line driving the pill (preview harness feeds it a fake snapshot). */
+    HudStatusLine line() {
+        return line;
     }
 
     // ---- settings ---------------------------------------------------------------------------------------------------
