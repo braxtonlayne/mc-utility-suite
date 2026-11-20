@@ -89,3 +89,29 @@ shared with the Latency Simulator), same as today.
       "Tool durability < 10 → pause and mend/swap", "Health < 6 hearts → retreat / pause job".
 - [ ] Spotlight-style top bar: typing a word ("water", "mace") filters and highlights matching settings across all
       tabs; typing a goal verb (gather, craft, go) runs a goal.
+
+## Next session, first: UI restyle to the three-column layout (user request 2026-11-20 18:00)
+
+Reference screenshot: `docs/ui/reference/style-target.webp`. Copy its layout and look only (not its feature set).
+
+- **Window:** large centered panel (~75% of the screen width), near-black (#141416-ish) with 1 px #2A2A2E hairline borders,
+  square or 4 px corners, uppercase bold title top-left ("UTILITY SUITE") with a small version chip, and icon buttons
+  top-right (settings, profile, close). Small, dense, crisp text; muted grey secondary text; white primary.
+- **Column 1, category sidebar (~150 px):** icon + label rows (Jobs, World, Travel, Combat, Tools, plus HUD, Profiles,
+  Keybinds, Rules), a count badge on the right showing how many modules in that category are on, active row
+  highlighted with a lighter fill; a divider then secondary groups (Profiles >, Binds >, Overlays >).
+- **Column 2, module list (~230 px):** search field at the top ("Search modules, settings…" + magnifier), a PRESET
+  segmented control (e.g. Off / Light / Balanced / Full, or the visual presets) with "none applied" status, then
+  small sub-group captions (dim uppercase) and one row per module: a tag chip on the left (e.g. "AUTO"/"ASSIST"/
+  "VISUAL", or a risk chip), name, kebab menu at the right; the selected module row highlighted; enabled modules in
+  white, disabled in grey.
+- **Column 3, detail panel:** module name + enable switch at the top right, a one-paragraph description in grey,
+  "SETTINGS" caption, then compact rows: label left; control right-aligned (small pill dropdown for enums, tiny
+  switch for booleans, full-width thin slider with value text at the right for numbers, range sliders "40 ↔ 80" for
+  min/max pairs, "0 selected >" pickers for lists). Collapsible sub-sections (e.g. TARGETS / TYPES).
+- **Search:** filters modules and settings across all categories and highlights matches (merges with the
+  Spotlight-style top bar idea above).
+- **HUD Studio side panel** (later): a library of HUD elements (minimap, info strip, armor status, clock, active-modules
+  list), each with a preview card, on/off and a favourite star; tabs Library / Layouts / Style; "Place overlays" enters
+  the drag/resize HUD edit mode (built for the minimap tonight).
+- Keep the existing generic SettingSpec → widget mapping; this is a new renderer for the same data. Keep the HUD pill.
