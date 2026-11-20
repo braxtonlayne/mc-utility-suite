@@ -24,6 +24,7 @@ public final class SchematicBootstrap {
         SchematicLibrary library = new SchematicLibrary(FMLPaths.GAMEDIR.get());
         toolkit = new SchematicToolkit(library);
         Services.modules().register(toolkit);
+        com.utilitysuite.jobs.goal.GoalEngine.registerBuildHandler(new SchematicBuildBridge(toolkit));
         NeoForge.EVENT_BUS.addListener(SchematicBootstrap::onRenderLevel);
     }
 

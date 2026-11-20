@@ -86,6 +86,7 @@ final class SchematicProject {
 
     Phase phase() { return phase; }
     boolean isPaused() { return paused; }
+    boolean gatherSubmitted() { return gatherSubmitted; }
     void setPaused(boolean paused) { this.paused = paused; }
     SchematicVolume volume() { return volume; }
     PlacementScan scan() { return scan; }

@@ -237,6 +237,12 @@ public final class SchematicToolkit implements IModule, IConfigurable {
         return library;
     }
 
+    /** True once a gather-only job has handed its missing materials to the goal engine. */
+    public boolean gatherSubmitted() {
+        SchematicProject p = project;
+        return p != null && p.gatherSubmitted();
+    }
+
     public SchematicSettings currentSettings() {
         return settings;
     }
