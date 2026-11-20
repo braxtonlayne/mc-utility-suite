@@ -12,14 +12,14 @@ public record SchematicSettings(boolean buildAssist, boolean silentRotation, int
                                 double placementDelayTicks, int scanBudget, int rescanTicks, boolean ghostPreview,
                                 int ghostDistance, boolean anyPlanksWhenHidden, boolean deepslateAsStone,
                                 String scaffoldItem, String strictItems, int projectChests, int layersPerPhase,
-                                int swapSlot, boolean autoNavigate) {
+                                int swapSlot, boolean autoNavigate, boolean walkToReach) {
 
     public static final String GROUP_ASSIST = "Build Assist";
     public static final String GROUP_PREVIEW = "Preview";
     public static final String GROUP_MATERIALS = "Materials";
 
     public static final SchematicSettings DEFAULTS = new SchematicSettings(true, false, 4, 20, 4.0, 2048, 100, true,
-            48, true, false, "minecraft:dirt", "", 2, 4, 8, true);
+            48, true, false, "minecraft:dirt", "", 2, 4, 8, true, true);
 
     public static List<SettingSpec> specs() {
         SchematicSettings d = DEFAULTS;
@@ -38,6 +38,8 @@ public record SchematicSettings(boolean buildAssist, boolean silentRotation, int
                         "Hotbar slot used when a block has to be pulled from the main inventory").asAdvanced(),
                 SettingSpec.bool("autoNavigate", "Walk to the site", d.autoNavigate, GROUP_ASSIST,
                         "Ask the navigator to path to a distant build site"),
+                SettingSpec.bool("walkToReach", "Walk to reach blocks", d.walkToReach, GROUP_ASSIST,
+                        "When no missing block can be placed from where you stand, walk to a spot that reaches one"),
                 SettingSpec.text("scaffoldItem", "Scaffold block", d.scaffoldItem, GROUP_ASSIST,
                         "Temporary support block, removed at the end"),
                 SettingSpec.bool("ghostPreview", "Ghost preview", d.ghostPreview, GROUP_PREVIEW,
@@ -79,7 +81,8 @@ public record SchematicSettings(boolean buildAssist, boolean silentRotation, int
                 clamp(p.getInt(id, "projectChests", d.projectChests), 0, 32),
                 clamp(p.getInt(id, "layersPerPhase", d.layersPerPhase), 1, 64),
                 clamp(p.getInt(id, "swapSlot", d.swapSlot + 1), 1, 9) - 1,
-                p.getBool(id, "autoNavigate", d.autoNavigate));
+                p.getBool(id, "autoNavigate", d.autoNavigate),
+                p.getBool(id, "walkToReach", d.walkToReach));
     }
 
     /** The substitution rules these settings describe. */

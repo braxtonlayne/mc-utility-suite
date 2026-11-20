@@ -5,14 +5,18 @@ import com.utilitysuite.core.api.ControlLease;
 import com.utilitysuite.core.api.ControlPriority;
 import com.utilitysuite.core.api.IContainerClicker;
 import com.utilitysuite.core.api.IInputSmoother;
+import com.utilitysuite.core.api.INavigator;
 import com.utilitysuite.core.api.LeaseEndReason;
 import com.utilitysuite.core.api.LeaseListener;
 import com.utilitysuite.core.api.LeaseRequest;
+import com.utilitysuite.core.api.NavigationRun;
 import com.utilitysuite.core.api.RotationTarget;
 import com.utilitysuite.core.api.Services;
 import com.utilitysuite.core.api.SimKey;
 import com.utilitysuite.jobs.schematic.model.SchematicVolume;
 import com.utilitysuite.jobs.schematic.plan.BuildPlan;
+import com.utilitysuite.jobs.schematic.walk.ReachWalker;
+import com.utilitysuite.jobs.schematic.walk.StandingSpotFinder;
 import com.utilitysuite.jobs.schematic.world.PlacementScan;
 import com.utilitysuite.jobs.schematic.world.PlacementStatus;
 import net.minecraft.client.Minecraft;
@@ -27,6 +31,7 @@ import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 
+import java.util.BitSet;
 import java.util.EnumSet;
 import java.util.Optional;
 
@@ -100,10 +105,42 @@ public final class BuildAssist implements LeaseListener {
     private final java.util.BitSet blockedCells = new java.util.BitSet();
     private long blockedFrom = Long.MIN_VALUE;
 
+    // "Walk to reach blocks": after WALK_STALL_TICKS with nothing placeable from here, walk to a standing spot.
+    private static final int WALK_STALL_TICKS = 40;
+    private static final int WALK_UNREACHABLE_TICKS = 1200;
+    private final String walkOwnerId;
+    private final ReachWalker walker = new ReachWalker(WALK_STALL_TICKS, WALK_UNREACHABLE_TICKS);
+    private final StandingSpotFinder spotFinder = new StandingSpotFinder(4);
+    private final ReachWalker.Host walkHost = new WalkHost();
+    private boolean walkToReach = true;
+    private boolean stalledLastTick;
+    private LocalPlayer walkPlayer;
+
     public BuildAssist(String ownerId) {
+        this(ownerId, ownerId + ".walk");
+    }
+
+    /**
+     * @param walkOwnerId lease owner of the "walk to reach" runs; must differ from {@code ownerId} so the walk lease
+     *                    and Build Assist's own lease never replace each other
+     */
+    public BuildAssist(String ownerId, String walkOwnerId) {
         this.ownerId = ownerId;
+        this.walkOwnerId = walkOwnerId;
         this.leaseRequest = new LeaseRequest(ownerId, ControlPriority.GOAL,
                 EnumSet.of(ControlChannel.WORLD_INTERACT, ControlChannel.CAMERA, ControlChannel.HOTBAR), 0, this);
+    }
+
+    /** "Walk to reach blocks" setting. Turning it off cancels a walk in progress. */
+    public void setWalkToReach(boolean on) {
+        if (walkToReach && !on) {
+            walker.reset();
+        }
+        walkToReach = on;
+    }
+
+    public ReachWalker.Phase walkPhase() {
+        return walkToReach ? walker.phase() : ReachWalker.Phase.IDLE;
     }
 
     public void configure(boolean silent, int maxPerWindow, int windowTicks, double meanDelayTicks, int swapSlot) {
@@ -127,7 +164,9 @@ public final class BuildAssist implements LeaseListener {
         if (!sameProject) {
             placements = 0;
             blockedCells.clear(); // cell indices belong to the scan; a refreshed plan for the same scan keeps them
+            walker.reset();
         }
+        stalledLastTick = false;
         clearTarget();
     }
 
@@ -145,11 +184,14 @@ public final class BuildAssist implements LeaseListener {
     }
 
     public boolean isActive() {
-        return lease != null && lease.isActive();
+        return (lease != null && lease.isActive()) || walker.isWalking();
     }
 
-    /** Drops the plan and the lease (Stop-All, cancel, world unload). */
+    /** Drops the plan and the lease (Stop-All, cancel, world unload); cancels a walk in progress. */
     public void stop() {
+        walker.reset();
+        stalledLastTick = false;
+        walkPlayer = null;
         releaseLease();
         plan = null;
         scan = null;
@@ -188,11 +230,25 @@ public final class BuildAssist implements LeaseListener {
             releaseLease();
             return;
         }
-        if (!blockedCells.isEmpty() && player.blockPosition().asLong() != blockedFrom) {
+        long here = player.blockPosition().asLong();
+        if (!blockedCells.isEmpty() && here != blockedFrom) {
             blockedCells.clear(); // the player moved: hidden faces may be visible now
+        }
+        if (walkToReach) {
+            // The walker releases this module's lease before it starts a walk, and Build Assist stays hands-off
+            // while the walk runs, so the two leases are never held together.
+            walkPlayer = player;
+            boolean walking = walker.tick(stalledLastTick && !pausedByPreemption, here, walkHost);
+            walkPlayer = null;
+            if (walking) {
+                stalledLastTick = false;
+                idleTicks = 0;
+                return;
+            }
         }
         double reach = player.blockInteractionRange();
         if (!nearSite(player, reach + 6)) {
+            stalledLastTick = false;
             idleTicks = 0;
             releaseLease();
             clearTarget();
@@ -214,11 +270,13 @@ public final class BuildAssist implements LeaseListener {
             return;
         }
         if (targetStep < 0 && !selectTarget(player, reach)) {
+            stalledLastTick = true;
             if (++idleTicks > IDLE_RELEASE_TICKS) {
                 releaseLease();
             }
             return;
         }
+        stalledLastTick = false;
         idleTicks = 0;
         if (!ensureLease()) {
             return;
@@ -536,6 +594,80 @@ public final class BuildAssist implements LeaseListener {
         boolean onTarget = hr instanceof BlockHitResult bhr && hr.getType() == HitResult.Type.BLOCK
                 && bhr.getBlockPos().equals(cursorPos.set(targetX, targetY, targetZ));
         input.setKeyHeld(lease, SimKey.ATTACK, onTarget);
+    }
+
+    // ---- walk to reach blocks -----------------------------------------------------------------------------------
+
+    /** World side of {@link ReachWalker}; only called from {@link #tick} (once per stall, not per idle tick). */
+    private final class WalkHost implements ReachWalker.Host {
+
+        @Override
+        public boolean navigatorAvailable() {
+            INavigator nav = Services.navigatorOrNull();
+            return nav != null && nav.isAvailable();
+        }
+
+        @Override
+        public int nearestStalledCell(BitSet skip) {
+            LocalPlayer p = walkPlayer;
+            if (p == null || plan == null) {
+                return -1;
+            }
+            Inventory inv = p.getInventory();
+            int end = Math.min(plan.size(), firstOpen + LOOKAHEAD);
+            int best = -1;
+            double bestD = Double.MAX_VALUE;
+            for (int step = firstOpen; step < end; step++) {
+                byte kind = plan.kind(step);
+                int cell = plan.cell(step);
+                if (kind == BuildPlan.REMOVE_SCAFFOLD || skip.get(cell) || isStepDone(step)) {
+                    continue; // isStepDone also sets the target coordinates
+                }
+                if (scan.status(cell) == PlacementStatus.WRONG || findSupportFace() < 0) {
+                    continue;
+                }
+                Item need = kind == BuildPlan.SCAFFOLD ? scaffoldItem : items[scan.volume().paletteIndex(cell)];
+                if (need == null || findItem(inv, need, 0, 36) < 0) {
+                    continue;
+                }
+                double dx = targetX + 0.5 - p.getX(), dy = targetY + 0.5 - p.getEyeY(), dz = targetZ + 0.5 - p.getZ();
+                double d = dx * dx + dy * dy + dz * dz;
+                if (d < bestD) {
+                    bestD = d;
+                    best = cell;
+                }
+            }
+            clearTarget();
+            return best;
+        }
+
+        @Override
+        public int standingSpots(int cell, long[] out) {
+            LocalPlayer p = walkPlayer;
+            if (p == null || scan == null) {
+                return 0;
+            }
+            setTargetCoords(cell);
+            int n = spotFinder.find(probe, scan.volume(), scan.originX(), scan.originY(), scan.originZ(),
+                    targetX, targetY, targetZ, p.getX(), p.getY(), p.getZ(), p.blockInteractionRange(), out);
+            clearTarget();
+            return n;
+        }
+
+        @Override
+        public void releaseOwnLease() {
+            releaseLease();
+            clearTarget();
+        }
+
+        @Override
+        public Optional<NavigationRun> startWalk(int x, int y, int z) {
+            INavigator nav = Services.navigatorOrNull();
+            if (nav == null || !nav.isAvailable()) {
+                return Optional.empty();
+            }
+            return nav.goToLeased(walkOwnerId, ControlPriority.GOAL, x, y, z, 0);
+        }
     }
 
     private void clearTarget() {

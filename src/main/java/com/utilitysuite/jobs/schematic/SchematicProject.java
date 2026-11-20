@@ -37,7 +37,7 @@ final class SchematicProject {
 
     private static final Logger LOG = LoggerFactory.getLogger("utilitysuite/schematic");
     /** Lease owner of the walk to a distant build site. */
-    static final String WALK_OWNER = SchematicToolkit.ID + ".walk";
+    public static final String WALK_OWNER = SchematicToolkit.ID + ".walk";
 
     enum Phase { LOADING, SCANNING, READY, COMPLETE, FAILED }
 

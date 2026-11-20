@@ -11,6 +11,7 @@ import com.utilitysuite.core.api.SettingSpec;
 import com.utilitysuite.jobs.schematic.mc.BuildAssist;
 import com.utilitysuite.jobs.schematic.mc.GhostPreviewRenderer;
 import com.utilitysuite.jobs.schematic.model.SchematicVolume;
+import com.utilitysuite.jobs.schematic.walk.ReachWalker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
 import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
@@ -32,9 +33,13 @@ public final class SchematicToolkit implements IModule, IConfigurable {
     public static final String ID = "schematic_toolkit";
     /** Card note while Build Assist skips blocks it cannot aim at from the player's spot. */
     static final String BLOCKED_NOTE = "Some blocks are hidden behind others from here: move around the build";
+    /** Card notes for "Walk to reach blocks". */
+    static final String WALKING_NOTE = "Walking to a spot that reaches the remaining blocks";
+    static final String WALK_PAUSED_NOTE = "Walk to reach blocks paused by your input: move to let it continue";
+    static final String WALK_UNAVAILABLE_NOTE = "Cannot walk to the remaining blocks without Baritone: move around the build";
 
     private final SchematicLibrary library;
-    private final BuildAssist assist = new BuildAssist(ID);
+    private final BuildAssist assist = new BuildAssist(ID, SchematicProject.WALK_OWNER);
     private boolean enabled = true;
     private SchematicSettings settings = SchematicSettings.DEFAULTS;
     private SchematicProject project;
@@ -97,6 +102,18 @@ public final class SchematicToolkit implements IModule, IConfigurable {
             } else {
                 p.removeNote(BLOCKED_NOTE);
             }
+            ReachWalker.Phase walk = assist.walkPhase();
+            setNote(p, WALKING_NOTE, walk == ReachWalker.Phase.WALKING);
+            setNote(p, WALK_PAUSED_NOTE, walk == ReachWalker.Phase.PAUSED);
+            setNote(p, WALK_UNAVAILABLE_NOTE, walk == ReachWalker.Phase.UNAVAILABLE);
+        }
+    }
+
+    private static void setNote(SchematicProject p, String note, boolean on) {
+        if (on) {
+            p.addNote(note);
+        } else {
+            p.removeNote(note);
         }
     }
 
@@ -147,6 +164,7 @@ public final class SchematicToolkit implements IModule, IConfigurable {
         settings = state == null ? SchematicSettings.DEFAULTS : SchematicSettings.read(state.profile(), ID);
         assist.configure(settings.silentRotation(), settings.placementsPerWindow(), settings.windowTicks(),
                 settings.placementDelayTicks(), settings.swapSlot());
+        assist.setWalkToReach(settings.walkToReach());
     }
 
     private static IModState modState() {
