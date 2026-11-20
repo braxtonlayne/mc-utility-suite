@@ -176,8 +176,9 @@ class OverlayLogicTest {
             idx.rebuildRenderListIfDirty();
         });
         assertEquals(4096, idx.renderCount());
-        // One iterator object per rebuild is fine; one entry object per highlighted block (4096 here) is not.
-        assertTrue(bytes < 2_000 * 64, "rebuild allocated " + bytes + " bytes over 2k rebuilds");
+        // One iterator object per rebuild is fine; one entry object per highlighted block (4096 here, ~65 KB per
+        // rebuild) is not. The 256 B/rebuild bound leaves room for JIT warm-up noise (one run measured 88 B).
+        assertTrue(bytes < 2_000 * 256, "rebuild allocated " + bytes + " bytes over 2k rebuilds");
     }
     @Test
     void caveCellsPackOneSectionIntoALong() {

@@ -41,7 +41,11 @@ public final class WorldTab {
     }
 
     public static void build(Panel p) {
-        knowledge(p);
+        // Overlay vs routing data sources are edited in the World Knowledge module card below (its settings), so the
+        // separate selector card is shown only when that module is missing.
+        if (Services.modules().byId("world_knowledge").isEmpty()) {
+            knowledge(p);
+        }
         waypoints(p);
         List<IModule> mods = Services.modules().byCategory(ModuleCategory.WORLD);
         p.section("World modules");
