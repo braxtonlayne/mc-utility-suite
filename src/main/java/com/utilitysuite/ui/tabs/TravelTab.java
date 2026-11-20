@@ -1,0 +1,81 @@
+package com.utilitysuite.ui.tabs;
+
+import com.utilitysuite.core.api.IModule;
+import com.utilitysuite.core.api.ModuleCategory;
+import com.utilitysuite.core.api.Services;
+import com.utilitysuite.travel.autopilot.TravelAutopilot;
+import com.utilitysuite.travel.bridge.BridgeAssist;
+import com.utilitysuite.ui.ModulePanels;
+import com.utilitysuite.ui.Panel;
+import com.utilitysuite.ui.SettingsRenderer;
+
+import java.util.List;
+
+/**
+ * Travel tab: TerrainAssist, TravelAutopilot (destination entry: coordinates or a waypoint name, mode in its settings,
+ * Start/Stop) and BridgeAssist (Start/Stop), each with its toggle and settings. The custom rows are registered as
+ * {@link ModulePanels} by {@link #registerPanels()}.
+ */
+public final class TravelTab {
+
+    private static final String K_DEST = "travel.dest";
+
+    private TravelTab() {
+    }
+
+    public static String signature() {
+        StringBuilder sb = new StringBuilder();
+        Services.modules().find(TravelAutopilot.class).ifPresent(a -> sb.append(a.isRunning()).append(a.runName()));
+        Services.modules().find(BridgeAssist.class).ifPresent(b -> sb.append('/').append(b.isRunning()));
+        return sb.toString();
+    }
+
+    public static void build(Panel p) {
+        List<IModule> mods = Services.modules().byCategory(ModuleCategory.TRAVEL);
+        if (mods.isEmpty()) {
+            p.text("No travel modules are installed.", Panel.GRAY);
+        }
+        for (IModule m : mods) {
+            SettingsRenderer.module(p, m);
+        }
+    }
+
+    /** Custom rows for the autopilot and bridge assist. */
+    public static void registerPanels() {
+        ModulePanels.register(TravelAutopilot.ID, (p, m) -> {
+            if (!(m instanceof TravelAutopilot a)) {
+                return;
+            }
+            int w = p.width();
+            p.textField(K_DEST, "x y z, x z or waypoint name (stops: a > b)", 0, w - 128);
+            boolean running = a.isRunning();
+            p.button(running ? "Stop" : "Start", w - 124, 124, b -> {
+                if (a.isRunning()) {
+                    a.stop();
+                } else {
+                    String dest = p.state(K_DEST, "").trim();
+                    boolean ok = dest.isEmpty() ? a.start() : a.start(dest);
+                    if (!ok) {
+                        p.toast("Autopilot did not start (see the message above the hotbar)");
+                    }
+                }
+                p.rebuild();
+            });
+            p.nextRow();
+            p.dynamic(() -> a.isRunning() ? "Running: " + a.runName().toLowerCase(java.util.Locale.ROOT) : "Idle",
+                    a.isRunning() ? Panel.GREEN : Panel.GRAY);
+        });
+        ModulePanels.register(BridgeAssist.ID, (p, m) -> {
+            if (!(m instanceof BridgeAssist b)) {
+                return;
+            }
+            boolean running = b.isRunning();
+            p.button(running ? "Stop bridging" : "Start bridging", 0, 140, btn -> {
+                b.toggle();
+                p.rebuild();
+            });
+            p.button("Mark point", "Marks the current block as a line point (MARKED mode)", 144, 100, btn -> b.mark());
+            p.nextRow();
+        });
+    }
+}

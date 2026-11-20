@@ -31,7 +31,7 @@ public final class UtilitySuiteMod {
         // WorldBootstrap.init(modBus);
         TravelBootstrap.init(modBus);
         CombatBootstrap.init(modBus);
-        // ToolsBootstrap.init(modBus);
-        // UiBootstrap.init(modBus);   // sets KeybindManager.setOpenMenuHandler(...)
+        com.utilitysuite.tools.ToolsBootstrap.init(modBus);
+        com.utilitysuite.ui.UiBootstrap.init(modBus);
     }
 }
