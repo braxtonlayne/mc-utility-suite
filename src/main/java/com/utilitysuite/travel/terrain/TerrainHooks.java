@@ -5,11 +5,18 @@ import com.utilitysuite.core.api.Services;
 import com.utilitysuite.core.api.SuiteEvent;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.MoverType;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.level.block.LiquidBlock;
 import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.phys.shapes.CollisionContext;
+import net.minecraft.world.phys.shapes.EntityCollisionContext;
+import net.minecraft.world.phys.shapes.Shapes;
+import net.minecraft.world.phys.shapes.VoxelShape;
 
 /**
  * Static entry points for the travel mixins (mixin classes stay tiny and logic-free). Each method returns the
@@ -48,6 +55,22 @@ public final class TerrainHooks {
         }
         TerrainAssist a = assist;
         return a != null && a.standsOnFluid(self, fluid);
+    }
+
+    /**
+     * LiquidBlockSolidSurfaceMixin: vanilla's half-height fluid top for an entity that stands on fluid becomes a full
+     * block for the local player while their feet are above it (SOLID_COLLISION stands on the surface, not half in it).
+     * Only reached when {@link #standOnFluid} already said yes for this player; constant shapes, no allocation.
+     */
+    public static VoxelShape fluidSurfaceShape(VoxelShape original, BlockPos pos, CollisionContext context) {
+        if (original != LiquidBlock.STABLE_SHAPE || !(context instanceof EntityCollisionContext ec)) {
+            return original;
+        }
+        Entity e = ec.getEntity();
+        if (e == null || e != Minecraft.getInstance().player) {
+            return original;
+        }
+        return context.isAbove(Shapes.block(), pos, true) ? Shapes.block() : original;
     }
 
     /**

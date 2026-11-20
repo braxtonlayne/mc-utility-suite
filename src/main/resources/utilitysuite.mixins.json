@@ -9,6 +9,7 @@
     "combat.ClientPacketListenerDamageMixin",
     "travel.ClientPacketListenerCorrectionMixin",
     "travel.LivingEntityFluidSurfaceMixin",
+    "travel.LiquidBlockSolidSurfaceMixin",
     "travel.PlayerSafeWalkMixin",
     "world.BlockFaceHidingMixin",
     "world.ClientLevelBlockUpdateMixin",
