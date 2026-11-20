@@ -48,3 +48,4 @@ logs/
 
 ### Agent worktrees ###
 .claude/worktrees/
+run-*.log

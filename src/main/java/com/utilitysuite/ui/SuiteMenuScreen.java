@@ -181,6 +181,11 @@ public final class SuiteMenuScreen extends Screen {
         return tab;
     }
 
+    /** Read-only view of the current tab's content nodes (for the dev playtest harness and UI preview). */
+    public List<UiNode> contentNodes() {
+        return java.util.Collections.unmodifiableList(nodes);
+    }
+
     /** Switches to a tab (also used by the UI preview / playtest harness). */
     public void selectTab(Tab t) {
         if (t == null || t == tab) {

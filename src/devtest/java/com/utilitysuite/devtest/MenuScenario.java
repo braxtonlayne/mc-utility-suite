@@ -3,9 +3,8 @@ package com.utilitysuite.devtest;
 import com.utilitysuite.core.api.Services;
 import com.utilitysuite.ui.SuiteMenuScreen;
 import com.utilitysuite.ui.UiBootstrap;
-import net.minecraft.client.gui.components.AbstractWidget;
-import net.minecraft.client.gui.components.Button;
-import net.minecraft.client.gui.components.CycleButton;
+import com.utilitysuite.ui.kit.ToggleSwitch;
+import com.utilitysuite.ui.kit.UiNode;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.ArrayList;
@@ -40,26 +39,15 @@ final class MenuScenario {
             String label = tab.name().charAt(0) + tab.name().substring(1).toLowerCase();
             s.run("switch to " + label, () -> {
                 SuiteMenuScreen m = menu();
-                if (m.tab() != tab) {
-                    Button b = H.buttonByText(m, label);
-                    if (b == null) {
-                        throw new IllegalStateException("no tab button " + label);
-                    }
-                    b.onPress();
-                }
+                m.selectTab(tab);
             });
             s.waitTicks(8);
             s.run("check " + label, () -> {
                 SuiteMenuScreen m = menu();
-                List<AbstractWidget> ws = H.widgets(m);
-                int toggles = 0;
-                for (AbstractWidget w : ws) {
-                    if (w instanceof CycleButton<?>) {
-                        toggles++;
-                    }
-                }
+                List<UiNode> ws = m.contentNodes();
+                int toggles = toggles(m).size();
                 s.check("tab " + label + " builds and renders", m.tab() == tab && ws.size() > 6,
-                        "tab=" + m.tab() + ", " + ws.size() + " widgets (" + toggles + " toggles)");
+                        "tab=" + m.tab() + ", " + ws.size() + " nodes (" + toggles + " toggles)");
                 java.nio.file.Path png = Harness.dir().resolve("menu-" + label.toLowerCase() + ".png");
                 java.nio.file.Files.createDirectories(png.getParent());
                 try (com.mojang.blaze3d.platform.NativeImage img = net.minecraft.client.Screenshot.takeScreenshot(
@@ -74,12 +62,11 @@ final class MenuScenario {
             }
         }
         s.run("close menu", () -> {
-            Button done = H.buttonByText(menu(), "Done");
-            done.onPress();
+            menu().onClose();
         });
         s.waitTicks(3);
         s.run("menu closed + HUD idle", () -> {
-            s.check("Done closes the menu", H.mc().screen == null, "screen=" + name(H.mc().screen));
+            s.check("closing returns to the game", H.mc().screen == null, "screen=" + name(H.mc().screen));
             String text = UiBootstrap.hud().text();
             CountingGraphics g = CountingGraphics.render(UiBootstrap.hud());
             s.check("HUD draws nothing when idle", text.isEmpty() && g.calls() == 0,
@@ -107,7 +94,7 @@ final class MenuScenario {
         int[] index = new int[1];
         s.run(tabLabel + ": press a toggle", () -> {
             SuiteMenuScreen m = menu();
-            List<CycleButton<?>> toggles = toggles(m);
+            List<ToggleSwitch> toggles = toggles(m);
             if (toggles.isEmpty()) {
                 s.notTested(tabLabel + " toggle round trip", "no toggle widgets on the tab");
                 index[0] = -1;
@@ -115,10 +102,10 @@ final class MenuScenario {
             }
             // Pick a toggle that is not a module on/off switch near the top (avoid enabling heavy modules).
             index[0] = Math.min(1, toggles.size() - 1);
-            CycleButton<?> b = toggles.get(index[0]);
-            message[0] = b.getMessage().getString();
+            ToggleSwitch b = toggles.get(index[0]);
+            message[0] = "#" + index[0] + (b.tooltipText() == null ? "" : " " + b.tooltipText());
             before[0] = Services.modState().profile().root().toString();
-            b.onPress();
+            b.set(!b.value(), true);
         });
         s.waitTicks(3);
         s.run(tabLabel + ": verify + press back", () -> {
@@ -128,9 +115,10 @@ final class MenuScenario {
             String after = Services.modState().profile().root().toString();
             s.check(tabLabel + " toggle '" + message[0] + "' lands in the profile", !after.equals(before[0]),
                     diff(before[0], after));
-            List<CycleButton<?>> toggles = toggles(menu());
+            List<ToggleSwitch> toggles = toggles(menu());
             if (index[0] < toggles.size()) {
-                toggles.get(index[0]).onPress();
+                ToggleSwitch b = toggles.get(index[0]);
+                b.set(!b.value(), true);
             }
         });
         s.waitTicks(3);
@@ -182,12 +170,11 @@ final class MenuScenario {
         return out.isEmpty() ? "no change" : String.join("; ", out);
     }
 
-    private static List<CycleButton<?>> toggles(SuiteMenuScreen m) {
-        List<CycleButton<?>> out = new ArrayList<>();
-        for (AbstractWidget w : H.widgets(m)) {
-            // Boolean toggles only: pressing twice must restore them (an enum cycle may have 3+ values).
-            if (w instanceof CycleButton<?> c && c.visible && c.getValue() instanceof Boolean) {
-                out.add(c);
+    private static List<ToggleSwitch> toggles(SuiteMenuScreen m) {
+        List<ToggleSwitch> out = new ArrayList<>();
+        for (UiNode n : m.contentNodes()) {
+            if (n instanceof ToggleSwitch t) {
+                out.add(t);
             }
         }
         return out;
