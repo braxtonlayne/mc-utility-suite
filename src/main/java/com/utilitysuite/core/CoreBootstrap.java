@@ -1,0 +1,192 @@
+package com.utilitysuite.core;
+
+import com.utilitysuite.UtilitySuiteMod;
+import com.utilitysuite.core.api.ProfileConfig;
+import com.utilitysuite.core.api.Services;
+import com.utilitysuite.core.arbiter.ActionArbiter;
+import com.utilitysuite.core.config.ConfigStore;
+import com.utilitysuite.core.config.ModState;
+import com.utilitysuite.core.config.ProfileIds;
+import com.utilitysuite.core.input.InputSmoother;
+import com.utilitysuite.core.input.KeybindManager;
+import com.utilitysuite.core.input.ManualInputHooks;
+import com.utilitysuite.core.input.MinecraftInputBackend;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.multiplayer.ServerData;
+import net.minecraft.client.server.IntegratedServer;
+import net.minecraft.network.chat.Component;
+import net.minecraft.world.level.storage.LevelResource;
+import net.neoforged.bus.api.IEventBus;
+import net.neoforged.fml.loading.FMLPaths;
+import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent;
+import net.neoforged.neoforge.client.event.ClientTickEvent;
+import net.neoforged.neoforge.client.event.InputEvent;
+import net.neoforged.neoforge.client.event.RenderFrameEvent;
+import net.neoforged.neoforge.common.NeoForge;
+
+import java.nio.file.Path;
+import java.util.Random;
+
+/**
+ * Creates the core services, registers them in {@link Services} and subscribes the core's event handlers. Called first
+ * from {@link UtilitySuiteMod}; feature bootstraps run after it and can rely on every core service being registered.
+ *
+ * <h2>Per-tick order</h2>
+ * <ul>
+ *   <li>Pre: smoother re-asserts held keys and expires taps; mouse-look accumulation window restarts.</li>
+ *   <li>Post: key bindings dispatch, arbiter (timeouts, override pauses), enabled modules, smoother (container click,
+ *       silent rotation), config save debounce.</li>
+ *   <li>Every frame: VISIBLE camera rotation.</li>
+ * </ul>
+ */
+public final class CoreBootstrap {
+
+    private static SuiteEventBus events;
+    private static ModuleRegistry modules;
+    private static ActionArbiter arbiter;
+    private static InputSmoother smoother;
+    private static ConfigStore configStore;
+    private static ModState modState;
+    private static ManualInputHooks manualInput;
+    private static long lastFrameNanos;
+
+    private CoreBootstrap() {
+    }
+
+    public static void init(IEventBus modBus) {
+        events = new SuiteEventBus();
+        Services.registerEvents(events);
+
+        modules = new ModuleRegistry();
+        Services.registerModules(modules);
+
+        smoother = new InputSmoother(new MinecraftInputBackend(), new Random());
+        Services.registerInput(smoother);
+        Services.registerClicker(smoother);
+
+        arbiter = new ActionArbiter();
+        arbiter.bind(smoother, modules, events);
+        Services.registerArbiter(arbiter);
+
+        manualInput = new ManualInputHooks(arbiter, smoother);
+
+        configStore = new ConfigStore(FMLPaths.CONFIGDIR.get().resolve(UtilitySuiteMod.MOD_ID));
+        modState = new ModState(configStore, arbiter, modules);
+        modState.setCoreSettingsListener(CoreBootstrap::applyCoreSettings);
+        Services.registerModState(modState);
+        modState.loadGlobal();
+
+        modBus.addListener(KeybindManager::onRegisterKeyMappings);
+        KeybindManager.onPressed(KeybindManager.KeyId.STOP_ALL, CoreBootstrap::stopAllFromKey);
+        KeybindManager.onPressed(KeybindManager.KeyId.CLEAN_SCREEN,
+                () -> modState.setCleanScreen(!modState.isCleanScreen()));
+
+        IEventBus bus = NeoForge.EVENT_BUS;
+        bus.addListener(CoreBootstrap::onTickPre);
+        bus.addListener(CoreBootstrap::onTickPost);
+        bus.addListener(CoreBootstrap::onFrame);
+        bus.addListener(CoreBootstrap::onLogin);
+        bus.addListener(CoreBootstrap::onLogout);
+        bus.addListener(manualInput::onKey);
+        bus.addListener(manualInput::onMouseButton);
+        bus.addListener(manualInput::onScroll);
+    }
+
+    /** Re-reads the core settings from {@code global.json} (also after the UI changes one). */
+    public static void applyCoreSettings() {
+        ProfileConfig g = modState.global();
+        arbiter.setManualOverridePauseTicks(g.getInt(ModState.CORE, ModState.KEY_OVERRIDE_PAUSE_TICKS, 20));
+        manualInput.setMouseThresholdPx(g.getDouble(ModState.CORE, ModState.KEY_MOUSE_THRESHOLD_PX, 6.0));
+        smoother.curve().setBaseSpeed(g.getDouble(ModState.CORE, ModState.KEY_CAMERA_SPEED, 240.0));
+    }
+
+    private static void stopAllFromKey() {
+        arbiter.stopAll("Stop-All key");
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.player != null && !modState.isCleanScreen()) {
+            mc.player.displayClientMessage(Component.translatable("message.utilitysuite.stop_all"), true);
+        }
+    }
+
+    // ---- event handlers ---------------------------------------------------------------------------------------------
+
+    private static void onTickPre(ClientTickEvent.Pre event) {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.player == null || mc.level == null) {
+            return;
+        }
+        manualInput.beginTick();
+        smoother.preTick();
+    }
+
+    private static void onTickPost(ClientTickEvent.Post event) {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.player != null && mc.level != null) {
+            KeybindManager.tick();
+            arbiter.tick();
+            modules.tick();
+            smoother.postTick();
+        }
+        modState.tick();
+    }
+
+    private static void onFrame(RenderFrameEvent.Pre event) {
+        long now = System.nanoTime();
+        long last = lastFrameNanos;
+        lastFrameNanos = now;
+        Minecraft mc = Minecraft.getInstance();
+        if (last == 0L || mc.player == null || mc.isPaused()) {
+            return;
+        }
+        smoother.onFrame((now - last) * 1.0e-9);
+    }
+
+    private static void onLogin(ClientPlayerNetworkEvent.LoggingIn event) {
+        String id = currentProfileId(Minecraft.getInstance());
+        UtilitySuiteMod.LOGGER.info("Loading profile {}", id);
+        modState.loadProfile(id);
+    }
+
+    private static void onLogout(ClientPlayerNetworkEvent.LoggingOut event) {
+        // Release every simulated key first so nothing stays pressed into the title screen or the next world.
+        arbiter.resetForWorldUnload();
+        smoother.releaseAll();
+        modules.worldUnloaded();
+        if (modState.hasActiveProfile()) {
+            modState.unloadProfile();
+        }
+    }
+
+    static String currentProfileId(Minecraft mc) {
+        IntegratedServer sp = mc.getSingleplayerServer();
+        if (sp != null) {
+            Path root = sp.getWorldPath(LevelResource.ROOT).toAbsolutePath().normalize();
+            Path name = root.getFileName();
+            return ProfileIds.singleplayer(name == null ? null : name.toString());
+        }
+        ServerData server = mc.getCurrentServer();
+        return ProfileIds.multiplayer(server == null ? null : server.ip);
+    }
+
+    // ---- accessors for later bootstraps -----------------------------------------------------------------------------
+
+    public static ModuleRegistry modules() {
+        return modules;
+    }
+
+    public static ActionArbiter arbiter() {
+        return arbiter;
+    }
+
+    public static InputSmoother smoother() {
+        return smoother;
+    }
+
+    public static ModState modState() {
+        return modState;
+    }
+
+    public static ConfigStore configStore() {
+        return configStore;
+    }
+}

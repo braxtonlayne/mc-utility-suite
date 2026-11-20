@@ -1,1 +1,10 @@
-{}
+{
+  "key.categories.utilitysuite": "Utility Suite",
+  "key.utilitysuite.open_menu": "Open Menu",
+  "key.utilitysuite.stop_all": "Stop All Automation",
+  "key.utilitysuite.clean_screen": "Toggle Clean Screen",
+  "key.utilitysuite.toggle_terrain_surface": "Toggle Terrain Assist (Surface)",
+  "key.utilitysuite.toggle_world_overlays": "Toggle World Overlays",
+  "key.utilitysuite.toggle_scout_camera": "Toggle Scout Camera",
+  "message.utilitysuite.stop_all": "Utility Suite: all automation stopped"
+}

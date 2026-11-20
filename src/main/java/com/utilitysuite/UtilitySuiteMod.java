@@ -1,6 +1,7 @@
 package com.utilitysuite;
 
 import com.mojang.logging.LogUtils;
+import com.utilitysuite.core.CoreBootstrap;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.ModContainer;
@@ -19,6 +20,15 @@ public final class UtilitySuiteMod {
 
     public UtilitySuiteMod(IEventBus modBus, ModContainer container) {
         LOGGER.info("Utility Suite loading");
-        // Core and module bootstraps are wired here by later milestones.
+        // Core first: registers every core service in Services (arbiter, input, clicker, modState, modules, events).
+        CoreBootstrap.init(modBus);
+
+        // ---- Feature bootstraps (later milestones) go here, after the core, e.g.: ----
+        // JobsBootstrap.init(modBus);
+        // WorldBootstrap.init(modBus);
+        // TravelBootstrap.init(modBus);
+        // CombatBootstrap.init(modBus);
+        // ToolsBootstrap.init(modBus);
+        // UiBootstrap.init(modBus);   // sets KeybindManager.setOpenMenuHandler(...)
     }
 }

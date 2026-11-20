@@ -1,0 +1,430 @@
+package com.utilitysuite.core.arbiter;
+
+import com.utilitysuite.core.api.ControlChannel;
+import com.utilitysuite.core.api.ControlLease;
+import com.utilitysuite.core.api.ControlPriority;
+import com.utilitysuite.core.api.IActionArbiter;
+import com.utilitysuite.core.api.IInputSmoother;
+import com.utilitysuite.core.api.IModule;
+import com.utilitysuite.core.api.IModuleRegistry;
+import com.utilitysuite.core.api.ISuiteEventBus;
+import com.utilitysuite.core.api.LeaseEndReason;
+import com.utilitysuite.core.api.LeaseRequest;
+import com.utilitysuite.core.api.ManualInput;
+import com.utilitysuite.core.api.SuiteEvent;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
+import java.util.function.LongSupplier;
+
+/**
+ * Single-owner arbitration over {@link ControlChannel}s. Pure Java (no Minecraft classes) so it is unit-testable.
+ * Client thread only.
+ *
+ * <h2>Rules</h2>
+ * <ul>
+ *   <li>Requests are atomic over their channels. A channel is available when it is free, held by a strictly lower
+ *       priority (that whole lease is preempted), or held by the requesting module itself.</li>
+ *   <li><b>Re-request by the same module:</b> a module owns at most one lease. If it requests again while holding one,
+ *       the new request is evaluated as if its own channels were free; when granted, the old lease ends with
+ *       {@link LeaseEndReason#RELEASED} (no {@code onPreempted} callback, its simulated keys are released) and is
+ *       replaced. When refused, the old lease stays untouched.</li>
+ *   <li><b>Resume:</b> a lease that ended by preemption or manual override is remembered. As soon as every channel it
+ *       covered is free and not in a manual-override pause, its listener gets {@code onResumable(formerLease)} (most
+ *       recently suspended first). A callback may request a new lease right away; later candidates are re-checked
+ *       afterwards. Nothing is remembered after Stop-All or a timeout. A granted request clears the module's
+ *       remembered leases.</li>
+ *   <li><b>Manual override:</b> real user input on a channel ends a lease below {@link ControlPriority#EMERGENCY} on
+ *       it ({@link LeaseEndReason#MANUAL_OVERRIDE}, by {@value #BY_MANUAL}) and (re)starts that channel's pause, during
+ *       which non-emergency requests for it are refused.</li>
+ *   <li><b>Stop-All:</b> revokes everything, releases all simulated input, notifies every module and refuses all
+ *       requests until {@link #resumeAutomation()}.</li>
+ * </ul>
+ * The steady-state {@link #tick()} path allocates nothing.
+ */
+public final class ActionArbiter implements IActionArbiter {
+
+    public static final String BY_MANUAL = "manual";
+    public static final String BY_STOP_ALL = "stop_all";
+    public static final String BY_TIMEOUT = "timeout";
+
+    /** Remembered (suspended) leases are capped; the oldest is dropped beyond this. */
+    private static final int MAX_SUSPENDED = 32;
+
+    private static final Logger LOG = LoggerFactory.getLogger("utilitysuite/arbiter");
+    private static final ControlChannel[] CHANNELS = ControlChannel.all();
+
+    private final Lease[] holders = new Lease[CHANNELS.length];
+    private final int[] pauseTicks = new int[CHANNELS.length];
+    /** Leases that lost channels by preemption/manual override, oldest first. */
+    private final ArrayList<Lease> suspended = new ArrayList<>();
+    /** Scratch for preemption victims (at most one per channel). */
+    private final Lease[] victims = new Lease[CHANNELS.length];
+
+    private IInputSmoother input;
+    private IModuleRegistry modules;
+    private ISuiteEventBus events;
+    private LongSupplier clock = System::currentTimeMillis;
+
+    private int manualOverridePauseTicks = 20;
+    private long nextLeaseId = 1;
+    private long tickCounter;
+    private boolean stopped;
+    private boolean inResumeCheck;
+    private boolean resumeCheckAgain;
+
+    /** Wires collaborators; any of them may be null (tests, early startup). */
+    public void bind(IInputSmoother input, IModuleRegistry modules, ISuiteEventBus events) {
+        this.input = input;
+        this.modules = modules;
+        this.events = events;
+    }
+
+    public void setClock(LongSupplier clock) {
+        this.clock = clock;
+    }
+
+    /** Ticks during which non-emergency automation is blocked on a channel after manual input (default 20). */
+    public void setManualOverridePauseTicks(int ticks) {
+        this.manualOverridePauseTicks = Math.max(0, ticks);
+    }
+
+    public int manualOverridePauseTicks() {
+        return manualOverridePauseTicks;
+    }
+
+    // ---- requests ---------------------------------------------------------------------------------------------------
+
+    @Override
+    public Optional<ControlLease> request(LeaseRequest request) {
+        if (stopped) {
+            return Optional.empty();
+        }
+        String moduleId = request.moduleId();
+        ControlPriority priority = request.priority();
+        boolean emergency = priority.level() >= ControlPriority.EMERGENCY.level();
+        int mask = 0;
+        for (ControlChannel c : request.channels()) {
+            int i = c.ordinal();
+            mask |= 1 << i;
+            if (pauseTicks[i] > 0 && !emergency) {
+                return Optional.empty();
+            }
+            Lease h = holders[i];
+            if (h != null && !h.moduleId().equals(moduleId) && !priority.outranks(h.priority())) {
+                return Optional.empty();
+            }
+        }
+
+        // Granted. Replace the module's own lease, wherever it is.
+        for (Lease h : holders) {
+            if (h != null && h.active && h.moduleId().equals(moduleId)) {
+                endLease(h, LeaseEndReason.RELEASED, moduleId);
+            }
+        }
+        // Collect distinct lower-priority victims on the requested channels.
+        int victimCount = 0;
+        for (int i = 0; i < CHANNELS.length; i++) {
+            Lease h = holders[i];
+            if ((mask & (1 << i)) == 0 || h == null) {
+                continue;
+            }
+            boolean seen = false;
+            for (int v = 0; v < victimCount; v++) {
+                if (victims[v] == h) {
+                    seen = true;
+                    break;
+                }
+            }
+            if (!seen) {
+                victims[victimCount++] = h;
+            }
+        }
+        Lease lease = new Lease(this, nextLeaseId++, moduleId, priority, request.channels(), request.timeoutTicks(),
+                request.listener());
+        lease.lastTickStamp = tickCounter;
+        removeSuspendedOf(moduleId);
+        // End victims without callbacks first so the new lease owns the channels before anyone is notified.
+        for (int v = 0; v < victimCount; v++) {
+            Lease victim = victims[v];
+            deactivate(victim, LeaseEndReason.PREEMPTED, moduleId);
+        }
+        for (int i = 0; i < CHANNELS.length; i++) {
+            if ((mask & (1 << i)) != 0) {
+                holders[i] = lease;
+            }
+        }
+        post(new SuiteEvent.LeaseGranted(clock.getAsLong(), lease.id(), moduleId, priority));
+        for (int v = 0; v < victimCount; v++) {
+            Lease victim = victims[v];
+            victims[v] = null;
+            suspend(victim);
+            notifyPreempted(victim, LeaseEndReason.PREEMPTED, moduleId);
+        }
+        // Channels freed by a replaced/preempted lease outside this request may let older leases resume.
+        if (!suspended.isEmpty()) {
+            checkResumable();
+        }
+        return Optional.of(lease);
+    }
+
+    @Override
+    public void release(ControlLease lease) {
+        if (lease instanceof Lease l && l.active) {
+            endLease(l, LeaseEndReason.RELEASED, l.moduleId());
+            checkResumable();
+        }
+    }
+
+    @Override
+    public Optional<ControlLease> holder(ControlChannel channel) {
+        return Optional.ofNullable(holders[channel.ordinal()]);
+    }
+
+    /** Allocation-free variant of {@link #holder}: the holder or null. */
+    public ControlLease holderOrNull(ControlChannel channel) {
+        return holders[channel.ordinal()];
+    }
+
+    @Override
+    public boolean isHeldBy(ControlChannel channel, String moduleId) {
+        Lease h = holders[channel.ordinal()];
+        return h != null && h.moduleId().equals(moduleId);
+    }
+
+    // ---- manual override --------------------------------------------------------------------------------------------
+
+    @Override
+    public void onManualInput(ManualInput input) {
+        ControlChannel channel = channelOf(input);
+        int i = channel.ordinal();
+        if (manualOverridePauseTicks > 0) {
+            pauseTicks[i] = manualOverridePauseTicks;
+        }
+        Lease h = holders[i];
+        if (h != null && ControlPriority.EMERGENCY.outranks(h.priority())) {
+            deactivate(h, LeaseEndReason.MANUAL_OVERRIDE, BY_MANUAL);
+            suspend(h);
+            notifyPreempted(h, LeaseEndReason.MANUAL_OVERRIDE, BY_MANUAL);
+            checkResumable();
+        }
+    }
+
+    public static ControlChannel channelOf(ManualInput input) {
+        return switch (input) {
+            case MOVEMENT_KEY -> ControlChannel.MOVEMENT;
+            case MOUSE_LOOK -> ControlChannel.CAMERA;
+            case ATTACK_OR_USE -> ControlChannel.WORLD_INTERACT;
+            case HOTBAR_SELECT -> ControlChannel.HOTBAR;
+        };
+    }
+
+    @Override
+    public boolean isManualOverrideActive(ControlChannel channel) {
+        return pauseTicks[channel.ordinal()] > 0;
+    }
+
+    // ---- stop-all ---------------------------------------------------------------------------------------------------
+
+    @Override
+    public void stopAll(String reason) {
+        stopped = true;
+        suspended.clear();
+        for (int i = 0; i < CHANNELS.length; i++) {
+            Lease h = holders[i];
+            if (h != null) {
+                endLease(h, LeaseEndReason.STOP_ALL, BY_STOP_ALL);
+            }
+        }
+        if (input != null) {
+            input.releaseAll();
+        }
+        if (modules != null) {
+            List<IModule> all = modules.all();
+            for (int i = 0; i < all.size(); i++) {
+                IModule m = all.get(i);
+                try {
+                    m.onStopAll();
+                } catch (RuntimeException e) {
+                    LOG.error("Module {} failed in onStopAll", m.id(), e);
+                }
+            }
+        }
+        post(new SuiteEvent.StopAll(clock.getAsLong(), reason == null ? "" : reason));
+        LOG.info("Stop-All: {}", reason);
+    }
+
+    @Override
+    public boolean isAutomationStopped() {
+        return stopped;
+    }
+
+    @Override
+    public void resumeAutomation() {
+        stopped = false;
+    }
+
+    /**
+     * World/server left: every lease ends ({@link LeaseEndReason#RELEASED}, modules get {@code onWorldUnload} from the
+     * registry instead of callbacks), pauses and remembered leases are dropped and the stopped state is cleared, so the
+     * next world starts clean. Not part of {@link IActionArbiter}; called by the core.
+     */
+    public void resetForWorldUnload() {
+        suspended.clear();
+        for (int i = 0; i < CHANNELS.length; i++) {
+            Lease h = holders[i];
+            if (h != null) {
+                endLease(h, LeaseEndReason.RELEASED, BY_STOP_ALL);
+            }
+            pauseTicks[i] = 0;
+        }
+        if (input != null) {
+            input.releaseAll();
+        }
+        stopped = false;
+    }
+
+    // ---- tick -------------------------------------------------------------------------------------------------------
+
+    @Override
+    public void tick() {
+        tickCounter++;
+        boolean pauseEnded = false;
+        for (int i = 0; i < CHANNELS.length; i++) {
+            if (pauseTicks[i] > 0 && --pauseTicks[i] == 0) {
+                pauseEnded = true;
+            }
+        }
+        boolean leaseEnded = false;
+        for (int i = 0; i < CHANNELS.length; i++) {
+            Lease h = holders[i];
+            if (h == null || h.timeoutTicks == 0 || h.lastTickStamp == tickCounter) {
+                continue;
+            }
+            h.lastTickStamp = tickCounter;
+            if (--h.ticksLeft <= 0) {
+                endLease(h, LeaseEndReason.TIMED_OUT, BY_TIMEOUT);
+                leaseEnded = true;
+            }
+        }
+        if ((pauseEnded || leaseEnded) && !suspended.isEmpty()) {
+            checkResumable();
+        }
+    }
+
+    /** Number of remembered (resumable) leases, for diagnostics and tests. */
+    public int suspendedCount() {
+        return suspended.size();
+    }
+
+    // ---- internals --------------------------------------------------------------------------------------------------
+
+    /** Ends a lease and notifies its listener when the end was involuntary (not after RELEASED). */
+    private void endLease(Lease lease, LeaseEndReason reason, String by) {
+        if (!lease.active) {
+            return;
+        }
+        deactivate(lease, reason, by);
+        if (reason != LeaseEndReason.RELEASED) {
+            notifyPreempted(lease, reason, by);
+        }
+    }
+
+    /** Marks inactive, frees channels, releases simulated input and posts LeaseEnded. No listener callback. */
+    private void deactivate(Lease lease, LeaseEndReason reason, String by) {
+        lease.active = false;
+        lease.endReason = reason;
+        for (int i = 0; i < CHANNELS.length; i++) {
+            if (holders[i] == lease) {
+                holders[i] = null;
+            }
+        }
+        if (input != null) {
+            input.releaseFor(lease);
+        }
+        post(new SuiteEvent.LeaseEnded(clock.getAsLong(), lease.id(), lease.moduleId(), reason, by));
+    }
+
+    private void notifyPreempted(Lease lease, LeaseEndReason reason, String by) {
+        try {
+            lease.listener.onPreempted(lease, reason, by);
+        } catch (RuntimeException e) {
+            LOG.error("Lease listener of {} failed in onPreempted", lease.moduleId(), e);
+        }
+    }
+
+    private void suspend(Lease lease) {
+        if (stopped) {
+            return;
+        }
+        if (suspended.size() >= MAX_SUSPENDED) {
+            suspended.remove(0);
+        }
+        suspended.add(lease);
+    }
+
+    private void removeSuspendedOf(String moduleId) {
+        for (int i = suspended.size() - 1; i >= 0; i--) {
+            if (suspended.get(i).moduleId().equals(moduleId)) {
+                suspended.remove(i);
+            }
+        }
+    }
+
+    private boolean channelsFree(Lease lease) {
+        for (int i = 0; i < CHANNELS.length; i++) {
+            if ((lease.mask & (1 << i)) != 0 && (holders[i] != null || pauseTicks[i] > 0)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Fires {@code onResumable} for remembered leases whose channels are all free, most recent first. Re-scans after
+     * each callback because the callback may grab channels; re-entrant calls just request another pass.
+     */
+    private void checkResumable() {
+        if (inResumeCheck) {
+            resumeCheckAgain = true;
+            return;
+        }
+        inResumeCheck = true;
+        try {
+            boolean again = true;
+            while (again && !stopped) {
+                again = false;
+                resumeCheckAgain = false;
+                for (int i = suspended.size() - 1; i >= 0; i--) {
+                    Lease s = suspended.get(i);
+                    if (channelsFree(s)) {
+                        suspended.remove(i);
+                        try {
+                            s.listener.onResumable(s);
+                        } catch (RuntimeException e) {
+                            LOG.error("Lease listener of {} failed in onResumable", s.moduleId(), e);
+                        }
+                        again = true;
+                        break;
+                    }
+                }
+                again |= resumeCheckAgain;
+            }
+        } finally {
+            inResumeCheck = false;
+        }
+    }
+
+    private void post(SuiteEvent event) {
+        if (events != null) {
+            try {
+                events.post(event);
+            } catch (RuntimeException e) {
+                LOG.error("Suite event listener failed for {}", event, e);
+            }
+        }
+    }
+}
