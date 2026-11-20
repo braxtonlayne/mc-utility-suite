@@ -45,3 +45,6 @@ dist/
 
 ### Test-run logs (MC log4j config on the test classpath writes here) ###
 logs/
+
+### Agent worktrees ###
+.claude/worktrees/
