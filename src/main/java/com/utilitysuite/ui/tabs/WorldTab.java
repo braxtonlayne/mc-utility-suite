@@ -9,8 +9,14 @@ import com.utilitysuite.core.api.IWorldKnowledgeService;
 import com.utilitysuite.core.api.ModuleCategory;
 import com.utilitysuite.core.api.Services;
 import com.utilitysuite.core.api.Waypoint;
+import com.utilitysuite.core.CoreBootstrap;
+import com.utilitysuite.core.api.IConfigurable;
+import com.utilitysuite.core.api.ProfileConfig;
+import com.utilitysuite.core.api.SettingSpec;
 import com.utilitysuite.ui.Panel;
+import com.utilitysuite.ui.SettingsAccess;
 import com.utilitysuite.ui.SettingWidgetMapper;
+import com.utilitysuite.world.overlays.VisualPresets;
 import com.utilitysuite.ui.SettingsRenderer;
 import com.utilitysuite.ui.kit.PillButton;
 import com.utilitysuite.world.camera.ScoutCameraModule;
@@ -53,7 +59,7 @@ public final class WorldTab {
         p.card("Quick actions", "freecam, overlays, waypoints");
         Services.modules().find(ScoutCameraModule.class).ifPresent(cam -> QuickActions.stateRow(p, "Freecam",
                 "Detaches the camera so you can look around; your player stays put. Also on the Scout Camera key.",
-                cam.isFreecamActive(), "Active", "Off", "Start freecam", "Stop freecam", cam::toggleFreecam));
+                cam.isFreecamActive(), "Active", "Off", "Start", "Stop", cam::toggleFreecam));
         Services.modules().find(WorldOverlaysModule.class).ifPresent(o -> QuickActions.moduleSwitch(p, o,
                 "Show world overlays", "Ore / block outlines and markers (same as the World Overlays card switch)."));
         IWaypointService wps = Services.waypointsOrNull();
@@ -63,7 +69,73 @@ public final class WorldTab {
         }
     }
 
+    /** One-click visual presets (definitions in {@link VisualPresets}); two pills per row on narrow panels. */
+    private static void presets(Panel p) {
+        p.card("Presets", "one-click overlay setups");
+        int w = p.width();
+        List<VisualPresets.Preset> all = VisualPresets.ALL;
+        int perRow = w >= 4 * 100 + 18 ? 4 : 2;
+        int gap = 6;
+        int bw = (w - gap * (perRow - 1)) / perRow;
+        for (int i = 0; i < all.size(); i++) {
+            VisualPresets.Preset preset = all.get(i);
+            int col = i % perRow;
+            p.button(preset.name(), preset.tooltip(), col * (bw + gap), bw,
+                    preset == VisualPresets.CLEAN ? PillButton.Style.SECONDARY : PillButton.Style.PRIMARY,
+                    b -> applyPreset(p, preset));
+            if (col == perRow - 1 || i == all.size() - 1) {
+                p.nextRow();
+            }
+        }
+    }
+
+    /** Writes the preset through each module's settings API (onSettingChanged + markDirty) and sets enable flags. */
+    static void applyPreset(Panel p, VisualPresets.Preset preset) {
+        ProfileConfig profile = Services.modState().profile();
+        int missing = 0;
+        for (VisualPresets.Setting s : preset.settings()) {
+            if (!writeSetting(profile, s)) {
+                missing++;
+            }
+        }
+        for (VisualPresets.Toggle t : preset.toggles()) {
+            if (Services.modules().byId(t.moduleId()).isPresent()) {
+                CoreBootstrap.modules().setModuleEnabled(t.moduleId(), t.enabled(), profile);
+            } else {
+                missing++;
+            }
+        }
+        Services.modState().markDirty();
+        p.toast("Preset applied: " + preset.name() + (missing > 0 ? " (some modules not installed)" : ""));
+        p.rebuild();
+    }
+
+    private static boolean writeSetting(ProfileConfig profile, VisualPresets.Setting s) {
+        IModule m = Services.modules().byId(s.moduleId()).orElse(null);
+        if (!(m instanceof IConfigurable c)) {
+            return false;
+        }
+        for (SettingSpec spec : c.settings()) {
+            if (!spec.key().equals(s.key())) {
+                continue;
+            }
+            SettingsAccess access = new SettingsAccess(profile, m.id(), c::onSettingChanged,
+                    Services.modState()::markDirty);
+            Object v = s.value();
+            if (v instanceof Boolean b) {
+                access.setBool(spec, b);
+            } else if (v instanceof Number n) {
+                access.setNumber(spec, n.doubleValue());
+            } else {
+                access.setString(spec, String.valueOf(v));
+            }
+            return true;
+        }
+        return false;
+    }
+
     public static void build(Panel p) {
+        presets(p);
         quickActions(p);
         // Overlay vs routing data sources are edited in the World Knowledge module card below (its settings), so the
         // separate selector card is shown only when that module is missing.

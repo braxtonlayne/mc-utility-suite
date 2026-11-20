@@ -87,6 +87,11 @@ public final class ScoutCameraModule extends WorldModule {
 
     @Override
     public List<SettingSpec> settings() {
+        return specs();
+    }
+
+    /** The settings specs (static so the World tab presets can be checked against them in unit tests). */
+    public static List<SettingSpec> specs() {
         return List.of(
                 SettingSpec.decimal("freecam_speed", "Camera speed", 0.8, 0.1, 5.0, "Free camera",
                         "Blocks per tick; hold Left Ctrl for 2.5x."),
