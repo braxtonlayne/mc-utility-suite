@@ -4,6 +4,7 @@ import com.utilitysuite.core.api.CandidateQuery;
 import com.utilitysuite.core.api.ControlChannel;
 import com.utilitysuite.core.api.ControlLease;
 import com.utilitysuite.core.api.ControlPriority;
+import com.utilitysuite.core.api.CostProfile;
 import com.utilitysuite.core.api.DataSourceMode;
 import com.utilitysuite.core.api.GoalRequest;
 import com.utilitysuite.core.api.IActionArbiter;
@@ -521,7 +522,7 @@ public final class JobExecutor implements LeaseListener {
                 startScan(j, step, progress);
                 return;
             }
-            j.candidates = queryCandidates(step, mode);
+            j.candidates = queryCandidates(step, mode, j.request.cost());
             j.candidateIdx = 0;
             if (j.candidates.isEmpty()) {
                 if (mode == DataSourceMode.HYBRID) {
@@ -616,7 +617,7 @@ public final class JobExecutor implements LeaseListener {
             return;
         }
         if (mode == DataSourceMode.SIMULATED_ONLY) {
-            j.candidates = queryCandidates(step, mode);
+            j.candidates = queryCandidates(step, mode, j.request.cost());
             j.candidateIdx = 0;
             if (j.candidates.isEmpty()) {
                 pauseDiagnostic(j, "No more simulated candidates for " + step.itemId());
@@ -1028,6 +1029,25 @@ public final class JobExecutor implements LeaseListener {
             return DataSourceMode.OBSERVED_ONLY;
         }
         return j.request.dataSource() == null ? k.routingMode() : j.request.dataSource();
+    }
+
+    private List<WorldObservation> queryCandidates(PlanStep step, DataSourceMode mode, CostProfile cost) {
+        List<WorldObservation> all = queryCandidates(step, mode);
+        return cost == CostProfile.SAFEST ? safeCandidates(all) : all;
+    }
+
+    /**
+     * SAFEST: drops predicted candidates below {@link DependencyPlanner#SAFE_MIN_Y} (lava level) unless nothing else is
+     * left, keeping the original order otherwise.
+     */
+    static List<WorldObservation> safeCandidates(List<WorldObservation> in) {
+        List<WorldObservation> out = new ArrayList<>(in.size());
+        for (WorldObservation o : in) {
+            if (PackedPos.y(o.packedPos()) >= DependencyPlanner.SAFE_MIN_Y) {
+                out.add(o);
+            }
+        }
+        return out.isEmpty() ? in : out;
     }
 
     private List<WorldObservation> queryCandidates(PlanStep step, DataSourceMode mode) {

@@ -186,6 +186,18 @@ class GoalRoutingTest {
         assertTrue(last.snapshot().reason().contains("cross-dimension"), last.snapshot().reason());
     }
 
+    @Test
+    void safestSkipsCandidatesAtLavaLevelUnlessNothingElse() {
+        com.utilitysuite.core.api.WorldObservation deep = new com.utilitysuite.core.api.WorldObservation(
+                PackedPos.pack(5, -58, 5), OVERWORLD, "minecraft:deepslate_diamond_ore",
+                com.utilitysuite.core.api.ObservationKind.PREDICTED, 0.9, 0);
+        com.utilitysuite.core.api.WorldObservation shallow = new com.utilitysuite.core.api.WorldObservation(
+                PackedPos.pack(40, -20, 5), OVERWORLD, "minecraft:deepslate_diamond_ore",
+                com.utilitysuite.core.api.ObservationKind.PREDICTED, 0.6, 0);
+        assertEquals(List.of(shallow), JobExecutor.safeCandidates(List.of(deep, shallow)));
+        assertEquals(List.of(deep), JobExecutor.safeCandidates(List.of(deep)));
+    }
+
     static JobExecutor newExecutor(Fakes.Actions actions, Fakes.Bus bus) {
         StorageMemory storage = new StorageMemory(() -> 1000L, Long.MAX_VALUE / 4);
         ActionArbiter arbiter = new ActionArbiter();

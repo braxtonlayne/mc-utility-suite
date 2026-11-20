@@ -113,6 +113,7 @@ public final class GoalEngine implements IGoalEngine, IModule, IConfigurable {
         }
         List<String> warnings = new ArrayList<>(plan.warnings());
         warnings.add("Data source: " + request.dataSource() + ", cost profile: " + request.cost());
+        warnings.add(DependencyPlanner.profileNote(request.cost()));
         List<ErrandBatcher.JobPlan> all = new ArrayList<>(queued);
         all.add(new ErrandBatcher.JobPlan(-1, plan));
         for (ErrandBatcher.Errand e : ErrandBatcher.batch(all, ErrandBatcher.DEFAULT_BAND_HEIGHT)) {
