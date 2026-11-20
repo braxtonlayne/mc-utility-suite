@@ -72,10 +72,54 @@ public final class DependencyPlanner {
         for (Target t : targets) {
             s.acquireTarget(t);
         }
+        if (ctx.cost() == CostProfile.SAFEST && s.digs()) {
+            // Safety prep (food, a weapon) goes before the first mining trip: replan with the prep resolved first so
+            // its steps come early and later demands share its nodes (one cobblestone trip, one crafting table).
+            s = new Session(ctx);
+            s.safetyPrep();
+            for (Target t : targets) {
+                s.acquireTarget(t);
+            }
+        }
         if (ctx.includeReturn() && s.harvests()) {
             s.addReturn();
         }
         return s.finish();
+    }
+
+    // ---- cost profile policy ----------------------------------------------------------------------------------------
+
+    /** Food the SAFEST profile counts and fetches (safe, no side effects). */
+    public static final List<String> SAFE_FOODS = List.of("minecraft:cooked_beef", "minecraft:cooked_porkchop",
+            "minecraft:cooked_mutton", "minecraft:cooked_chicken", "minecraft:cooked_salmon", "minecraft:cooked_cod",
+            "minecraft:baked_potato", "minecraft:bread", "minecraft:golden_carrot", "minecraft:apple",
+            "minecraft:carrot", "minecraft:cooked_rabbit", "minecraft:pumpkin_pie");
+    /** SAFEST brings at least this much food before mining. */
+    public static final int SAFE_FOOD_COUNT = 8;
+    /**
+     * Lowest Y the SAFEST profile mines predicted ore at. In 1.21.1 cave aquifers below Y=-54 are filled with lava
+     * (lava lakes at Y=-55), so candidates under -50 are skipped when others exist.
+     */
+    public static final int SAFE_MIN_Y = -50;
+
+    /**
+     * One-line description of how the profile shapes the plan, for the plan preview.
+     */
+    public static String profileNote(CostProfile cost) {
+        return switch (cost == null ? CostProfile.FASTEST : cost) {
+            case FASTEST -> "Fastest: no optional prep, best stored pickaxe, ore candidates at any depth";
+            case SAFEST -> "Safest: food and a sword before mining, best stored pickaxe, skips predicted ore below Y="
+                    + SAFE_MIN_Y + " (lava level)";
+            case CHEAPEST -> "Cheapest: lowest sufficient stored pickaxe (saves better tools), no extra tools, "
+                    + "storage before mining";
+            case PRESERVE_TERRAIN -> "Preserve terrain: storage and recipes before digging, planks instead of coal "
+                    + "for fuel, lowest sufficient stored pickaxe";
+        };
+    }
+
+    /** Whether a profile fetches the best stored pickaxe (speed) instead of the lowest sufficient one (thrift). */
+    static boolean prefersBestTool(CostProfile cost) {
+        return cost == CostProfile.FASTEST || cost == CostProfile.SAFEST;
     }
 
     public Plan plan(Target target, PlanContext ctx) {
@@ -230,6 +274,15 @@ public final class DependencyPlanner {
                     hand &= s.byHand();
                 }
             }
+            if (role != StepRole.TARGET && WoodTypes.isLog(item)) {
+                // Wood for planks: fell whatever trees are near (jungle/birch spawns); the executor counts any log
+                // and crafts the planks matching the logs on hand.
+                for (String log : WoodTypes.LOGS) {
+                    if (!blocks.contains(log) && !harvest.sourcesFor(log).isEmpty()) {
+                        blocks.add(log);
+                    }
+                }
+            }
             boolean ok = ensureTool(tier, depth + 1);
             Node node = touch(hand ? StepKind.GATHER : StepKind.MINE, item, null, blocks, tier, PlanStep.NO_POS, role);
             node.count += n;
@@ -269,7 +322,11 @@ public final class DependencyPlanner {
             if (tier <= 0 || toolTier >= tier) {
                 return true;
             }
-            for (int t = tier; t <= 5; t++) {
+            // FASTEST/SAFEST take the best stored pickaxe (mines faster); CHEAPEST/PRESERVE_TERRAIN the lowest one
+            // that is enough, keeping better tools' durability.
+            boolean best = prefersBestTool(ctx.cost());
+            for (int i = 0; i <= 5 - tier; i++) {
+                int t = best ? 5 - i : tier + i;
                 String p = ToolTiers.pickaxeForTier(t);
                 if (storageAvailable(p) > 0) {
                     fetch(p, 1, StepRole.TOOL);
@@ -467,6 +524,9 @@ public final class DependencyPlanner {
             double best = INF;
             for (HarvestTable.Source s : sources) {
                 double c = (s.byHand() ? 1.0 : 2.0) + Math.max(0, s.requiredTier() - toolTier) * 3.0;
+                if (!s.byHand() && ctx.cost() == CostProfile.PRESERVE_TERRAIN) {
+                    c *= 3.0; // digging scars terrain: recipes from carried/stored materials win more often
+                }
                 best = Math.min(best, c / Math.max(0.1, s.dropsPerBlock()));
             }
             return best;
@@ -544,6 +604,56 @@ public final class DependencyPlanner {
             unresolvedCount++;
             missing.merge(item, n, Integer::sum);
             warnings.add(why);
+        }
+
+        /** True when the plan mines with a pickaxe (not just hand-gathering logs or dirt). */
+        boolean digs() {
+            for (Node n : nodes.values()) {
+                if (n.kind == StepKind.MINE) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /** SAFEST prep: food from storage when low, and a sword (stored, else a crafted stone/wooden sword). */
+        void safetyPrep() {
+            int food = 0;
+            for (String f : SAFE_FOODS) {
+                food += vinv.getOrDefault(f, 0);
+            }
+            if (food < SAFE_FOOD_COUNT) {
+                int need = SAFE_FOOD_COUNT - food;
+                for (String f : SAFE_FOODS) {
+                    if (need <= 0) {
+                        break;
+                    }
+                    need -= fetch(f, need, StepRole.PRIMARY);
+                }
+                if (need == SAFE_FOOD_COUNT - food && food == 0) {
+                    warnings.add("Safest: no food carried or in known storage; bring food before mining");
+                }
+            }
+            for (Map.Entry<String, Integer> e : vinv.entrySet()) {
+                if (e.getValue() > 0 && e.getKey().endsWith("_sword")) {
+                    return;
+                }
+            }
+            for (StorageEntry e : ctx.storage()) {
+                for (String item : e.contents().keySet()) {
+                    if (item.endsWith("_sword") && storageAvailable(item) > 0) {
+                        fetch(item, 1, StepRole.PRIMARY);
+                        return;
+                    }
+                }
+            }
+            for (String sword : new String[]{"minecraft:stone_sword", "minecraft:wooden_sword"}) {
+                if (!recipes.recipesFor(sword).isEmpty()) {
+                    produce(sword, 1, StepRole.PRIMARY, 0, true);
+                    return;
+                }
+            }
+            warnings.add("Safest: no sword recipe known; mining without a weapon");
         }
 
         boolean harvests() {

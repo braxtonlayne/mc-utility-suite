@@ -1,7 +1,5 @@
 package com.utilitysuite.jobs;
 
-import com.utilitysuite.core.api.DataSourceMode;
-import com.utilitysuite.core.api.IWaypointService;
 import com.utilitysuite.core.api.Services;
 import com.utilitysuite.jobs.baritone.BaritoneAdapter;
 import com.utilitysuite.jobs.goal.GoalEngine;
@@ -33,7 +31,6 @@ import net.neoforged.neoforge.event.entity.player.PlayerInteractEvent;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
 
 /**
  * Wires the jobs feature: dependency planner, goal engine (IGoalEngine), Baritone navigator (INavigator), storage
@@ -81,8 +78,11 @@ public final class JobsBootstrap {
                 System::currentTimeMillis,
                 BackgroundWorker.executor()), new JobExecutor.Settings());
 
-        GoalParser parser = new GoalParser(JobsBootstrap::matcher, JobsBootstrap::waypoint,
-                () -> Services.worldKnowledgeOrNull() == null ? DataSourceMode.OBSERVED_ONLY : DataSourceMode.HYBRID,
+        // Typed commands follow the World tab's routing data source unless they say source=...; waypoints are
+        // converted 8:1 into the current dimension like the World tab "Go".
+        GoalParser parser = new GoalParser(JobsBootstrap::matcher,
+                name -> GoalParser.resolveWaypoint(Services.waypointsOrNull(), name, actions.dimension()),
+                GoalParser.routingDefault(Services::worldKnowledgeOrNull),
                 () -> actions.playerPos(), () -> actions.dimension());
         GoalEngine engine = new GoalEngine(parser, () -> planner, executor, BackgroundWorker.executor());
         Services.registerGoals(engine);
@@ -124,13 +124,5 @@ public final class JobsBootstrap {
             matcher = m;
         }
         return m;
-    }
-
-    private static Optional<GoalParser.WaypointTarget> waypoint(String name) {
-        IWaypointService wp = Services.waypointsOrNull();
-        if (wp == null) {
-            return Optional.empty();
-        }
-        return wp.byName(name).map(w -> new GoalParser.WaypointTarget(w.x(), w.y(), w.z(), w.dimension()));
     }
 }

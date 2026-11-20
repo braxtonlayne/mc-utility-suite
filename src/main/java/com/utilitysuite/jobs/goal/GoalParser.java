@@ -3,6 +3,9 @@ package com.utilitysuite.jobs.goal;
 import com.utilitysuite.core.api.CostProfile;
 import com.utilitysuite.core.api.DataSourceMode;
 import com.utilitysuite.core.api.GoalRequest;
+import com.utilitysuite.core.api.IWaypointService;
+import com.utilitysuite.core.api.IWorldKnowledgeService;
+import com.utilitysuite.core.api.Waypoint;
 import com.utilitysuite.core.api.ParseResult;
 import com.utilitysuite.jobs.planner.PackedPos;
 
@@ -22,8 +25,70 @@ import java.util.function.Supplier;
  */
 public final class GoalParser {
 
-    /** A waypoint resolved for "travel to NAME". */
-    public record WaypointTarget(int x, int y, int z, String dimension) {
+    /**
+     * A waypoint resolved for "travel to NAME", already converted into the player's current dimension. {@code error}
+     * is non-null when the waypoint exists but cannot be reached from here (the parse then fails with that message).
+     */
+    public record WaypointTarget(int x, int y, int z, String dimension, String error) {
+        public WaypointTarget(int x, int y, int z, String dimension) {
+            this(x, y, z, dimension, null);
+        }
+
+        public static WaypointTarget unreachable(String error) {
+            return new WaypointTarget(0, 0, 0, "", error);
+        }
+    }
+
+    static final String OVERWORLD = "minecraft:overworld";
+    static final String NETHER = "minecraft:the_nether";
+
+    /**
+     * Resolves a waypoint by name for travel from {@code currentDimension}, using the same 8:1 overworld/nether
+     * conversion as the World tab "Go" ({@link IWaypointService#positionIn}). Waypoints in a dimension that is not the
+     * current one or its overworld/nether partner resolve to an {@link WaypointTarget#unreachable} target, since
+     * cross-dimension portal routing is not supported yet.
+     */
+    public static Optional<WaypointTarget> resolveWaypoint(IWaypointService service, String name,
+                                                           String currentDimension) {
+        if (service == null) {
+            return Optional.empty();
+        }
+        Optional<Waypoint> found = service.byName(name);
+        if (found.isEmpty()) {
+            return Optional.empty();
+        }
+        Waypoint w = found.get();
+        if (!convertible(w.dimension(), currentDimension)) {
+            return Optional.of(WaypointTarget.unreachable("Waypoint '" + w.name() + "' is in "
+                    + shortDim(w.dimension()) + " and you are in " + shortDim(currentDimension)
+                    + "; routing between these dimensions (through portals) is not supported yet"));
+        }
+        long p = service.positionIn(w, currentDimension);
+        return Optional.of(new WaypointTarget(PackedPos.x(p), PackedPos.y(p), PackedPos.z(p), currentDimension));
+    }
+
+    /** True for the same dimension or an overworld/nether pair (the pairs {@code positionIn} can convert). */
+    static boolean convertible(String from, String to) {
+        if (from.equals(to)) {
+            return true;
+        }
+        return (OVERWORLD.equals(from) && NETHER.equals(to)) || (NETHER.equals(from) && OVERWORLD.equals(to));
+    }
+
+    static String shortDim(String dim) {
+        return dim.startsWith("minecraft:") ? dim.substring("minecraft:".length()) : dim;
+    }
+
+    /**
+     * Default data source for typed commands without {@code source=}: the World tab's routing mode, or OBSERVED_ONLY
+     * when no world knowledge service is registered.
+     */
+    public static Supplier<DataSourceMode> routingDefault(Supplier<IWorldKnowledgeService> knowledge) {
+        return () -> {
+            IWorldKnowledgeService k = knowledge.get();
+            DataSourceMode m = k == null ? null : k.routingMode();
+            return m == null ? DataSourceMode.OBSERVED_ONLY : m;
+        };
     }
 
     private static final List<String> VERBS = List.of("gather", "mine", "collect", "get", "craft", "make", "smelt",
@@ -219,6 +284,9 @@ public final class GoalParser {
             return ParseResult.error("Unknown waypoint '" + name + "'", List.of());
         }
         WaypointTarget t = wp.get();
+        if (t.error() != null) {
+            return ParseResult.error(t.error(), List.of());
+        }
         return ParseResult.ok(new GoalRequest.Travel(t.x(), t.y(), t.z(), t.dimension(), cost, source));
     }
 
