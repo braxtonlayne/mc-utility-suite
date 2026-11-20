@@ -3,6 +3,7 @@ package com.utilitysuite;
 import com.mojang.logging.LogUtils;
 import com.utilitysuite.combat.CombatBootstrap;
 import com.utilitysuite.core.CoreBootstrap;
+import com.utilitysuite.travel.TravelBootstrap;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.ModContainer;
@@ -28,7 +29,7 @@ public final class UtilitySuiteMod {
         com.utilitysuite.jobs.schematic.SchematicBootstrap.init(modBus);
         // JobsBootstrap.init(modBus);
         // WorldBootstrap.init(modBus);
-        // TravelBootstrap.init(modBus);
+        TravelBootstrap.init(modBus);
         CombatBootstrap.init(modBus);
         // ToolsBootstrap.init(modBus);
         // UiBootstrap.init(modBus);   // sets KeybindManager.setOpenMenuHandler(...)

@@ -6,7 +6,10 @@
   "client": [
     "LocalPlayerSilentRotationMixin",
     "MouseHandlerManualLookMixin",
-    "combat.ClientPacketListenerDamageMixin"
+    "combat.ClientPacketListenerDamageMixin",
+    "travel.ClientPacketListenerCorrectionMixin",
+    "travel.LivingEntityFluidSurfaceMixin",
+    "travel.PlayerSafeWalkMixin"
   ],
   "injectors": {
     "defaultRequire": 1
