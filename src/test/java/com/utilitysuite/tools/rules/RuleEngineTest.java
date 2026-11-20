@@ -17,7 +17,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RuleEngineTest {
 
-    static final class FakeContext implements RuleContext {
+    static class FakeContext implements RuleContext {
         double full;
         double health = 20;
         double hunger = 20;

@@ -2,6 +2,7 @@ package com.utilitysuite.ui.tabs;
 
 import com.utilitysuite.core.CoreBootstrap;
 import com.utilitysuite.core.api.IModule;
+import com.utilitysuite.core.api.IWaypointService;
 import com.utilitysuite.core.api.ModuleCategory;
 import com.utilitysuite.core.api.ProfileConfig;
 import com.utilitysuite.core.api.Services;
@@ -16,6 +17,7 @@ import com.utilitysuite.tools.packetlab.LatencySimulator;
 import com.utilitysuite.tools.packetlab.PacketLab;
 import com.utilitysuite.tools.rules.LocalRules;
 import com.utilitysuite.tools.rules.Rule;
+import com.utilitysuite.tools.rules.RuleEdits;
 import com.utilitysuite.ui.ModulePanels;
 import com.utilitysuite.ui.Panel;
 import com.utilitysuite.ui.ProfileCopier;
@@ -42,19 +44,16 @@ import java.util.stream.Stream;
 
 /**
  * Tools tab: Smart Inventory (settings + pinned hotbar slots), Packet Lab (switch, live rates, timeline viewer), the
- * latency simulator, Local Rules (list + builder), HUD settings, Profiles (active id, copy from global or another
+ * latency simulator, Local Rules (list with inline editor, starter presets, builder), HUD settings, Profiles (active id, copy from global or another
  * saved profile), hotkeys, core settings, and a Resume card while Stop-All is active.
  */
 public final class ToolsTab {
 
-    private static final String K_COND = "rules.cond";
-    private static final String K_CMP = "rules.cmp";
-    private static final String K_VALUE = "rules.value";
-    private static final String K_COND_ARG = "rules.condArg";
-    private static final String K_ACTION = "rules.action";
-    private static final String K_ACTION_ARG = "rules.actionArg";
-    private static final String K_FLAG = "rules.flag";
-    private static final String K_COOLDOWN = "rules.cooldown";
+    /** State-key prefixes: the new-rule builder and the inline rule editor share one set of widgets. */
+    private static final String NEW = "rules.";
+    private static final String EDIT = "rules.edit.";
+    /** Id of the rule whose inline editor is open, or empty. */
+    private static final String K_EDITING = "rules.editing";
 
     /** Core settings rendered with the generic renderer, stored in global.json under "core". */
     static final List<SettingSpec> CORE_SPECS = List.of(
@@ -177,33 +176,77 @@ public final class ToolsTab {
             p.paragraph("No rules yet. Example: If inventory >= 90% full, deposit at Base Chest and resume.",
                     Panel.GRAY);
         }
+        String editing = p.state(K_EDITING, "");
         for (Rule r : list) {
             String id = r.id();
             p.listRow(null);
-            p.rowLabel(r.describe(), 4, w - 112, r.enabled() ? Panel.WHITE : Panel.GRAY);
+            p.rowLabel(r.describe(), 4, w - 154, r.enabled() ? Panel.WHITE : Panel.GRAY);
+            boolean open = id.equals(editing);
+            p.button(open ? "Editing" : "Edit", null, w - 146, 46, PillButton.Style.SECONDARY, b -> {
+                if (open) {
+                    p.setState(K_EDITING, "");
+                } else {
+                    loadIntoState(p, EDIT, r);
+                    p.setState(K_EDITING, id);
+                }
+                p.rebuild();
+            }).selected(open);
             p.place(new com.utilitysuite.ui.kit.ToggleSwitch(r.enabled(), v -> {
                 rules.setRuleEnabled(id, v);
                 p.rebuild();
             }).animKey("rule." + id), w - 96);
             p.button("Delete", null, w - 58, 56, PillButton.Style.DANGER_SOFT, b -> {
                 rules.removeRule(id);
+                if (id.equals(p.state(K_EDITING, ""))) {
+                    p.setState(K_EDITING, "");
+                }
                 p.rebuild();
             });
             p.nextRow();
+            if (open) {
+                ruleFields(p, EDIT, w);
+                p.button("Cancel", null, w - 154, 60, PillButton.Style.SECONDARY, b -> {
+                    p.setState(K_EDITING, "");
+                    p.rebuild();
+                });
+                p.button("Save", null, w - 90, 90, PillButton.Style.PRIMARY, b -> saveEdit(p, rules, r));
+                p.nextRow();
+            }
         }
         p.dynamic(rules::lastMessage, Panel.GRAY);
 
+        p.subheading("Starter rules");
+        int px = 0;
+        int pw = (w - 8) / 3;
+        for (RuleEdits.Preset preset : RuleEdits.PRESETS) {
+            p.button(preset.label(), preset.rule("-").describe(), px, pw, PillButton.Style.SECONDARY,
+                    b -> addPreset(p, rules, preset));
+            px += pw + 4;
+        }
+        p.nextRow();
+
         p.subheading("New rule");
-        Rule.ConditionType ct = enumState(p, K_COND, Rule.ConditionType.INVENTORY_FULL_PCT);
-        Rule.Comparison cmp = enumState(p, K_CMP, Rule.Comparison.AT_LEAST);
-        Rule.ActionType at = enumState(p, K_ACTION, Rule.ActionType.DEPOSIT_AT);
+        ruleFields(p, NEW, w);
+        p.button("Add rule", null, w - 90, 90, PillButton.Style.PRIMARY, b -> addRule(p, rules));
+        p.nextRow();
+    }
+
+    /**
+     * The condition / action / cooldown widgets, bound to state keys under {@code pre} ("rules." for the new-rule
+     * builder, "rules.edit." for the inline editor). Leaves the cursor on the cooldown row so the caller can place
+     * its buttons on the right.
+     */
+    private static void ruleFields(Panel p, String pre, int w) {
+        Rule.ConditionType ct = enumState(p, pre + "cond", Rule.ConditionType.INVENTORY_FULL_PCT);
+        Rule.Comparison cmp = enumState(p, pre + "cmp", Rule.Comparison.AT_LEAST);
+        Rule.ActionType at = enumState(p, pre + "action", Rule.ActionType.DEPOSIT_AT);
         int lab = 36;
         int c1 = (w - lab) * 40 / 100;
         int x1 = lab;
         int x2 = x1 + c1 + 4;
         p.rowLabel("If", 0, lab - 4, Panel.DIM);
         cycle(p, List.of(Rule.ConditionType.values()), ct, Rule.ConditionType::label, x1, c1, v -> {
-            p.setState(K_COND, v.name());
+            p.setState(pre + "cond", v.name());
             p.rebuild();
         });
         boolean jobStatus = ct == Rule.ConditionType.JOB_STATUS;
@@ -213,41 +256,48 @@ public final class ToolsTab {
             cmp = Rule.Comparison.EQUALS;
         }
         int cmpW = 50;
-        cycle(p, cmps, cmp, Rule.Comparison::symbol, x2, cmpW, v -> p.setState(K_CMP, v.name()));
+        cycle(p, cmps, cmp, Rule.Comparison::symbol, x2, cmpW, v -> p.setState(pre + "cmp", v.name()));
         int x3 = x2 + cmpW + 4;
         int rest = w - x3;
-        if (ct.usesText() && !jobStatus) {
+        if (ct == Rule.ConditionType.TOOL_DURABILITY) {
+            boolean pct = Rule.ConditionType.UNIT_PERCENT.equals(p.state(pre + "unit", Rule.ConditionType.UNIT_POINTS));
+            int unitW = 64;
+            p.textField(pre + "value", pct ? "percent left, e.g. 10" : "points left, e.g. 10", x3, rest - unitW - 4);
+            p.button(pct ? "percent" : "points", "Absolute durability points or percent of max", w - unitW, unitW,
+                    PillButton.Style.SECONDARY, b -> {
+                        p.setState(pre + "unit", pct ? Rule.ConditionType.UNIT_POINTS : Rule.ConditionType.UNIT_PERCENT);
+                        p.rebuild();
+                    });
+        } else if (ct.usesText() && !jobStatus) {
             int half = (rest - 4) / 2;
-            p.textField(K_COND_ARG, "item id", x3, half);
-            p.textField(K_VALUE, "count", x3 + half + 4, rest - half - 4);
+            p.textField(pre + "condArg", "item id", x3, half);
+            p.textField(pre + "value", "count", x3 + half + 4, rest - half - 4);
         } else if (jobStatus) {
-            p.textField(K_COND_ARG, "RUNNING, PAUSED, NONE...", x3, rest);
+            p.textField(pre + "condArg", "RUNNING, PAUSED, NONE...", x3, rest);
         } else {
-            p.textField(K_VALUE, valueHint(ct), x3, rest);
+            p.textField(pre + "value", valueHint(ct), x3, rest);
         }
         p.nextRow();
         p.rowLabel("Then", 0, lab - 4, Panel.DIM);
         cycle(p, List.of(Rule.ActionType.values()), at, Rule.ActionType::label, x1, c1, v -> {
-            p.setState(K_ACTION, v.name());
+            p.setState(pre + "action", v.name());
             p.rebuild();
         });
         int flagW = at == Rule.ActionType.DEPOSIT_AT || at == Rule.ActionType.TOGGLE_MODULE ? 84 : 0;
         if (at.usesText()) {
-            p.textField(K_ACTION_ARG, actionHint(at), x2, w - x2 - (flagW > 0 ? flagW + 4 : 0));
+            p.textField(pre + "actionArg", actionHint(at), x2, w - x2 - (flagW > 0 ? flagW + 4 : 0));
         }
         if (flagW > 0) {
-            boolean flag = !"0".equals(p.state(K_FLAG, "1"));
+            boolean flag = !"0".equals(p.state(pre + "flag", "1"));
             String label = at == Rule.ActionType.DEPOSIT_AT ? (flag ? "+ resume" : "no resume") : (flag ? "on" : "off");
             p.button(label, null, w - flagW, flagW, PillButton.Style.SECONDARY, b -> {
-                p.setState(K_FLAG, flag ? "0" : "1");
+                p.setState(pre + "flag", flag ? "0" : "1");
                 p.rebuild();
             }).selected(flag);
         }
         p.nextRow();
         p.rowLabel("Every", 0, lab - 4, Panel.DIM);
-        p.textField(K_COOLDOWN, "cooldown ticks (200)", x1, c1);
-        p.button("Add rule", null, w - 90, 90, PillButton.Style.PRIMARY, b -> addRule(p, rules));
-        p.nextRow();
+        p.textField(pre + "cooldown", "cooldown ticks (200)", x1, c1);
     }
 
     private static <E> void cycle(Panel p, List<E> values, E current, Function<E, String> label, int dx, int w,
@@ -255,49 +305,83 @@ public final class ToolsTab {
         p.cycle(values, current, label, dx, w, set);
     }
 
-    private static void addRule(Panel p, LocalRules rules) {
-        Rule.ConditionType ct = enumState(p, K_COND, Rule.ConditionType.INVENTORY_FULL_PCT);
-        Rule.Comparison cmp = enumState(p, K_CMP, Rule.Comparison.AT_LEAST);
-        Rule.ActionType at = enumState(p, K_ACTION, Rule.ActionType.DEPOSIT_AT);
-        double value = 0;
-        if (ct != Rule.ConditionType.JOB_STATUS) {
-            try {
-                value = Double.parseDouble(p.state(K_VALUE, "").trim().replace(',', '.'));
-            } catch (NumberFormatException e) {
-                p.toast("Enter a number for the condition");
-                return;
-            }
-        } else if (cmp != Rule.Comparison.NOT_EQUALS) {
-            cmp = Rule.Comparison.EQUALS;
+    /** Validates the fields under {@code pre} into a rule (toasting the first problem), or null. */
+    private static Rule ruleFromState(Panel p, String pre, String id, boolean enabled) {
+        RuleEdits.Result res = RuleEdits.build(id, enabled,
+                enumState(p, pre + "cond", Rule.ConditionType.INVENTORY_FULL_PCT),
+                enumState(p, pre + "cmp", Rule.Comparison.AT_LEAST),
+                p.state(pre + "value", ""), p.state(pre + "condArg", ""),
+                p.state(pre + "unit", Rule.ConditionType.UNIT_POINTS),
+                enumState(p, pre + "action", Rule.ActionType.DEPOSIT_AT),
+                p.state(pre + "actionArg", ""), !"0".equals(p.state(pre + "flag", "1")),
+                p.state(pre + "cooldown", ""));
+        if (!res.ok()) {
+            p.toast(res.error());
+            return null;
         }
-        String condArg = p.state(K_COND_ARG, "").trim();
-        if (ct.usesText() && condArg.isEmpty()) {
-            p.toast(ct == Rule.ConditionType.ITEM_COUNT ? "Enter an item id" : "Enter a job status");
+        return res.rule();
+    }
+
+    /** Copies a rule into the editor's state keys. */
+    private static void loadIntoState(Panel p, String pre, Rule r) {
+        Rule.Condition c = r.condition();
+        p.setState(pre + "cond", c.type().name());
+        p.setState(pre + "cmp", c.comparison().name());
+        p.setState(pre + "value", c.type() == Rule.ConditionType.JOB_STATUS ? "" : fmtValue(c.value()));
+        p.setState(pre + "condArg", c.type().usesText() ? c.arg() : "");
+        p.setState(pre + "unit", c.durabilityPercent() ? Rule.ConditionType.UNIT_PERCENT
+                : Rule.ConditionType.UNIT_POINTS);
+        p.setState(pre + "action", r.action().type().name());
+        p.setState(pre + "actionArg", r.action().arg());
+        p.setState(pre + "flag", r.action().flag() ? "1" : "0");
+        p.setState(pre + "cooldown", Integer.toString(r.cooldownTicks()));
+    }
+
+    private static String fmtValue(double v) {
+        return v == Math.rint(v) ? Long.toString((long) v) : Double.toString(v);
+    }
+
+    private static void saveEdit(Panel p, LocalRules rules, Rule original) {
+        Rule edited = ruleFromState(p, EDIT, original.id(), original.enabled());
+        if (edited == null) {
             return;
         }
-        String actionArg = p.state(K_ACTION_ARG, "").trim();
-        if (at.usesText() && actionArg.isEmpty()) {
-            p.toast("Enter " + actionHint(at));
+        if (!rules.replaceRule(original.id(), edited)) {
+            p.toast("That rule no longer exists");
+        } else {
+            p.toast("Saved: " + edited.describe());
+        }
+        p.setState(K_EDITING, "");
+        p.rebuild();
+    }
+
+    private static void addPreset(Panel p, LocalRules rules, RuleEdits.Preset preset) {
+        if (RuleEdits.hasEquivalent(rules.rules(), preset)) {
+            p.toast("Already have: " + preset.rule("-").describe());
             return;
         }
-        int cooldown = 200;
-        String cd = p.state(K_COOLDOWN, "").trim();
-        if (!cd.isEmpty()) {
-            try {
-                cooldown = Math.max(0, Integer.parseInt(cd));
-            } catch (NumberFormatException e) {
-                p.toast("Cooldown must be whole ticks");
-                return;
-            }
-        }
-        boolean flag = !"0".equals(p.state(K_FLAG, "1"));
-        Rule rule = new Rule(rules.newRuleId(), true,
-                new Rule.Condition(ct, cmp, value, ct.usesText() ? condArg : ""),
-                new Rule.Action(at, at.usesText() ? actionArg : "", flag), cooldown);
+        Rule rule = preset.rule(rules.newRuleId());
         rules.addRule(rule);
-        p.setState(K_VALUE, "");
-        p.setState(K_COND_ARG, "");
-        p.setState(K_ACTION_ARG, "");
+        String note = "";
+        if (rule.action().type() == Rule.ActionType.DEPOSIT_AT) {
+            IWaypointService wps = Services.waypointsOrNull();
+            if (wps == null || wps.byName(rule.action().arg()).isEmpty()) {
+                note = " (needs a waypoint named '" + rule.action().arg() + "')";
+            }
+        }
+        p.toast("Added: " + rule.describe() + note);
+        p.rebuild();
+    }
+
+    private static void addRule(Panel p, LocalRules rules) {
+        Rule rule = ruleFromState(p, NEW, rules.newRuleId(), true);
+        if (rule == null) {
+            return;
+        }
+        rules.addRule(rule);
+        p.setState(NEW + "value", "");
+        p.setState(NEW + "condArg", "");
+        p.setState(NEW + "actionArg", "");
         p.toast("Added: " + rule.describe());
         p.rebuild();
     }
