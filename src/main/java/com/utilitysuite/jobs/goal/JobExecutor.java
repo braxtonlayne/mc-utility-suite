@@ -21,6 +21,8 @@ import com.utilitysuite.core.api.StorageEntry;
 import com.utilitysuite.core.api.SuiteEvent;
 import com.utilitysuite.core.api.WorldObservation;
 import com.utilitysuite.jobs.planner.DependencyPlanner;
+import com.utilitysuite.jobs.planner.DisplayNames;
+import com.utilitysuite.jobs.planner.WoodTypes;
 import com.utilitysuite.jobs.planner.ErrandBatcher;
 import com.utilitysuite.jobs.planner.PackedPos;
 import com.utilitysuite.jobs.planner.Plan;
@@ -509,8 +511,8 @@ public final class JobExecutor implements LeaseListener {
                 pauseDiagnostic(j, "Baritone is not installed; '" + step.label() + "' needs it");
                 return;
             }
-            int base = j.baselines.computeIfAbsent(step, s -> inv.count(s.itemId()));
-            int progress = inv.count(step.itemId()) - base;
+            int base = j.baselines.computeIfAbsent(step, s -> stepCount(inv, s));
+            int progress = stepCount(inv, step) - base;
             if (progress >= step.count()) {
                 completeStep(j);
                 return;
@@ -537,7 +539,7 @@ public final class JobExecutor implements LeaseListener {
             approachCandidate(j);
             return;
         }
-        int progress = inv.count(step.itemId()) - j.baselines.getOrDefault(step, 0);
+        int progress = stepCount(inv, step) - j.baselines.getOrDefault(step, 0);
         if (progress >= step.count()) {
             d.cancel();
             completeStep(j);
@@ -643,7 +645,7 @@ public final class JobExecutor implements LeaseListener {
         if (!replan(j, step, "Predicted " + expected + " at " + PackedPos.format(pos) + " was " + actual)) {
             return;
         }
-        int progress = deps.inventory().get().count(step.itemId()) - j.baselines.getOrDefault(step, 0);
+        int progress = stepCount(deps.inventory().get(), step) - j.baselines.getOrDefault(step, 0);
         alternative(j, step, progress);
     }
 
@@ -709,9 +711,81 @@ public final class JobExecutor implements LeaseListener {
         }
     }
 
+    /**
+     * Items a GATHER/MINE step has collected so far. A wood step that may fell several log types counts all of them, so
+     * a birch or jungle spawn satisfies "gather oak logs for planks". Allocation-free (runs every tick).
+     */
+    static int stepCount(IInventoryView inv, PlanStep step) {
+        List<String> blocks = step.blockIds();
+        if (blocks.size() > 1 && WoodTypes.isLog(step.itemId())) {
+            int c = 0;
+            for (int i = 0, n = blocks.size(); i < n; i++) {
+                if (WoodTypes.isLog(blocks.get(i))) {
+                    c += inv.count(blocks.get(i));
+                }
+            }
+            return c;
+        }
+        return inv.count(step.itemId());
+    }
+
+    /**
+     * A planks craft planned from one wood (oak) when the player holds other logs: returns replacement steps that craft
+     * the planks of the logs on hand (planned wood first), or null when no substitution is needed or possible. Any
+     * planks satisfy the vanilla planks tag used by the later crafts (table, sticks, wooden tools).
+     */
+    static List<PlanStep> planksForLogsOnHand(IInventoryView inv, PlanStep step) {
+        if (step.kind() != StepKind.CRAFT || step.crafts() <= 0) {
+            return null;
+        }
+        String plannedLog = WoodTypes.logFor(step.itemId());
+        if (plannedLog == null || inv.count(plannedLog) >= step.crafts()) {
+            return null;
+        }
+        int perCraft = Math.max(1, (step.count() + step.crafts() - 1) / step.crafts());
+        int left = step.crafts();
+        List<PlanStep> out = new ArrayList<>(2);
+        int planned = Math.min(left, inv.count(plannedLog));
+        if (planned > 0) {
+            out.add(planksStep(step, step.itemId(), planned, perCraft));
+            left -= planned;
+        }
+        for (String log : WoodTypes.LOGS) {
+            if (left <= 0) {
+                break;
+            }
+            if (log.equals(plannedLog)) {
+                continue;
+            }
+            int use = Math.min(left, inv.count(log));
+            if (use > 0) {
+                out.add(planksStep(step, WoodTypes.planksFor(log), use, perCraft));
+                left -= use;
+            }
+        }
+        return left > 0 || out.isEmpty() ? null : out;
+    }
+
+    private static PlanStep planksStep(PlanStep step, String planks, int crafts, int perCraft) {
+        // vanilla planks recipes are named after their output ("minecraft:birch_planks")
+        String recipe = step.recipeId() == null ? planks
+                : step.recipeId().replace(com.utilitysuite.jobs.planner.Items.path(step.itemId()),
+                com.utilitysuite.jobs.planner.Items.path(planks));
+        return new PlanStep(StepKind.CRAFT, planks, crafts * perCraft, crafts, recipe, step.blockIds(),
+                step.requiredTier(), step.storagePos(), step.dimension(), step.role(), step.label(), step.milestone());
+    }
+
     private void tickCraft(Job j, PlanStep step) {
         WorldActions a = deps.actions();
         if (j.phase == Phase.START) {
+            List<PlanStep> wood = planksForLogsOnHand(deps.inventory().get(), step);
+            if (wood != null) {
+                // Same position in the plan, no replan counted: just the planks matching the logs actually mined.
+                j.steps.remove(j.index);
+                j.steps.addAll(j.index, wood);
+                step = wood.get(0);
+                setReason(j, "Using " + DisplayNames.of(WoodTypes.logFor(step.itemId())) + " for planks");
+            }
             if (step.kind() == StepKind.SMELT) {
                 a.beginSmelt(step, lease);
             } else {

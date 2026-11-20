@@ -274,6 +274,15 @@ public final class DependencyPlanner {
                     hand &= s.byHand();
                 }
             }
+            if (role != StepRole.TARGET && WoodTypes.isLog(item)) {
+                // Wood for planks: fell whatever trees are near (jungle/birch spawns); the executor counts any log
+                // and crafts the planks matching the logs on hand.
+                for (String log : WoodTypes.LOGS) {
+                    if (!blocks.contains(log) && !harvest.sourcesFor(log).isEmpty()) {
+                        blocks.add(log);
+                    }
+                }
+            }
             boolean ok = ensureTool(tier, depth + 1);
             Node node = touch(hand ? StepKind.GATHER : StepKind.MINE, item, null, blocks, tier, PlanStep.NO_POS, role);
             node.count += n;
