@@ -5,7 +5,11 @@
   "compatibilityLevel": "JAVA_21",
   "client": [
     "LocalPlayerSilentRotationMixin",
-    "MouseHandlerManualLookMixin"
+    "MouseHandlerManualLookMixin",
+    "world.BlockFaceHidingMixin",
+    "world.ClientLevelBlockUpdateMixin",
+    "world.EntityTurnFreecamMixin",
+    "world.LightTextureFullbrightMixin"
   ],
   "injectors": {
     "defaultRequire": 1
