@@ -72,5 +72,15 @@
   "module.utilitysuite.seed_oresim": "Seed Workbench & OreSim",
   "module.utilitysuite.world_radar": "World Radar",
   "module.utilitysuite.scout_camera": "Scout Camera",
-  "module.utilitysuite.waypoints": "Waypoints"
+  "module.utilitysuite.waypoints": "Waypoints",
+  "key.utilitysuite.quick_deposit": "Quick Deposit (in containers; Shift = Dump)",
+  "button.utilitysuite.deposit": "Deposit",
+  "button.utilitysuite.deposit.tooltip": "Move items this container already holds into it",
+  "button.utilitysuite.dump": "Dump",
+  "button.utilitysuite.dump.tooltip": "Move everything except pinned hotbar slots into this container",
+  "module.utilitysuite.smart_inventory": "Smart Inventory",
+  "module.utilitysuite.packet_lab": "Packet Lab",
+  "module.utilitysuite.latency_simulator": "Latency Simulator (test worlds only)",
+  "module.utilitysuite.local_rules": "Local Rules",
+  "module.utilitysuite.suite_hud": "HUD status line"
 }

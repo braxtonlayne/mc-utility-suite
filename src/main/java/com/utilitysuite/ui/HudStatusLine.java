@@ -1,0 +1,175 @@
+package com.utilitysuite.ui;
+
+import com.utilitysuite.core.api.JobSnapshot;
+import com.utilitysuite.core.api.JobStatus;
+
+import java.util.Locale;
+import java.util.Objects;
+
+/**
+ * The HUD's one status pill, e.g. {@code [Goal] Gathering 32 Diamonds (18/32) — Mining at Y=-54}. The text is rebuilt
+ * only when one of its inputs changed; an unchanged update compares fields and allocates nothing. Pure Java.
+ */
+public final class HudStatusLine {
+
+    private String label;
+    private JobStatus status;
+    private int current = Integer.MIN_VALUE;
+    private int target = Integer.MIN_VALUE;
+    private String step;
+    private String schematic;
+    private String text = "";
+    private int rebuilds;
+
+    /** Updates from a job snapshot. Returns true when the text changed. */
+    public boolean update(JobSnapshot s) {
+        if (s == null) {
+            return clear();
+        }
+        return update(s.goalLabel(), s.status(), s.progressCurrent(), s.progressTarget(), s.currentStep());
+    }
+
+    public boolean update(String goalLabel, JobStatus st, int cur, int tgt, String now) {
+        if (schematic == null && st == status && cur == current && tgt == target && Objects.equals(goalLabel, label)
+                && Objects.equals(now, step)) {
+            return false;
+        }
+        schematic = null;
+        label = goalLabel;
+        status = st;
+        current = cur;
+        target = tgt;
+        step = now;
+        return set(format(goalLabel, st, cur, tgt, now));
+    }
+
+    /** Updates from the schematic toolkit's card line (when no goal job runs). */
+    public boolean updateSchematic(String statusLine) {
+        if (statusLine == null) {
+            return clear();
+        }
+        if (statusLine.equals(schematic)) {
+            return false;
+        }
+        schematic = statusLine;
+        label = null;
+        status = null;
+        return set("[Build] " + statusLine);
+    }
+
+    /** No job: nothing renders. Returns true when the text changed. */
+    public boolean clear() {
+        label = null;
+        status = null;
+        step = null;
+        schematic = null;
+        current = Integer.MIN_VALUE;
+        target = Integer.MIN_VALUE;
+        return set("");
+    }
+
+    private boolean set(String t) {
+        if (t.equals(text)) {
+            return false;
+        }
+        text = t;
+        rebuilds++;
+        return true;
+    }
+
+    /** Current text; empty means "render nothing". */
+    public String text() {
+        return text;
+    }
+
+    public boolean isEmpty() {
+        return text.isEmpty();
+    }
+
+    /** How often the text was rebuilt (tests: change detection). */
+    public int rebuilds() {
+        return rebuilds;
+    }
+
+    public static String format(String goalLabel, JobStatus st, int cur, int tgt, String now) {
+        StringBuilder sb = new StringBuilder(64);
+        sb.append("[Goal] ").append(prettyLabel(goalLabel == null ? "" : goalLabel));
+        if (tgt > 0) {
+            sb.append(" (").append(Math.max(0, cur)).append('/').append(tgt).append(')');
+        }
+        String detail;
+        if (st == JobStatus.PAUSED) {
+            detail = "Paused";
+        } else if (st == JobStatus.QUEUED || st == JobStatus.PLANNING) {
+            detail = "Planning";
+        } else if (st == JobStatus.REPLANNING) {
+            detail = "Replanning";
+        } else {
+            detail = now == null ? "" : now.trim();
+        }
+        if (!detail.isEmpty()) {
+            sb.append(" — ").append(detail);
+        }
+        return sb.toString();
+    }
+
+    /**
+     * "Gather 32 minecraft:diamond" → "Gathering 32 Diamonds": verb in -ing form, registry ids as readable names,
+     * plural after a count above one.
+     */
+    public static String prettyLabel(String label) {
+        String[] words = label.trim().split("\\s+");
+        StringBuilder sb = new StringBuilder(label.length() + 8);
+        int lastNumber = -1;
+        for (int i = 0; i < words.length; i++) {
+            String w = words[i];
+            if (w.isEmpty()) {
+                continue;
+            }
+            String out = w;
+            if (i == 0) {
+                out = gerund(w);
+            } else if (w.indexOf(':') > 0 && w.indexOf('/') < 0 && w.indexOf('\\') < 0) {
+                out = itemName(w.substring(w.indexOf(':') + 1), lastNumber > 1);
+            }
+            try {
+                lastNumber = Integer.parseInt(w);
+            } catch (NumberFormatException e) {
+                lastNumber = -1;
+            }
+            if (sb.length() > 0) {
+                sb.append(' ');
+            }
+            sb.append(out);
+        }
+        return sb.toString();
+    }
+
+    private static String gerund(String verb) {
+        return switch (verb.toLowerCase(Locale.ROOT)) {
+            case "gather" -> "Gathering";
+            case "craft" -> "Crafting";
+            case "build" -> "Building";
+            case "travel" -> "Travelling";
+            default -> verb;
+        };
+    }
+
+    private static String itemName(String path, boolean plural) {
+        String[] parts = path.split("_");
+        StringBuilder sb = new StringBuilder(path.length() + 2);
+        for (String p : parts) {
+            if (p.isEmpty()) {
+                continue;
+            }
+            if (sb.length() > 0) {
+                sb.append(' ');
+            }
+            sb.append(Character.toUpperCase(p.charAt(0))).append(p.substring(1));
+        }
+        if (plural && sb.length() > 0 && sb.charAt(sb.length() - 1) != 's') {
+            sb.append('s');
+        }
+        return sb.toString();
+    }
+}
