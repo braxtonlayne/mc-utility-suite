@@ -30,6 +30,8 @@ import java.util.concurrent.CompletableFuture;
 public final class SchematicToolkit implements IModule, IConfigurable {
 
     public static final String ID = "schematic_toolkit";
+    /** Card note while Build Assist skips blocks it cannot aim at from the player's spot. */
+    static final String BLOCKED_NOTE = "Some blocks are hidden behind others from here: move around the build";
 
     private final SchematicLibrary library;
     private final BuildAssist assist = new BuildAssist(ID);
@@ -90,6 +92,11 @@ public final class SchematicToolkit implements IModule, IConfigurable {
         }
         if (assist.hasPlan()) {
             assist.tick(mc);
+            if (assist.blockedCount() > 0) {
+                p.addNote(BLOCKED_NOTE);
+            } else {
+                p.removeNote(BLOCKED_NOTE);
+            }
         }
     }
 

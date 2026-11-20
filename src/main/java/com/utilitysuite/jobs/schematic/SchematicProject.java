@@ -218,6 +218,10 @@ final class SchematicProject {
         }
     }
 
+    void removeNote(String note) {
+        notes.remove(note);
+    }
+
     void addNote(String note) {
         if (!notes.contains(note)) {
             notes.add(note);

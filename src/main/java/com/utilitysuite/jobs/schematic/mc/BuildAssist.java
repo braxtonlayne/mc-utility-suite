@@ -95,6 +95,11 @@ public final class BuildAssist implements LeaseListener {
     private int waitTicks;
     private int placements;
 
+    // Cells whose aim timed out from where the player stands (every support face hidden behind other blocks). They are
+    // skipped until the player moves to another block, so the rest of the build continues and the card can say why.
+    private final java.util.BitSet blockedCells = new java.util.BitSet();
+    private long blockedFrom = Long.MIN_VALUE;
+
     public BuildAssist(String ownerId) {
         this.ownerId = ownerId;
         this.leaseRequest = new LeaseRequest(ownerId, ControlPriority.GOAL,
@@ -121,12 +126,18 @@ public final class BuildAssist implements LeaseListener {
         searchPos = 0;
         if (!sameProject) {
             placements = 0;
+            blockedCells.clear(); // cell indices belong to the scan; a refreshed plan for the same scan keeps them
         }
         clearTarget();
     }
 
     public boolean hasPlan() {
         return plan != null;
+    }
+
+    /** Cells currently skipped because they could not be aimed at from the player's position. */
+    public int blockedCount() {
+        return blockedCells.cardinality();
     }
 
     public int placements() {
@@ -176,6 +187,9 @@ public final class BuildAssist implements LeaseListener {
         if (Services.arbiter().isAutomationStopped()) {
             releaseLease();
             return;
+        }
+        if (!blockedCells.isEmpty() && player.blockPosition().asLong() != blockedFrom) {
+            blockedCells.clear(); // the player moved: hidden faces may be visible now
         }
         double reach = player.blockInteractionRange();
         if (!nearSite(player, reach + 6)) {
@@ -258,7 +272,7 @@ public final class BuildAssist implements LeaseListener {
             if (kind == BuildPlan.REMOVE_SCAFFOLD && step != firstOpen) {
                 continue; // scaffolds come down only after everything before them is done
             }
-            if (isStepDone(step)) {
+            if (blockedCells.get(plan.cell(step)) || isStepDone(step)) {
                 continue;
             }
             int cell = plan.cell(step);
@@ -444,6 +458,8 @@ public final class BuildAssist implements LeaseListener {
             aimSet = true;
         }
         if (++aimTicks > AIM_TIMEOUT_TICKS) {
+            blockedCells.set(targetCell);
+            blockedFrom = player.blockPosition().asLong();
             input.clearRotation(lease);
             clearTarget();
             return false;
@@ -463,6 +479,10 @@ public final class BuildAssist implements LeaseListener {
                 placed = input.scheduleKeyTap(lease, SimKey.USE, 1, 2);
             } else if (aimTicks < AIM_TIMEOUT_TICKS) {
                 return; // something is in the line of sight; wait for the crosshair (times out in aim())
+            } else {
+                // Timed out with the face still hidden from here: skip this cell until the player moves.
+                blockedCells.set(targetCell);
+                blockedFrom = player.blockPosition().asLong();
             }
         } else {
             // Silent rotation: the crosshair follows the user's camera, so build the hit result from the target face.
