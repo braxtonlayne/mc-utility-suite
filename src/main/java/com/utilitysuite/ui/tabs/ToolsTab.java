@@ -113,6 +113,10 @@ public final class ToolsTab {
             if (!(m instanceof SmartInventory inv)) {
                 return;
             }
+            p.paragraph("Quick Deposit: open a chest or shulker box and press R (rebind under Controls > Utility "
+                    + "Suite > Quick deposit) to move matching items in, or click the Deposit / Dump buttons beside "
+                    + "the container. The Deposit buttons switch is in the Deposit group below.", Panel.GRAY);
+            p.gap(6);
             p.text("Pinned hotbar slots (never overwritten or dumped)", Panel.DIM);
             int bw = Math.min(26, (p.width() - 8 * 4) / 9);
             for (int i = 0; i < 9; i++) {
