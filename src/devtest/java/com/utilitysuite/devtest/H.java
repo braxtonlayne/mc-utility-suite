@@ -140,4 +140,33 @@ final class H {
     static int floorZ() {
         return net.minecraft.util.Mth.floor(p().getZ());
     }
+
+    /** Diagnostic: "name=value" of the given (private) fields of {@code o}, read reflectively. */
+    static String fields(Object o, String... names) {
+        StringBuilder sb = new StringBuilder();
+        for (String n : names) {
+            try {
+                java.lang.reflect.Field f = o.getClass().getDeclaredField(n);
+                f.setAccessible(true);
+                sb.append(n).append('=').append(f.get(o)).append(' ');
+            } catch (ReflectiveOperationException | RuntimeException e) {
+                sb.append(n).append("=? ");
+            }
+        }
+        return sb.toString().trim();
+    }
+
+    /** Diagnostic: arbiter state (stopped, holders, manual-override pauses) and the open screen. */
+    static String arbiterState() {
+        var arb = com.utilitysuite.core.api.Services.arbiter();
+        StringBuilder sb = new StringBuilder("stopped=" + arb.isAutomationStopped());
+        for (var c : com.utilitysuite.core.api.ControlChannel.all()) {
+            sb.append(' ').append(c).append('=').append(arb.holder(c).map(l -> l.moduleId()).orElse("-"));
+            if (arb.isManualOverrideActive(c)) {
+                sb.append("(override)");
+            }
+        }
+        sb.append(" screen=").append(mc().screen == null ? "-" : mc().screen.getClass().getSimpleName());
+        return sb.toString();
+    }
 }

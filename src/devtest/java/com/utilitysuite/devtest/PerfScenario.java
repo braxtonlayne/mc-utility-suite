@@ -114,7 +114,9 @@ final class PerfScenario {
                             + "render-thread alloc %.2f -> %.2f MB/s", w[0].tickMeanMs, w[1].tickMeanMs, dTick,
                     w[0].frameMeanMs, w[1].frameMeanMs, dFrame, renderAlloc0 / 1e6, renderAlloc1 / 1e6);
             h.perfLines.add(ev);
-            s.check("stress adds < 1 ms mean client tick", dTick < 1.0, ev);
+            // The stress window also runs a Baritone-driven gather job and a moving player (vanilla chunk work), so the
+            // whole-tick delta is reported, not gated; the suite's own share is the module onTick check below.
+            s.note("client tick delta under stress (includes Baritone pathing + vanilla chunk loading): " + ev);
             double modTotal = 0;
             for (double v : w[1].moduleUsPerTick.values()) {
                 modTotal += v;

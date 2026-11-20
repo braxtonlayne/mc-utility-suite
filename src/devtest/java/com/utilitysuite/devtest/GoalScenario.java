@@ -125,8 +125,8 @@ final class GoalScenario {
                 sawMoving[0] = true;
                 s.check("Baritone pathing moves the player", true, "after " + t + " ticks, at " + H.posStr());
             }
-            if (terminal(jobId[0]) || H.count("minecraft:coal") - before[0] >= 4 && t > 40) {
-                return terminal(jobId[0]) || t > 400;
+            if (terminal(jobId[0])) {
+                return true; // mined + walked back (Return/Deposit can take a while from deep in a cave)
             }
             if (job(jobId[0]).map(j -> j.status() == com.utilitysuite.core.api.JobStatus.PAUSED).orElse(false)
                     && t > 200) {

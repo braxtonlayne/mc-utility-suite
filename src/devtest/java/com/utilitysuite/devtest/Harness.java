@@ -57,6 +57,7 @@ public final class Harness {
     Phase phase = Phase.BOOT;
     int phaseTicks;
     Scenario current;
+    static volatile String menuClosedBy = "";
     int stepIndex;
     int stepTicks;
     long worldReadyMillis;
@@ -76,6 +77,18 @@ public final class Harness {
             onTick();
         });
         bus.addListener(EventPriority.HIGHEST, RenderFrameEvent.Pre.class, e -> perf.onFrame());
+        // Diagnostic: who closes the suite menu (a run once saw it close by itself right after opening).
+        bus.addListener(net.neoforged.neoforge.client.event.ScreenEvent.Closing.class, e -> {
+            if (e.getScreen() instanceof com.utilitysuite.ui.SuiteMenuScreen) {
+                StringBuilder sb = new StringBuilder();
+                for (StackTraceElement el : new Throwable().getStackTrace()) {
+                    sb.append(" < ").append(el.getClassName().substring(el.getClassName().lastIndexOf('.') + 1))
+                            .append('.').append(el.getMethodName());
+                }
+                menuClosedBy = sb.toString();
+                PlaytestMod.LOG.info("[playtest] suite menu closed{}", menuClosedBy);
+            }
+        });
         bus.addListener(EventPriority.LOWEST, net.neoforged.neoforge.client.event.ClientChatReceivedEvent.class,
                 ChatCapture::onChat);
         Thread watchdog = new Thread(this::watchdog, "utilitysuite-playtest-watchdog");

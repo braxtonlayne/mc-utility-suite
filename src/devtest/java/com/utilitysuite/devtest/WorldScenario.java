@@ -107,7 +107,7 @@ final class WorldScenario {
             double moved = Math.sqrt(c.distanceToSqr(saved[0][0], saved[0][1] + H.p().getEyeHeight(), saved[0][2]));
             double player = H.dist(saved[0], H.pos());
             s.check("camera flies, player stays", moved > 2 && player < 0.3,
-                    Harness.fmt("camera moved %.2f, player moved %.2f", moved, player));
+                    Harness.fmt("camera moved %.2f, player moved %.2f", moved, player) + "; " + H.arbiterState());
             ((ScoutCameraModule) H.module(ScoutCameraModule.ID)).toggleFreecam();
         });
         s.waitTicks(3);
@@ -144,7 +144,7 @@ final class WorldScenario {
             WaypointsModule m = H.module(WaypointsModule.ID);
             int before = (int) saved[1][0];
             s.check("breadcrumbs recorded while walking", m.trail().size() > before + 2,
-                    "trail " + before + " -> " + m.trail().size() + " points, now at " + H.posStr());
+                    "trail " + before + " -> " + m.trail().size() + " points, now at " + H.posStr() + "; " + H.arbiterState());
         });
         s.always("release W", () -> H.mc().options.keyUp.setDown(false));
         s.always("freecam off", () -> {

@@ -69,7 +69,7 @@ final class TravelScenario {
             s.check("bridge places blocks over the gap and stops at the budget (5)",
                     !TravelBootstrap.bridge().isRunning() && placed == 5 && used == 5,
                     "deck blocks east of the edge: " + placed + ", cobblestone used " + used + ", running="
-                            + TravelBootstrap.bridge().isRunning() + ", player " + H.posStr());
+                            + TravelBootstrap.bridge().isRunning() + ", player " + H.posStr() + "; " + H.arbiterState());
         });
         // --- Water walk ---
         s.cmd(() -> Arena.tp(6.5, -6.5, 0f));

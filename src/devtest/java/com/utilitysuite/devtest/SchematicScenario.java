@@ -73,6 +73,10 @@ final class SchematicScenario {
         IGoalEngine g = Services.goals();
         SchematicToolkit tk = SchematicBootstrap.toolkit();
         int[] anchor = new int[3];
+        int[] moves = {0};
+        boolean[] sawHiddenNote = {false};
+        // Standing spots around the hut (dx, dz, yaw relative to the arena centre): east (start), south, west, north.
+        double[][] spots = {{-4.5, -6.5, 90}, {-6.5, -3.5, 180}, {-9.5, -6.5, 270}, {-6.5, -9.5, 0}};
         long[] jobId = {-1};
         String[] lastPhase = {""};
         Arena.ensure(s);
@@ -106,11 +110,47 @@ final class SchematicScenario {
                 s.note("t=" + t + " card: " + ph + "; job " + GoalScenario.describe(jobId[0]));
                 lastPhase[0] = ph;
             }
+            if (c.map(x -> x.notes().stream().anyMatch(n -> n.contains("hidden behind"))).orElse(false)) {
+                sawHiddenNote[0] = true;
+            }
+            if (placed(anchor) < HUT.length && t > 0 && t % 300 == 0 && moves[0] < 3) {
+                // Build Assist only places what it can see from where the player stands; walk around like a user.
+                moves[0]++;
+                double[] sp = spots[moves[0]];
+                Harness.command(Arena.tp(sp[0], sp[1], (float) sp[2]));
+                s.note("t=" + t + ": " + placed(anchor) + "/" + HUT.length + " placed; moving the player to spot "
+                        + moves[0] + " (" + H.posStr() + ")");
+            }
             if (placed(anchor) == HUT.length && t > 20) {
                 return true;
             }
             if (c.map(x -> x.phase().equals("COMPLETE") || x.phase().equals("FAILED")).orElse(false) && t > 40) {
                 return true;
+            }
+            if (t == 280 && placed(anchor) < HUT.length) {
+                StringBuilder miss = new StringBuilder();
+                for (Object[] b : HUT) {
+                    String have = H.blockId(anchor[0] + (Integer) b[0], anchor[1] + (Integer) b[1], anchor[2] + (Integer) b[2]);
+                    if (!have.equals(b[3])) {
+                        miss.append(b[0]).append(",").append(b[1]).append(",").append(b[2]).append(" wants ").append(b[3]).append(" has ").append(have).append("; ");
+                    }
+                }
+                s.note("diag t=" + t + ": missing cells (relative to anchor " + anchor[0] + "," + anchor[1] + "," + anchor[2] + "): " + miss);
+                Object assist = null;
+                try {
+                    java.lang.reflect.Field f = SchematicToolkit.class.getDeclaredField("assist");
+                    f.setAccessible(true);
+                    assist = f.get(tk);
+                } catch (ReflectiveOperationException e) {
+                    s.note("no assist field: " + e);
+                }
+                if (assist != null) {
+                    s.note("diag t=" + t + ": assist " + H.fields(assist, "plan", "lease", "pausedByPreemption", "leaseRetry",
+                            "cooldown", "waitTicks", "windowCount", "idleTicks", "firstOpen", "searchPos", "targetStep",
+                            "targetX", "targetY", "targetZ", "targetFace", "aimTicks", "placements")
+                            + "; " + H.arbiterState() + "; player " + H.posStr() + " reach "
+                            + H.p().blockInteractionRange() + "; main hand " + H.p().getMainHandItem());
+                }
             }
             if (t > 20 * 90) {
                 throw new Scenario.StepTimeout("build did not finish in 90 s: " + ph + " placed " + placed(anchor));
@@ -121,6 +161,12 @@ final class SchematicScenario {
             int n = placed(anchor);
             s.check("Build Assist placed every block", n == HUT.length, n + "/" + HUT.length
                     + " blocks match in the world; card " + lastPhase[0]);
+            if (moves[0] > 0) {
+                s.check("card says why when blocks are hidden from the player's spot", sawHiddenNote[0],
+                        "needed " + moves[0] + " move(s); hidden-blocks note seen=" + sawHiddenNote[0]);
+            } else {
+                s.note("finished from the first standing spot");
+            }
         });
         s.waitUpTo("job completes", 100, () -> GoalScenario.terminal(jobId[0]));
         s.run("job state", () -> s.check("build job completes", GoalScenario.describe(jobId[0]).startsWith(

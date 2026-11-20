@@ -197,7 +197,8 @@ final class MenuScenario {
         if (H.mc().screen instanceof SuiteMenuScreen m) {
             return m;
         }
-        throw new IllegalStateException("menu not open (screen=" + name(H.mc().screen) + ")");
+        throw new IllegalStateException("menu not open (screen=" + name(H.mc().screen) + "); last close:"
+                + Harness.menuClosedBy);
     }
 
     static String name(Object o) {
