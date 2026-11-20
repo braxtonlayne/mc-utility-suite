@@ -54,7 +54,7 @@ public final class MinecraftWorldActions implements WorldActions {
 
     private enum Op { NONE, CRAFT, SMELT, FETCH, DEPOSIT }
 
-    private enum Phase { FIND, SELECT_ITEM, AIM_PLACE, WAIT_PLACED, OPEN, WAIT_OPEN, WORK, WAIT_CLICKS, COLLECT, DONE }
+    private enum Phase { FIND, SELECT_ITEM, CLEAR_WALK, AIM_PLACE, WAIT_PLACED, OPEN, WAIT_OPEN, WORK, WAIT_CLICKS, COLLECT, DONE }
 
     private static final int OPEN_TIMEOUT = 200;
 
@@ -74,6 +74,8 @@ public final class MinecraftWorldActions implements WorldActions {
     private int timer;
     /** Timer value when the recipe was placed for the current craft; -1 until placed. */
     private int placedAt = -1;
+    /** True once this action walked to open ground to find a station spot (only tried once per action). */
+    private boolean walkedForSpot;
     /** Ticks to wait for a recipe unlock packet before giving up on a locked recipe. */
     private static final int RECIPE_UNLOCK_WAIT = 20;
     private PlanStep step;
@@ -157,6 +159,7 @@ public final class MinecraftWorldActions implements WorldActions {
         message = "";
         timer = 0;
         placedAt = -1;
+        walkedForSpot = false;
         stationPos = Long.MIN_VALUE;
         transferred = Map.of();
     }
@@ -179,6 +182,15 @@ public final class MinecraftWorldActions implements WorldActions {
         switch (phase) {
             case FIND -> find(mc);
             case SELECT_ITEM -> selectStationItem(player);
+            case CLEAR_WALK -> {
+                MiningDriver.Status st = driver.get().status();
+                if (st == MiningDriver.Status.ARRIVED) {
+                    phase = Phase.SELECT_ITEM;
+                    timer = 0;
+                } else if (st == MiningDriver.Status.FAILED || st == MiningDriver.Status.UNAVAILABLE || timer > 400) {
+                    fail("No free spot to place " + station + " (could not walk to open ground)");
+                }
+            }
             case AIM_PLACE -> aimAndPlace(mc);
             case WAIT_PLACED -> {
                 if (station.equals(blockAt(mc.level, stationPos))) {
@@ -253,6 +265,15 @@ public final class MinecraftWorldActions implements WorldActions {
         Services.input().selectHotbarSlot(lease, hotbar);
         long spot = findPlacementSpot(Minecraft.getInstance());
         if (spot == Long.MIN_VALUE) {
+            // Typically inside a tree canopy after chopping: walk once to open ground below/near it and look again.
+            long ground = walkedForSpot ? Long.MIN_VALUE : findOpenGround(Minecraft.getInstance());
+            if (ground != Long.MIN_VALUE && driver.get().isAvailable()) {
+                walkedForSpot = true;
+                driver.get().gotoCoord(ground, 0);
+                phase = Phase.CLEAR_WALK;
+                timer = 0;
+                return;
+            }
             fail("No free spot to place " + station);
             return;
         }
@@ -577,6 +598,40 @@ public final class MinecraftWorldActions implements WorldActions {
     /** Y offsets tried for a station spot, nearest first (inside a tree canopy foot level is often all leaves). */
     private static final int[] PLACE_DY = {0, -1, 1, -2, 2};
 
+    /**
+     * Nearest standable ground column (ignoring leaves) within 6 blocks: air for feet and head on a sturdy block.
+     * Not per tick: only when no station spot was found.
+     */
+    private long findOpenGround(Minecraft mc) {
+        LocalPlayer p = mc.player;
+        Level level = mc.level;
+        BlockPos c = p.blockPosition();
+        for (int ring = 0; ring <= 6; ring++) {
+            for (int dx = -ring; dx <= ring; dx++) {
+                for (int dz = -ring; dz <= ring; dz++) {
+                    if (Math.max(Math.abs(dx), Math.abs(dz)) != ring) {
+                        continue;
+                    }
+                    int x = c.getX() + dx;
+                    int z = c.getZ() + dz;
+                    int y = level.getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z);
+                    probe.set(x, y, z);
+                    BlockState feet = level.getBlockState(probe);
+                    probe.set(x, y + 1, z);
+                    BlockState head = level.getBlockState(probe);
+                    probe.set(x, y - 1, z);
+                    BlockState floor = level.getBlockState(probe);
+                    if (feet.getCollisionShape(level, probe).isEmpty() && feet.getFluidState().isEmpty()
+                            && head.getCollisionShape(level, probe).isEmpty()
+                            && floor.isFaceSturdy(level, probe, Direction.UP)) {
+                        return BlockPos.asLong(x, y, z);
+                    }
+                }
+            }
+        }
+        return Long.MIN_VALUE;
+    }
+
     private long findPlacementSpot(Minecraft mc) {
         LocalPlayer p = mc.player;
         Level level = mc.level;
@@ -609,7 +664,7 @@ public final class MinecraftWorldActions implements WorldActions {
                         long spot = probe.asLong();
                         probe.set(c.getX() + dx, y - 1, c.getZ() + dz);
                         BlockState below = level.getBlockState(probe);
-                        if (below.isFaceSturdy(level, probe, Direction.UP)) {
+                        if (below.isFaceSturdy(level, probe, Direction.UP) && canSeeTopFace(level, p, probe)) {
                             return spot;
                         }
                     }
@@ -617,6 +672,19 @@ public final class MinecraftWorldActions implements WorldActions {
             }
         }
         return Long.MIN_VALUE;
+    }
+
+    /**
+     * True when a ray from the eye to the centre of the support's top face hits that block (leaves or logs in the way
+     * would make the aim fail). Called only while choosing a station spot, not per tick.
+     */
+    private static boolean canSeeTopFace(Level level, LocalPlayer p, BlockPos support) {
+        net.minecraft.world.phys.Vec3 eye = p.getEyePosition();
+        net.minecraft.world.phys.Vec3 target = new net.minecraft.world.phys.Vec3(support.getX() + 0.5, support.getY() + 0.999,
+                support.getZ() + 0.5);
+        BlockHitResult hit = level.clip(new net.minecraft.world.level.ClipContext(eye, target,
+                net.minecraft.world.level.ClipContext.Block.OUTLINE, net.minecraft.world.level.ClipContext.Fluid.NONE, p));
+        return hit.getType() == HitResult.Type.MISS || hit.getBlockPos().equals(support);
     }
 
     private static RotationTarget aimAt(LocalPlayer p, double x, double y, double z) {

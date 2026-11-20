@@ -93,6 +93,20 @@ final class WorldScenario {
         });
         s.run("look down for overlay shot", () -> H.p().setXRot(40f));
         Shots.add(s, "world-overlays");
+        // Minimap (military default) + Info strip, overlays off so the HUD reads cleanly.
+        s.run("minimap + info strip on", () -> {
+            H.enable("world_overlays", false);
+            H.enable("minimap", true);
+            H.setting("suite_hud", "info_strip", true);
+            H.p().setXRot(10f);
+        });
+        s.waitTicks(80);
+        Shots.add(s, "hud-minimap-infostrip");
+        s.run("minimap + info strip off", () -> {
+            H.enable("minimap", false);
+            H.setting("suite_hud", "info_strip", false);
+            H.enable("world_overlays", true);
+        });
         // --- freecam ---
         s.run("freecam on", () -> {
             saved[0] = H.pos();

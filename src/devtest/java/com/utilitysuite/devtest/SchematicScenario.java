@@ -114,7 +114,8 @@ final class SchematicScenario {
             if (c.map(x -> x.notes().stream().anyMatch(n -> n.contains("hidden behind"))).orElse(false)) {
                 sawHiddenNote[0] = true;
             }
-            if (placed(anchor) < HUT.length && t > 0 && t % 300 == 0 && moves[0] < 3) {
+            // Build Assist walks to hidden cells itself now; the harness only steps in as a late fallback.
+            if (placed(anchor) < HUT.length && t > 0 && t % 900 == 0 && moves[0] < 3) {
                 // Build Assist only places what it can see from where the player stands; walk around like a user.
                 moves[0]++;
                 double[] sp = spots[moves[0]];
