@@ -91,6 +91,38 @@ class AcceptanceScenario2Test {
     }
 
 
+
+    /** Gather-only builds also go through the toolkit, which knows the missing materials only after its diff. */
+    @Test
+    void gatherOnlyBuildIsHandedToTheToolkit() {
+        List<GoalRequest.Build> started = new ArrayList<>();
+        exec.setBuildHandler(new BuildHandler() {
+            @Override
+            public Map<String, Integer> missingMaterials(GoalRequest.Build request) {
+                return Map.of();
+            }
+
+            @Override
+            public void startBuild(long jobId, GoalRequest.Build request) {
+                started.add(request);
+            }
+
+            @Override
+            public JobStatus buildStatus(long jobId) {
+                return JobStatus.COMPLETED;
+            }
+
+            @Override
+            public void cancelBuild(long jobId) {
+            }
+        });
+        long id = exec.submit(new GoalRequest.Build("bricks.nbt", 0L, true, CostProfile.CHEAPEST,
+                DataSourceMode.OBSERVED_ONLY));
+        tick(10);
+        assertEquals(1, started.size(), "startBuild called for the gather-only request");
+        assertTrue(started.get(0).gatherOnly());
+        assertEquals(JobStatus.COMPLETED, lastPosted(id).status());
+    }
     /** The schematic toolkit's Build Assist leases its own channels; the goal job must not hold them meanwhile. */
     @Test
     void buildStepLeavesTheChannelsToTheToolkit() {

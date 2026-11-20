@@ -388,9 +388,11 @@ public final class JobExecutor implements LeaseListener {
     private void applyInitialPlan(Job j, Plan p) {
         j.steps.clear();
         j.steps.addAll(p.steps());
-        if (j.request instanceof GoalRequest.Build b && !b.gatherOnly()) {
+        if (j.request instanceof GoalRequest.Build b) {
+            // Gather-only too: the toolkit diffs the schematic and submits the GatherMany itself (see SchematicBuildBridge),
+            // since missingMaterials() is unknown until the schematic is loaded.
             j.steps.add(new PlanStep(StepKind.BUILD, "", 1, 0, null, List.of(), 0, b.anchor(),
-                    deps.actions().dimension(), StepRole.TARGET, "Build " + b.schematicPath(), null));
+                    deps.actions().dimension(), StepRole.TARGET, b.label(), null));
         }
         j.index = 0;
         j.phase = Phase.START;
