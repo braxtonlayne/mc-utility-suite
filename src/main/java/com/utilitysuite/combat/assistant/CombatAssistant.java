@@ -109,6 +109,18 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
     private int eatTicks;
     private boolean retreating;
     private int totemCooldown;
+    private int pulledInvSlot = -1;
+    private int pulledHotbarSlot = -1;
+
+    // offhand totem keeper (runs while armed, engaged or not)
+    static final int KEEPER_MAX_TICKS = 20;
+    private final LeaseRequest keeperRequest;
+    private ControlLease keeperLease;
+    private int keeperTicks;
+    private int keeperClock;
+    private int totemKeepCooldown;
+    private int totemRefills;
+    private int jumpResets;
     private boolean jumpedThisCycle;
     private boolean wasAirborne;
     private int critWait;
@@ -134,6 +146,8 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         this.clock = clock;
         this.leaseRequest = new LeaseRequest(ID, ControlPriority.COMBAT,
                 EnumSet.of(LEASE_CHANNELS[0], LEASE_CHANNELS[1], LEASE_CHANNELS[2], LEASE_CHANNELS[3]), 0, this);
+        this.keeperRequest = new LeaseRequest(ID, ControlPriority.EMERGENCY, EnumSet.of(ControlChannel.HOTBAR),
+                KEEPER_MAX_TICKS, this);
     }
 
     // =================================================================================================================
@@ -158,6 +172,12 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
             return;
         }
         DamageClassifier.Kind kind = DamageClassifier.kind(damageTypeId);
+        if (victimId == local && state == CombatState.ENGAGED && holdsLease()
+                && SustainExtras.shouldJumpReset(settings.jumpReset, world.extrasAllowedHere(), true,
+                kind == DamageClassifier.Kind.ENTITY_ATTACK, snap.onGround, eating)
+                && input.scheduleKeyTap(lease, SimKey.JUMP, 1, 1)) {
+            jumpResets++; // ordinary jump tap under the MOVEMENT channel of the combat lease
+        }
         if (victimId == local) {
             onLocalDamaged(local, kind, damageTypeId, causeId);
         } else if ((causeId == local || directId == local) && victimId == pendingAttackTarget
@@ -282,6 +302,7 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         if (totemCooldown > 0) {
             totemCooldown--;
         }
+        tickTotemKeeper();
         if (state == CombatState.DORMANT) {
             return;
         }
@@ -368,6 +389,7 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
 
         // ---- 1. emergency sustain ------------------------------------------------------------------------------
         if (settings.sustain) {
+            maybePullConsumable(s);
             SustainPlanner.Action a = SustainPlanner.decide(s, settings.lowHealth, lastHitDamage, settings.totems,
                     settings.gapples);
             if (a == SustainPlanner.Action.EQUIP_TOTEM && totemCooldown == 0 && !s.screenOpen
@@ -567,6 +589,88 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         eating = false;
         eatTicks = 0;
         selectWeapon();
+        swapBackPulled();
+    }
+
+    /** Pulls the best main-inventory consumable into the hotbar (SWAP click) when the hotbar has none. */
+    private void maybePullConsumable(CombatSnapshot s) {
+        if (eating || pulledInvSlot >= 0 || !settings.gapples || s.effectiveHealth() > settings.lowHealth) {
+            return;
+        }
+        if (!SustainExtras.shouldPull(settings.wholeInventory, world.extrasAllowedHere(), s.gappleSlot,
+                s.sustainInvSlot, clicker.pending() > 0, s.screenOpen)) {
+            return;
+        }
+        int hotbar = SustainExtras.hotbarSlotForPull(s.emptyHotbarSlot, weaponSlot);
+        if (clicker.queueClick(lease, SustainPlanner.menuSlotOf(s.sustainInvSlot), hotbar,
+                IContainerClicker.Click.SWAP)) {
+            pulledInvSlot = s.sustainInvSlot;
+            pulledHotbarSlot = hotbar;
+        }
+    }
+
+    /** Returns a pulled item to its inventory slot (the same SWAP again), when the setting asks for it. */
+    private void swapBackPulled() {
+        if (pulledInvSlot < 0) {
+            return;
+        }
+        if (settings.swapBack && holdsLease() && !snap.screenOpen) {
+            clicker.queueClick(lease, SustainPlanner.menuSlotOf(pulledInvSlot), pulledHotbarSlot,
+                    IContainerClicker.Click.SWAP);
+        }
+        pulledInvSlot = -1;
+        pulledHotbarSlot = -1;
+    }
+
+    /** Every few ticks while armed: refill an empty offhand with a totem under a short EMERGENCY hotbar lease. */
+    private void tickTotemKeeper() {
+        if (totemKeepCooldown > 0) {
+            totemKeepCooldown--;
+        }
+        if (keeperLease != null) {
+            if (!keeperLease.isActive() || clicker.pending() == 0 || ++keeperTicks > KEEPER_MAX_TICKS) {
+                releaseKeeper();
+            }
+            return;
+        }
+        if (!enabled || !settings.keepTotem || ++keeperClock < SustainExtras.TOTEM_CHECK_INTERVAL) {
+            return;
+        }
+        keeperClock = 0;
+        int slot = world.totemRefillSlot();
+        if (slot < 0 || !SustainExtras.shouldReplenishTotem(enabled, settings.keepTotem, world.extrasAllowedHere(),
+                false, slot, false, arbiter.isManualOverrideActive(ControlChannel.HOTBAR), totemKeepCooldown)) {
+            return;
+        }
+        ControlLease l;
+        if (holdsLease()) {
+            l = lease;
+        } else {
+            if (arbiter.isAutomationStopped()) {
+                return;
+            }
+            Optional<ControlLease> granted = arbiter.request(keeperRequest);
+            if (granted.isEmpty()) {
+                return;
+            }
+            keeperLease = granted.get();
+            keeperTicks = 0;
+            l = keeperLease;
+        }
+        if (clicker.queueClick(l, SustainPlanner.menuSlotOf(slot), OFFHAND_BUTTON, IContainerClicker.Click.SWAP)) {
+            totemKeepCooldown = SustainExtras.TOTEM_REFILL_COOLDOWN;
+            totemRefills++;
+        } else if (keeperLease != null) {
+            releaseKeeper();
+        }
+    }
+
+    private void releaseKeeper() {
+        ControlLease l = keeperLease;
+        keeperLease = null;
+        if (l != null && l.isActive()) {
+            arbiter.release(l);
+        }
     }
 
     // ---- disengage ----------------------------------------------------------------------------------------------
@@ -593,6 +697,7 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
             input.clearRotation(lease);
             selectWeapon();
         }
+        swapBackPulled();
         eating = false;
         LOG.info("Combat assistant: disengaged ({})", reason);
         diagnostic("Disengaged: " + reason);
@@ -690,12 +795,17 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         if (!enabled && state != CombatState.DORMANT) {
             disengageNow(DisengageReason.DISARMED);
         }
+        if (!enabled) {
+            releaseKeeper();
+        }
         this.enabled = enabled;
     }
 
     @Override
     public void onStopAll() {
         pendingAttackTarget = -1;
+        keeperLease = null; // Stop-All revoked it already
+        totemKeepCooldown = 100; // do not grab the hotbar again right after Stop-All
         if (state != CombatState.DORMANT) {
             disengageNow(DisengageReason.STOP_ALL);
         }
@@ -704,6 +814,9 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
     @Override
     public void onWorldUnload() {
         lease = null; // the core ended it already
+        keeperLease = null;
+        pulledInvSlot = -1;
+        pulledHotbarSlot = -1;
         if (state != CombatState.DORMANT) {
             lastDisengage = DisengageReason.WORLD_UNLOAD;
         }
@@ -773,6 +886,15 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
 
     public float lastHitDamage() {
         return lastHitDamage;
+    }
+
+    /** Totems moved to the offhand by the keeper. */
+    public int totemRefills() {
+        return totemRefills;
+    }
+
+    public int jumpResets() {
+        return jumpResets;
     }
 
     public int engagements() {

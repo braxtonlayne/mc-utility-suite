@@ -34,4 +34,13 @@ public interface CombatWorld {
      * undefined) when the player or the target is missing, removed or dead.
      */
     boolean sample(int targetId, CombatSnapshot out);
+
+    /**
+     * Cheap offhand check for the totem keeper (no target needed, allocation free): when the local player exists, no
+     * screen is open and the offhand holds no totem, the inventory index 0..35 of a totem; otherwise -1.
+     */
+    int totemRefillSlot();
+
+    /** Single-player, or a server on the shared allow list ({@code core.ServerAllowList}). Cheap; may be cached. */
+    boolean extrasAllowedHere();
 }
