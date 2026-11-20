@@ -6,5 +6,7 @@
   "key.utilitysuite.toggle_terrain_surface": "Toggle Terrain Assist (Surface)",
   "key.utilitysuite.toggle_world_overlays": "Toggle World Overlays",
   "key.utilitysuite.toggle_scout_camera": "Toggle Scout Camera",
-  "message.utilitysuite.stop_all": "Utility Suite: all automation stopped"
+  "message.utilitysuite.stop_all": "Utility Suite: all automation stopped",
+  "module.utilitysuite.schematic_toolkit": "Schematic Toolkit",
+  "module.utilitysuite.schematic_toolkit.description": "Import schematics, count materials, survey the site and assist building"
 }
