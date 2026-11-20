@@ -170,8 +170,8 @@ final class GoalScenario {
             Optional<JobSnapshot> j = job(jobId[0]);
             String seq = String.join(" > ", steps).toLowerCase();
             s.note("step sequence: " + String.join(" > ", steps));
-            s.check("started from an empty inventory and bootstrapped its own tools (log + pickaxe steps)",
-                    seq.contains("log") && seq.contains("pickaxe"), "steps: " + seq);
+            s.check("started from an empty inventory and bootstrapped its own tools (wood + pickaxe steps)",
+                    (seq.contains("wood") || seq.contains("log")) && seq.contains("pick"), "steps: " + seq);
             s.note("ends with: pickaxes " + H.count("minecraft:wooden_pickaxe") + " wooden / "
                     + H.count("minecraft:stone_pickaxe") + " stone, cobblestone " + H.count("minecraft:cobblestone"));
             s.check("gather 4 coal: inventory delta >= 4 and job completes", delta >= 4

@@ -574,16 +574,20 @@ public final class MinecraftWorldActions implements WorldActions {
     }
 
     /** An air block next to the player (not its own column) with a solid block below. */
-    /** Y offsets tried for a station spot, in order: foot level, one lower, one higher. */
-    private static final int[] PLACE_DY = {0, -1, 1};
+    /** Y offsets tried for a station spot, nearest first (inside a tree canopy foot level is often all leaves). */
+    private static final int[] PLACE_DY = {0, -1, 1, -2, 2};
 
     private long findPlacementSpot(Minecraft mc) {
         LocalPlayer p = mc.player;
         Level level = mc.level;
         BlockPos c = p.blockPosition();
         // Uneven ground (tree roots, slopes, a Baritone pit) often has no free spot at foot level, so also try one
-        // block lower and higher; nearer rings and foot level first. Ring 3 stays inside the 4.5-block reach.
-        for (int ring = 1; ring <= 3; ring++) {
+        // or two lower and higher; nearer rings and foot level first, and only spots whose support is within reach.
+        double ex = p.getX();
+        double ey = p.getEyeY();
+        double ez = p.getZ();
+        double reach = Math.min(4.5, p.blockInteractionRange()) - 0.3;
+        for (int ring = 1; ring <= 4; ring++) {
             for (int dyi = 0; dyi < PLACE_DY.length; dyi++) {
                 int y = c.getY() + PLACE_DY[dyi];
                 for (int dx = -ring; dx <= ring; dx++) {
@@ -594,6 +598,12 @@ public final class MinecraftWorldActions implements WorldActions {
                         probe.set(c.getX() + dx, y, c.getZ() + dz);
                         BlockState at = level.getBlockState(probe);
                         if (!at.canBeReplaced() || !at.getFluidState().isEmpty()) {
+                            continue;
+                        }
+                        double sx = c.getX() + dx + 0.5 - ex;
+                        double sy = y - ey;
+                        double sz = c.getZ() + dz + 0.5 - ez;
+                        if (sx * sx + sy * sy + sz * sz > reach * reach) {
                             continue;
                         }
                         long spot = probe.asLong();
