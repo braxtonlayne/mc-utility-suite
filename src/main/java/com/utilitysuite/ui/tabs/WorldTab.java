@@ -1,5 +1,6 @@
 package com.utilitysuite.ui.tabs;
 
+import com.utilitysuite.core.api.ControlPriority;
 import com.utilitysuite.core.api.DataSourceMode;
 import com.utilitysuite.core.api.IModule;
 import com.utilitysuite.core.api.INavigator;
@@ -29,6 +30,8 @@ public final class WorldTab {
 
     private static final String K_WP_NAME = "world.wpName";
     private static final int MAX_WAYPOINTS = 30;
+    /** Lease owner for waypoint Go / Take Me Back runs (the waypoints module id). */
+    static final String NAV_OWNER = "waypoints";
 
     private WorldTab() {
     }
@@ -159,7 +162,11 @@ public final class WorldTab {
             return;
         }
         long pos = wps.positionIn(wp, mc.level.dimension().location().toString());
-        nav.goTo(BlockPos.getX(pos), BlockPos.getY(pos), BlockPos.getZ(pos), 2);
+        if (nav.goToLeased(NAV_OWNER, ControlPriority.TRAVEL, BlockPos.getX(pos), BlockPos.getY(pos),
+                BlockPos.getZ(pos), 2).isEmpty()) {
+            p.toast("Movement is busy or automation is stopped");
+            return;
+        }
         p.toast("Going to " + wp.name());
     }
 
@@ -178,7 +185,10 @@ public final class WorldTab {
         for (int i = 0; i < crumbs.length; i++) {
             back[i] = crumbs[crumbs.length - 1 - i];
         }
-        nav.followPath(back);
+        if (nav.followPathLeased(NAV_OWNER, ControlPriority.TRAVEL, back).isEmpty()) {
+            p.toast("Movement is busy or automation is stopped");
+            return;
+        }
         p.toast("Taking you back along " + back.length + " breadcrumbs");
     }
 
