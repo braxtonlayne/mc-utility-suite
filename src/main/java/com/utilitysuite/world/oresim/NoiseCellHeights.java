@@ -3,6 +3,7 @@ package com.utilitysuite.world.oresim;
 import com.utilitysuite.UtilitySuiteMod;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.util.Mth;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.ChunkGenerator;
 import net.minecraft.world.level.levelgen.Aquifer;
@@ -177,6 +178,76 @@ final class NoiseCellHeights implements ColumnHeightCache.CellFiller {
                 }
             }
         }
+    }
+
+    /** Vein Y bounds of both {@code OreVeinifier.VeinType}s (iron -60..-8, copper 0..50). */
+    private static final int VEIN_MIN_Y = -60;
+    private static final int VEIN_MAX_Y = 50;
+
+    /**
+     * Replays vanilla's noise fill ({@code NoiseBasedChunkGenerator.doFill}) for the vein Y range of one chunk with a
+     * single NoiseChunk and reports the vein ore blocks the material rule produces ({@code OreVeinifier} runs inside
+     * {@code getInterpolatedState}, after the aquifer, exactly as in vanilla). Differences to the real chunk: no
+     * structure beardifier (rare at these depths) and no later carvers, which remove some blocks; both are left to
+     * verification like for decoration ores. About 16 x 16 x 112 interpolated samples, once per simulated chunk.
+     */
+    boolean largeVeins(int chunkX, int chunkZ, TerrainOracle.LargeVeinSink sink) {
+        if (!fastPath || !settings.oreVeinsEnabled()) {
+            return false;
+        }
+        NoiseSettings ns = noiseSettings;
+        int cellHeight = ns.getCellHeight();
+        int cellWidth = ns.getCellWidth();
+        if (cellWidth <= 0 || 16 % cellWidth != 0) {
+            return false;
+        }
+        int cellMinY = Mth.floorDiv(ns.minY(), cellHeight);
+        int cellCountY = Mth.floorDiv(ns.height(), cellHeight);
+        int cyLow = Math.max(0, Mth.floorDiv(VEIN_MIN_Y, cellHeight) - cellMinY);
+        int cyHigh = Math.min(cellCountY - 1, Mth.floorDiv(VEIN_MAX_Y, cellHeight) - cellMinY);
+        if (cyHigh < cyLow) {
+            return true;
+        }
+        int cells = 16 / cellWidth;
+        int minX = chunkX << 4;
+        int minZ = chunkZ << 4;
+        BlockState copper = Blocks.COPPER_ORE.defaultBlockState();
+        BlockState iron = Blocks.DEEPSLATE_IRON_ORE.defaultBlockState();
+        NoiseChunk chunk = new NoiseChunk(cells, random, minX, minZ, ns, BEARDIFIER_MARKER, settings, fluidPicker,
+                Blender.empty());
+        chunk.initializeForFirstCellX();
+        for (int cx = 0; cx < cells; cx++) {
+            chunk.advanceCellX(cx);
+            for (int cz = 0; cz < cells; cz++) {
+                for (int cy = cyHigh; cy >= cyLow; cy--) {
+                    chunk.selectCellYZ(cy, cz);
+                    for (int iy = cellHeight - 1; iy >= 0; iy--) {
+                        int by = (cellMinY + cy) * cellHeight + iy;
+                        chunk.updateForY(by, (double) iy / (double) cellHeight);
+                        if (by < VEIN_MIN_Y || by > VEIN_MAX_Y) {
+                            continue;
+                        }
+                        for (int ix = 0; ix < cellWidth; ix++) {
+                            int bx = minX + cx * cellWidth + ix;
+                            chunk.updateForX(bx, (double) ix / (double) cellWidth);
+                            for (int iz = 0; iz < cellWidth; iz++) {
+                                int bz = minZ + cz * cellWidth + iz;
+                                chunk.updateForZ(bz, (double) iz / (double) cellWidth);
+                                BlockState state = interpolatedState(chunk);
+                                if (state == copper) {
+                                    sink.acceptVeinOre(true, bx, by, bz);
+                                } else if (state == iron) {
+                                    sink.acceptVeinOre(false, bx, by, bz);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            chunk.swapSlices();
+        }
+        chunk.stopInterpolation();
+        return true;
     }
 
     private static BlockState interpolatedState(NoiseChunk chunk) {

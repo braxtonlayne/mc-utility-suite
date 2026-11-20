@@ -35,6 +35,14 @@ public record OreSpec(String featureId, int step, int index, int countMin, int c
         biomesAllowed = biomesAllowed == null ? null : Set.copyOf(biomesAllowed);
     }
 
+    /** Feature-id prefix of the noise-stage large ore veins ({@code OreVeinifier}), which are not decoration features. */
+    public static final String LARGE_VEIN_PREFIX = "utilitysuite:large_vein_";
+
+    /** Noise-stage large vein (copper/granite or iron/tuff): predicted by {@link TerrainOracle#largeVeins}, not by the decoration simulator. */
+    public boolean largeVein() {
+        return featureId.startsWith(LARGE_VEIN_PREFIX);
+    }
+
     /** Resource name of features simulated only because they make blocks non-replaceable (dirt, gravel blobs). */
     public static final String OCCLUDER = "occluder";
 

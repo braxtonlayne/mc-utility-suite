@@ -29,7 +29,7 @@ public final class ServerWorldgenOracles {
     /** One shared height cache per level (the simulation thread is the only user); replaced when the level changes. */
     private static volatile SharedHeights shared;
 
-    private record SharedHeights(ServerLevel level, ColumnHeightCache cache) {
+    private record SharedHeights(ServerLevel level, ColumnHeightCache cache, ColumnHeightCache.CellFiller filler) {
     }
 
     /** About 1 MB: 1024 chunks x 256 ints, enough for the simulation radius plus the 3 x 3 vein-box margin. */
@@ -41,7 +41,9 @@ public final class ServerWorldgenOracles {
      * column per simulated chunk.
      */
     public static TerrainOracle terrain(ServerLevel level) {
-        ColumnHeightCache cache = heightsFor(level);
+        SharedHeights shared = sharedFor(level);
+        ColumnHeightCache cache = shared.cache;
+        NoiseCellHeights noise = shared.filler instanceof NoiseCellHeights n ? n : null;
         return new TerrainOracle() {
             @Override
             public byte classify(OreSpec spec, int x, int y, int z) {
@@ -52,21 +54,34 @@ public final class ServerWorldgenOracles {
             public int surfaceHeight(int x, int z) {
                 return cache.surfaceHeight(x, z);
             }
+
+            @Override
+            public boolean largeVeins(int chunkX, int chunkZ, LargeVeinSink sink) {
+                if (noise == null) {
+                    return false;
+                }
+                try {
+                    return noise.largeVeins(chunkX, chunkZ, sink);
+                } catch (RuntimeException e) {
+                    return false;
+                }
+            }
         };
     }
 
-    static ColumnHeightCache heightsFor(ServerLevel level) {
+    private static SharedHeights sharedFor(ServerLevel level) {
         SharedHeights s = shared;
         if (s != null && s.level == level) {
-            return s.cache;
+            return s;
         }
         synchronized (ServerWorldgenOracles.class) {
             s = shared;
             if (s == null || s.level != level) {
-                s = new SharedHeights(level, new ColumnHeightCache(NoiseCellHeights.create(level), HEIGHT_CACHE_CHUNKS));
+                ColumnHeightCache.CellFiller filler = NoiseCellHeights.create(level);
+                s = new SharedHeights(level, new ColumnHeightCache(filler, HEIGHT_CACHE_CHUNKS), filler);
                 shared = s;
             }
-            return s.cache;
+            return s;
         }
     }
 

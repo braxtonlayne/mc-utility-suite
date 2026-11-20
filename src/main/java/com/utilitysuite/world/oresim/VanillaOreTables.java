@@ -107,6 +107,33 @@ public final class VanillaOreTables {
         return out.toArray(new OreSpec[0]);
     }
 
+    /** Noise-stage copper vein ({@code OreVeinifier.VeinType.COPPER}: copper ore in granite, Y 0..50). */
+    public static final OreSpec LARGE_VEIN_COPPER = new OreSpec(OreSpec.LARGE_VEIN_PREFIX + "copper", 15, 0, 0, 0, 0,
+            false, 0, 50, 0, 0, 0f, false, "minecraft:copper_ore", null, null, null, "copper");
+    /** Noise-stage iron vein ({@code OreVeinifier.VeinType.IRON}: deepslate iron ore in tuff, Y -60..-8). */
+    public static final OreSpec LARGE_VEIN_IRON = new OreSpec(OreSpec.LARGE_VEIN_PREFIX + "iron", 15, 1, 0, 0, 0,
+            false, -60, -8, 0, 0, 0f, false, "minecraft:deepslate_iron_ore", null, null, null, "iron");
+
+    /**
+     * {@link #select} plus the overworld's noise-stage large veins for the selected resources (appended last; the
+     * simulator emits them before the decoration features). Only useful with a terrain oracle that implements
+     * {@link TerrainOracle#largeVeins}.
+     */
+    public static OreSpec[] selectWithLargeVeins(String dimension, java.util.Collection<String> resources) {
+        OreSpec[] base = select(dimension, resources);
+        if (!OVERWORLD.equals(dimension)) {
+            return base;
+        }
+        java.util.List<OreSpec> out = new java.util.ArrayList<>(java.util.Arrays.asList(base));
+        if (resources.contains("copper")) {
+            out.add(LARGE_VEIN_COPPER);
+        }
+        if (resources.contains("iron")) {
+            out.add(LARGE_VEIN_IRON);
+        }
+        return out.toArray(new OreSpec[0]);
+    }
+
     public static List<OreSpec> forDimension(String dimension) {
         if (OVERWORLD.equals(dimension)) {
             return OVERWORLD_ORES;

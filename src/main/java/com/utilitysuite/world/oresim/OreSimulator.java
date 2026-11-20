@@ -33,6 +33,22 @@ public final class OreSimulator {
     private int[] stamp = new int[8192];
     private int stampGen;
 
+    // large-vein forwarding (set per simulateChunk call; one bound sink, no per-chunk lambda)
+    private int veinCopperSpec = -1;
+    private int veinIronSpec = -1;
+    private float veinConfidence;
+    private OreSink veinSink;
+    private final TerrainOracle.LargeVeinSink veinForwarder = this::acceptVeinOre;
+
+    private void acceptVeinOre(boolean copper, int x, int y, int z) {
+        int spec = copper ? veinCopperSpec : veinIronSpec;
+        OreSink s = veinSink;
+        if (spec >= 0 && s != null) {
+            // cluster ordinal: 16-block Y band, so one missing stretch of a vein does not downrank the whole chunk
+            s.accept(spec, x, y, z, ((y + 64) >> 4) & 0xFF, veinConfidence);
+        }
+    }
+
     static float mthSin(float value) {
         return SIN[(int) (value * 10430.378F) & 65535];
     }
@@ -85,7 +101,32 @@ public final class OreSimulator {
         int ox = chunkX << 4;
         int oz = chunkZ << 4;
         placed.clear();
+        // Noise-stage large veins come first (they exist before any decoration feature runs; the sink keeps the
+        // first claim on a position, like vein ore that later features cannot replace).
+        veinCopperSpec = -1;
+        veinIronSpec = -1;
         for (int s = 0; s < specs.length; s++) {
+            if (specs[s].largeVein()) {
+                if ("copper".equals(specs[s].resource())) {
+                    veinCopperSpec = s;
+                } else {
+                    veinIronSpec = s;
+                }
+            }
+        }
+        if (veinCopperSpec >= 0 || veinIronSpec >= 0) {
+            veinSink = sink;
+            veinConfidence = baseConfidence;
+            try {
+                terrain.largeVeins(chunkX, chunkZ, veinForwarder);
+            } finally {
+                veinSink = null;
+            }
+        }
+        for (int s = 0; s < specs.length; s++) {
+            if (specs[s].largeVein()) {
+                continue;
+            }
             long decorationSeed = rng.setDecorationSeed(worldSeed, ox, oz);
             simulateFeature(decorationSeed, s, specs[s], ox, minY, oz, minY, height, terrain, biomes, baseConfidence,
                     sink);
