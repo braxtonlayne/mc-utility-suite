@@ -43,4 +43,24 @@ public interface CombatWorld {
 
     /** Single-player, or a server on the shared allow list ({@code core.ServerAllowList}). Cheap; may be cached. */
     boolean extrasAllowedHere();
+
+    /**
+     * Proactive-mode scan: fills {@code out} with living entities (players and mobs, never the local player) within
+     * {@code radius} blocks, flagged per {@link TargetCandidates}. Line of sight is only traced when
+     * {@code computeLos}. Called a few times a second at most, only while proactive engagement is armed and dormant.
+     */
+    void scanTargets(double radius, boolean computeLos, TargetCandidates out);
+
+    /** Safe food items (not rotten flesh, spider eyes...) in the player's inventory and offhand. Called rarely. */
+    int inventoryFood();
+
+    /** Safe food in remembered containers within {@code radius} blocks ({@link FoodObjective#storedNearby}). */
+    int storedFoodNearby(double radius);
+
+    /**
+     * The nearest dropped food item within {@code radius} blocks of the player and within 1.5 blocks of its feet height
+     * (never one that fell into a pit): writes its offset from the player's feet (dx, dy, dz) into {@code outXyz} and
+     * returns true, or returns false when there is none.
+     */
+    boolean nearestFoodDrop(double radius, double[] outXyz);
 }

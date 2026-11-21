@@ -32,7 +32,7 @@ shared with the Latency Simulator), same as today.
 
 ## Phase 2: Milestone 2 (combat, network tools)
 
-- [ ] Combat engagement mode: REACTIVE / PROACTIVE with target priority CLOSEST, LOWEST_HEALTH, THREAT (SP/allow-list).
+- [x] Combat engagement mode: REACTIVE / PROACTIVE with target priority CLOSEST, LOWEST_HEALTH, THREAT (SP/allow-list). Done 2026-11-21, see "Combat tactics and the hunter direction".
 - [ ] Silent (decoupled) aim through InputSmoother SILENT rotation for combat (SP/allow-list).
 - [ ] Auto-mace swap when falling > 1.5 blocks; wind-charge fall clutch and optional mid-fight boost.
 - [ ] Jump-reset on knockback; totems, golden apples and potions from the whole inventory; offhand totem replenish.
@@ -159,9 +159,13 @@ chain, and it works with modded content and JEI. The research and design notes a
       Build Assist (line of sight, silent rotation, delays), Bridge Assist (rotation, delay, walk pace and disguise) and
       combat aim. Balanced = the defaults; "custom" when hand-tuned. Table in `core/LegitPresets`.
 - [ ] Extend the legit level to new knobs as they appear (combat engagement mode, silent aim, reach margin).
-- [ ] Combat Assistant: the same line-of-sight setting (today it disengages after the LOS timeout).
-- [ ] Goal engine station placement (crafting table, furnace): its own line-of-sight setting; it currently always
-      requires a visible top face and walks to open ground once. Make the walk retry with new spots (up to a cap).
+- [x] Combat Assistant: "Require line of sight" for proactive target picks (Relaxed level turns it off).
+- [x] Goal engine station placement is a strategy ladder, like a player (2026-11-21, after a table failed inside a
+      tree canopy): 1) place against any visible clickable face in reach (floor, then sides, then above; leaves and
+      log sides count; blocks that open a screen do not); 2) break a leaf block hemming you in, then look again (up to
+      3); 3) walk to open ground, farther each try (up to 3). Line of sight always respected.
+- [ ] Same ladder for every placement and interaction (Build Assist, bridging, chests): add "pillar up one block"
+      and "dig a pocket" rungs, and log which rung worked so the planner learns what the terrain needs.
 - [x] Playtest evidence: a screenshot on every failed check (run/playtest/shots/fail/) and a rolling trace of long
       steps every 5 s (run/playtest/shots/trace/<scenario>/, last 12 kept).
 
@@ -184,3 +188,36 @@ Next for bridging:
 - [ ] Silent hotbar swap (the server sees the block slot while the client keeps your item in hand).
 - [ ] Tower while moving ("tower-move"), and a jump-bridge/god-bridge timing look.
 - [ ] HUD hint while walk mode is armed (mode, pace, blocks left).
+
+## Combat tactics and the hunter direction (user direction 2026-11-21)
+
+Goal: combat that looks and plays like a skilled player, using terrain and knockback, built and polished in this UI
+first. Later the same stack drives an in-game **manhunt hunter agent** that plays the game while it hunts. Keep every
+decision engine-free (snapshot in, keys/aim out) so an autonomous driver can reuse it.
+
+Layers: `TargetSelector` (who) -> `TacticsPlanner` (where to stand, when to hit) -> spacing/strafe/swing/sustain (how).
+
+Done:
+- [x] Engagement mode REACTIVE / PROACTIVE (single-player or allow-listed servers only). A budgeted scan every 5 ticks
+      while dormant; filter HOSTILE / HOSTILE_AND_PLAYERS / PLAYERS; priority THREAT / CLOSEST / LOWEST_HEALTH; engage
+      range; line of sight required by default (Relaxed legit level turns it off). Neutral mobs only once angry; roster
+      allies never. Retargets on kill, escape or lost sight. Pauses after the user takes over (move, cancel, Stop-All).
+- [x] Gap ambush (HOLD_GAP): a ravine between you and the target, so never chase into it. Walk to a safe stand-off at
+      the lip, no strafing or crit hops there, wait. A target in reach while airborne over the drop gets hit at once,
+      so the knockback drops it. Works when you ran and jumped the gap too.
+- [x] Edge knock (EDGE_KNOCK): the target stands within 2 blocks of a deep drop or lava. Circle to the opposite side,
+      then close in with a sprint hit toward the edge.
+- [x] Food as a passive objective: no safe food in the inventory and none in remembered containers within 32 blocks,
+      so it hunts nearby adult, unnamed, unleashed food animals when no hostile is around and you are not moving, then
+      walks over the drops (never into a pit). It switches itself off once there is food.
+
+Next tactics (backlog, roughly in order):
+- [ ] Rod/projectile pull at the edge: fishing rod or snowball/egg to knock a target off a ledge from range.
+- [ ] Block-in and pillar escape: pillar up to break a melee chase, or cobweb/block a pursuer in a 1-wide tunnel.
+- [ ] Water-bucket clutch while knocked off (MLG) and lava-bucket area denial (single-player or allow-list only).
+- [ ] Bow play: lead shots on a runner, charge timing, switch to melee at range < 6.
+- [ ] Bridge-fight awareness: never stand on a 1-wide bridge in front of an attacker; knock bridgers off.
+- [ ] Retreat-and-heal loop: break line of sight with terrain before eating, re-engage after.
+- [ ] Pursuit for the hunter: follow a fleeing player with Baritone, predict jumps over gaps, avoid the ambush above.
+- [ ] Evasion for the runner role: pick escape routes over gaps or water, then switch to HOLD_GAP on the far side.
+- [ ] Food objective extras: cook the meat in a nearby furnace or smoker, fish when no animals, wheat into bread.

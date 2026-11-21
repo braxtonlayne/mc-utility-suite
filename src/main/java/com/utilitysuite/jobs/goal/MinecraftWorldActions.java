@@ -54,7 +54,7 @@ public final class MinecraftWorldActions implements WorldActions {
 
     private enum Op { NONE, CRAFT, SMELT, FETCH, DEPOSIT }
 
-    private enum Phase { FIND, SELECT_ITEM, CLEAR_WALK, AIM_PLACE, WAIT_PLACED, OPEN, WAIT_OPEN, WORK, WAIT_CLICKS, COLLECT, DONE }
+    private enum Phase { FIND, SELECT_ITEM, CLEAR_OBSTRUCTION, CLEAR_WALK, AIM_PLACE, WAIT_PLACED, OPEN, WAIT_OPEN, WORK, WAIT_CLICKS, COLLECT, DONE }
 
     private static final int OPEN_TIMEOUT = 200;
 
@@ -78,6 +78,9 @@ public final class MinecraftWorldActions implements WorldActions {
     /** Walks to open ground made while looking for a station spot (each one searches farther out). */
     private int spotWalks;
     private static final int MAX_SPOT_WALKS = 3;
+    private int obstructionClears;
+    private static final int MAX_OBSTRUCTION_CLEARS = 3;
+    private long clearPos = Long.MIN_VALUE;
     /** Ticks to wait for a recipe unlock packet before giving up on a locked recipe. */
     private static final int RECIPE_UNLOCK_WAIT = 20;
     private PlanStep step;
@@ -85,6 +88,9 @@ public final class MinecraftWorldActions implements WorldActions {
     private String station;
     private long stationPos = Long.MIN_VALUE;
     private long supportPos;
+    /** Face of {@link #supportPos} that gets clicked (points toward the station spot). */
+    private Direction supportFace = Direction.UP;
+    private double aimX, aimY, aimZ;
     private int craftsLeft;
     private int startCount;
     private Map<String, Integer> wanted = Map.of();
@@ -162,6 +168,8 @@ public final class MinecraftWorldActions implements WorldActions {
         timer = 0;
         placedAt = -1;
         spotWalks = 0;
+        obstructionClears = 0;
+        clearPos = Long.MIN_VALUE;
         stationPos = Long.MIN_VALUE;
         transferred = Map.of();
     }
@@ -184,6 +192,7 @@ public final class MinecraftWorldActions implements WorldActions {
         switch (phase) {
             case FIND -> find(mc);
             case SELECT_ITEM -> selectStationItem(player);
+            case CLEAR_OBSTRUCTION -> clearObstruction(mc);
             case CLEAR_WALK -> {
                 MiningDriver.Status st = driver.get().status();
                 if (st == MiningDriver.Status.ARRIVED) {
@@ -274,9 +283,16 @@ public final class MinecraftWorldActions implements WorldActions {
         Services.input().selectHotbarSlot(lease, hotbar);
         long spot = findPlacementSpot(Minecraft.getInstance());
         if (spot == Long.MIN_VALUE) {
-            // Typically inside a tree canopy after chopping: walk to open ground and look again, farther each try.
+            // Typically inside a tree canopy after chopping. Like a player: first break a leaf block next to you to make
+            // room, then walk to open ground and look again, farther each try.
+            if (obstructionClears < MAX_OBSTRUCTION_CLEARS && findSoftObstruction(Minecraft.getInstance())) {
+                obstructionClears++;
+                phase = Phase.CLEAR_OBSTRUCTION;
+                timer = 0;
+                return;
+            }
             long ground = spotWalks >= MAX_SPOT_WALKS ? Long.MIN_VALUE
-                    : findOpenGround(Minecraft.getInstance(), spotWalks == 0 ? 0 : 2 + spotWalks * 3, 6 + spotWalks * 4);
+                    : findOpenGround(Minecraft.getInstance(), spotWalks == 0 ? 0 : 2 + spotWalks * 3, 8 + spotWalks * 5);
             if (ground != Long.MIN_VALUE && driver.get().isAvailable()) {
                 spotWalks++;
                 driver.get().gotoCoord(ground, 0);
@@ -287,10 +303,9 @@ public final class MinecraftWorldActions implements WorldActions {
             fail("No free spot to place " + station + (spotWalks > 0 ? " after " + spotWalks + " walks" : ""));
             return;
         }
+        // findPlacementSpot chose the support block, its clicked face and a visible aim point on that face
         stationPos = spot;
-        supportPos = BlockPos.offset(spot, Direction.DOWN);
-        Services.input().setRotationTarget(lease, aimAt(player, BlockPos.getX(supportPos) + 0.5,
-                BlockPos.getY(supportPos) + 1.0, BlockPos.getZ(supportPos) + 0.5));
+        Services.input().setRotationTarget(lease, aimAt(player, aimX, aimY, aimZ));
         phase = Phase.AIM_PLACE;
         timer = 0;
     }
@@ -302,7 +317,7 @@ public final class MinecraftWorldActions implements WorldActions {
         }
         HitResult hit = mc.hitResult;
         if (hit instanceof BlockHitResult bh && bh.getType() == HitResult.Type.BLOCK
-                && bh.getBlockPos().asLong() == supportPos && bh.getDirection() == Direction.UP) {
+                && bh.getBlockPos().asLong() == supportPos && bh.getDirection() == supportFace) {
             input.scheduleKeyTap(lease, SimKey.USE, 1, 2);
             input.clearRotation(lease);
             phase = Phase.WAIT_PLACED;
@@ -672,9 +687,12 @@ public final class MinecraftWorldActions implements WorldActions {
                             continue;
                         }
                         long spot = probe.asLong();
-                        probe.set(c.getX() + dx, y - 1, c.getZ() + dz);
-                        BlockState below = level.getBlockState(probe);
-                        if (below.isFaceSturdy(level, probe, Direction.UP) && canSeeTopFace(level, p, probe)) {
+                        int sx0 = c.getX() + dx;
+                        int sz0 = c.getZ() + dz;
+                        if (p.getBoundingBox().intersects(sx0, y, sz0, sx0 + 1, y + 1, sz0 + 1)) {
+                            continue; // the block would go into the player
+                        }
+                        if (chooseSupport(level, p, sx0, y, sz0, reach)) {
                             return spot;
                         }
                     }
@@ -685,16 +703,121 @@ public final class MinecraftWorldActions implements WorldActions {
     }
 
     /**
-     * True when a ray from the eye to the centre of the support's top face hits that block (leaves or logs in the way
-     * would make the aim fail). Called only while choosing a station spot, not per tick.
+     * A soft block hemming the player in (leaves, or a replaceable plant with a shape) next to its feet or head, in
+     * reach with a visible face: breaking it makes room for a station. Sets {@link #clearPos} and the aim point.
      */
-    private static boolean canSeeTopFace(Level level, LocalPlayer p, BlockPos support) {
+    private boolean findSoftObstruction(Minecraft mc) {
+        LocalPlayer p = mc.player;
+        Level level = mc.level;
+        BlockPos c = p.blockPosition();
         net.minecraft.world.phys.Vec3 eye = p.getEyePosition();
-        net.minecraft.world.phys.Vec3 target = new net.minecraft.world.phys.Vec3(support.getX() + 0.5, support.getY() + 0.999,
-                support.getZ() + 0.5);
-        BlockHitResult hit = level.clip(new net.minecraft.world.level.ClipContext(eye, target,
-                net.minecraft.world.level.ClipContext.Block.OUTLINE, net.minecraft.world.level.ClipContext.Fluid.NONE, p));
-        return hit.getType() == HitResult.Type.MISS || hit.getBlockPos().equals(support);
+        for (int dy = 0; dy <= 1; dy++) {
+            for (Direction d : Direction.Plane.HORIZONTAL) {
+                supportProbe.set(c.getX() + d.getStepX(), c.getY() + dy, c.getZ() + d.getStepZ());
+                BlockState st = level.getBlockState(supportProbe);
+                if (!st.is(net.minecraft.tags.BlockTags.LEAVES)) {
+                    continue;
+                }
+                Direction face = d.getOpposite();
+                double ax = supportProbe.getX() + 0.5 + face.getStepX() * 0.499;
+                double ay = supportProbe.getY() + 0.5;
+                double az = supportProbe.getZ() + 0.5 + face.getStepZ() * 0.499;
+                BlockHitResult hit = level.clip(new net.minecraft.world.level.ClipContext(eye,
+                        new net.minecraft.world.phys.Vec3(ax, ay, az),
+                        net.minecraft.world.level.ClipContext.Block.OUTLINE,
+                        net.minecraft.world.level.ClipContext.Fluid.NONE, p));
+                if (hit.getType() == HitResult.Type.BLOCK && hit.getBlockPos().equals(supportProbe)) {
+                    clearPos = supportProbe.asLong();
+                    aimX = ax;
+                    aimY = ay;
+                    aimZ = az;
+                    Services.input().setRotationTarget(lease, aimAt(p, ax, ay, az));
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /** Breaks {@link #clearPos} by holding attack on it, then looks for a station spot again. */
+    private void clearObstruction(Minecraft mc) {
+        IInputSmoother input = Services.input();
+        BlockPos.MutableBlockPos at = supportProbe.set(clearPos);
+        boolean gone = mc.level.getBlockState(at).canBeReplaced() || mc.level.getBlockState(at).isAir();
+        if (gone || timer > 80) {
+            input.setKeyHeld(lease, SimKey.ATTACK, false);
+            input.clearRotation(lease);
+            if (!gone) {
+                obstructionClears = MAX_OBSTRUCTION_CLEARS; // could not break it: walk instead
+            }
+            phase = Phase.SELECT_ITEM;
+            timer = 0;
+            return;
+        }
+        if (!input.isRotationSettled(2f) && timer < 30) {
+            return;
+        }
+        boolean onIt = mc.hitResult instanceof BlockHitResult bh && bh.getType() == HitResult.Type.BLOCK
+                && bh.getBlockPos().asLong() == clearPos;
+        input.setKeyHeld(lease, SimKey.ATTACK, onIt);
+    }
+
+    /** Support directions from the spot, floor first (a table on the ground looks normal), then sides, then above. */
+    private static final Direction[] SUPPORT_ORDER = {Direction.DOWN, Direction.NORTH, Direction.SOUTH, Direction.WEST,
+            Direction.EAST, Direction.UP};
+    private final BlockPos.MutableBlockPos supportProbe = new BlockPos.MutableBlockPos();
+
+    /**
+     * Picks a block next to the spot to click, like a player would: any block with an outline (stone, dirt, a log's
+     * side, leaves in a canopy) except ones that open a screen or toggle on right-click. The face toward the spot must
+     * be in reach and visible (line of sight respected: never through a wall). Sets {@link #supportPos},
+     * {@link #supportFace} and the aim point. Not per tick: only while choosing a station spot.
+     */
+    private boolean chooseSupport(Level level, LocalPlayer p, int x, int y, int z, double reach) {
+        net.minecraft.world.phys.Vec3 eye = p.getEyePosition();
+        for (Direction d : SUPPORT_ORDER) {
+            supportProbe.set(x + d.getStepX(), y + d.getStepY(), z + d.getStepZ());
+            BlockState st = level.getBlockState(supportProbe);
+            if (st.canBeReplaced() || st.getShape(level, supportProbe).isEmpty() || opensOrToggles(level, st)) {
+                continue;
+            }
+            Direction face = d.getOpposite();
+            double ax = supportProbe.getX() + 0.5 + face.getStepX() * 0.499;
+            double ay = supportProbe.getY() + 0.5 + face.getStepY() * 0.499;
+            double az = supportProbe.getZ() + 0.5 + face.getStepZ() * 0.499;
+            double rx = ax - eye.x;
+            double ry = ay - eye.y;
+            double rz = az - eye.z;
+            if (rx * rx + ry * ry + rz * rz > reach * reach) {
+                continue;
+            }
+            // the eye must be on the outside of that face, and the ray must land on it
+            if ((eye.x - ax) * face.getStepX() + (eye.y - ay) * face.getStepY() + (eye.z - az) * face.getStepZ() <= 0) {
+                continue;
+            }
+            BlockHitResult hit = level.clip(new net.minecraft.world.level.ClipContext(eye,
+                    new net.minecraft.world.phys.Vec3(ax, ay, az), net.minecraft.world.level.ClipContext.Block.OUTLINE,
+                    net.minecraft.world.level.ClipContext.Fluid.NONE, p));
+            if (hit.getType() == HitResult.Type.BLOCK && hit.getBlockPos().equals(supportProbe)
+                    && hit.getDirection() == face) {
+                supportPos = supportProbe.asLong();
+                supportFace = face;
+                aimX = ax;
+                aimY = ay;
+                aimZ = az;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Right-clicking these opens a screen or toggles them instead of placing against them. */
+    private static boolean opensOrToggles(Level level, BlockState st) {
+        return st.hasBlockEntity() || st.getMenuProvider(level, BlockPos.ZERO) != null
+                || st.is(net.minecraft.tags.BlockTags.DOORS) || st.is(net.minecraft.tags.BlockTags.TRAPDOORS)
+                || st.is(net.minecraft.tags.BlockTags.FENCE_GATES) || st.is(net.minecraft.tags.BlockTags.BUTTONS)
+                || st.is(net.minecraft.tags.BlockTags.BEDS) || st.is(net.minecraft.world.level.block.Blocks.LEVER)
+                || st.is(net.minecraft.world.level.block.Blocks.CRAFTING_TABLE);
     }
 
     private static RotationTarget aimAt(LocalPlayer p, double x, double y, double z) {

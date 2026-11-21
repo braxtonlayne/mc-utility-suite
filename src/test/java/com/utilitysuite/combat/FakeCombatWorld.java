@@ -2,6 +2,7 @@ package com.utilitysuite.combat;
 
 import com.utilitysuite.combat.assistant.CombatSnapshot;
 import com.utilitysuite.combat.assistant.CombatWorld;
+import com.utilitysuite.combat.assistant.TargetCandidates;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -20,6 +21,17 @@ public final class FakeCombatWorld implements CombatWorld {
         public double x, y, z;
         public double vx, vy, vz;
         public boolean blocking;
+        /** Hostile mob (only meaningful for non-players). */
+        public boolean hostile;
+        public boolean aggressive;
+        public boolean swelling;
+        public boolean ranged;
+        public float health = 20f;
+        /** Line of sight from the local player (proactive scan). */
+        public boolean visible = true;
+        public boolean onGround = true;
+        /** A food animal (cow, pig...). */
+        public boolean food;
 
         E(int id, String name) {
             this.id = id;
@@ -181,6 +193,60 @@ public final class FakeCombatWorld implements CombatWorld {
         out.targetBlocking = t.blocking;
         out.lineOfSight = lineOfSight;
         out.crosshairOnTarget = crosshairOnTarget;
+        out.targetOnGround = t.onGround;
+        if (out.wantTerrain) {
+            out.gapNear = s.gapNear;
+            out.gapFar = s.gapFar;
+            out.targetDropBelow = s.targetDropBelow;
+            out.knockX = s.knockX;
+            out.knockZ = s.knockZ;
+            out.knockDepth = s.knockDepth;
+        }
         return true;
+    }
+
+    public int invFood = 5;
+    public int storedFood;
+    /** Offset of the nearest food drop from the player, or null for none. */
+    public double[] drop;
+
+    @Override
+    public int inventoryFood() {
+        return invFood;
+    }
+
+    @Override
+    public int storedFoodNearby(double radius) {
+        return storedFood;
+    }
+
+    @Override
+    public boolean nearestFoodDrop(double radius, double[] outXyz) {
+        if (drop == null) {
+            return false;
+        }
+        System.arraycopy(drop, 0, outXyz, 0, 3);
+        return true;
+    }
+
+    public int scans;
+
+    @Override
+    public void scanTargets(double radius, boolean computeLos, TargetCandidates out) {
+        scans++;
+        out.clear();
+        for (E e : entities.values()) {
+            if (e.id == localId || !e.living || !e.alive) {
+                continue;
+            }
+            double d = distanceSqToLocal(e.id);
+            if (d > radius * radius) {
+                continue;
+            }
+            int f = (e.player ? TargetCandidates.PLAYER : 0) | (e.hostile ? TargetCandidates.HOSTILE : 0)
+                    | (e.aggressive ? TargetCandidates.AGGRESSIVE : 0) | (e.swelling ? TargetCandidates.SWELLING : 0)
+                    | (e.ranged ? TargetCandidates.RANGED : 0) | (e.food ? TargetCandidates.FOOD : 0) | (computeLos && e.visible ? TargetCandidates.LOS : 0);
+            out.add(e.id, d, e.health, f);
+        }
     }
 }

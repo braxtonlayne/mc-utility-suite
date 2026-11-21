@@ -31,7 +31,7 @@ import java.util.UUID;
 import java.util.function.LongSupplier;
 
 /**
- * Reactive, defensive combat assistance (an accessibility aid for players with motor limitations). One master toggle:
+ * Combat assistance, reactive by default (an accessibility aid for players with motor limitations). One master toggle:
  * the module's enabled flag arms it. While armed it stays {@link CombatState#DORMANT} during normal play and only
  * engages on a confirmed trigger:
  * <ol>
@@ -40,6 +40,10 @@ import java.util.function.LongSupplier;
  *   <li><b>Defensive:</b> the user takes damage of an entity-attack type with a resolvable, living cause entity. Fall,
  *       fire, lava, drowning and other environmental types never engage; neither does unattributable damage.</li>
  *   <li><b>Ally defense:</b> a roster player marked {@code defend} within range takes confirmed entity damage.</li>
+ *   <li><b>Proactive</b> (engagement mode PROACTIVE, single-player or allow-listed servers only): a few times a second
+ *       while dormant it scans for a valid target in the engage range ({@link TargetSelector}: filter, priority, line of
+ *       sight) and engages it; when a target dies, escapes or hides it moves on to the next one. It pauses after the
+ *       user takes over (movement, cancel key, Stop-All) and never scans while the user is moving.</li>
  * </ol>
  * It never targets a roster player with {@code neverTarget} (if one hits the user it stays dormant and logs).
  * It disengages when the target dies or leaves the disengage radius, after losing line of sight for the configured
@@ -82,6 +86,9 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
     private final StrafePlanner strafe = new StrafePlanner();
     private final ShieldBreakSequencer shield = new ShieldBreakSequencer();
     private final AerialPlanner wind = new AerialPlanner();
+    private final TacticsPlanner tactics = new TacticsPlanner();
+    private TacticsPlanner.Tactic lastTactic = TacticsPlanner.Tactic.NONE;
+    private int tacticSwings;
     private final float[] aim = new float[2];
     private final boolean[] keyDown = new boolean[SimKey.all().length];
 
@@ -130,6 +137,29 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
     private float lastAimYaw = Float.NaN;
     private float lastAimPitch = Float.NaN;
 
+    // proactive engagement
+    public static final int SCAN_INTERVAL_TICKS = 5;
+    static final int PAUSE_AFTER_USER_TICKS = 60;
+    public static final int PAUSE_AFTER_CANCEL_TICKS = 200;
+    static final int PAUSE_AFTER_LOST_SIGHT_TICKS = 40;
+    private final TargetCandidates candidates = new TargetCandidates();
+    private final TargetSelector.AllyTest allyTest;
+    private int scanClock;
+    private int proactivePause;
+    private boolean proactiveBlockedNoted;
+    private int proactiveEngagements;
+
+    // food objective
+    private boolean foodNeed;
+    private int foodRefreshScans;
+    private boolean foodEngagement;
+    private boolean collecting;
+    private int collectTicks;
+    private boolean sawDrop;
+    private int foodKills;
+    private int foodPickups;
+    private final double[] dropOffset = new double[3];
+
     // diagnostics
     private int engagements;
     private int swings;
@@ -148,6 +178,7 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
                 EnumSet.of(LEASE_CHANNELS[0], LEASE_CHANNELS[1], LEASE_CHANNELS[2], LEASE_CHANNELS[3]), 0, this);
         this.keeperRequest = new LeaseRequest(ID, ControlPriority.EMERGENCY, EnumSet.of(ControlChannel.HOTBAR),
                 KEEPER_MAX_TICKS, this);
+        this.allyTest = id -> roster.isNeverTarget(world.uuidOf(id));
     }
 
     // =================================================================================================================
@@ -275,8 +306,12 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         }
         boolean fresh = state == CombatState.DORMANT;
         targetId = entityId;
+        foodEngagement = false;
+        collecting = false;
         losLostTicks = 0;
         shield.reset();
+        tactics.reset();
+        lastTactic = TacticsPlanner.Tactic.NONE;
         wind.reset();
         spacing.reset();
         state = CombatState.ENGAGED;
@@ -304,6 +339,9 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         }
         tickTotemKeeper();
         if (state == CombatState.DORMANT) {
+            if (enabled && settings.engageMode == TargetSelector.Mode.PROACTIVE) {
+                tickProactive();
+            }
             return;
         }
         if (state == CombatState.DISENGAGING) {
@@ -325,8 +363,28 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
             return;
         }
         lastMovePause = movePause;
+        if (collecting) {
+            tickCollect();
+            return;
+        }
+        if (foodEngagement && ++scanClock >= SCAN_INTERVAL_TICKS) {
+            scanClock = 0; // a hostile always comes before food
+            int hostile = pickProactiveTarget();
+            if (hostile >= 0) {
+                proactiveEngagements++;
+                engage(hostile, "proactive: hostile while hunting food");
+            }
+        }
         CombatSnapshot s = snap;
+        s.wantTerrain = settings.holdGap || settings.edgeKnock;
         if (!world.sample(targetId, s)) {
+            if (foodEngagement) {
+                startCollect();
+                return;
+            }
+            if (retarget()) {
+                return;
+            }
             disengage(DisengageReason.TARGET_LOST);
             return;
         }
@@ -336,12 +394,18 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         }
         double r = settings.disengageRadius;
         if (s.distanceSq() > r * r) {
+            if (retarget()) {
+                return;
+            }
             disengage(DisengageReason.OUT_OF_RANGE);
             return;
         }
         if (s.lineOfSight) {
             losLostTicks = 0;
         } else if (++losLostTicks > settings.losTimeoutTicks) {
+            if (retarget()) {
+                return;
+            }
             disengage(DisengageReason.LINE_OF_SIGHT_LOST);
             return;
         }
@@ -468,7 +532,19 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
             jumpedThisCycle = false;
         }
         wasAirborne = !s.onGround;
-        SwingGate.Action sw = SwingGate.decide(s, settings.critSync, jumpedThisCycle, critWait, MAX_CRIT_WAIT);
+        TacticsPlanner.Tactic tac = s.wantTerrain ? tactics.plan(s, settings.holdGap, settings.edgeKnock)
+                : TacticsPlanner.Tactic.NONE;
+        noteTactic(tac);
+        if (tactics.swingNow() && s.wantTerrain) {
+            tacticSwings++;
+            tapAttack(); // target mid-jump over a drop: hit now, the knockback drops it
+            move(tac == TacticsPlanner.Tactic.NONE ? SpacingController.HOLD : tactics.forward(), StrafePlanner.NONE,
+                    false);
+            return;
+        }
+        // no crit hops at the lip of a gap
+        boolean crit = settings.critSync && tac != TacticsPlanner.Tactic.HOLD_GAP;
+        SwingGate.Action sw = SwingGate.decide(s, crit, jumpedThisCycle, critWait, MAX_CRIT_WAIT);
         if (sw == SwingGate.Action.JUMP) {
             input.scheduleKeyTap(lease, SimKey.JUMP, 1, 2);
             jumpedThisCycle = true;
@@ -484,7 +560,11 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         }
 
         // ---- 6. spacing, strafe, sprint reset -------------------------------------------------------------------
-        movement(s);
+        if (tac != TacticsPlanner.Tactic.NONE) {
+            move(tactics.forward(), tactics.side(), tactics.sprint());
+        } else {
+            movement(s);
+        }
     }
 
     private void tapAttack() {
@@ -673,6 +753,134 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         }
     }
 
+    /** Logs a tactic change (strings only on change, never per tick). */
+    private void noteTactic(TacticsPlanner.Tactic tac) {
+        if (tac == lastTactic) {
+            return;
+        }
+        lastTactic = tac;
+        if (tac != TacticsPlanner.Tactic.NONE) {
+            lastNote = switch (tac) {
+                case HOLD_GAP -> "Holding the gap: waiting at the edge for " + world.describe(targetId) + " to jump";
+                case EDGE_KNOCK -> "Edge knock: circling to knock " + world.describe(targetId) + " off the edge";
+                default -> lastNote;
+            };
+            diagnostic(lastNote);
+        }
+    }
+
+    // ---- proactive engagement -------------------------------------------------------------------------------------
+
+    /**
+     * Dormant + proactive: every {@value #SCAN_INTERVAL_TICKS} ticks look for a target and engage it. Skipped while the
+     * user is moving (manual input wins), after Stop-All, during the pause that follows a user takeover, and outside
+     * single-player / allow-listed servers.
+     */
+    private void tickProactive() {
+        if (proactivePause > 0) {
+            proactivePause--;
+            return;
+        }
+        if (++scanClock < SCAN_INTERVAL_TICKS) {
+            return;
+        }
+        scanClock = 0;
+        if (arbiter.isAutomationStopped() || arbiter.isManualOverrideActive(ControlChannel.MOVEMENT)
+                || world.localPlayerId() < 0) {
+            return;
+        }
+        if (!world.extrasAllowedHere()) {
+            if (!proactiveBlockedNoted) {
+                proactiveBlockedNoted = true;
+                diagnostic("Proactive engagement is limited to single-player and allow-listed servers; reacting only");
+            }
+            return;
+        }
+        proactiveBlockedNoted = false;
+        int id = pickProactiveTarget();
+        if (id >= 0) {
+            proactiveEngagements++;
+            engage(id, "proactive");
+        } else if (settings.foodObjective && foodNeeded()) {
+            int food = TargetSelector.pickFood(candidates, settings.foodRange, settings.engageRequiresLos);
+            if (food >= 0) {
+                engage(food, "food objective: no food on you or in nearby chests");
+                foodEngagement = true;
+            }
+        }
+    }
+
+    // ---- food objective --------------------------------------------------------------------------------------------
+
+    /** Cached need, re-evaluated every {@link FoodObjective#REFRESH_TICKS} ticks (counted in scans) or after a pickup. */
+    private boolean foodNeeded() {
+        if (--foodRefreshScans <= 0) {
+            foodRefreshScans = FoodObjective.REFRESH_TICKS / SCAN_INTERVAL_TICKS;
+            boolean was = foodNeed;
+            foodNeed = FoodObjective.needed(world.inventoryFood(),
+                    world.storedFoodNearby(FoodObjective.STORAGE_RADIUS));
+            if (foodNeed && !was) {
+                diagnostic("No food on you or in nearby chests: food animals nearby are now a passive objective");
+            }
+        }
+        return foodNeed;
+    }
+
+    /** The food animal died: keep the lease and walk over its drops. */
+    private void startCollect() {
+        foodKills++;
+        collecting = true;
+        collectTicks = 0;
+        sawDrop = false;
+        targetId = -1;
+        tactics.reset();
+        lastNote = "Collecting food drops";
+    }
+
+    private void tickCollect() {
+        if (!holdsLease() && !tryAcquire()) {
+            return;
+        }
+        boolean drop = world.nearestFoodDrop(FoodObjective.COLLECT_RADIUS, dropOffset);
+        if (!drop || ++collectTicks > FoodObjective.COLLECT_MAX_TICKS) {
+            if (sawDrop && !drop) {
+                foodPickups++;
+            }
+            foodRefreshScans = 0; // re-check the need on the next scan: one meal may be enough
+            disengage(DisengageReason.TARGET_LOST);
+            return;
+        }
+        sawDrop = true;
+        double dx = dropOffset[0];
+        double dz = dropOffset[2];
+        double horiz = Math.sqrt(dx * dx + dz * dz);
+        float yaw = (float) Math.toDegrees(Math.atan2(-dx, dz));
+        float pitch = (float) Math.toDegrees(-Math.atan2(dropOffset[1] - 1.62, Math.max(horiz, 0.1)));
+        aimAt(yaw, pitch, settings.aimSpeed);
+        move(horiz > 0.35 ? SpacingController.FORWARD : SpacingController.HOLD, StrafePlanner.NONE, false);
+    }
+
+    /** Proactive mode only: replace a dead, escaped or hidden target with the next one instead of standing down. */
+    private boolean retarget() {
+        if (settings.engageMode != TargetSelector.Mode.PROACTIVE || !world.extrasAllowedHere()) {
+            return false;
+        }
+        int id = pickProactiveTarget();
+        if (id < 0 || id == targetId) {
+            return false;
+        }
+        proactiveEngagements++;
+        engage(id, "proactive: next target");
+        return true;
+    }
+
+    private int pickProactiveTarget() {
+        double radius = settings.foodObjective ? Math.max(settings.engageRange, settings.foodRange) : settings.engageRange;
+        world.scanTargets(radius, settings.engageRequiresLos, candidates);
+        return TargetSelector.pick(candidates, settings.targets, settings.priority, settings.engageRange,
+                settings.engageRequiresLos, recentOpponentId(), allyTest);
+    }
+
     // ---- disengage ----------------------------------------------------------------------------------------------
 
     /** Leaves ENGAGED: keys up, weapon slot back; releases the lease now unless our container clicks are in flight. */
@@ -681,6 +889,14 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
             return;
         }
         lastDisengage = reason;
+        collecting = false;
+        foodEngagement = false;
+        proactivePause = switch (reason) {
+            case CANCEL_KEY, STOP_ALL, DISARMED -> PAUSE_AFTER_CANCEL_TICKS;
+            case MANUAL_MOVEMENT, LEASE_ENDED -> PAUSE_AFTER_USER_TICKS;
+            case LINE_OF_SIGHT_LOST, OUT_OF_RANGE, TARGET_IS_ALLY -> PAUSE_AFTER_LOST_SIGHT_TICKS;
+            default -> 0;
+        };
         targetId = -1;
         shield.reset();
         wind.reset();
@@ -895,6 +1111,35 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
 
     public int jumpResets() {
         return jumpResets;
+    }
+
+    /** Food animals killed for the food objective, and drop pickups completed. */
+    public int foodKills() {
+        return foodKills;
+    }
+
+    public int foodPickups() {
+        return foodPickups;
+    }
+
+    /** True while the current engagement is the food objective (hunt or pickup). */
+    public boolean onFoodObjective() {
+        return foodEngagement || collecting;
+    }
+
+    /** The terrain tactic of the last engaged tick. */
+    public TacticsPlanner.Tactic tactic() {
+        return lastTactic;
+    }
+
+    /** Swings forced by a tactic (target airborne over a drop). */
+    public int tacticSwings() {
+        return tacticSwings;
+    }
+
+    /** Engagements the proactive mode started (including retargets). */
+    public int proactiveEngagements() {
+        return proactiveEngagements;
     }
 
     public int engagements() {

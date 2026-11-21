@@ -54,7 +54,8 @@ public final class LegitPresets {
             knob(BRIDGE, "server_sneak", "AT_EDGE", "AT_EDGE", "OFF"),
             knob(BRIDGE, "hide_sprint", true, true, false),
             knob(COMBAT, "aim_speed", 0.75, 1.0, 2.0),
-            knob(COMBAT, "los_timeout_ticks", 60, 100, 200));
+            knob(COMBAT, "los_timeout_ticks", 60, 100, 200),
+            knob(COMBAT, "engage_requires_los", true, true, false));
 
     private LegitPresets() {
     }

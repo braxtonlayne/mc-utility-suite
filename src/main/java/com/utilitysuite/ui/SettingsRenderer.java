@@ -26,7 +26,7 @@ public final class SettingsRenderer {
     /** Short descriptions for the card headers (the module API has no description field). */
     private static final Map<String, String> BLURBS = Map.ofEntries(
             Map.entry("ally_roster", "Allies and the middle-click shortcut"),
-            Map.entry("combat_assistant", "Defensive: engages only after a confirmed trigger"),
+            Map.entry("combat_assistant", "Fights back, or hunts on its own (Proactive)"),
             Map.entry("fight_coach", "Spacing, cooldown and retreat hints"),
             Map.entry("schematic_toolkit", "Import, bill of materials, build assist"),
             Map.entry("storage_memory", "Remembers what your containers hold"),

@@ -36,6 +36,26 @@ public final class CombatSettings {
     public static final String KEEP_TOTEM = "keep_offhand_totem";
     public static final String JUMP_RESET = "jump_reset";
 
+    public static final String ENGAGE_MODE = "engage_mode";
+    public static final String TARGETS = "proactive_targets";
+    public static final String PRIORITY = "target_priority";
+    public static final String ENGAGE_RANGE = "engage_range";
+    public static final String ENGAGE_REQUIRES_LOS = "engage_requires_los";
+    public static final String HOLD_GAP = "tactic_hold_gap";
+    public static final String FOOD_OBJECTIVE = "food_objective";
+    public static final String FOOD_RANGE = "food_range";
+    public static final String EDGE_KNOCK = "tactic_edge_knock";
+
+    public TargetSelector.Mode engageMode = TargetSelector.Mode.REACTIVE;
+    public TargetSelector.Targets targets = TargetSelector.Targets.HOSTILE;
+    public TargetSelector.Priority priority = TargetSelector.Priority.THREAT;
+    public double engageRange = 8.0;
+    public boolean holdGap = true;
+    public boolean foodObjective = true;
+    public double foodRange = 12.0;
+    public boolean edgeKnock = true;
+    public boolean engageRequiresLos = true;
+
     public double disengageRadius = 16.0;
     public double allyDefenseRange = 12.0;
     public int losTimeoutTicks = 100;
@@ -60,11 +80,20 @@ public final class CombatSettings {
     public boolean jumpReset = false;
 
     public void read(ProfileConfig p, String id) {
+        engageMode = parseEnum(p.getString(id, ENGAGE_MODE, ""), TargetSelector.Mode.REACTIVE);
+        targets = parseEnum(p.getString(id, TARGETS, ""), TargetSelector.Targets.HOSTILE);
+        priority = parseEnum(p.getString(id, PRIORITY, ""), TargetSelector.Priority.THREAT);
+        engageRequiresLos = p.getBool(id, ENGAGE_REQUIRES_LOS, true);
+        holdGap = p.getBool(id, HOLD_GAP, true);
+        foodObjective = p.getBool(id, FOOD_OBJECTIVE, true);
+        edgeKnock = p.getBool(id, EDGE_KNOCK, true);
         wholeInventory = p.getBool(id, WHOLE_INVENTORY, true);
         swapBack = p.getBool(id, SWAP_BACK, true);
         keepTotem = p.getBool(id, KEEP_TOTEM, true);
         jumpReset = p.getBool(id, JUMP_RESET, false);
         disengageRadius = p.getDouble(id, DISENGAGE_RADIUS, 16.0);
+        engageRange = Math.min(disengageRadius - 1.0, p.getDouble(id, ENGAGE_RANGE, 8.0));
+        foodRange = Math.min(disengageRadius - 1.0, p.getDouble(id, FOOD_RANGE, 12.0));
         allyDefenseRange = p.getDouble(id, ALLY_DEFENSE_RANGE, 12.0);
         losTimeoutTicks = p.getInt(id, LOS_TIMEOUT_TICKS, 100);
         aimSpeed = (float) p.getDouble(id, AIM_SPEED, 1.0);
@@ -84,6 +113,15 @@ public final class CombatSettings {
         gapples = p.getBool(id, GAPPLES, true);
     }
 
+    static <E extends Enum<E>> E parseEnum(String s, E def) {
+        for (E e : def.getDeclaringClass().getEnumConstants()) {
+            if (e.name().equalsIgnoreCase(s)) {
+                return e;
+            }
+        }
+        return def;
+    }
+
     private static SprintReset parse(String s) {
         for (SprintReset r : SprintReset.values()) {
             if (r.name().equalsIgnoreCase(s)) {
@@ -95,6 +133,33 @@ public final class CombatSettings {
 
     public static List<SettingSpec> specs() {
         return List.of(
+                SettingSpec.choice(ENGAGE_MODE, "Engagement", TargetSelector.Mode.REACTIVE, "",
+                        "Reactive: fight back only when you or a defended ally is hit, or you land a hit. Proactive:"
+                                + " also go after valid targets in range on its own (single-player or allow-listed"
+                                + " servers only)."),
+                SettingSpec.choice(TARGETS, "Proactive targets", TargetSelector.Targets.HOSTILE, "Proactive",
+                        "What proactive mode goes after. Allies on the roster are never targeted; neutral mobs only"
+                                + " once they are angry."),
+                SettingSpec.choice(PRIORITY, "Target priority", TargetSelector.Priority.THREAT, "Proactive",
+                        "Threat: whoever just hit you, swelling creepers, aggressive and ranged mobs first."
+                                + " Closest or lowest health otherwise."),
+                SettingSpec.decimal(ENGAGE_RANGE, "Engage range", 8.0, 3.0, 24.0, "Proactive",
+                        "Proactive mode starts a fight only within this many blocks (kept below the disengage"
+                                + " radius)."),
+                SettingSpec.bool(ENGAGE_REQUIRES_LOS, "Require line of sight", true, "Proactive",
+                        "Only go after targets you can see. Off lets it pick targets behind walls (less legit)."),
+                SettingSpec.bool(FOOD_OBJECTIVE, "Hunt for food when out", true, "Proactive",
+                        "When you have no food and none in nearby chests the assistant remembers, hunt nearby cows,"
+                                + " pigs, sheep, chickens and rabbits and pick up the drops, but only while you are not"
+                                + " moving and no hostile is around. Named or leashed animals are left alone."),
+                SettingSpec.decimal(FOOD_RANGE, "Food range", 12.0, 4.0, 24.0, "Proactive",
+                        "How far the food objective looks for animals."),
+                SettingSpec.bool(HOLD_GAP, "Gap ambush", true, "Tactics",
+                        "Never chase into a ravine or pit. Wait at the edge and hit the target while it jumps across, so"
+                                + " the knockback drops it."),
+                SettingSpec.bool(EDGE_KNOCK, "Edge knock", true, "Tactics",
+                        "When the target stands near a drop or lava, circle to the far side and sprint-hit it toward"
+                                + " the edge."),
                 SettingSpec.decimal(DISENGAGE_RADIUS, "Disengage radius", 16.0, 6.0, 48.0, "",
                         "Stop when the target gets farther than this many blocks."),
                 SettingSpec.decimal(ALLY_DEFENSE_RANGE, "Ally defense range", 12.0, 2.0, 32.0, "",

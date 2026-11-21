@@ -31,6 +31,34 @@ import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.EntityHitResult;
 import net.minecraft.world.phys.Vec3;
 
+import com.utilitysuite.combat.assistant.TacticsPlanner;
+import com.utilitysuite.combat.assistant.TargetCandidates;
+import net.minecraft.world.entity.Mob;
+import net.minecraft.world.entity.NeutralMob;
+import net.minecraft.world.entity.decoration.ArmorStand;
+import net.minecraft.world.entity.monster.Blaze;
+import net.minecraft.world.entity.monster.Creeper;
+import net.minecraft.world.entity.monster.EnderMan;
+import net.minecraft.world.entity.monster.Enemy;
+import net.minecraft.world.entity.monster.Ghast;
+import net.minecraft.world.entity.monster.RangedAttackMob;
+import net.minecraft.world.level.entity.EntityTypeTest;
+
+import com.utilitysuite.combat.assistant.FoodObjective;
+import com.utilitysuite.core.api.IStorageIndex;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.entity.animal.Chicken;
+import net.minecraft.world.entity.animal.Cow;
+import net.minecraft.world.entity.animal.Pig;
+import net.minecraft.world.entity.animal.Rabbit;
+import net.minecraft.world.entity.animal.Sheep;
+import net.minecraft.world.entity.item.ItemEntity;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -212,7 +240,98 @@ public final class MinecraftCombatWorld implements CombatWorld, LineOfSight.Soli
         out.hazardBack = isHazard(out.px - fx * d, out.py, out.pz - fz * d);
         out.hazardLeft = isHazard(out.px + fz * d, out.py, out.pz - fx * d);
         out.hazardRight = isHazard(out.px - fz * d, out.py, out.pz + fx * d);
+        out.targetOnGround = t.onGround();
+        if (out.wantTerrain) {
+            sampleTerrain(out, fx, fz, len);
+        }
         return true;
+    }
+
+    private static final int DROP_SCAN = 8;
+    private static final double GAP_STEP = 0.5;
+    private static final double GAP_MAX = 8.0;
+    private static final double[] KNOCK_DIST = {1.0, 2.0};
+
+    /** Gap on the line to the target, open blocks under the target, deepest drop around the target. */
+    private void sampleTerrain(CombatSnapshot out, double fx, double fz, double len) {
+        out.gapNear = -1;
+        out.gapFar = -1;
+        double limit = Math.min(len, GAP_MAX);
+        for (double t = GAP_STEP; t <= limit; t += GAP_STEP) {
+            int depth = dropBelow(out.px + fx * t, out.py, out.pz + fz * t);
+            if (depth < 0) {
+                break; // a wall: not a gap
+            }
+            if (out.gapNear < 0) {
+                if (depth >= TacticsPlanner.GAP_DEPTH) {
+                    out.gapNear = t - GAP_STEP * 0.5;
+                }
+            } else if (depth == 0) {
+                out.gapFar = t - GAP_STEP * 0.5;
+                break;
+            }
+        }
+        if (out.gapFar < 0) {
+            // the target itself may be mid-jump over the gap: count the line up to it as the gap
+            out.gapFar = out.gapNear >= 0 && !out.targetOnGround ? len : -1;
+            if (out.gapFar < 0) {
+                out.gapNear = -1;
+            }
+        }
+        int below = dropBelow(out.tx, out.ty, out.tz);
+        out.targetDropBelow = Math.max(0, below);
+        out.knockDepth = 0;
+        out.knockX = 0;
+        out.knockZ = 0;
+        for (int i = 0; i < 8; i++) {
+            double a = i * (Math.PI / 4);
+            double dx = Math.cos(a);
+            double dz = Math.sin(a);
+            for (double r : KNOCK_DIST) {
+                int depth = dropBelow(out.tx + dx * r, out.ty, out.tz + dz * r);
+                if (depth < 0) {
+                    break; // wall in that direction
+                }
+                if (depth > out.knockDepth) {
+                    out.knockDepth = depth;
+                    out.knockX = dx;
+                    out.knockZ = dz;
+                }
+                if (depth > 0) {
+                    break; // the nearest drop in this direction is what a hit pushes it into
+                }
+            }
+        }
+    }
+
+    /**
+     * Open blocks below the feet level at (x, z): 0 = solid floor right under, -1 = a wall at feet level,
+     * {@link CombatSnapshot#DEEP} for lava, the void or deeper than {@value #DROP_SCAN}.
+     */
+    private int dropBelow(double x, double y, double z) {
+        int bx = Mth.floor(x);
+        int by = Mth.floor(y + 0.01);
+        int bz = Mth.floor(z);
+        mpos.set(bx, by, bz);
+        BlockState feet = level.getBlockState(mpos);
+        if (!feet.getCollisionShape(level, mpos).isEmpty()) {
+            return -1;
+        }
+        for (int dy = 1; dy <= DROP_SCAN; dy++) {
+            int yy = by - dy;
+            if (yy < level.getMinBuildHeight()) {
+                return CombatSnapshot.DEEP;
+            }
+            mpos.set(bx, yy, bz);
+            BlockState st = level.getBlockState(mpos);
+            if (st.getFluidState().is(FluidTags.LAVA)) {
+                return CombatSnapshot.DEEP;
+            }
+            if (!st.getCollisionShape(level, mpos).isEmpty()) {
+                return dy - 1;
+            }
+        }
+        return CombatSnapshot.DEEP;
     }
 
     private static void sampleInventory(LocalPlayer p, CombatSnapshot out) {
@@ -325,6 +444,173 @@ public final class MinecraftCombatWorld implements CombatWorld, LineOfSight.Soli
         return st.is(BlockTags.FIRE) || st.is(BlockTags.CAMPFIRES) || st.is(Blocks.MAGMA_BLOCK)
                 || st.is(Blocks.CACTUS) || st.is(Blocks.SWEET_BERRY_BUSH) || st.is(Blocks.WITHER_ROSE)
                 || st.is(Blocks.POWDER_SNOW);
+    }
+
+    // proactive scan: one reused output list and a static type test; the AABB and the level's section walk allocate a
+    // little per call, which is why the assistant scans at most a few times a second and only while armed and dormant
+    private final List<LivingEntity> scanBuffer = new ArrayList<>();
+    private static final EntityTypeTest<Entity, LivingEntity> LIVING = EntityTypeTest.forClass(LivingEntity.class);
+
+    @Override
+    public void scanTargets(double radius, boolean computeLos, TargetCandidates out) {
+        out.clear();
+        Minecraft mc = Minecraft.getInstance();
+        LocalPlayer p = mc.player;
+        ClientLevel lvl = mc.level;
+        if (p == null || lvl == null) {
+            return;
+        }
+        level = lvl;
+        scanBuffer.clear();
+        lvl.getEntities(LIVING, p.getBoundingBox().inflate(radius), MinecraftCombatWorld::scanCandidate, scanBuffer,
+                TargetCandidates.CAPACITY * 2);
+        double eyeX = p.getX();
+        double eyeY = p.getEyeY();
+        double eyeZ = p.getZ();
+        double r2 = radius * radius;
+        for (int i = 0; i < scanBuffer.size(); i++) {
+            LivingEntity e = scanBuffer.get(i);
+            if (e == p) {
+                continue;
+            }
+            double d = p.distanceToSqr(e);
+            if (d > r2) {
+                continue;
+            }
+            int f = flags(e);
+            if (computeLos && (f & (TargetCandidates.HOSTILE | TargetCandidates.PLAYER | TargetCandidates.FOOD)) != 0
+                    && LineOfSight.clear(eyeX, eyeY, eyeZ, e.getX(), e.getEyeY(), e.getZ(), this, LOS_MAX_STEPS)) {
+                f |= TargetCandidates.LOS;
+            }
+            if (!out.add(e.getId(), d, e.getHealth() + e.getAbsorptionAmount(), f)) {
+                break;
+            }
+        }
+        scanBuffer.clear();
+    }
+
+    // ---- food objective (evaluated every few seconds, not per tick) ----------------------------------------------
+
+    private final Map<String, Boolean> safeFoodById = new HashMap<>();
+    private final List<ItemEntity> dropBuffer = new ArrayList<>();
+    private static final EntityTypeTest<Entity, ItemEntity> ITEMS = EntityTypeTest.forClass(ItemEntity.class);
+
+    static boolean isSafeFood(ItemStack st) {
+        return !st.isEmpty() && st.has(DataComponents.FOOD) && !st.is(Items.ROTTEN_FLESH) && !st.is(Items.SPIDER_EYE)
+                && !st.is(Items.POISONOUS_POTATO) && !st.is(Items.PUFFERFISH) && !st.is(Items.CHORUS_FRUIT)
+                && !st.is(Items.SUSPICIOUS_STEW);
+    }
+
+    private boolean isSafeFoodId(String id) {
+        return safeFoodById.computeIfAbsent(id, k -> {
+            ResourceLocation rl = ResourceLocation.tryParse(k);
+            return rl != null && BuiltInRegistries.ITEM.containsKey(rl)
+                    && isSafeFood(new ItemStack(BuiltInRegistries.ITEM.get(rl)));
+        });
+    }
+
+    @Override
+    public int inventoryFood() {
+        LocalPlayer p = Minecraft.getInstance().player;
+        if (p == null) {
+            return 0;
+        }
+        Inventory inv = p.getInventory();
+        int n = 0;
+        for (int i = 0; i < inv.items.size(); i++) {
+            ItemStack st = inv.items.get(i);
+            if (isSafeFood(st)) {
+                n += st.getCount();
+            }
+        }
+        ItemStack off = inv.offhand.get(0);
+        return isSafeFood(off) ? n + off.getCount() : n;
+    }
+
+    @Override
+    public int storedFoodNearby(double radius) {
+        Minecraft mc = Minecraft.getInstance();
+        LocalPlayer p = mc.player;
+        IStorageIndex idx = Services.storageOrNull();
+        if (p == null || idx == null || mc.level == null) {
+            return 0;
+        }
+        return FoodObjective.storedNearby(idx.entries(), mc.level.dimension().location().toString(), p.getX(),
+                p.getY(), p.getZ(), radius, this::isSafeFoodId);
+    }
+
+    @Override
+    public boolean nearestFoodDrop(double radius, double[] outXyz) {
+        Minecraft mc = Minecraft.getInstance();
+        LocalPlayer p = mc.player;
+        ClientLevel lvl = mc.level;
+        if (p == null || lvl == null) {
+            return false;
+        }
+        dropBuffer.clear();
+        lvl.getEntities(ITEMS, p.getBoundingBox().inflate(radius), MinecraftCombatWorld::isFoodDrop, dropBuffer, 16);
+        ItemEntity best = null;
+        double bestD = radius * radius;
+        for (int i = 0; i < dropBuffer.size(); i++) {
+            ItemEntity it = dropBuffer.get(i);
+            double d = p.distanceToSqr(it);
+            if (d <= bestD && Math.abs(it.getY() - p.getY()) <= 1.5) {
+                best = it;
+                bestD = d;
+            }
+        }
+        dropBuffer.clear();
+        if (best == null) {
+            return false;
+        }
+        outXyz[0] = best.getX() - p.getX();
+        outXyz[1] = best.getY() - p.getY();
+        outXyz[2] = best.getZ() - p.getZ();
+        return true;
+    }
+
+    private static boolean isFoodDrop(ItemEntity e) {
+        return e.isAlive() && isSafeFood(e.getItem());
+    }
+
+    /** Adult animals that drop food; named or leashed ones are someone's and are left alone. */
+    private static boolean isFoodAnimal(LivingEntity e) {
+        return (e instanceof Cow || e instanceof Pig || e instanceof Sheep || e instanceof Chicken
+                || e instanceof Rabbit) && !e.isBaby() && !e.hasCustomName()
+                && !(e instanceof Mob m && m.isLeashed());
+    }
+
+    private static boolean scanCandidate(LivingEntity e) {
+        return e.isAlive() && !e.isRemoved() && !(e instanceof ArmorStand);
+    }
+
+    /** Candidate flags. A neutral mob (enderman, zombified piglin, wolf...) only counts as hostile once it is angry. */
+    private static int flags(LivingEntity e) {
+        int f = 0;
+        if (e instanceof Player pl) {
+            if (!pl.isSpectator() && !pl.isCreative()) {
+                f |= TargetCandidates.PLAYER;
+            }
+            return f;
+        }
+        if (isFoodAnimal(e)) {
+            return TargetCandidates.FOOD;
+        }
+        boolean aggressive = e instanceof Mob m && m.isAggressive()
+                || e instanceof EnderMan em && em.isCreepy();
+        if (aggressive) {
+            f |= TargetCandidates.AGGRESSIVE;
+        }
+        if (e instanceof Enemy && (!(e instanceof NeutralMob) || aggressive)) {
+            f |= TargetCandidates.HOSTILE;
+        }
+        if (e instanceof Creeper c && c.getSwellDir() > 0) {
+            f |= TargetCandidates.SWELLING;
+        }
+        if (e instanceof RangedAttackMob || e instanceof Ghast || e instanceof Blaze) {
+            f |= TargetCandidates.RANGED;
+        }
+        return f;
     }
 
     /** {@link LineOfSight.SolidTest}: a block with a collision shape blocks sight (vanilla's COLLIDER clip mode). */

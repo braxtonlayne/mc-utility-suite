@@ -41,6 +41,27 @@ public final class CombatSnapshot {
     // ---- hazards (relative to the player->target direction) -------------------------------------------------------
     public boolean hazardFront, hazardBack, hazardLeft, hazardRight;
 
+    // ---- terrain for tactics (filled only when wantTerrain is set before sampling)
+    /** Input: the caller wants the terrain probes below (they cost a few dozen block lookups). */
+    public boolean wantTerrain;
+    public boolean targetOnGround = true;
+    /**
+     * Horizontal distance from the player to the near edge of a drop on the straight line toward the target, or -1
+     * when the line has no drop with ground beyond it before the target.
+     */
+    public double gapNear = -1;
+    /** Horizontal distance from the player to the far edge of that drop, or -1. */
+    public double gapFar = -1;
+    /** Open blocks below the target's feet (capped; {@link #DEEP} for lava). Large while it jumps over a pit. */
+    public int targetDropBelow;
+    /** Unit horizontal direction from the target toward the deepest drop within two blocks of it. */
+    public double knockX, knockZ;
+    /** Depth of that drop (0 = none nearby, {@link #DEEP} = lava or the void). */
+    public int knockDepth;
+
+    /** Depth value used for lava, the void and very deep drops. */
+    public static final int DEEP = 64;
+
     /** Horizontal centre-to-centre distance player -> target (the spacing metric). */
     public double horizontalDistance() {
         double dx = tx - px;
