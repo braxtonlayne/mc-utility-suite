@@ -157,9 +157,49 @@ volley); the new settings use inline labels, no lang keys.
 - 17:00 check on main after the second volley: mixin audit clean (KeyboardHandlerTabGuiMixin applies), Menu and
   Modules playtests PASS.
 
+## Third volley (tiered) (17:00-17:12)
+
+Seven tasks, sized by tier, each on its own worktree branch. All seven merged into main with `--no-ff`
+(`compileJava` after each merge, smallest first). No unmerged branches. The branches
+`refs/heads/worktree-wf_4262cab8-ad7-2` to `refs/heads/worktree-wf_4262cab8-ad7-8` are kept, not deleted, not pushed.
+
+| Tier | Task | What landed |
+|------|------|-------------|
+| opus | Reflex lease split (`-ad7-2`) | `CombatReflexes` requests its movement lease under `combat_reflexes.move` and its interact/turn lease under `combat_reflexes`, so a shield raise and an escape or dodge no longer replace each other (the arbiter replaces by module id; it does not validate ids against the registry). Release, disable and Stop-All work by lease reference and are unchanged. `ReflexLeaseSplitTest` (6 tests, real `ActionArbiter`). |
+| opus | Job resume hazard hold (`-ad7-3`) | `jobs/goal/ResumeHoldGate` (pure HOLD/GO): after an EMERGENCY movement preemption, or any preemption while `Services.danger().has(HazardKind.EXPLOSION)`, `JobExecutor` does not re-request its lease while the explosion hazard is live, then waits 10 settle ticks, capped at 100 ticks from the preemption. Status reason "Waiting for hazard to clear". The user's resume, Stop-All and world unload disarm it. `ResumeHoldGateTest` (8 tests incl. a 200k-call allocation check). No `core.api` change. |
+| sonnet | Setting lang keys (`-ad7-4`) | Four `en_us.json` keys (`setting.utilitysuite.autopilot.black_box_always`, `setting.utilitysuite.combat_reflexes.escape_during_jobs`, each with `.tooltip`) and `NewSettingLangKeysTest`. Nothing reads them yet: `SettingSpec` carries plain strings and the renderer uses `spec.label()` directly. |
+| sonnet | Hot-path allocation tests (`-ad7-5`) | `JobEscapeGateAllocationTest`, `TabGuiNavAllocationTest`, `MomentumReleaseAllocationTest`: 200k calls each under a 1 KiB budget, all pass. Test only. |
+| haiku | Drop `TabGui.onKey` (`-ad7-6`) | Removed the empty `InputEvent.Key` listener and its registration in `UiBootstrap`; keys reach the Tab-GUI only through the mixin and `consumesKey`. |
+| haiku | Dodge planner tests (`-ad7-7`) | 8 more `DodgePlannerTest` cases (tap clamp, horizon and hit-radius boundaries, zero / straight-down velocity, both escape directions hazardous, state reset, blast-radius edge, blocked diagonal). No bug found, `DodgePlanner` unchanged. |
+| haiku | Playtest checklist (`-ad7-8`) | `docs/state/playtest-checklist.md`: about 55 unchecked in-game items in seven sections, each with its source. |
+
+Results on main after the merges: `./gradlew test` passes, 912 tests, 0 failures, 0 errors, 0 skipped (was 885).
+Static input-rule grep: only the two allowed read-only `inv.selected ==` comparisons in `travel/movement`.
+
+Nothing in this volley has run in a game client. Needs an in-game pass (also listed in the playtest checklist):
+
+- Raise the shield while an escape or dodge is running: both leases should stay held, and manual keys still win.
+- A lit creeper next to a running strip-mine job: the job pauses, the player backs off, the status line shows
+  "Waiting for hazard to clear", and the job resumes about half a second after the hazard is gone.
+- Tab-GUI arrows/Enter still work with the `InputEvent.Key` listener gone (mixin path only).
+
+Known leftovers:
+
+- The resume hold is not distance-aware: `IDangerModel` reports no hazard position, so any live EXPLOSION hazard
+  holds the job. The distance overload of `ResumeHoldGate.decide` exists but has no caller.
+- No planner no-go zone: if the hazard outlasts the 100-tick cap, the job resumes on its original route.
+- Because of the live-hazard fallback, a non-emergency preemption during a fuse also arms the hold (100 ticks at
+  most). There is no `JobExecutor`-level test of the arming, only of the gate.
+- PacketLab lease log lines and other modules' `onPreempted` ids now show `combat_reflexes.move` for reflex moves.
+- The setting lang keys need a lookup in `SettingsRenderer` (try the key, fall back to `spec.label()`).
+- The checklist keeps the mixin audit as owed although the 17:00 check on main was clean; this volley added no
+  mixin, so the 17:00 result still stands.
+- Commit trailers on `-ad7-6` and `-ad7-8` name Claude Haiku 5.5 (their session attribution); not amended.
+
 ## Next session, first things
 
-1. Playtest a lit creeper next to a running strip-mine job (pause, back off, resume; does it walk back in?).
+1. Work through `docs/state/playtest-checklist.md`, starting with a lit creeper next to a running strip-mine job
+   (pause, back off, hold, resume) and the shield raised during an escape.
 2. Tab-GUI arrows/Enter in a real game; camera momentum with invert-mouse; Timeline at GUI scale 4.
 3. Dodge tuning in game; Fly/Velocity Scale after re-applying Relaxed.
-4. Remove the 16 kept worktrees under `.claude/worktrees/` once nothing on them is needed.
+4. Remove the 23 kept worktrees under `.claude/worktrees/` once nothing on them is needed.

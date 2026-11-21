@@ -374,9 +374,19 @@ has run in a game client yet**. Details, caveats and the playtest list: `docs/st
 - [ ] Second volley, in game: mixin audit for the Tab-GUI key mixin (20 mixins now); creeper back-off during a strip
       job (pause, resume, does it walk back into the blast spot); black-box rows while the autopilot is off;
       Timeline at GUI scale 3 and 4; World/Travel "Go back" rows and the Freecam switch.
-- [ ] Drop the empty `TabGui.onKey` listener registration in `UiBootstrap`.
-- [ ] One lease per module: a shield lease and the job-escape move lease from `combat_reflexes` replace each other.
+- [x] Dropped the empty `TabGui.onKey` listener and its registration in `UiBootstrap` (third volley).
+- [x] Reflex lease split: `combat_reflexes.move` for movement, `combat_reflexes` for interact/turn, so a shield
+      lease and an escape or dodge lease are held together. Unit-tested against the real arbiter; check in game.
 - [ ] Still untested in game: dodge, black-box dump, danger ranking under several hazards, humanized turn feel.
+- [x] Goal jobs hold their resume after an emergency preemption until the explosion hazard clears
+      (`jobs/goal/ResumeHoldGate`: 10 settle ticks, 100-tick cap). Unit-tested only.
+- [ ] Resume hold follow-ups: hazard position on `IDangerModel` so the hold is distance-aware (the overload exists);
+      a planner no-go zone around the blast spot; a `JobExecutor`-level test of the arming.
+- [ ] Resolve setting lang keys in `SettingsRenderer` (four keys exist for `black_box_always` and
+      `escape_during_jobs`; fall back to `spec.label()`), then add keys for the other settings.
+- [x] Allocation tests for `JobEscapeGate`, `TabGuiNav` and `MomentumRelease`; 8 more `DodgePlanner` edge tests.
+- [ ] Third volley, in game: work through `docs/state/playtest-checklist.md` (shield during an escape, the
+      "Waiting for hazard to clear" hold, Tab-GUI keys on the mixin path only).
 
 ### Deferred
 
