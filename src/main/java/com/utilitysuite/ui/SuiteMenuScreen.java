@@ -1395,7 +1395,7 @@ public final class SuiteMenuScreen extends Screen {
         private final String sub;
         private final boolean enabled;
         private final boolean overview;
-        private final boolean selected;
+        private final boolean isSelected;
         private final String chip;
 
         ModuleRow(Font f, Tab target, String moduleId, String name, String sub, boolean enabled, boolean overview,
@@ -1404,7 +1404,7 @@ public final class SuiteMenuScreen extends Screen {
             this.target = target;
             this.moduleId = moduleId;
             this.overview = overview;
-            this.selected = selected;
+            this.isSelected = selected;
             this.enabled = enabled;
             this.chip = overview ? "PAGE" : target.chip();
             int chipW = smallWidth(f, chip) + 8;
@@ -1422,7 +1422,7 @@ public final class SuiteMenuScreen extends Screen {
         @Override
         public void render(GuiGraphics g, Font font, int sx, int sy, int mouseX, int mouseY) {
             boolean hover = inside(mouseX, mouseY, sx, sy, w, h);
-            if (selected) {
+            if (isSelected) {
                 UiRenderUtils.roundedRect(g, sx, sy, w, h, UiTheme.RADIUS_SMALL, UiTheme.CARD_HOVER);
                 UiRenderUtils.roundedRect(g, sx, sy + 4, 2, h - 8, 1, UiTheme.ACCENT);
             } else if (hover) {
@@ -1435,7 +1435,7 @@ public final class SuiteMenuScreen extends Screen {
             smallText(g, font, chip, sx + 10, cy + 3, chipColor);
             boolean on = overview || enabled;
             UiRenderUtils.text(g, font, name, sx + 6 + cw + 6, sy + (ROW_H - 8) / 2,
-                    selected ? UiTheme.TEXT : on ? UiTheme.TEXT_SECONDARY : UiTheme.TEXT_MUTED);
+                    isSelected ? UiTheme.TEXT : on ? UiTheme.TEXT_SECONDARY : UiTheme.TEXT_MUTED);
             if (!overview) {
                 UiRenderUtils.dot(g, sx + w - 9, sy + (ROW_H - 4) / 2, 4, enabled ? UiTheme.RUNNING : UiTheme.TRACK_OFF);
             }

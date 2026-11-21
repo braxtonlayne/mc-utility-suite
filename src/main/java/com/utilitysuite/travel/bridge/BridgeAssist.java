@@ -54,6 +54,9 @@ public final class BridgeAssist implements IModule, IConfigurable {
 
     public enum LineMode { FACING, MARKED }
 
+    /** LINE: the automated line bridge (it walks for you). WALK: you walk, it fills the deck ahead of you. */
+    public enum Mode { LINE, WALK }
+
     static final String K_LINE = "line_mode";
     static final String K_LENGTH = "length";
     static final String K_BUDGET = "budget";
@@ -61,6 +64,14 @@ public final class BridgeAssist implements IModule, IConfigurable {
     static final String K_ROTATION = "rotation_mode";
     static final String K_DELAY_MEAN = "delay_mean_ticks";
     static final String K_DELAY_STD = "delay_std_ticks";
+    static final String K_MODE = "mode";
+    static final String K_WALK_PACE = "walk_pace";
+    static final String K_SERVER_LOOK = "server_look";
+    static final String K_SERVER_SNEAK = "server_sneak";
+    static final String K_HIDE_SPRINT = "hide_sprint";
+    static final String K_TOWER = "tower";
+    static final String K_LOOKAHEAD = "lookahead_ticks";
+    static final String GROUP_WALK = "Walk mode";
 
     private static final double REACH = 4.5;
     private static final int VERIFY_TICKS = 8;
@@ -70,6 +81,7 @@ public final class BridgeAssist implements IModule, IConfigurable {
     private boolean enabled = true;
 
     // settings
+    private Mode mode = Mode.LINE;
     private LineMode lineMode = LineMode.FACING;
     private int length = 32;
     private int budget = 64;
@@ -104,6 +116,11 @@ public final class BridgeAssist implements IModule, IConfigurable {
     private final HeldKeys keys = new HeldKeys();
     private final CameraAim aim = new CameraAim(0.5f);
     private final BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+    private final WalkBridge walk = new WalkBridge();
+    private final java.util.function.IntSupplier walkSlot = () -> {
+        LocalPlayer p = Minecraft.getInstance().player;
+        return p == null ? 0 : placeableSlot(p.getInventory(), p.level());
+    };
 
     // ---- IModule ------------------------------------------------------------------------------------------------------
 
@@ -125,20 +142,21 @@ public final class BridgeAssist implements IModule, IConfigurable {
     @Override
     public void setEnabled(boolean enabled) {
         this.enabled = enabled;
-        if (!enabled && running) {
+        if (!enabled && isRunning()) {
             finish(null);
         }
     }
 
     @Override
     public void onStopAll() {
-        if (running) {
+        if (isRunning()) {
             finish(null);
         }
     }
 
     @Override
     public void onWorldUnload() {
+        walk.worldUnload();
         running = false;
         plan = null;
         hasA = false;
@@ -155,12 +173,20 @@ public final class BridgeAssist implements IModule, IConfigurable {
 
     @Override
     public void onTick() {
-        if (!running) {
+        if (!running && !walk.isRunning()) {
             return;
         }
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer player = mc.player;
         if (player == null || mc.level == null || mc.gameMode == null) {
+            return;
+        }
+        if (walk.isRunning()) {
+            String end = walk.tick(mc, player, countPlaceable(player.getInventory(), mc.level), reserve, budget,
+                    walkSlot);
+            if (end != null) {
+                finish(end);
+            }
             return;
         }
         if (slot.terminated()) {
@@ -296,12 +322,16 @@ public final class BridgeAssist implements IModule, IConfigurable {
     // ---- control ------------------------------------------------------------------------------------------------------
 
     public boolean isRunning() {
-        return running;
+        return running || walk.isRunning();
+    }
+
+    public Mode mode() {
+        return mode;
     }
 
     /** Key handler: start or stop. */
     public void toggle() {
-        if (running) {
+        if (isRunning()) {
             finish("message.utilitysuite.bridge.stopped");
         } else {
             start();
@@ -341,6 +371,15 @@ public final class BridgeAssist implements IModule, IConfigurable {
         if (Services.arbiter().isAutomationStopped()) {
             TravelMessages.status("message.utilitysuite.travel.automation_stopped");
             return false;
+        }
+        if (mode == Mode.WALK) {
+            String refused = walk.start(player);
+            if (refused != null) {
+                TravelMessages.status(refused);
+                return false;
+            }
+            TravelMessages.status("message.utilitysuite.bridge.walk_started");
+            return true;
         }
         if (!player.onGround()) {
             TravelMessages.status("message.utilitysuite.bridge.not_on_ground");
@@ -397,6 +436,13 @@ public final class BridgeAssist implements IModule, IConfigurable {
     }
 
     private void finish(String messageKey) {
+        if (walk.isRunning()) {
+            walk.stop();
+            if (messageKey != null) {
+                TravelMessages.status(messageKey, walk.placed());
+            }
+            return;
+        }
         ControlLease lease = slot.active();
         IInputSmoother input = Services.input();
         keys.releaseAll(input, lease);
@@ -468,6 +514,9 @@ public final class BridgeAssist implements IModule, IConfigurable {
     @Override
     public List<SettingSpec> settings() {
         return List.of(
+                SettingSpec.choice(K_MODE, "Mode", Mode.LINE, "",
+                        "LINE: bridges a line for you (walks, sneaks, places). WALK: you walk or run normally and blocks "
+                                + "are placed under you; the Walk mode settings choose how it looks to the server."),
                 SettingSpec.choice(K_LINE, "Line", LineMode.FACING, "",
                         "FACING: straight ahead from where you look (8 directions). MARKED: from point A to point B "
                                 + "(mark them with the bridge mark key)."),
@@ -479,6 +528,22 @@ public final class BridgeAssist implements IModule, IConfigurable {
                         "Stop when no more than this many placeable blocks are left in the hotbar."),
                 SettingSpec.choice(K_ROTATION, "Rotation", RotationMode.VISIBLE, "",
                         "VISIBLE turns your camera; SILENT aims only in what is sent to the server."),
+                SettingSpec.choice(K_WALK_PACE, "Pace", WalkBridge.Pace.LEGIT, GROUP_WALK,
+                        "LEGIT: one block as you reach the edge, with human spacing. INSTANT: every block along your path "
+                                + "the moment you need it, at any speed (single-player / allow-listed servers)."),
+                SettingSpec.choice(K_SERVER_LOOK, "Server look", WalkBridge.ServerLook.BRIDGER, GROUP_WALK,
+                        "What the server and other players see of your head. REAL: your camera. BRIDGER: facing back "
+                                + "down at the deck like a backward bridger while you walk forward. FACE: aimed at each "
+                                + "block placed. Your own camera never moves."),
+                SettingSpec.choice(K_SERVER_SNEAK, "Server sneak", WalkBridge.ServerSneak.AT_EDGE, GROUP_WALK,
+                        "Crouch shown to the server while you keep full speed. AT_EDGE: a short crouch at each block, "
+                                + "like ninja bridging. ALWAYS: crouched the whole time."),
+                SettingSpec.bool(K_HIDE_SPRINT, "Hide sprint from server", true, GROUP_WALK,
+                        "The server sees you walking while you sprint."),
+                SettingSpec.bool(K_TOWER, "Tower", false, GROUP_WALK,
+                        "Jumping in place places a block under you each jump."),
+                SettingSpec.integer(K_LOOKAHEAD, "Look-ahead (ticks)", 3, 1, 10, GROUP_WALK,
+                        "INSTANT pace: how far ahead of your movement blocks are placed.").asAdvanced(),
                 SettingSpec.decimal(K_DELAY_MEAN, "Delay between blocks (ticks)", 4.0, 1.0, 20.0, "Timing",
                         "Average pause between placements.").asAdvanced(),
                 SettingSpec.decimal(K_DELAY_STD, "Delay spread (ticks)", 1.2, 0.0, 10.0, "Timing",
@@ -506,5 +571,24 @@ public final class BridgeAssist implements IModule, IConfigurable {
         }
         delayMean = p.getDouble(ID, K_DELAY_MEAN, 4.0);
         delayStd = p.getDouble(ID, K_DELAY_STD, 1.2);
+        mode = parse(Mode.class, p.getString(ID, K_MODE, Mode.LINE.name()), Mode.LINE);
+        walk.pace = parse(WalkBridge.Pace.class, p.getString(ID, K_WALK_PACE, "LEGIT"), WalkBridge.Pace.LEGIT);
+        walk.look = parse(WalkBridge.ServerLook.class, p.getString(ID, K_SERVER_LOOK, "BRIDGER"),
+                WalkBridge.ServerLook.BRIDGER);
+        walk.sneak = parse(WalkBridge.ServerSneak.class, p.getString(ID, K_SERVER_SNEAK, "AT_EDGE"),
+                WalkBridge.ServerSneak.AT_EDGE);
+        walk.hideSprint = p.getBool(ID, K_HIDE_SPRINT, true);
+        walk.tower = p.getBool(ID, K_TOWER, false);
+        walk.lookahead = Math.max(1, Math.min(10, p.getInt(ID, K_LOOKAHEAD, 3)));
+        walk.delayMean = delayMean;
+        walk.delayStd = delayStd;
+    }
+
+    private static <E extends Enum<E>> E parse(Class<E> type, String value, E fallback) {
+        try {
+            return Enum.valueOf(type, value);
+        } catch (IllegalArgumentException | NullPointerException e) {
+            return fallback;
+        }
     }
 }

@@ -367,12 +367,32 @@ public final class InputSmoother implements IInputSmoother, IContainerClicker {
         return (int) (r < lo ? lo : (r > hi ? hi : r));
     }
 
+    // ---- server-visible pose ------------------------------------------------------------------------------------------
+
+    @Override
+    public boolean setServerPose(ControlLease lease, Boolean sneak, Boolean sprint) {
+        if (!valid(lease, ControlChannel.CAMERA)) {
+            return false;
+        }
+        if (sneak == null && sprint == null) {
+            if (ServerPose.owner() == lease) {
+                ServerPose.clear();
+            }
+            return true;
+        }
+        ServerPose.set(lease, sneak, sprint);
+        return true;
+    }
+
     // ---- cleanup ----------------------------------------------------------------------------------------------------
 
     @Override
     public void releaseFor(ControlLease lease) {
         if (lease == null) {
             return;
+        }
+        if (ServerPose.owner() == lease) {
+            ServerPose.clear();
         }
         for (int k = 0; k < KEYS.length; k++) {
             if (managed[k] && keyOwner[k] == lease) {
@@ -387,6 +407,7 @@ public final class InputSmoother implements IInputSmoother, IContainerClicker {
 
     @Override
     public void releaseAll() {
+        ServerPose.clear();
         for (int k = 0; k < KEYS.length; k++) {
             if (managed[k]) {
                 unmanage(k);

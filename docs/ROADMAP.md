@@ -163,3 +163,23 @@ chain, and it works with modded content and JEI. The research and design notes a
       requires a visible top face and walks to open ground once. Make the walk retry with new spots (up to a cap).
 - [x] Playtest evidence: a screenshot on every failed check (run/playtest/shots/fail/) and a rolling trace of long
       steps every 5 s (run/playtest/shots/trace/<scenario>/, last 12 kept).
+
+## Bridging: walk mode and packet options (user request 2026-11-21)
+
+Bridge Assist has a Mode setting: LINE (the automated line bridge) or WALK (you walk or run with your own keys and
+camera; blocks are placed under you). Walk-mode settings combine freely:
+
+- Pace: LEGIT (one block as your feet reach the edge, human spacing, never lets you drop) or INSTANT (every block
+  along the next ticks of travel, up to 3 a tick, at sprint speed).
+- Server look: REAL (your camera), BRIDGER (the server and other players see you facing back down at the deck like a
+  backward bridger while you walk forward), FACE (aimed at each block). Packet-only: your camera never moves.
+- Server sneak: OFF, AT_EDGE (a short crouch at each block, like ninja bridging), ALWAYS. Local movement stays at full
+  speed (`LocalPlayerServerPoseMixin` + `IInputSmoother.setServerPose`, owned by a lease).
+- Hide sprint from server; Tower (jump in place to pillar up); look-ahead ticks.
+- INSTANT pace and any server look/sneak/sprint option need single-player or an allow-listed server.
+
+Next for bridging:
+- [ ] Diagonal and stair-step (ascending/descending) walk bridging; the planner already handles diagonal corners.
+- [ ] Silent hotbar swap (the server sees the block slot while the client keeps your item in hand).
+- [ ] Tower while moving ("tower-move"), and a jump-bridge/god-bridge timing look.
+- [ ] HUD hint while walk mode is armed (mode, pace, blocks left).

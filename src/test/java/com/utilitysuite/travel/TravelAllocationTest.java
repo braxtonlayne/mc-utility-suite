@@ -50,6 +50,17 @@ class TravelAllocationTest {
     }
 
     @Test
+    void walkBridgePlanningIsAllocationFree() {
+        com.utilitysuite.travel.bridge.WalkBridgePlanner planner = new com.utilitysuite.travel.bridge.WalkBridgePlanner();
+        com.utilitysuite.travel.bridge.WalkBridgePlanner.Cells air = (x, y, z) -> x > 0;
+        long bytes = AllocationProbe.measure(ITERATIONS, () -> {
+            planner.plan(air, 0.7, 0.5, 0.28, 0.05, 64, 3, 0.6);
+            planner.plan(air, 0.5, 0.5, 0.2, 0.2, 64, 6, 0.6);
+        });
+        assertTrue(bytes < SLACK_BYTES, "allocated " + bytes);
+    }
+
+    @Test
     void safeWalkClampIsAllocationFree() {
         EdgeClamp clamp = new EdgeClamp();
         FootprintSupportProbe probe = new FootprintSupportProbe();

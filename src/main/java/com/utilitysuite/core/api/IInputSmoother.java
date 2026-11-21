@@ -18,6 +18,15 @@ public interface IInputSmoother {
     /** True when the current target is reached within {@code toleranceDeg} (or no target is set). */
     boolean isRotationSettled(float toleranceDeg);
 
+    // ---- server-visible pose (packet layer) ---------------------------------------------------------------------
+
+    /**
+     * Overrides the sneak and sprint states the server (and so other players) sees, without changing how the local
+     * player moves; {@code null} = report the real state. Needs CAMERA (like a SILENT rotation, it is what the server
+     * sees of the player). Lapses when the lease ends; cleared by {@link #releaseFor}/{@link #releaseAll}.
+     */
+    boolean setServerPose(ControlLease lease, Boolean sneak, Boolean sprint);
+
     // ---- keys ---------------------------------------------------------------------------------------------------
 
     /** Holds or releases a simulated key. Needs the key's channel. */

@@ -4,6 +4,7 @@
   "package": "com.utilitysuite.mixin",
   "compatibilityLevel": "JAVA_21",
   "client": [
+    "LocalPlayerServerPoseMixin",
     "LocalPlayerSilentRotationMixin",
     "MouseHandlerManualLookMixin",
     "combat.ClientPacketListenerDamageMixin",

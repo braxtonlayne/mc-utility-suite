@@ -60,6 +60,8 @@
   "message.utilitysuite.bridge.off_line": "Bridge: stand on point A or on the marked line",
   "message.utilitysuite.bridge.mark_a": "Bridge point A: %s %s %s",
   "message.utilitysuite.bridge.mark_b": "Bridge point B: %s %s %s",
+  "message.utilitysuite.bridge.walk_started": "Walk bridge on: walk, blocks follow your feet",
+  "message.utilitysuite.bridge.walk_not_allowed": "Walk bridge: instant pace and server look/sneak/sprint options need single-player or an allow-listed server (Tools tab)",
   "module.utilitysuite.goal_engine": "Goal Engine",
   "module.utilitysuite.storage_memory": "Storage Memory",
   "module.utilitysuite.survival_autopilot": "Survival Autopilot",

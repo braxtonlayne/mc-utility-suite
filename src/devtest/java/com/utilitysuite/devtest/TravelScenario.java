@@ -72,6 +72,8 @@ final class TravelScenario {
                             + TravelBootstrap.bridge().isRunning() + ", player " + H.posStr() + "; " + H.arbiterState());
         });
         Shots.add(s, "travel-bridge");
+        walkBridge(s, lease, "INSTANT", "BRIDGER", "AT_EDGE", true, 4, "walk-instant");
+        walkBridge(s, lease, "LEGIT", "REAL", "OFF", false, 8, "walk-legit");
         // --- Water walk ---
         s.cmd(() -> Arena.tp(6.5, -6.5, 0f));
         s.run("surface mode", () -> {
@@ -104,5 +106,92 @@ final class TravelScenario {
         });
         s.cmd(() -> Arena.tp(0.5, 0.5, 0f));
         return s;
+    }
+
+    /**
+     * Bridge Assist WALK mode: the "user" (a playtest movement lease) walks or sprints east off the platform edge with
+     * the bridge on; blocks must appear under them and they must not fall. In single-player the integrated server's
+     * copy of the player shows what the server saw: crouching while the client was not, and the bridger look (facing
+     * back west) while the camera faced east.
+     */
+    private static void walkBridge(Scenario s, ControlLease[] lease, String pace, String look, String sneak,
+                                   boolean sprint, int laneDz, String shot) {
+        int[] start = new int[1];
+        boolean[] sawServerSneak = new boolean[1];
+        boolean[] sawClientSneak = new boolean[1];
+        float[] maxBackLook = new float[1];
+        s.cmd("clear @s");
+        s.cmd("give @s minecraft:cobblestone 64");
+        s.cmd(() -> Arena.tp(10.5, laneDz + 0.5, -90f));
+        s.waitTicks(10);
+        s.run("walk bridge " + pace + " on", () -> {
+            H.setting(BridgeAssist.ID, "mode", "WALK");
+            H.setting(BridgeAssist.ID, "walk_pace", pace);
+            H.setting(BridgeAssist.ID, "server_look", look);
+            H.setting(BridgeAssist.ID, "server_sneak", sneak);
+            H.setting(BridgeAssist.ID, "hide_sprint", sprint);
+            H.setting(BridgeAssist.ID, "budget", 0);
+            H.setting(BridgeAssist.ID, "hotbar_reserve", 0);
+            H.enable(BridgeAssist.ID, true);
+            start[0] = H.count("minecraft:cobblestone");
+            boolean started = TravelBootstrap.bridge().start();
+            s.check("walk bridge (" + pace + ", look " + look + ", sneak " + sneak + ") starts", started,
+                    "running=" + TravelBootstrap.bridge().isRunning());
+            lease[0] = Services.arbiter().request(LeaseRequest.of("playtest_mover", ControlPriority.TRAVEL, null,
+                    ControlChannel.MOVEMENT)).orElseThrow();
+            Services.input().setKeyHeld(lease[0], SimKey.FORWARD, true);
+            if (sprint) {
+                Services.input().setKeyHeld(lease[0], SimKey.SPRINT, true);
+            }
+        });
+        s.waitUpTo("walk east to x+20 (" + pace + ")", 20 * 15, () -> {
+            var sp = serverPlayer();
+            if (sp != null) {
+                sawServerSneak[0] |= sp.isShiftKeyDown();
+                // bridger look: the server yaw points back west (+90) while the camera faces east (-90)
+                float back = (float) Math.abs(com.utilitysuite.travel.Angles.delta(H.p().getYRot(), sp.getYRot()));
+                maxBackLook[0] = Math.max(maxBackLook[0], back);
+            }
+            sawClientSneak[0] |= H.p().isShiftKeyDown();
+            return H.p().getX() >= Arena.cx + 20.5 || H.p().getY() < Arena.FLOOR + 0.5;
+        });
+        s.run("walk bridge " + pace + " result", () -> {
+            Services.input().setKeyHeld(lease[0], SimKey.FORWARD, false);
+            Services.input().setKeyHeld(lease[0], SimKey.SPRINT, false);
+            lease[0].close();
+            int deck = 0;
+            for (int dx = 13; dx <= 20; dx++) {
+                if (!H.block(Arena.cx + dx, Arena.FLOOR, Arena.cz + laneDz).isAir()) {
+                    deck++;
+                }
+            }
+            double y = H.p().getY();
+            s.check("walk bridge (" + pace + ") keeps the player on a deck it builds under them",
+                    deck >= 7 && y >= Arena.FLOOR + 0.99,
+                    "deck blocks x+13..x+20: " + deck + ", used " + (start[0] - H.count("minecraft:cobblestone"))
+                            + ", player " + H.posStr());
+            if (!"OFF".equals(sneak)) {
+                s.check("server saw a crouch while the client never sneaked",
+                        sawServerSneak[0] && !sawClientSneak[0],
+                        "server sneak seen=" + sawServerSneak[0] + ", client sneak seen=" + sawClientSneak[0]);
+            }
+            if ("BRIDGER".equals(look)) {
+                s.check("server saw the backward bridger look while the camera faced forward", maxBackLook[0] > 135f,
+                        Harness.fmt("max |server yaw - camera yaw| = %.1f deg", maxBackLook[0]));
+            }
+        });
+        Shots.add(s, "travel-" + shot);
+        s.run("walk bridge " + pace + " off", () -> {
+            if (TravelBootstrap.bridge().isRunning()) {
+                TravelBootstrap.bridge().toggle();
+            }
+            H.setting(BridgeAssist.ID, "mode", "LINE");
+        });
+    }
+
+    /** The integrated server's copy of the local player (single-player only), or null. */
+    private static net.minecraft.server.level.ServerPlayer serverPlayer() {
+        var server = H.mc().getSingleplayerServer();
+        return server == null ? null : server.getPlayerList().getPlayer(H.p().getUUID());
     }
 }
