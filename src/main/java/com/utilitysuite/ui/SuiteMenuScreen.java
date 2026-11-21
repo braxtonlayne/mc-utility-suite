@@ -350,8 +350,9 @@ public final class SuiteMenuScreen extends Screen {
         int gw = Math.max(40, Math.min(320, regionR - regionL));
         int center = viewX + viewW / 2;
         int gx = Math.max(regionL, Math.min(regionR - gw, center - gw / 2));
-        goalField = new StyledTextField(f, GoalConsole.K_GOAL, narrow ? "Goal, e.g. gather 32 diamonds"
-                : "Goal: gather 32 diamonds, craft 16 hoppers...", gw,
+        goalField = new StyledTextField(f, GoalConsole.K_GOAL, UiRenderUtils.firstThatFits(f, gw - START_W - 24,
+                "Goal: gather 32 diamonds, craft 16 hoppers...", "Goal, e.g. gather 32 diamonds",
+                "Goal, e.g. 32 diamonds", "Type a goal"), gw,
                 GOAL_H).prompt(true).reserveRight(START_W - 2);
         goalField.x = gx;
         goalField.y = wy + (UiTheme.TOP_BAR_H - GOAL_H) / 2;
@@ -616,7 +617,7 @@ public final class SuiteMenuScreen extends Screen {
         try {
             if (autopilotPage && CoreBootstrap.autopilot() != null) {
                 SettingsRenderer.module(panel, CoreBootstrap.autopilot());
-                panel.text("The autopilot is a layer over the modules: it runs the reflexes you allow here even when"
+                panel.paragraph("The autopilot is a layer over the modules: it runs the reflexes you allow here even when"
                         + " their own module is off. Every module stays in the categories on the left, including the"
                         + " ones the autopilot never uses.", Panel.DIM);
             } else if (selected != null) {

@@ -46,7 +46,20 @@ final class AutopilotBar extends UiNode {
         KeyMapping key = KeybindManager.mapping(KeybindManager.KeyId.TOGGLE_AUTOPILOT);
         keyHint = key == null || key.isUnbound() ? "" : "[" + key.getTranslatedKeyMessage().getString() + "]";
         int room = w - 24 - font.width(LABEL) - 40 - SETTINGS_W - (keyHint.isEmpty() ? 0 : font.width(keyHint) + 10);
-        summary = ap == null ? "" : UiRenderUtils.ellipsize(font, ap.summary(), Math.max(20, room));
+        int fit = Math.max(20, room);
+        if (ap == null) {
+            summary = "";
+        } else if (!on) {
+            summary = UiRenderUtils.firstThatFits(font, fit, ap.summary(), "Off: click to let reflexes act for you",
+                    "Off: click to turn on", "Off");
+        } else {
+            int n = 0;
+            for (com.utilitysuite.core.api.IAutopilot.Reflex r : com.utilitysuite.core.api.IAutopilot.Reflex.values()) {
+                n += ap.allows(r) ? 1 : 0;
+            }
+            summary = UiRenderUtils.firstThatFits(font, fit, ap.summary(),
+                    "Watching " + n + (n == 1 ? " reflex" : " reflexes"), n + " on");
+        }
     }
 
     @Override

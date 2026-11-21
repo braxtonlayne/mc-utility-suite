@@ -176,7 +176,7 @@ public final class WorldTab {
         p.card("Data sources", "where overlays and the miner get block data");
         IWorldKnowledgeService wk = Services.worldKnowledgeOrNull();
         if (wk == null) {
-            p.text("World knowledge is not available (world module not loaded).", Panel.GRAY);
+            p.paragraph("World knowledge is not available (world module not loaded).", Panel.GRAY);
             return;
         }
         int w = p.width();

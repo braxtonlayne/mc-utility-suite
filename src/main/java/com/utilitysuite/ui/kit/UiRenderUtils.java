@@ -194,6 +194,19 @@ public final class UiRenderUtils {
     }
 
     /** Text clipped to {@code maxWidth} with an ellipsis. Allocates: call on change, not per frame. */
+    /**
+     * The first of {@code options} (longest phrasing first) that fits {@code maxWidth}; the last one ellipsized when
+     * none does. Lets a label say less instead of being cut mid-word.
+     */
+    public static String firstThatFits(Font font, int maxWidth, String... options) {
+        for (String o : options) {
+            if (font.width(o) <= maxWidth) {
+                return o;
+            }
+        }
+        return ellipsize(font, options[options.length - 1], maxWidth);
+    }
+
     public static String ellipsize(Font font, String s, int maxWidth) {
         if (s == null || s.isEmpty()) {
             return "";

@@ -59,8 +59,11 @@ public final class GoalHeroCard extends UiNode {
         if (idle) {
             icon = ItemIcons.stack(Items.COMPASS);
             title = "No active job";
-            now = UiRenderUtils.ellipsize(font, "Type a goal in the bar above: Enter previews it, Enter again starts it.",
-                    w - TEXT_X - PAD);
+            now = UiRenderUtils.firstThatFits(font, w - TEXT_X - PAD,
+                    "Type a goal in the bar above: Enter previews it, Enter again starts it.",
+                    "Type a goal above: Enter previews, Enter again starts.",
+                    "Type a goal above, press Enter twice.",
+                    "Type a goal above.");
         } else {
             refresh(font);
         }

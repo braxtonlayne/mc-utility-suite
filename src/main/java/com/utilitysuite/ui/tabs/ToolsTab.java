@@ -134,7 +134,7 @@ public final class ToolsTab {
             if (!(m instanceof PacketLab lab)) {
                 return;
             }
-            p.text("Read-only: records packet types, sizes and times only (no contents).", Panel.DIM);
+            p.paragraph("Read-only: records packet types, sizes and times only (no contents).", Panel.DIM);
             p.dynamic(() -> {
                 if (!lab.isEnabled()) {
                     return "Capture is off.";

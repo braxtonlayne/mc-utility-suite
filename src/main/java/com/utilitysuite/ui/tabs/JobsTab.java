@@ -149,7 +149,7 @@ public final class JobsTab {
         if (!err.isEmpty()) {
             p.card("Could not read that goal", "", 0, CardNode.Tone.DANGER);
             p.paragraph(err, UiTheme.DANGER_TEXT);
-            p.text("Examples: gather 32 diamonds  ·  craft 16 hoppers  ·  travel to Base", Panel.GRAY);
+            p.paragraph("Examples: gather 32 diamonds  ·  craft 16 hoppers  ·  travel to Base", Panel.GRAY);
         }
         Optional<PlanPreview> preview = UiPreview.lastPreview(goals);
         if (preview.isEmpty()) {
@@ -230,7 +230,7 @@ public final class JobsTab {
         }
         List<Path> files = schematicFiles;
         if (files.isEmpty() && !listing) {
-            p.text("No schematic files listed yet. Press Refresh list to scan.", Panel.GRAY);
+            p.paragraph("No schematic files listed yet. Press Refresh list to scan.", Panel.GRAY);
         }
         String selected = p.state(K_SCHEMATIC, "");
         int shown = Math.min(MAX_FILES, files.size());
