@@ -4,6 +4,7 @@ import com.utilitysuite.tools.packetlab.PacketLab;
 import com.utilitysuite.tools.packetlab.RateRing;
 import com.utilitysuite.tools.packetlab.TimelineEvents;
 import com.utilitysuite.ui.kit.ChipNode;
+import com.utilitysuite.ui.kit.MenuScale;
 import com.utilitysuite.ui.kit.PillButton;
 import com.utilitysuite.ui.kit.UiNode;
 import com.utilitysuite.ui.kit.UiRenderUtils;
@@ -71,8 +72,13 @@ public final class TimelineScreen extends Screen {
 
     @Override
     protected void init() {
-        ww = Math.min(760, width - 24);
-        wh = Math.min(460, height - 24);
+        if (minecraft != null && minecraft.getWindow() != null) {
+            double gs = minecraft.getWindow().getGuiScale();
+            width = virtualSize(minecraft.getWindow().getWidth(), gs);
+            height = virtualSize(minecraft.getWindow().getHeight(), gs);
+        }
+        ww = windowSize(760, width);
+        wh = windowSize(460, height);
         wx = (width - ww) / 2;
         wy = (height - wh) / 2;
         chrome.clear();
@@ -102,6 +108,27 @@ public final class TimelineScreen extends Screen {
         chrome.add(clear);
         modeChip = new ChipNode(font, frozen ? "Frozen" : "Live", frozen ? UiTheme.WARNING : UiTheme.RUNNING);
         recompute();
+    }
+
+    // ---- effective scale (same as the suite menu; engine-free helpers) ----------------------------------------------
+
+    /** Virtual layout size for one window axis: the menu's effective scale at GUI scale 3+, vanilla below. */
+    static int virtualSize(int windowPx, double guiScale) {
+        return MenuScale.virtualSize(windowPx, guiScale);
+    }
+
+    /** Panel size on one axis: the preferred size, kept 12 px clear of the virtual bounds on each side. */
+    static int windowSize(int preferred, int virtualExtent) {
+        return Math.min(preferred, virtualExtent - 24);
+    }
+
+    /** GUI-px mouse coordinate to virtual layout px. */
+    static double toVirtual(double guiCoord, double guiScale) {
+        return MenuScale.toVirtual(guiCoord, guiScale);
+    }
+
+    private double guiScale() {
+        return minecraft == null || minecraft.getWindow() == null ? 1.0 : minecraft.getWindow().getGuiScale();
     }
 
     private static long nowSecond() {
@@ -200,7 +227,10 @@ public final class TimelineScreen extends Screen {
     // ---- input ------------------------------------------------------------------------------------------------------
 
     @Override
-    public boolean mouseClicked(double mx, double my, int button) {
+    public boolean mouseClicked(double guiX, double guiY, int button) {
+        double gs = guiScale();
+        double mx = toVirtual(guiX, gs);
+        double my = toVirtual(guiY, gs);
         for (int i = chrome.size() - 1; i >= 0; i--) {
             UiNode n = chrome.get(i);
             if (n.contains(mx, my, n.x, n.y) && n.interactive() && n.onClick(mx, my, button, n.x, n.y)) {
@@ -208,7 +238,7 @@ public final class TimelineScreen extends Screen {
                 return true;
             }
         }
-        return super.mouseClicked(mx, my, button);
+        return super.mouseClicked(guiX, guiY, button);
     }
 
     // ---- rendering --------------------------------------------------------------------------------------------------
@@ -219,7 +249,25 @@ public final class TimelineScreen extends Screen {
     }
 
     @Override
-    public void render(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
+    public void render(GuiGraphics g, int guiMouseX, int guiMouseY, float partialTick) {
+        double gs = guiScale();
+        float f = (float) MenuScale.factor(gs);
+        if (f == 1f) {
+            renderScaled(g, guiMouseX, guiMouseY, partialTick);
+            return;
+        }
+        g.pose().pushPose();
+        g.pose().scale(f, f, 1f);
+        MenuScale.setActive(f);
+        try {
+            renderScaled(g, (int) toVirtual(guiMouseX, gs), (int) toVirtual(guiMouseY, gs), partialTick);
+        } finally {
+            MenuScale.reset();
+            g.pose().popPose();
+        }
+    }
+
+    private void renderScaled(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
         renderBackground(g, mouseX, mouseY, partialTick);
         UiRenderUtils.shadow(g, wx, wy, ww, wh, UiTheme.RADIUS, 6);
         UiRenderUtils.roundedRect(g, wx, wy, ww, wh, UiTheme.RADIUS, UiTheme.WINDOW);
