@@ -647,7 +647,8 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
                 s.hazardBack);
         int side = StrafePlanner.NONE;
         if (settings.strafe && d <= settings.spacingMax + 1.0) {
-            side = strafe.update(s.hazardLeft, s.hazardRight, input.nextGaussianTicks(30, 8, 15, 50));
+            side = strafe.update(s.hazardLeft, s.hazardRight, input.nextGaussianTicks(30, 8, 15, 50),
+                    settings.tacticUtility ? opponents.strafeBias(targetId) : 0.0);
         }
         boolean sprint = fwd == SpacingController.FORWARD && d > settings.spacingMax + 0.5;
         if (sprintResetTicks > 0) {
