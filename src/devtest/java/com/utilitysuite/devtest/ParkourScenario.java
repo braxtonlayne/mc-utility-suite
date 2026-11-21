@@ -123,9 +123,12 @@ final class ParkourScenario {
         Shots.add(s, "parkour-finish");
         s.cmd(() -> Arena.tp(0.5, 0.5, 0f));
         s.waitTicks(10);
-        blockLane(s, lease, "wall", 12, true);
-        blockLane(s, lease, "gap", 18, false);
-        waterClutch(s, 26);
+        blockLane(s, lease, "wall", 12, true, false);
+        blockLane(s, lease, "gap", 18, false, false);
+        waterClutch(s, 26, false);
+        // the autopilot runs the same reflexes with Movement Assist itself switched off
+        waterClutch(s, 50, true);
+        blockLane(s, lease, "gap", 58, false, true);
         blockClutch(s, 34, "hay_block", FallClutchPlanner.Kind.HAY, false, 3f);
         blockClutch(s, 42, "cobweb", FallClutchPlanner.Kind.COBWEB, false, 1f);
         // --- escape path from a zombie ---
@@ -169,7 +172,9 @@ final class ParkourScenario {
      * sprint jump clears) and the runner holds only forward + sprint. Either way the run must end past the obstacle
      * with a block placed.
      */
-    private static void blockLane(Scenario s, ControlLease[] lease, String name, int dx, boolean wall) {
+    private static void blockLane(Scenario s, ControlLease[] lease, String name, int dx, boolean wall,
+                                  boolean viaAutopilot) {
+        String tag = viaAutopilot ? "autopilot (Movement Assist off) " : "";
         int[] before = new int[1];
         double[] minY = {Double.MAX_VALUE};
         boolean[] shot = new boolean[1];
@@ -187,7 +192,8 @@ final class ParkourScenario {
                 + " 0 10");
         s.waitTicks(15);
         s.run(name + ": runner", () -> {
-            H.setting(MovementAssist.ID, "parkour_blocks", true);
+            H.setting(MovementAssist.ID, "parkour_blocks", !viaAutopilot);
+            autopilotOnly(viaAutopilot);
             before[0] = TravelBootstrap.movement().blocksPlaced();
             lease[0] = Services.arbiter().request(LeaseRequest.of("parkour_runner", ControlPriority.TRAVEL, null,
                     ControlChannel.MOVEMENT)).orElseThrow();
@@ -216,7 +222,8 @@ final class ParkourScenario {
             var p = H.p();
             MovementAssist ma = TravelBootstrap.movement();
             double z = p.getZ() - Arena.cz - OZ;
-            s.check("parkour blocks: " + (wall ? "jumping at a 2-high wall, a block to land on, over it"
+            autopilotRestore(viaAutopilot);
+            s.check(tag + "parkour blocks: " + (wall ? "jumping at a 2-high wall, a block to land on, over it"
                             : "a gap one block too long, a block extends the far side, across"),
                     z > goalZ && p.getY() >= Arena.FLOOR + 0.99 && ma.blocksPlaced() > before[0],
                     Harness.fmt("z=+%.2f (goal +%.1f) y=%.2f min y %.2f; blocks placed %d, plans %d, aborts %d", z,
@@ -226,10 +233,36 @@ final class ParkourScenario {
     }
 
     /**
+     * Autopilot lanes: Movement Assist off (and its own reflex toggle off too), the autopilot on with its defaults.
+     * Whatever reflex fires now can only have come through the autopilot.
+     */
+    private static void autopilotOnly(boolean on) {
+        if (!on) {
+            return;
+        }
+        H.enable(MovementAssist.ID, false);
+        com.utilitysuite.core.CoreBootstrap.setAutopilot(true);
+        if (TravelBootstrap.movement().isEnabled() || !com.utilitysuite.core.CoreBootstrap.autopilot().isOn()) {
+            throw new IllegalStateException("autopilot lane setup failed");
+        }
+    }
+
+    private static void autopilotRestore(boolean on) {
+        if (!on) {
+            return;
+        }
+        com.utilitysuite.core.CoreBootstrap.setAutopilot(false);
+        H.setting(MovementAssist.ID, "water_clutch", true);
+        H.setting(MovementAssist.ID, "parkour_blocks", true);
+        H.enable(MovementAssist.ID, true);
+    }
+
+    /**
      * Water clutch: fall damage on, a water bucket in the hotbar, dropped from 14 blocks (11 damage, enough to
      * clutch, not enough to kill if it fails). Must land unhurt, with the water scooped back into the bucket.
      */
-    private static void waterClutch(Scenario s, int dx) {
+    private static void waterClutch(Scenario s, int dx, boolean viaAutopilot) {
+        String tag = viaAutopilot ? "autopilot (Movement Assist off) " : "";
         int drop = 14;
         float[] hp = new float[1];
         int[] before = new int[1];
@@ -241,7 +274,8 @@ final class ParkourScenario {
         s.cmd("gamerule fallDamage true");
         s.waitTicks(10);
         s.run("clutch: drop", () -> {
-            H.setting(MovementAssist.ID, "water_clutch", true);
+            H.setting(MovementAssist.ID, "water_clutch", !viaAutopilot);
+            autopilotOnly(viaAutopilot);
             before[0] = TravelBootstrap.movement().fallClutches();
             hp[0] = H.p().getHealth();
         });
@@ -273,7 +307,8 @@ final class ParkourScenario {
             for (int i = 0; i < 9; i++) {
                 bucket |= p.getInventory().getItem(i).is(Items.WATER_BUCKET);
             }
-            s.check("water clutch: a " + drop + "-block fall lands in poured water, unhurt, water picked back up",
+            autopilotRestore(viaAutopilot);
+            s.check(tag + "water clutch: a " + drop + "-block fall lands in poured water, unhurt, water picked back up",
                     ma.fallClutches() > before[0] && p.getHealth() >= hp[0] && bucket && water == 0,
                     Harness.fmt("clutches %d, pickups %d, health %.1f -> %.1f, water bucket back %s, water left %d,"
                                     + " pitch now %.1f", ma.fallClutches() - before[0], ma.clutchPickups(), hp[0],
