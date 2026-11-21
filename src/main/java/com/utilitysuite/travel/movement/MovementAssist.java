@@ -55,6 +55,9 @@ public final class MovementAssist implements IModule, IConfigurable {
     static final String K_CLUTCH_MIN = "clutch_min_damage";
     static final String K_CLUTCH_PICKUP = "clutch_pickup";
     static final String K_CLUTCH_BLOCKS = "clutch_blocks";
+    static final String K_CLUTCH_STAGE = "clutch_stage";
+    static final String K_CLUTCH_ELYTRA = "clutch_elytra";
+    static final String K_GLIDE_GUARD = "glide_guard";
     static final int ESCAPE_EVERY_TICKS = 10;
     static final double MOB_RANGE = 16.0;
     static final double PLAYER_RANGE = 32.0;
@@ -118,8 +121,8 @@ public final class MovementAssist implements IModule, IConfigurable {
         IAutopilot ap = enabled ? null : Services.autopilotOrNull();
         boolean auto = ap != null && ap.isOn();
         if (!enabled && !auto) {
-            if (clutch.active() || blocks.active()) {
-                clutch.release();
+            if (clutch.active() || clutch.staging.staged() || blocks.active()) {
+                clutch.releaseAll();
                 blocks.release();
             }
             return;
@@ -145,8 +148,8 @@ public final class MovementAssist implements IModule, IConfigurable {
             if (clutch.active()) {
                 blocks.release();
             }
-        } else if (clutch.active()) {
-            clutch.release();
+        } else if (clutch.active() || clutch.staging.staged()) {
+            clutch.releaseAll();
         }
         if (!useParkour && !useBlocks) {
             blocks.release();
@@ -484,7 +487,7 @@ public final class MovementAssist implements IModule, IConfigurable {
     @Override
     public void onWorldUnload() {
         blocks.release();
-        clutch.release();
+        clutch.releaseAll();
         showLanding = false;
         reachCount = 0;
         escapeCount = 0;
@@ -511,8 +514,11 @@ public final class MovementAssist implements IModule, IConfigurable {
         clutch.minDamage = (float) p.getInt(ID, K_CLUTCH_MIN, 6);
         clutch.pickup = p.getBool(ID, K_CLUTCH_PICKUP, true);
         clutch.useBlocks = p.getBool(ID, K_CLUTCH_BLOCKS, true);
+        clutch.staging.enabled = p.getBool(ID, K_CLUTCH_STAGE, true);
+        clutch.elytraDeploy = p.getBool(ID, K_CLUTCH_ELYTRA, true);
+        clutch.glideGuard = p.getBool(ID, K_GLIDE_GUARD, true);
         if (!clutchOn) {
-            clutch.release();
+            clutch.releaseAll();
         }
         escapeOverlay = p.getBool(ID, K_ESCAPE, true);
         escapePlayers = p.getBool(ID, K_ESCAPE_PLAYERS, true);
@@ -558,6 +564,14 @@ public final class MovementAssist implements IModule, IConfigurable {
                         "Fall damage (half-hearts) that is worth a clutch. Lethal falls are always clutched."),
                 SettingSpec.bool(K_CLUTCH_PICKUP, "Pick the clutch back up", true, "",
                         "After landing in clutch water or powder snow, scoop it back into the bucket."),
+                SettingSpec.bool(K_CLUTCH_STAGE, "Stage the clutch early", true, "",
+                        "Near a deep drop when a fall gets likely (sprinting at the edge, knockback, a fight on a"
+                                + " ledge): move the clutch item into an empty hotbar slot and select it. The camera"
+                                + " only moves once you are airborne; the slot comes back when the risk passes."),
+                SettingSpec.bool(K_CLUTCH_ELYTRA, "Deploy a worn elytra", true, "",
+                        "Falling with an elytra on: open it with a jump tap when that saves more than a clutch."),
+                SettingSpec.bool(K_GLIDE_GUARD, "Glide pull-up", true, "",
+                        "Gliding toward the ground fast enough to get hurt: raise the nose (smoothed) until safe."),
                 SettingSpec.bool(K_ESCAPE, "Escape path", true, "Overlay",
                         "When hostile mobs (or players) are near, draw the route that leaves the most room between you"
                                 + " and them, using sprint jumps mobs cannot follow (magenta = jump)."),

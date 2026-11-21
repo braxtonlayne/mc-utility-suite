@@ -192,6 +192,19 @@ public final class FallClutchPlanner {
         }
     }
 
+    /**
+     * Only the landing prediction (no clutch search): fills {@link #ticksToLand()}, {@link #landDamage()} and
+     * {@link #lands()}. Used by the danger feed and the option ladder. Allocation free.
+     */
+    public boolean predictLanding(MovementPhysics now, float heading, boolean sprint, int f, int s,
+                                  MovementPhysics.Voxels w) {
+        if (now.onGround) {
+            lands = false;
+            return false;
+        }
+        return predict(now, heading, sprint, f, s, w);
+    }
+
     /** Trajectory until landing; false when it never lands within the horizon. */
     private boolean predict(MovementPhysics now, float heading, boolean sprint, int f, int s,
                             MovementPhysics.Voxels w) {
