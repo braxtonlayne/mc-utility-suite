@@ -57,6 +57,8 @@ public final class SuiteHud implements IModule, IConfigurable, LayeredDraw.Layer
     private boolean pollNow;
     private int usedTop;
     private final InfoStrip infoStrip = new InfoStrip(this);
+    private final ModuleListHud moduleList = new ModuleListHud(this);
+    public static final String K_MODULE_LIST = "module_list";
 
     public static final String K_INFO = "info_strip";
     public static final String K_INFO_POSITION = "info_position";
@@ -100,6 +102,7 @@ public final class SuiteHud implements IModule, IConfigurable, LayeredDraw.Layer
 
     @Override
     public void onTick() {
+        moduleList.tick();
         if (!pollNow && ++ticks % POLL_TICKS != 0) {
             return;
         }
@@ -189,6 +192,11 @@ public final class SuiteHud implements IModule, IConfigurable, LayeredDraw.Layer
         return position == side ? usedTop : 0;
     }
 
+    /** The optional classic list of enabled modules (top-right). */
+    ModuleListHud moduleList() {
+        return moduleList;
+    }
+
     /** The optional info strip (settings live on this module). */
     InfoStrip infoStrip() {
         return infoStrip;
@@ -215,6 +223,10 @@ public final class SuiteHud implements IModule, IConfigurable, LayeredDraw.Layer
                         "Small badge while Stop-All is active."),
                 SettingSpec.bool(K_CLEAN_BADGE, "Clean-Screen indicator", false, "",
                         "Small badge while Clean-Screen hides everything else."),
+                SettingSpec.bool(K_MODULE_LIST, "Enabled module list", false, "",
+                        "Classic client list of the modules that are on, top-right, longest name first, coloured by"
+                                + " category. The autopilot heads it while it is on. Hidden with F1, F3 and"
+                                + " Clean-Screen."),
                 SettingSpec.bool(K_INFO, "Info strip", false, INFO_GROUP,
                         "Compact strip with coordinates, biome, TPS, ping and durability. Hidden with F1, F3, "
                                 + "open screens and Clean-Screen."),
@@ -244,6 +256,8 @@ public final class SuiteHud implements IModule, IConfigurable, LayeredDraw.Layer
         } catch (IllegalArgumentException e) {
             position = Position.TOP_CENTER;
         }
+        moduleList.enabled = p.getBool(ID, K_MODULE_LIST, false);
+        moduleList.invalidate();
         InfoStrip s = infoStrip;
         s.enabled = p.getBool(ID, K_INFO, false);
         try {

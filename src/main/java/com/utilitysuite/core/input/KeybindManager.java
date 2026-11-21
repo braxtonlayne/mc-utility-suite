@@ -29,7 +29,8 @@ public final class KeybindManager {
         CLEAN_SCREEN("clean_screen", GLFW.GLFW_KEY_F10),
         TOGGLE_TERRAIN_SURFACE("toggle_terrain_surface", InputConstants.UNKNOWN.getValue()),
         TOGGLE_WORLD_OVERLAYS("toggle_world_overlays", InputConstants.UNKNOWN.getValue()),
-        TOGGLE_SCOUT_CAMERA("toggle_scout_camera", InputConstants.UNKNOWN.getValue());
+        TOGGLE_SCOUT_CAMERA("toggle_scout_camera", InputConstants.UNKNOWN.getValue()),
+        TOGGLE_AUTOPILOT("toggle_autopilot", InputConstants.UNKNOWN.getValue());
 
         private static final KeyId[] VALUES = values();
 

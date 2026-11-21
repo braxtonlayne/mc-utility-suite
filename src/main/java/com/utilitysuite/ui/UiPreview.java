@@ -149,6 +149,18 @@ public final class UiPreview {
             menu.setState(SuiteMenuScreen.K_SEARCH, "");
             menu.selectModule(SuiteMenuScreen.Tab.TRAVEL, "");
         });
+        add("autopilot on", () -> {
+            com.utilitysuite.core.CoreBootstrap.setAutopilot(true);
+            menu.requestRebuild();
+        });
+        add("shot autopilot-on", () -> shot(mc, "autopilot-on"));
+        add("autopilot page", () -> menu.toggleAutopilotPage());
+        add("shot autopilot-page", () -> shot(mc, "autopilot-page"));
+        add("autopilot off", () -> {
+            menu.toggleAutopilotPage();
+            com.utilitysuite.core.CoreBootstrap.setAutopilot(false);
+            menu.requestRebuild();
+        });
         add("demo on", () -> {
             demo = true;
             menu.selectTab(SuiteMenuScreen.Tab.JOBS);

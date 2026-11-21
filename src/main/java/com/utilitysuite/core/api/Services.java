@@ -19,6 +19,7 @@ public final class Services {
     private static volatile IWorldKnowledgeService worldKnowledge;
     private static volatile IStorageIndex storage;
     private static volatile IWaypointService waypoints;
+    private static volatile IAutopilot autopilot;
 
     private Services() {
     }
@@ -41,6 +42,8 @@ public final class Services {
     public static IWaypointService waypointsOrNull() { return waypoints; }
     public static INavigator navigatorOrNull() { return navigator; }
     public static IGoalEngine goalsOrNull() { return goals; }
+    /** The opt-in autopilot, or null before the core is up (reflexes then act only through their own module). */
+    public static IAutopilot autopilotOrNull() { return autopilot; }
     public static ISuiteEventBus eventsOrNull() { return events; }
 
     public static void registerArbiter(IActionArbiter s) { arbiter = s; }
@@ -54,11 +57,12 @@ public final class Services {
     public static void registerWorldKnowledge(IWorldKnowledgeService s) { worldKnowledge = s; }
     public static void registerStorage(IStorageIndex s) { storage = s; }
     public static void registerWaypoints(IWaypointService s) { waypoints = s; }
+    public static void registerAutopilot(IAutopilot s) { autopilot = s; }
 
     /** Test hook: clears every registration. */
     public static void resetForTests() {
         arbiter = null; input = null; clicker = null; modState = null; modules = null; events = null; goals = null;
-        navigator = null; worldKnowledge = null; storage = null; waypoints = null;
+        navigator = null; worldKnowledge = null; storage = null; waypoints = null; autopilot = null;
     }
 
     private static <T> T require(T value, String name) {

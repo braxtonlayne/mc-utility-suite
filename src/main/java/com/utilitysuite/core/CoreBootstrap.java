@@ -1,6 +1,7 @@
 package com.utilitysuite.core;
 
 import com.utilitysuite.UtilitySuiteMod;
+import com.utilitysuite.core.autopilot.Autopilot;
 import com.utilitysuite.core.api.ControlChannel;
 import com.utilitysuite.core.api.ProfileConfig;
 import com.utilitysuite.core.api.Services;
@@ -49,6 +50,7 @@ public final class CoreBootstrap {
 
     private static SuiteEventBus events;
     private static ModuleRegistry modules;
+    private static Autopilot autopilot;
     private static ActionArbiter arbiter;
     private static InputSmoother smoother;
     private static ConfigStore configStore;
@@ -84,7 +86,12 @@ public final class CoreBootstrap {
         Services.registerModState(modState);
         modState.loadGlobal();
 
+        autopilot = new Autopilot();
+        modules.register(autopilot);
+        Services.registerAutopilot(autopilot);
+
         modBus.addListener(KeybindManager::onRegisterKeyMappings);
+        KeybindManager.onPressed(KeybindManager.KeyId.TOGGLE_AUTOPILOT, () -> setAutopilot(!autopilot.isOn()));
         KeybindManager.onPressed(KeybindManager.KeyId.STOP_ALL, CoreBootstrap::stopAllFromKey);
         KeybindManager.onPressed(KeybindManager.KeyId.CLEAN_SCREEN,
                 () -> modState.setCleanScreen(!modState.isCleanScreen()));
@@ -108,6 +115,25 @@ public final class CoreBootstrap {
         arbiter.setManualOverridePauseTicks(g.getInt(ModState.CORE, ModState.KEY_OVERRIDE_PAUSE_TICKS, 20));
         manualInput.setMouseThresholdPx(g.getDouble(ModState.CORE, ModState.KEY_MOUSE_THRESHOLD_PX, 6.0));
         smoother.curve().setBaseSpeed(g.getDouble(ModState.CORE, ModState.KEY_CAMERA_SPEED, 240.0));
+    }
+
+    /** The autopilot module (opt-in layer over the reflex modules). */
+    public static Autopilot autopilot() {
+        return autopilot;
+    }
+
+    /** Turns the autopilot on or off (key, menu bar), records it in the profile and says so on the action bar. */
+    public static void setAutopilot(boolean on) {
+        ProfileConfig profile = modState.hasActiveProfile() ? modState.profile() : null;
+        modules.setModuleEnabled(Autopilot.ID, on, profile);
+        if (profile != null) {
+            modState.markDirty();
+        }
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.player != null && !modState.isCleanScreen()) {
+            mc.player.displayClientMessage(Component.translatable(on ? "message.utilitysuite.autopilot_on"
+                    : "message.utilitysuite.autopilot_off"), true);
+        }
     }
 
     private static void stopAllFromKey() {

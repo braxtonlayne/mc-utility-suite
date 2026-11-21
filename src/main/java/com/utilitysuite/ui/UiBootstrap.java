@@ -43,6 +43,8 @@ public final class UiBootstrap {
         // drawn after the status line so it can sit below the pill when both share a corner
         event.registerAboveAll(ResourceLocation.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID, "info_strip"),
                 hud.infoStrip());
+        event.registerAboveAll(ResourceLocation.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID, "module_list"),
+                hud.moduleList());
     }
 
     /** Opens the menu (key handler; also usable from other code on the client thread). */

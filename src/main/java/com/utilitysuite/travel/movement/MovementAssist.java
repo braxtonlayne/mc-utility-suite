@@ -5,9 +5,10 @@ import com.mojang.blaze3d.vertex.VertexConsumer;
 import com.utilitysuite.core.api.ControlChannel;
 import com.utilitysuite.core.api.IConfigurable;
 import com.utilitysuite.core.api.IModule;
+import com.utilitysuite.core.api.IAutopilot;
 import com.utilitysuite.core.api.ModuleCategory;
-import com.utilitysuite.core.api.ProfileConfig;
 import com.utilitysuite.core.api.Services;
+import com.utilitysuite.core.api.ProfileConfig;
 import com.utilitysuite.core.api.SettingSpec;
 import com.utilitysuite.travel.Packed;
 import net.minecraft.client.Minecraft;
@@ -113,9 +114,19 @@ public final class MovementAssist implements IModule, IConfigurable {
 
     public void onMovementInput(MovementInputUpdateEvent event) {
         jumpingThisTick = false;
-        if (!enabled) {
+        // the autopilot runs the reflexes it is allowed even while this module is off (no overlays then)
+        IAutopilot ap = enabled ? null : Services.autopilotOrNull();
+        boolean auto = ap != null && ap.isOn();
+        if (!enabled && !auto) {
+            if (clutch.active() || blocks.active()) {
+                clutch.release();
+                blocks.release();
+            }
             return;
         }
+        boolean useClutch = enabled ? clutchOn : ap.allows(IAutopilot.Reflex.FALL_CLUTCH);
+        boolean useParkour = enabled || ap.allows(IAutopilot.Reflex.PARKOUR);
+        boolean useBlocks = enabled ? blocksOn : ap.allows(IAutopilot.Reflex.PARKOUR_BLOCKS);
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer p = mc.player;
         if (event.getEntity() != p || p == null || mc.level == null) {
@@ -127,13 +138,23 @@ public final class MovementAssist implements IModule, IConfigurable {
         }
         Input in = event.getInput();
         fillNow(mc, p);
-        if (clutchOn) {
+        if (useClutch) {
             // before the skip checks: it runs while sneaking, in water (scooping it back up) and under automation
             clutch.tick(mc, p, now, sign(in.forwardImpulse), sign(in.leftImpulse), voxels);
             clutch.compensate(in, p.getYRot());
             if (clutch.active()) {
                 blocks.release();
             }
+        } else if (clutch.active()) {
+            clutch.release();
+        }
+        if (!useParkour && !useBlocks) {
+            blocks.release();
+            showLanding = false;
+            reachCount = 0;
+            escapeCount = 0;
+            status = "autopilot: clutch only";
+            return;
         }
         String skipped = skip(p);
         if (skipped != null) {
@@ -161,8 +182,23 @@ public final class MovementAssist implements IModule, IConfigurable {
         int userS = sign(in.leftImpulse);
         float health = p.getHealth() + p.getAbsorptionAmount();
         brain.safeOnly = safeWalk.getAsBoolean();
-        brain.decide(now, p.getYRot(), sprinting, userF, userS, in.jumping, health, voxels);
-        status = userF > 0 ? "assisting" : "no forward key";
+        if (auto) {
+            // the autopilot's parkour reflex is edge jumps and air steering, whatever this module's own toggles say
+            boolean e = brain.edgeJump;
+            boolean s = brain.airSteer;
+            boolean h = brain.sprintHop;
+            brain.edgeJump = useParkour;
+            brain.airSteer = useParkour;
+            brain.sprintHop = false;
+            brain.decide(now, p.getYRot(), sprinting, userF, userS, in.jumping, health, voxels);
+            brain.edgeJump = e;
+            brain.airSteer = s;
+            brain.sprintHop = h;
+            status = userF > 0 ? "autopilot" : "autopilot: no forward key";
+        } else {
+            brain.decide(now, p.getYRot(), sprinting, userF, userS, in.jumping, health, voxels);
+            status = userF > 0 ? "assisting" : "no forward key";
+        }
 
         if (brain.jump()) {
             in.jumping = true;
@@ -185,7 +221,7 @@ public final class MovementAssist implements IModule, IConfigurable {
             in.left = brain.strafe() > 0;
             in.right = brain.strafe() < 0;
         }
-        if (blocksOn && brain.edgeNoLanding() && !blocks.active() && now.onGround
+        if (useBlocks && brain.edgeNoLanding() && !blocks.active() && now.onGround
                 && ParkourBlocks.blockSlot(p.getInventory(), mc.level) >= 0) {
             // an edge nothing clears: jump anyway when the jump plus one block keeps the run going
             hop.copyFrom(now).tick(userF, userS, p.getYRot(), sprinting, true, voxels);
@@ -196,7 +232,7 @@ public final class MovementAssist implements IModule, IConfigurable {
                 edgeJumps++;
             }
         }
-        if (blocksOn && !clutch.active()) {
+        if (useBlocks && !clutch.active()) {
             blocks.tick(mc, p, now, sprinting, userF, userS, health, jumpAir, voxels);
             blocks.compensate(in, p.getYRot());
         }
@@ -205,6 +241,12 @@ public final class MovementAssist implements IModule, IConfigurable {
         }
         wasCorrecting = brain.corrected();
 
+        if (auto) {
+            showLanding = false; // HUD discipline: the autopilot acts, it draws nothing
+            reachCount = 0;
+            escapeCount = 0;
+            return;
+        }
         // overlay state
         moving = !now.onGround || now.vx * now.vx + now.vz * now.vz > 0.0025;
         showLanding = overlay && moving && (brain.hasLanding() || !now.onGround);

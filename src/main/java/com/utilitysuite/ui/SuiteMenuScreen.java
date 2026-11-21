@@ -115,6 +115,8 @@ public final class SuiteMenuScreen extends Screen {
     private static final long TOOLTIP_DELAY_MS = 350L;
 
     private static Tab lastTab = Tab.JOBS;
+    /** The autopilot's settings page is open in the content canvas (its bar's "Settings" end). */
+    private static boolean autopilotPage;
     private static final int[] SCROLL = new int[Tab.values().length];
     private static final Map<String, String> STATE = new HashMap<>();
     /** Column 2 selection per category: "" = the category's overview page, else a module id. */
@@ -133,6 +135,7 @@ public final class SuiteMenuScreen extends Screen {
     private static final long OPEN_KEY_GRACE_MS = 250L;
     private final Map<EditBox, String> textFieldKeys = new HashMap<>();
     private Tab tab = lastTab;
+    private AutopilotBar autopilotBar;
 
     // geometry (GUI px), computed in init()
     private int wx;
@@ -255,9 +258,10 @@ public final class SuiteMenuScreen extends Screen {
 
     /** Switches to a tab (also used by the UI preview / playtest harness). */
     public void selectTab(Tab t) {
-        if (t == null || t == tab) {
+        if (t == null || (t == tab && !autopilotPage)) {
             return;
         }
+        autopilotPage = false;
         SCROLL[tab.ordinal()] = scrollTarget;
         tab = t;
         lastTab = t;
@@ -284,7 +288,7 @@ public final class SuiteMenuScreen extends Screen {
         // column 2 only when the content column keeps a usable width; otherwise the two-column layout (overview pages)
         listW = ww < UiTheme.THREE_COLUMN_MIN_W ? 0 : ww < 720 ? UiTheme.LIST_W_COMPACT : UiTheme.LIST_W;
         viewX = listX + (listW > 0 ? listW + 1 : 0);
-        viewY = wy + UiTheme.TOP_BAR_H + 1;
+        viewY = autopilotBarY() + AutopilotBar.H + 1;
         viewW = wx + ww - viewX;
         viewH = wy + wh - viewY - 1;
         if (versionText.isEmpty()) {
@@ -365,6 +369,12 @@ public final class SuiteMenuScreen extends Screen {
         startPill.y = goalField.y + (GOAL_H - 14) / 2;
         chrome.add(startPill);
 
+        // the autopilot's own toggle: pinned across the window under the title bar, above every category panel
+        autopilotBar = new AutopilotBar(f, ww - 2, autopilotPage, this::toggleAutopilotPage);
+        autopilotBar.x = wx + 1;
+        autopilotBar.y = autopilotBarY();
+        chrome.add(autopilotBar);
+
         // sidebar tabs; short windows (GUI scale 3-4) get tighter tabs and a one-line footer
         Tab[] tabs = Tab.values();
         int sideH = wy + wh - viewY;
@@ -431,6 +441,7 @@ public final class SuiteMenuScreen extends Screen {
 
     /** Selects a column-2 entry ("" = overview) in a category, switching to that category if needed. */
     void selectModule(Tab t, String moduleId) {
+        autopilotPage = false;
         SELECTED.put(t, moduleId == null ? "" : moduleId);
         if (t != tab) {
             SCROLL[tab.ordinal()] = scrollTarget;
@@ -575,12 +586,40 @@ public final class SuiteMenuScreen extends Screen {
         return listTop + n.y - listScroll;
     }
 
+    private int autopilotBarY() {
+        return wy + UiTheme.TOP_BAR_H + 1;
+    }
+
+    /** Opens or closes the autopilot's settings page in the content canvas. */
+    void toggleAutopilotPage() {
+        autopilotPage = !autopilotPage;
+        builtTab = null; // reset the content scroll for the page
+        focusNode = null;
+        rebuildKeepingFocus();
+    }
+
+    /** The autopilot bar's {x, y, w, h} in GUI pixels (playtest harness clicks it like a user would). */
+    public int[] autopilotBarRect() {
+        return autopilotBar == null ? new int[4]
+                : new int[]{autopilotBar.x, autopilotBar.y, autopilotBar.w, autopilotBar.h};
+    }
+
+    /** True while the autopilot's settings page fills the content canvas (preview / playtest harness). */
+    public boolean autopilotPageOpen() {
+        return autopilotPage;
+    }
+
     private void buildContent() {
         int canvasW = viewW - 2 * UiTheme.CONTENT_PAD;
         panel = new Panel(this, font, canvasW);
         IModule selected = selectedModule();
         try {
-            if (selected != null) {
+            if (autopilotPage && CoreBootstrap.autopilot() != null) {
+                SettingsRenderer.module(panel, CoreBootstrap.autopilot());
+                panel.text("The autopilot is a layer over the modules: it runs the reflexes you allow here even when"
+                        + " their own module is off. Every module stays in the categories on the left, including the"
+                        + " ones the autopilot never uses.", Panel.DIM);
+            } else if (selected != null) {
                 SettingsRenderer.module(panel, selected);
             } else switch (tab) {
                 case JOBS -> JobsTab.build(panel);
@@ -636,7 +675,7 @@ public final class SuiteMenuScreen extends Screen {
             case TOOLS -> ToolsTab::signature;
         };
         try {
-            return s.get() + "|" + automationStopped() + "|" + cleanScreen() + "|" + safeProfile();
+            return s.get() + "|" + autopilotOn() + "|" + automationStopped() + "|" + cleanScreen() + "|" + safeProfile();
         } catch (RuntimeException e) {
             return "";
         }
@@ -660,6 +699,9 @@ public final class SuiteMenuScreen extends Screen {
             }
             for (int i = 0; i < listNodes.size(); i++) {
                 listNodes.get(i).refresh(font);
+            }
+            if (autopilotBar != null) {
+                autopilotBar.refresh(font);
             }
             refreshFooter();
             String sig = signature();
@@ -707,6 +749,10 @@ public final class SuiteMenuScreen extends Screen {
         }
         footerJob = UiRenderUtils.ellipsize(font, job, sidebarW - 30);
         footerStatus = UiRenderUtils.ellipsize(font, footerStatus, sidebarW - 30);
+    }
+
+    private static boolean autopilotOn() {
+        return CoreBootstrap.autopilot() != null && CoreBootstrap.autopilot().isOn();
     }
 
     private static boolean automationStopped() {
@@ -1095,6 +1141,7 @@ public final class SuiteMenuScreen extends Screen {
             UiRenderUtils.vLine(g, listX + listW, viewY, wy + wh - 1, UiTheme.BORDER);
         }
         UiRenderUtils.hLine(g, wx + 1, wx + ww - 1, wy + UiTheme.TOP_BAR_H, UiTheme.BORDER);
+        UiRenderUtils.hLine(g, wx + 1, wx + ww - 1, autopilotBarY() + AutopilotBar.H, UiTheme.BORDER);
         UiRenderUtils.vLine(g, wx + sidebarW, viewY, wy + wh - 1, UiTheme.BORDER);
         UiRenderUtils.roundedOutline(g, wx, wy, ww, wh, UiTheme.RADIUS, UiTheme.BORDER);
     }

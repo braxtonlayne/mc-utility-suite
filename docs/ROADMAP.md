@@ -90,6 +90,19 @@ shared with the Latency Simulator), same as today.
 - [ ] Spotlight-style top bar: typing a word ("water", "mace") filters and highlights matching settings across all
       tabs; typing a goal verb (gather, craft, go) runs a goal.
 
+## Autopilot and the classic-client feel (user direction 2026-11-21)
+
+- [x] Autopilot (`core/autopilot/Autopilot`, contract `IAutopilot`): opt-in, off by default, its own bar pinned across
+      the menu under the title bar (click = on/off with a green ON badge, "Settings" end = its page) and an unbound
+      "Toggle Autopilot" key. Settings: how far it may go (DANGER_ONLY / ASSIST) and which reflexes it may use (fall
+      clutch, parkour timing, parkour blocks). It runs those reflexes even while Movement Assist is off, draws nothing.
+- [x] Classic enabled-module list on the HUD (HUD status line > "Enabled module list", off by default): top-right,
+      longest name first, category colours, Autopilot on top while on.
+- [ ] More reflexes for the autopilot as they land: threat escape (walk the escape path), self-defence (Combat
+      Assistant), auto-eat / totem in danger, ladder/vine clutch.
+- [ ] Classic look beyond the bar and the list (keep the three-column layout below): optional "Classic" theme with
+      square panels, per-category accent headers and bracketed key hints; decide with the user how far to go.
+
 ## Next session, first: UI restyle to the three-column layout (user request 2026-11-20 18:00)
 
 Reference screenshot: `docs/ui/reference/style-target.webp`. Copy its layout and look only (not its feature set).

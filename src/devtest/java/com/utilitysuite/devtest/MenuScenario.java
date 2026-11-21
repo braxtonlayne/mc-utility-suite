@@ -61,6 +61,7 @@ final class MenuScenario {
                 toggleRoundTrip(s, label);
             }
         }
+        autopilotBar(s);
         s.run("close menu", () -> {
             menu().onClose();
         });
@@ -85,6 +86,61 @@ final class MenuScenario {
             }
         });
         return s;
+    }
+
+    /** The autopilot bar: off by default, a click turns it on (and into the profile), its Settings end opens its page. */
+    private static void autopilotBar(Scenario s) {
+        s.run("autopilot off by default", () -> {
+            var ap = com.utilitysuite.core.CoreBootstrap.autopilot();
+            s.check("autopilot is off by default", ap != null && !ap.isOn(), "on=" + (ap != null && ap.isOn()));
+            int[] r = menu().autopilotBarRect();
+            s.check("autopilot bar is pinned under the title bar, full width", r[2] > 200 && r[3] > 0,
+                    "rect=" + java.util.Arrays.toString(r));
+            menu().mouseClicked(r[0] + r[2] / 3.0, r[1] + r[3] / 2.0, 0);
+        });
+        s.waitTicks(12);
+        s.run("autopilot on", () -> {
+            var ap = com.utilitysuite.core.CoreBootstrap.autopilot();
+            boolean saved = Services.modState().profile().getBool("autopilot", "enabled", false);
+            s.check("clicking the bar turns the autopilot on and saves it", ap.isOn() && saved,
+                    "on=" + ap.isOn() + " profile=" + saved + " summary='" + ap.summary() + "'");
+            shot(s, "menu-autopilot-on.png");
+            int[] r = menu().autopilotBarRect();
+            menu().mouseClicked(r[0] + r[2] - 20.0, r[1] + r[3] / 2.0, 0);
+        });
+        s.waitTicks(8);
+        s.run("autopilot page", () -> {
+            SuiteMenuScreen m = menu();
+            s.check("the bar's Settings end opens the autopilot page", m.autopilotPageOpen()
+                    && m.contentNodes().size() > 4, "open=" + m.autopilotPageOpen() + ", "
+                    + m.contentNodes().size() + " nodes");
+            shot(s, "menu-autopilot-page.png");
+            int[] r = m.autopilotBarRect();
+            m.mouseClicked(r[0] + r[2] - 20.0, r[1] + r[3] / 2.0, 0);
+            m.mouseClicked(r[0] + r[2] / 3.0, r[1] + r[3] / 2.0, 0);
+        });
+        s.waitTicks(4);
+        s.run("autopilot back off", () -> {
+            var ap = com.utilitysuite.core.CoreBootstrap.autopilot();
+            s.check("a second click turns it off and closes the page", !ap.isOn() && !menu().autopilotPageOpen(),
+                    "on=" + ap.isOn() + " page=" + menu().autopilotPageOpen());
+        });
+        s.always("autopilot off", () -> {
+            var ap = com.utilitysuite.core.CoreBootstrap.autopilot();
+            if (ap != null && ap.isOn()) {
+                com.utilitysuite.core.CoreBootstrap.setAutopilot(false);
+            }
+        });
+    }
+
+    private static void shot(Scenario s, String name) throws java.io.IOException {
+        java.nio.file.Path png = Harness.dir().resolve(name);
+        java.nio.file.Files.createDirectories(png.getParent());
+        try (com.mojang.blaze3d.platform.NativeImage img = net.minecraft.client.Screenshot.takeScreenshot(
+                H.mc().getMainRenderTarget())) {
+            img.writeToFile(png);
+        }
+        s.note("screenshot " + png.toAbsolutePath());
     }
 
     /** Presses a toggle through the menu's generic widget, checks the profile changed, presses it back. */
