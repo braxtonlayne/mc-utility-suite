@@ -49,6 +49,31 @@ public final class HazardScanner {
         sweeping = false;
     }
 
+    /**
+     * Lava at the feet or straight ahead, for the danger model: 0 when lava is in the feet column ({@code fy-1 ..
+     * fy}), {@code k} when the first lava is {@code k} blocks along the step direction ({@code dx}, {@code dz} each in
+     * -1..1), -1 when none within {@code steps}. A solid block at body height ends the look ahead. Allocation free.
+     */
+    public static int lavaAhead(HazardWorld w, int fx, int fy, int fz, int dx, int dz, int steps) {
+        if (w.lava(fx, fy - 1, fz) || w.lava(fx, fy, fz)) {
+            return 0;
+        }
+        if (dx == 0 && dz == 0) {
+            return -1;
+        }
+        for (int k = 1; k <= steps; k++) {
+            int x = fx + dx * k;
+            int z = fz + dz * k;
+            if (!w.loaded(x, z) || w.solid(x, fy, z)) {
+                return -1;
+            }
+            if (w.lava(x, fy - 1, z) || w.lava(x, fy, z)) {
+                return k;
+            }
+        }
+        return -1;
+    }
+
     /** Advances the sweep by at most {@code budget} columns. Returns the number of columns classified. */
     public int tick(HazardWorld world, int playerX, int playerFeetY, int playerZ) {
         if (!sweeping || Math.abs(playerX - originX) > RESWEEP_DISTANCE || Math.abs(playerZ - originZ) > RESWEEP_DISTANCE

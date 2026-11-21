@@ -172,6 +172,34 @@ public final class TerrainAssist implements IModule, IConfigurable {
         }
         if (hazards) {
             scanner.tick(view.bind(mc.level), player.getBlockX(), player.getBlockY(), player.getBlockZ());
+            feedLava(mc, player);
+        }
+    }
+
+    private boolean lavaReported;
+
+    /** Danger model: lava at the feet or within a few blocks along the way the player moves. Allocation free. */
+    private void feedLava(Minecraft mc, LocalPlayer player) {
+        com.utilitysuite.core.api.IDangerModel d = Services.danger();
+        if (d == com.utilitysuite.core.api.IDangerModel.NONE || player.fireImmune()) {
+            return;
+        }
+        double vx = player.getDeltaMovement().x;
+        double vz = player.getDeltaMovement().z;
+        double speed = Math.sqrt(vx * vx + vz * vz);
+        int dx = speed < 0.03 ? 0 : (Math.abs(vx) * 2.4 > speed ? (vx > 0 ? 1 : -1) : 0);
+        int dz = speed < 0.03 ? 0 : (Math.abs(vz) * 2.4 > speed ? (vz > 0 ? 1 : -1) : 0);
+        int k = HazardScanner.lavaAhead(view.bind(mc.level), player.getBlockX(), player.getBlockY(),
+                player.getBlockZ(), dx, dz, 3);
+        if (k >= 0) {
+            int ticks = k == 0 ? 0 : (int) Math.ceil(k / Math.max(0.05, speed));
+            float bearing = k == 0 ? com.utilitysuite.core.api.IDangerModel.NO_BEARING
+                    : (float) Math.toDegrees(Math.atan2(-dx, dz));
+            d.report(com.utilitysuite.core.api.HazardKind.LAVA, ticks, 4f, bearing);
+            lavaReported = true;
+        } else if (lavaReported) {
+            d.clear(com.utilitysuite.core.api.HazardKind.LAVA);
+            lavaReported = false;
         }
     }
 
