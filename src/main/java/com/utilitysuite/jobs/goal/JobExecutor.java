@@ -675,6 +675,9 @@ public final class JobExecutor implements LeaseListener {
                 ores[n++] = o.packedPos();
             }
         }
+        // known fluid pockets push the tunnel away (lava weighs above water); once per route, not per tick
+        routePlanner.setFluids(fluidCells(k, dim, centre, radius, "minecraft:lava"),
+                fluidCells(k, dim, centre, radius, "minecraft:water"));
         StripRoutePlanner.Route r = routePlanner.best(java.util.Arrays.copyOf(ores, n), PackedPos.x(me),
                 PackedPos.y(me), PackedPos.z(me), minY, maxY, STRIP_LENGTH);
         j.routesTried++;
@@ -692,6 +695,17 @@ public final class JobExecutor implements LeaseListener {
         setReason(j, "Strip mining for " + step.label() + " at y " + r.y() + ", heading " + heading(r));
         markChanged(j);
         return true;
+    }
+
+    /** Packed positions of known cells of one fluid around the route area (empty when the knowledge has none). */
+    private static long[] fluidCells(IWorldKnowledgeService k, String dim, long centre, int radius, String fluidId) {
+        List<WorldObservation> obs = k.findCandidates(new CandidateQuery(Set.of(fluidId), dim, centre, radius,
+                ROUTE_MAX_ORES, DataSourceMode.HYBRID));
+        long[] out = new long[obs.size()];
+        for (int i = 0; i < out.length; i++) {
+            out[i] = obs.get(i).packedPos();
+        }
+        return out;
     }
 
     private static String heading(StripRoutePlanner.Route r) {
