@@ -49,13 +49,20 @@ public final class ManualInputHooks {
     }
 
     private void mouseDelta(double dx, double dy) {
+        smoother.noteManualMouse(dx, dy); // released momentum never pushes against the user's own motion
         if (mouseReported) {
             return;
         }
         mouseAccum += Math.abs(dx) + Math.abs(dy);
         if (mouseAccum > mouseThresholdPx && !smoother.isSilentRotationActive()) {
             mouseReported = true;
-            arbiter.onManualInput(ManualInput.MOUSE_LOOK);
+            // ending the camera lease inside this bracket hands the running turn over with decaying momentum
+            smoother.setManualLookPreempting(true);
+            try {
+                arbiter.onManualInput(ManualInput.MOUSE_LOOK);
+            } finally {
+                smoother.setManualLookPreempting(false);
+            }
         }
     }
 

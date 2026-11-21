@@ -78,6 +78,15 @@ public final class RotationCurve {
      * Starts a motion from the current angles to the target. {@code speedScale} multiplies the base speed.
      */
     public void start(float fromYaw, float fromPitch, float toYaw, float toPitch, float speedScale) {
+        start(fromYaw, fromPitch, toYaw, toPitch, speedScale, 0.0);
+    }
+
+    /**
+     * As {@link #start(float, float, float, float, float)}, with the main motion lasting at least
+     * {@code minMainSeconds} (a humanized turn time). It can only lengthen a motion, never shorten it.
+     */
+    public void start(float fromYaw, float fromPitch, float toYaw, float toPitch, float speedScale,
+                      double minMainSeconds) {
         double dy = wrapDegrees((double) toYaw - fromYaw);
         targetYaw = fromYaw + dy;
         targetPitch = clampPitch(toPitch);
@@ -114,7 +123,11 @@ public final class RotationCurve {
 
         // no-snap rule: no speed multiplier pushes a motion past the hard cap (InputSmoother also limits each step)
         double speed = Math.min(RotationLimits.MAX_DEG_PER_SEC, baseSpeedDegPerSec * (speedScale > 0f ? speedScale : 1f));
-        mainDuration = clamp(minDurationSec + dist / speed, minDurationSec, maxDurationSec);
+        double planned = minDurationSec + dist / speed;
+        if (minMainSeconds > planned) {
+            planned = minMainSeconds;
+        }
+        mainDuration = clamp(planned, minDurationSec, maxDurationSec);
         correctionDuration = overshoot > 1.0e-4 ? clamp(0.04 + overshoot / (speed * 0.5), 0.04, 0.3) : 0.0;
         noiseOffset = random.nextDouble() * 1000.0;
         active = true;
@@ -202,6 +215,13 @@ public final class RotationCurve {
 
     public float targetPitch() {
         return (float) targetPitch;
+    }
+
+    /** Angular distance (degrees) a motion from the given angles to the target covers (yaw the short way). */
+    public static double turnDistance(float fromYaw, float fromPitch, float toYaw, float toPitch) {
+        double dy = wrapDegrees((double) toYaw - fromYaw);
+        double dp = clampPitch(toPitch) - fromPitch;
+        return Math.sqrt(dy * dy + dp * dp);
     }
 
     /** Angular distance (degrees) between the current sample and the target. */
