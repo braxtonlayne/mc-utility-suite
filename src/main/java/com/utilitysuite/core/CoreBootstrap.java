@@ -10,7 +10,10 @@ import com.utilitysuite.core.config.ConfigStore;
 import com.utilitysuite.core.config.ModState;
 import com.utilitysuite.core.config.ProfileIds;
 import com.utilitysuite.core.input.ForeignRotationHook;
+import com.utilitysuite.core.input.Humanizer;
+import com.utilitysuite.core.input.InputSettings;
 import com.utilitysuite.core.input.InputSmoother;
+import com.utilitysuite.core.input.PrimitiveRandom;
 import com.utilitysuite.core.input.KeybindManager;
 import com.utilitysuite.core.input.ManualInputHooks;
 import com.utilitysuite.core.input.MinecraftInputBackend;
@@ -32,7 +35,6 @@ import net.neoforged.neoforge.client.event.RenderFrameEvent;
 import net.neoforged.neoforge.common.NeoForge;
 
 import java.nio.file.Path;
-import java.util.Random;
 
 /**
  * Creates the core services, registers them in {@link Services} and subscribes the core's event handlers. Called first
@@ -56,6 +58,7 @@ public final class CoreBootstrap {
     private static ConfigStore configStore;
     private static ModState modState;
     private static ManualInputHooks manualInput;
+    private static Humanizer humanizer;
     private static long lastFrameNanos;
 
     private CoreBootstrap() {
@@ -68,7 +71,12 @@ public final class CoreBootstrap {
         modules = new ModuleRegistry();
         Services.registerModules(modules);
 
-        smoother = new InputSmoother(new MinecraftInputBackend(), new Random());
+        // one primitive generator per session: curve shape, click jitter and humanization share the stream
+        PrimitiveRandom random = new PrimitiveRandom(PrimitiveRandom.sessionSeed());
+        humanizer = new Humanizer(random);
+        Services.registerHumanizer(humanizer);
+        smoother = new InputSmoother(new MinecraftInputBackend(), random);
+        smoother.setHumanizer(humanizer);
         ForeignRotationHook.install(smoother);
         Services.registerInput(smoother);
         Services.registerClicker(smoother);
@@ -115,6 +123,9 @@ public final class CoreBootstrap {
         arbiter.setManualOverridePauseTicks(g.getInt(ModState.CORE, ModState.KEY_OVERRIDE_PAUSE_TICKS, 20));
         manualInput.setMouseThresholdPx(g.getDouble(ModState.CORE, ModState.KEY_MOUSE_THRESHOLD_PX, 6.0));
         smoother.curve().setBaseSpeed(g.getDouble(ModState.CORE, ModState.KEY_CAMERA_SPEED, 240.0));
+        humanizer.setEnabled(g.getBool(ModState.CORE, InputSettings.KEY_HUMANIZATION, true));
+        humanizer.setSkillOverride(g.getDouble(ModState.CORE, InputSettings.KEY_SKILL_OVERRIDE, -1.0));
+        smoother.setMomentumRelease(g.getBool(ModState.CORE, InputSettings.KEY_MOMENTUM_RELEASE, true));
     }
 
     /** The autopilot module (opt-in layer over the reflex modules). */

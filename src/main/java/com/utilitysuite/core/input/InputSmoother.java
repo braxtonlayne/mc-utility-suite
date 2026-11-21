@@ -74,6 +74,20 @@ public final class InputSmoother implements IInputSmoother, IContainerClicker {
     private float requestedYaw;
     private float requestedPitch;
 
+    // ---- humanization and momentum release --------------------------------------------------------------------------
+    /** Target width Fitts's law assumes for a plain look target (degrees, about a mob at mid range). */
+    static final double DEFAULT_TARGET_WIDTH_DEG = 3.0;
+    private Humanizer humanizer;
+    private final MomentumRelease momentum = new MomentumRelease();
+    private boolean momentumEnabled = true;
+    /** Set while the arbiter ends leases for a manual mouse look, so the lease-end path can hand over momentum. */
+    private boolean manualLookPreempting;
+    private int userYawSign;
+    private int userPitchSign;
+    /** Angular velocity of the last VISIBLE frame the smoother wrote (degrees per second). */
+    private double lastVelYaw;
+    private double lastVelPitch;
+
     // ---- container clicks (ring buffer) -----------------------------------------------------------------------------
     private final ControlLease[] clickLease = new ControlLease[CLICK_CAPACITY];
     private final int[] clickSlot = new int[CLICK_CAPACITY];
@@ -97,6 +111,60 @@ public final class InputSmoother implements IInputSmoother, IContainerClicker {
     /** The curve, for configuration (speed, overshoot, drift). */
     public RotationCurve curve() {
         return curve;
+    }
+
+    /**
+     * Human turn timing (Fitts's law) for non-emergency turns that do not ask for a speed of their own; null = off.
+     * Humanized turns only get slower than the configured base speed, never faster, and stay under the no-snap cap.
+     */
+    public void setHumanizer(Humanizer humanizer) {
+        this.humanizer = humanizer;
+    }
+
+    public Humanizer humanizer() {
+        return humanizer;
+    }
+
+    /** Camera momentum release when manual mouse input preempts an automated turn (default on). */
+    public void setMomentumRelease(boolean on) {
+        momentumEnabled = on;
+        if (!on) {
+            momentum.cancel();
+        }
+    }
+
+    public boolean isMomentumReleaseOn() {
+        return momentumEnabled;
+    }
+
+    /** True while released camera momentum is still decaying. */
+    public boolean isMomentumActive() {
+        return momentum.isActive();
+    }
+
+    /**
+     * The user's raw mouse motion this frame (from the look mixin). Only the signs are kept: momentum never pushes
+     * against the direction the user moves.
+     */
+    public void noteManualMouse(double dx, double dy) {
+        userYawSign = dx > 0 ? 1 : (dx < 0 ? -1 : 0);
+        userPitchSign = dy > 0 ? 1 : (dy < 0 ? -1 : 0);
+    }
+
+    /** Brackets the arbiter call for a manual mouse look, so ending the camera lease releases with momentum. */
+    public void setManualLookPreempting(boolean on) {
+        manualLookPreempting = on;
+    }
+
+    /** Main-motion time a humanized turn takes, or 0 when the base speed decides (off, emergency, explicit speed). */
+    private double humanTurnSeconds(ControlLease lease, RotationTarget target, float fromYaw, float fromPitch) {
+        Humanizer h = humanizer;
+        if (h == null || !h.isEnabled() || target.speed() != 1f
+                || lease.priority() == com.utilitysuite.core.api.ControlPriority.EMERGENCY) {
+            return 0.0;
+        }
+        double dist = RotationCurve.turnDistance(fromYaw, fromPitch, target.yaw(), target.pitch());
+        return h.turnSeconds(dist, DEFAULT_TARGET_WIDTH_DEG);
     }
 
     /** Gaussian spacing of queued container clicks, milliseconds. */
@@ -149,7 +217,9 @@ public final class InputSmoother implements IInputSmoother, IContainerClicker {
             silentReturning = true; // the server angle eases back to the camera instead of jumping
         }
         lagging = false;
-        curve.start(fromYaw, fromPitch, target.yaw(), target.pitch(), target.speed());
+        momentum.cancel(); // automation owns the camera again
+        curve.start(fromYaw, fromPitch, target.yaw(), target.pitch(), target.speed(),
+                humanTurnSeconds(lease, target, fromYaw, fromPitch));
         rotationOwner = lease;
         rotationMode = mode;
         hasTarget = true;
@@ -201,7 +271,12 @@ public final class InputSmoother implements IInputSmoother, IContainerClicker {
 
     /** Per rendered frame: advances a VISIBLE rotation and writes it to the player. */
     public void onFrame(double dtSeconds) {
+        if (momentum.isActive()) {
+            advanceMomentum(dtSeconds);
+        }
         if (!hasTarget || rotationMode != RotationMode.VISIBLE || (!curve.isActive() && !lagging)) {
+            lastVelYaw = 0.0;
+            lastVelPitch = 0.0;
             return;
         }
         if (rotationOwner == null || !rotationOwner.isActive()) {
@@ -215,9 +290,33 @@ public final class InputSmoother implements IInputSmoother, IContainerClicker {
         curve.advance(dt);
         // no-snap rule: whatever the curve asks for, the camera moves at most the hard cap from where it is now
         // (measured from the live camera, so the user's own mouse is never limited or fought)
-        lagging = !RotationLimits.step(backend.yaw(), backend.pitch(), curve.yaw(), curve.pitch(),
+        float fromYaw = backend.yaw();
+        float fromPitch = backend.pitch();
+        lagging = !RotationLimits.step(fromYaw, fromPitch, curve.yaw(), curve.pitch(),
                 RotationLimits.MAX_DEG_PER_SEC * dt, limited);
         backend.setRotation(limited[0], limited[1]);
+        if (dt > 0.0) {
+            lastVelYaw = ((double) limited[0] - fromYaw) / dt;
+            lastVelPitch = ((double) limited[1] - fromPitch) / dt;
+        }
+    }
+
+    /** Adds one frame of decaying released momentum on top of whatever the user's mouse did. */
+    private void advanceMomentum(double dtSeconds) {
+        if (!backend.isReady()) {
+            momentum.cancel();
+            return;
+        }
+        double dt = Math.min(Math.max(dtSeconds, 0.0), 0.1);
+        int ys = userYawSign;
+        int ps = userPitchSign;
+        userYawSign = 0;
+        userPitchSign = 0;
+        if (momentum.advance(dt, ys, ps)) {
+            float pitch = (float) (backend.pitch() + momentum.pitchStep());
+            pitch = pitch < -90f ? -90f : (pitch > 90f ? 90f : pitch);
+            backend.setRotation((float) (backend.yaw() + momentum.yawStep()), pitch);
+        }
     }
 
     // ---- keys -------------------------------------------------------------------------------------------------------
@@ -432,7 +531,12 @@ public final class InputSmoother implements IInputSmoother, IContainerClicker {
             }
         }
         if (rotationOwner == lease) {
+            boolean handOver = manualLookPreempting && momentumEnabled && rotationMode == RotationMode.VISIBLE
+                    && (curve.isActive() || lagging);
             clearRotationInternal();
+            if (handOver) {
+                momentum.start(lastVelYaw, lastVelPitch); // A10: ease out instead of stopping dead
+            }
         }
         cancel(lease);
     }
@@ -450,6 +554,9 @@ public final class InputSmoother implements IInputSmoother, IContainerClicker {
             }
         }
         clearRotationInternal();
+        momentum.cancel(); // Stop-All and world unload stop the camera at once
+        lastVelYaw = 0.0;
+        lastVelPitch = 0.0;
         clearClicks();
     }
 
