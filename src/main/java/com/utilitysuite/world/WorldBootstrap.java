@@ -5,7 +5,10 @@ import com.utilitysuite.core.api.IModuleRegistry;
 import com.utilitysuite.core.api.ISuiteEventBus;
 import com.utilitysuite.core.api.Services;
 import com.utilitysuite.core.input.KeybindManager;
+import com.utilitysuite.world.blast.BlastOverlayModule;
 import com.utilitysuite.world.camera.ScoutCameraModule;
+import com.utilitysuite.world.lighting.LightOverlayModule;
+import com.utilitysuite.world.spawn.SpawnGeometryModule;
 import com.utilitysuite.world.knowledge.KnowledgeLedger;
 import com.utilitysuite.world.knowledge.WorldKnowledgeModule;
 import com.utilitysuite.world.knowledge.WorldKnowledgeService;
@@ -70,13 +73,17 @@ public final class WorldBootstrap {
         ScoutCameraModule camera = new ScoutCameraModule();
         WaypointsModule waypoints = new WaypointsModule();
         MinimapModule minimap = new MinimapModule();
+        LightOverlayModule lightOverlay = new LightOverlayModule();
+        BlastOverlayModule blastOverlay = new BlastOverlayModule();
+        SpawnGeometryModule spawnGeometry = new SpawnGeometryModule(oreSim::profile);
         modBus.addListener(RegisterGuiLayersEvent.class, e -> e.registerBelow(VanillaGuiLayers.CHAT,
                 ResourceLocation.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID, "minimap"), minimap.hud()));
         Services.registerWaypoints(waypoints.store());
         waypoints.subscribe(events);
 
         IModuleRegistry registry = Services.modules();
-        for (WorldModule m : new WorldModule[] {knowledge, overlays, oreSim, radar, camera, waypoints, minimap}) {
+        for (WorldModule m : new WorldModule[] {knowledge, overlays, oreSim, radar, camera, waypoints, minimap,
+                lightOverlay, blastOverlay, spawnGeometry}) {
             registry.register(m);
             runtime.add(m);
         }
@@ -97,13 +104,21 @@ public final class WorldBootstrap {
         });
 
         // Mixin hooks.
-        WorldHooks.setBlockChangeListener(runtime::onBlockChanged);
+        WorldHooks.setBlockChangeListener((pos, o, n) -> {
+            runtime.onBlockChanged(pos, o, n);
+            lightOverlay.onBlockChanged(pos, o, n);
+        });
         WorldHooks.setTurnRedirect(camera::turn);
 
         IEventBus bus = NeoForge.EVENT_BUS;
         bus.addListener(runtime::onTick);
         bus.addListener(runtime::onRender);
-        bus.addListener((ChunkEvent.Load e) -> runtime.onChunkLoad(e));
+        bus.addListener((ChunkEvent.Load e) -> {
+            runtime.onChunkLoad(e);
+            if (e.getLevel().isClientSide()) {
+                lightOverlay.onChunkLoaded(e.getChunk().getPos().x, e.getChunk().getPos().z);
+            }
+        });
         bus.addListener((ChunkEvent.Unload e) -> runtime.onChunkUnload(e));
         bus.addListener((ClientPlayerNetworkEvent.LoggingOut e) -> runtime.onWorldUnload());
         bus.addListener((ClientChatReceivedEvent.System e) -> oreSim.onChat(e));
