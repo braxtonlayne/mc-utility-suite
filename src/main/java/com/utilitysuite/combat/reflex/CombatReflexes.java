@@ -58,6 +58,14 @@ import java.util.Optional;
 public final class CombatReflexes implements IModule, IConfigurable, LeaseListener {
 
     public static final String ID = "combat_reflexes";
+    /**
+     * Lease owner id of the shield side (WORLD_INTERACT, plus CAMERA for a shield turn). The arbiter keeps one lease
+     * per owner id and replaces it on a new request, so the shield and the escape/dodge movement lease use distinct
+     * owner ids and can be held together. Interact and turn share this id: only one of them is ever held.
+     */
+    static final String INTERACT_LEASE_ID = ID;
+    /** Lease owner id of the escape/dodge MOVEMENT lease (see {@link #INTERACT_LEASE_ID}). */
+    static final String MOVE_LEASE_ID = ID + ".move";
     public static final String SHIELD = "shield";
     public static final String DODGE = "dodge";
     public static final String ESCAPE = "threat_escape";
@@ -114,11 +122,11 @@ public final class CombatReflexes implements IModule, IConfigurable, LeaseListen
         this.assistant = assistant;
         this.threats = threats;
         this.world = world;
-        this.interactRequest = new LeaseRequest(ID, ControlPriority.EMERGENCY,
+        this.interactRequest = new LeaseRequest(INTERACT_LEASE_ID, ControlPriority.EMERGENCY,
                 EnumSet.of(ControlChannel.WORLD_INTERACT), 0, this);
-        this.turnRequest = new LeaseRequest(ID, ControlPriority.EMERGENCY,
+        this.turnRequest = new LeaseRequest(INTERACT_LEASE_ID, ControlPriority.EMERGENCY,
                 EnumSet.of(ControlChannel.WORLD_INTERACT, ControlChannel.CAMERA), 0, this);
-        this.moveRequest = new LeaseRequest(ID, ControlPriority.EMERGENCY, EnumSet.of(ControlChannel.MOVEMENT), 0,
+        this.moveRequest = new LeaseRequest(MOVE_LEASE_ID, ControlPriority.EMERGENCY, EnumSet.of(ControlChannel.MOVEMENT), 0,
                 this);
     }
 
