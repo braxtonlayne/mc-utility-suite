@@ -54,7 +54,8 @@
   (default 95%). A long manual press is left alone; a jump press during the automated charge preempts the lease.
 - Fly: sets `abilities.mayfly` client-side (no mixin). Unverified: whether the integrated server tolerates it without
   `allow-flight` (it may correct or kick for flying). Test in single-player before shipping.
-- Velocity scale: entity-motion packets only. Explosion knockback (`handleExplode`) is NOT scaled yet.
+- Velocity scale: entity-motion packets (`handleSetEntityMotion`) and explosion knockback (`handleExplosion`), both
+  hooked at RETURN in the one mixin (targets checked against the 21.1.265 sources).
 
 ## Not done
 

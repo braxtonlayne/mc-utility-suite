@@ -2,6 +2,7 @@ package com.utilitysuite.mixin.travel;
 
 import com.utilitysuite.travel.mobility.VelocityScale;
 import net.minecraft.client.multiplayer.ClientPacketListener;
+import net.minecraft.network.protocol.game.ClientboundExplodePacket;
 import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -22,5 +23,11 @@ public abstract class ClientPacketListenerVelocityMixin {
     @Inject(method = "handleSetEntityMotion", at = @At("RETURN"))
     private void utilitysuite$scaleVelocity(ClientboundSetEntityMotionPacket packet, CallbackInfo ci) {
         VelocityScale.afterEntityMotion(packet.getId(), packet.getXa(), packet.getYa(), packet.getZa());
+    }
+
+    /** Explosions add their knockback to the local player's velocity in the same handler: take back the unscaled share. */
+    @Inject(method = "handleExplosion", at = @At("RETURN"))
+    private void utilitysuite$scaleExplosion(ClientboundExplodePacket packet, CallbackInfo ci) {
+        VelocityScale.afterExplosion(packet.getKnockbackX(), packet.getKnockbackY(), packet.getKnockbackZ());
     }
 }

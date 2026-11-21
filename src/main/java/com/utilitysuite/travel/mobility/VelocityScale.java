@@ -104,6 +104,21 @@ public final class VelocityScale implements IModule, IConfigurable {
                 RelaxedGate.scale(za, v.horizontal));
     }
 
+    /** Mixin hook after an explosion packet added {@code k} to the local player's velocity: keep only the scaled share. */
+    public static void afterExplosion(double kx, double ky, double kz) {
+        VelocityScale v = instance;
+        if (v == null || !v.enabled) {
+            return;
+        }
+        LocalPlayer p = Minecraft.getInstance().player;
+        if (p == null) {
+            return;
+        }
+        var d = p.getDeltaMovement();
+        p.setDeltaMovement(d.x - kx + RelaxedGate.scale(kx, v.horizontal), d.y - ky + RelaxedGate.scale(ky, v.vertical),
+                d.z - kz + RelaxedGate.scale(kz, v.horizontal));
+    }
+
     @Override
     public void onWorldUnload() {
         enabled = false;
