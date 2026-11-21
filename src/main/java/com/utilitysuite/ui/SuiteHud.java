@@ -1,5 +1,6 @@
 package com.utilitysuite.ui;
 
+import com.utilitysuite.core.api.IAutopilot;
 import com.utilitysuite.core.api.IConfigurable;
 import com.utilitysuite.core.api.IGoalEngine;
 import com.utilitysuite.core.api.IModule;
@@ -55,6 +56,7 @@ public final class SuiteHud implements IModule, IConfigurable, LayeredDraw.Layer
     private int stoppedW = -1;
     private int cleanW;
     private boolean pollNow;
+    private IAutopilot.Reflex lastReflex;
     private int usedTop;
     private final InfoStrip infoStrip = new InfoStrip(this);
     private final ModuleListHud moduleList = new ModuleListHud(this);
@@ -103,11 +105,23 @@ public final class SuiteHud implements IModule, IConfigurable, LayeredDraw.Layer
     @Override
     public void onTick() {
         moduleList.tick();
+        // the autopilot's acting reflex is short-lived: check it every tick (two field reads, no allocation)
+        IAutopilot ap = Services.autopilotOrNull();
+        IAutopilot.Reflex reflex = ap != null && ap.isOn() ? ap.activeReflex() : null;
+        if (reflex != lastReflex) {
+            lastReflex = reflex;
+            pollNow = true;
+        }
         if (!pollNow && ++ticks % POLL_TICKS != 0) {
             return;
         }
         pollNow = false;
         if (Services.modState().isCleanScreen()) {
+            return;
+        }
+        if (reflex != null) {
+            // what is acting right now outranks the job line; one line only
+            line.updateAutopilot(ReflexChips.statusLine(reflex));
             return;
         }
         IGoalEngine goals = Services.goalsOrNull();

@@ -47,7 +47,10 @@ public final class HudPill {
         seenMaxW = maxW;
         progress = line.progressText();
         progressW = progress.isEmpty() ? 0 : font.width(progress);
-        if (line.isSchematic()) {
+        if (line.isAutopilot()) {
+            icon = ItemIcons.stack(Items.FEATHER);
+            dotColor = UiTheme.RUNNING;
+        } else if (line.isSchematic()) {
             icon = ItemIcons.stack(Items.SCAFFOLDING);
             dotColor = UiTheme.RUNNING;
         } else {

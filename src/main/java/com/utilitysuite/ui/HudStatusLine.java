@@ -20,6 +20,7 @@ public final class HudStatusLine {
     private int target = Integer.MIN_VALUE;
     private String step;
     private String schematic;
+    private String autopilot;
     private String text = "";
     private String progressText = "";
     private String detailText = "";
@@ -35,11 +36,12 @@ public final class HudStatusLine {
     }
 
     public boolean update(String goalLabel, JobStatus st, int cur, int tgt, String now) {
-        if (schematic == null && st == status && cur == current && tgt == target && Objects.equals(goalLabel, label)
-                && Objects.equals(now, step)) {
+        if (schematic == null && autopilot == null && st == status && cur == current && tgt == target
+                && Objects.equals(goalLabel, label) && Objects.equals(now, step)) {
             return false;
         }
         schematic = null;
+        autopilot = null;
         label = goalLabel;
         status = st;
         current = cur;
@@ -61,6 +63,7 @@ public final class HudStatusLine {
             return false;
         }
         schematic = statusLine;
+        autopilot = null;
         label = null;
         status = null;
         progressText = "";
@@ -69,8 +72,38 @@ public final class HudStatusLine {
         return set("[Build] " + statusLine);
     }
 
+    /**
+     * Updates from the autopilot's acting reflex. {@code constantLine} must be a constant per reflex (e.g.
+     * {@code "Autopilot: fall clutch"}), so an unchanged update compares one reference and allocates nothing.
+     */
+    public boolean updateAutopilot(String constantLine) {
+        if (constantLine == null) {
+            return clear();
+        }
+        if (constantLine.equals(autopilot)) {
+            return false;
+        }
+        autopilot = constantLine;
+        schematic = null;
+        label = null;
+        status = null;
+        step = null;
+        current = Integer.MIN_VALUE;
+        target = Integer.MIN_VALUE;
+        progressText = "";
+        detailText = constantLine;
+        itemId = "";
+        return set(constantLine);
+    }
+
+    /** True when the line shows the autopilot's acting reflex rather than a job. */
+    public boolean isAutopilot() {
+        return autopilot != null;
+    }
+
     /** No job: nothing renders. Returns true when the text changed. */
     public boolean clear() {
+        autopilot = null;
         label = null;
         status = null;
         step = null;
