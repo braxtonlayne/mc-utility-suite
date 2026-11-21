@@ -474,6 +474,8 @@ public final class SuiteMenuScreen extends Screen {
         String q = state(K_SEARCH, "").trim().toLowerCase(Locale.ROOT);
         String sel = SELECTED.getOrDefault(tab, "");
         try {
+            y = addCaption(out, "LEGIT LEVEL", y, rowW);
+            y = addRow(out, new PresetBar(rowW), y) + 4;
             if (q.isEmpty()) {
                 y = addCaption(out, tab.label.toUpperCase(Locale.ROOT), y, rowW);
                 y = addRow(out, new ModuleRow(f, tab, "", "Overview", "", false, true, sel.isEmpty(), rowW), y);
@@ -655,6 +657,9 @@ public final class SuiteMenuScreen extends Screen {
         if (ticks % REFRESH_TICKS == 0) {
             for (int i = 0; i < nodes.size(); i++) {
                 nodes.get(i).refresh(font);
+            }
+            for (int i = 0; i < listNodes.size(); i++) {
+                listNodes.get(i).refresh(font);
             }
             refreshFooter();
             String sig = signature();
@@ -1465,6 +1470,131 @@ public final class SuiteMenuScreen extends Screen {
                 return false;
             }
             selectModule(target, moduleId);
+            return true;
+        }
+    }
+
+    // ---- legit level ------------------------------------------------------------------------------------------------
+
+    /** Applies a legit level: writes its knobs, notifies the modules whose settings changed, saves. */
+    void applyLegitLevel(com.utilitysuite.core.LegitPresets.Level level) {
+        try {
+            var ms = Services.modState();
+            List<com.utilitysuite.core.LegitPresets.Knob> changed =
+                    com.utilitysuite.core.LegitPresets.apply(level, ms.profile(), ms.global());
+            boolean core = false;
+            for (com.utilitysuite.core.LegitPresets.Knob k : changed) {
+                if (k.global()) {
+                    core = true;
+                    continue;
+                }
+                Services.modules().byId(k.moduleId()).ifPresent(m -> {
+                    if (m instanceof IConfigurable c) {
+                        c.onSettingChanged(k.key());
+                    }
+                });
+            }
+            if (core) {
+                CoreBootstrap.applyCoreSettings();
+            }
+            ms.markDirty();
+            setStatus("Legit level: " + presetLabel(level) + (changed.isEmpty() ? " (already set)"
+                    : " (" + changed.size() + " settings)"));
+        } catch (RuntimeException e) {
+            UtilitySuiteMod.LOGGER.warn("Applying legit level {} failed", level, e);
+            setStatus("Could not apply the legit level");
+        }
+        requestRebuild();
+    }
+
+    private static com.utilitysuite.core.LegitPresets.Level currentLegitLevel() {
+        try {
+            return com.utilitysuite.core.LegitPresets.current(Services.modState().profile(),
+                    Services.modState().global());
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    private static String presetLabel(com.utilitysuite.core.LegitPresets.Level l) {
+        return switch (l) {
+            case LEGIT -> "Legit";
+            case BALANCED -> "Balanced";
+            case RELAXED -> "Relaxed";
+        };
+    }
+
+    private static String presetTip(com.utilitysuite.core.LegitPresets.Level l) {
+        return switch (l) {
+            case LEGIT -> "Slower turns, human spacing, line of sight required, visible rotations, walk bridge "
+                    + "disguised as a backward bridger";
+            case BALANCED -> "The defaults";
+            case RELAXED -> "Fast turns and placements, silent rotations, no line-of-sight requirement, instant "
+                    + "walk bridging without a disguise";
+        };
+    }
+
+    /**
+     * Segmented Legit / Balanced / Relaxed control (column 2). No segment is lit when the knobs are mixed ("custom");
+     * re-reads the profile in {@link #refresh} (every few ticks), so hand-tuning a setting shows up.
+     */
+    private final class PresetBar extends UiNode {
+        private static final com.utilitysuite.core.LegitPresets.Level[] LEVELS =
+                com.utilitysuite.core.LegitPresets.Level.values();
+        private com.utilitysuite.core.LegitPresets.Level current = currentLegitLevel();
+
+        PresetBar(int w) {
+            super(w, 26);
+            tooltip("Tunes every system at once (speed, rotations, line of sight, bridge disguise). It never turns "
+                    + "features on or off. Lit segment: the level all settings match; none lit: custom.");
+        }
+
+        @Override
+        public boolean interactive() {
+            return true;
+        }
+
+        @Override
+        public void refresh(Font font) {
+            current = currentLegitLevel();
+        }
+
+        @Override
+        public void render(GuiGraphics g, Font font, int sx, int sy, int mouseX, int mouseY) {
+            int bx = sx + 4, bw = w - 8, bh = 14;
+            UiRenderUtils.panel(g, bx, sy, bw, bh, 3, UiTheme.FIELD, UiTheme.CONTROL_BORDER);
+            int segW = bw / LEVELS.length;
+            for (int i = 0; i < LEVELS.length; i++) {
+                int x0 = bx + i * segW;
+                int segWi = i == LEVELS.length - 1 ? bw - i * segW : segW;
+                boolean on = LEVELS[i] == current;
+                boolean hover = inside(mouseX, mouseY, x0, sy, segWi, bh);
+                if (on) {
+                    UiRenderUtils.roundedRect(g, x0 + 1, sy + 1, segWi - 2, bh - 2, 2, UiTheme.ACCENT_TINT);
+                    UiRenderUtils.roundedOutline(g, x0 + 1, sy + 1, segWi - 2, bh - 2, 2, UiTheme.ACCENT_BORDER);
+                } else if (hover) {
+                    UiRenderUtils.roundedRect(g, x0 + 1, sy + 1, segWi - 2, bh - 2, 2, 0x10FFFFFF);
+                }
+                String label = presetLabel(LEVELS[i]).toUpperCase(Locale.ROOT);
+                smallText(g, font, label, x0 + (segWi - smallWidth(font, label)) / 2, sy + 5,
+                        on ? UiTheme.ACCENT : hover ? UiTheme.TEXT_SECONDARY : UiTheme.TEXT_DIM);
+            }
+            String status = current == null ? "custom: settings are hand-tuned" : presetTip(current);
+            smallText(g, font, UiRenderUtils.ellipsize(font, status, (int) ((w - 12) / 0.75f)), sx + 6, sy + bh + 4,
+                    current == null ? UiTheme.WARNING : UiTheme.TEXT_MUTED);
+        }
+
+        @Override
+        public boolean onClick(double mouseX, double mouseY, int button, int sx, int sy) {
+            if (button != 0 || mouseY > sy + 14) {
+                return false;
+            }
+            int bw = w - 8;
+            int i = (int) ((mouseX - sx - 4) / Math.max(1, bw / LEVELS.length));
+            if (i < 0 || i >= LEVELS.length) {
+                return false;
+            }
+            applyLegitLevel(LEVELS[i]);
             return true;
         }
     }

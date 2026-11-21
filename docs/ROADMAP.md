@@ -155,9 +155,10 @@ chain, and it works with modded content and JEI. The research and design notes a
 - [x] Build Assist: aims at a visible point on any support face (it used to aim at the face centre, which its own
       placed blocks could cover), skips a cell only when no face is visible, and the reach walker then moves to a
       spot that sees it. Setting "Require line of sight" (on).
-- [ ] Global "legit level" preset (e.g. Legit / Balanced / Relaxed) in the top bar or the PRESET control of column 2
-      that drives the per-system knobs together: line of sight, rotation speed and smoothing, silent rotation, reach
-      margin, placement delays, combat aim and engagement.
+- [x] Global "legit level" preset (Legit / Balanced / Relaxed) at the top of column 2: one click tunes camera speed,
+      Build Assist (line of sight, silent rotation, delays), Bridge Assist (rotation, delay, walk pace and disguise) and
+      combat aim. Balanced = the defaults; "custom" when hand-tuned. Table in `core/LegitPresets`.
+- [ ] Extend the legit level to new knobs as they appear (combat engagement mode, silent aim, reach margin).
 - [ ] Combat Assistant: the same line-of-sight setting (today it disengages after the LOS timeout).
 - [ ] Goal engine station placement (crafting table, furnace): its own line-of-sight setting; it currently always
       requires a visible top face and walks to open ground once. Make the walk retry with new spots (up to a cap).

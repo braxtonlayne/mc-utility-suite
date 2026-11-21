@@ -36,7 +36,7 @@ public final class SettingsRenderer {
             Map.entry("local_rules", "Condition → action rules for this profile"),
             Map.entry("travel_autopilot", "Overland, boat, elytra or Nether highway"),
             Map.entry("bridge_assist", "Places blocks along a line while sneaking"),
-            Map.entry("terrain_assist", "SafeWalk, Edge Jump, Step, hazards"),
+            Map.entry("terrain_assist", "SafeWalk, Edge Jump, Step, Water Walk, hazards"),
             Map.entry("scout_camera", "Free camera, zoom, fullbright"),
             Map.entry("world_knowledge", "Data sources and prediction ledger"),
             Map.entry("seed_oresim", "World seed and ore predictions"),

@@ -142,6 +142,9 @@ public final class UiPreview {
             menu.requestRebuild();
         });
         add("shot search", () -> shot(mc, "search"));
+        add("legit level", () -> menu.applyLegitLevel(com.utilitysuite.core.LegitPresets.Level.LEGIT));
+        add("shot legit-level", () -> shot(mc, "legit-level"));
+        add("balanced level", () -> menu.applyLegitLevel(com.utilitysuite.core.LegitPresets.Level.BALANCED));
         add("search off", () -> {
             menu.setState(SuiteMenuScreen.K_SEARCH, "");
             menu.selectModule(SuiteMenuScreen.Tab.TRAVEL, "");
