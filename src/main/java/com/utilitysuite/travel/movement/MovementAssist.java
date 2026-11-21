@@ -53,6 +53,7 @@ public final class MovementAssist implements IModule, IConfigurable {
     static final String K_CLUTCH = "water_clutch";
     static final String K_CLUTCH_MIN = "clutch_min_damage";
     static final String K_CLUTCH_PICKUP = "clutch_pickup";
+    static final String K_CLUTCH_BLOCKS = "clutch_blocks";
     static final int ESCAPE_EVERY_TICKS = 10;
     static final double MOB_RANGE = 16.0;
     static final double PLAYER_RANGE = 32.0;
@@ -67,7 +68,7 @@ public final class MovementAssist implements IModule, IConfigurable {
     private final EscapePlanner escape = new EscapePlanner();
     private final ParkourBlocks blocks = new ParkourBlocks();
     private boolean blocksOn;
-    private final WaterClutch clutch = new WaterClutch();
+    private final FallClutch clutch = new FallClutch();
     private boolean clutchOn;
     private final MovementPhysics hop = new MovementPhysics();
     private boolean wasOnGround = true;
@@ -467,6 +468,7 @@ public final class MovementAssist implements IModule, IConfigurable {
         clutchOn = p.getBool(ID, K_CLUTCH, true);
         clutch.minDamage = (float) p.getInt(ID, K_CLUTCH_MIN, 6);
         clutch.pickup = p.getBool(ID, K_CLUTCH_PICKUP, true);
+        clutch.useBlocks = p.getBool(ID, K_CLUTCH_BLOCKS, true);
         if (!clutchOn) {
             clutch.release();
         }
@@ -503,14 +505,17 @@ public final class MovementAssist implements IModule, IConfigurable {
                 SettingSpec.choice(K_LOOK, "Look style", LookStyle.NATURAL, "",
                         "NATURAL: automated looks stay along the way you are moving (aim ahead, turn back after)."
                                 + " FREE: look wherever is quickest for the job (less legit)."),
-                SettingSpec.bool(K_CLUTCH, "Water clutch", true, "",
-                        "Falling toward a landing that would kill you or cost the damage below, with a water bucket in"
-                                + " the hotbar: look down and pour it the last moment it reaches, so you land in water."
-                                + " Not in the Nether."),
+                SettingSpec.bool(K_CLUTCH, "Fall clutch", true, "",
+                        "Falling toward a landing that would kill you or cost the damage below: look and use a clutch"
+                                + " item from the hotbar the last moment it reaches. A water bucket first (not in the"
+                                + " Nether), then the blocks below if allowed."),
+                SettingSpec.bool(K_CLUTCH_BLOCKS, "Clutch with blocks", true, "",
+                        "Without a water bucket (or in the Nether): powder snow, cobweb, slime (not while sneaking),"
+                                + " or a hay bale (a fifth of the damage)."),
                 SettingSpec.integer(K_CLUTCH_MIN, "Clutch at damage", 6, 1, 20, "",
                         "Fall damage (half-hearts) that is worth a clutch. Lethal falls are always clutched."),
-                SettingSpec.bool(K_CLUTCH_PICKUP, "Pick the water back up", true, "",
-                        "After landing in the clutch water, scoop it back into the bucket."),
+                SettingSpec.bool(K_CLUTCH_PICKUP, "Pick the clutch back up", true, "",
+                        "After landing in clutch water or powder snow, scoop it back into the bucket."),
                 SettingSpec.bool(K_ESCAPE, "Escape path", true, "Overlay",
                         "When hostile mobs (or players) are near, draw the route that leaves the most room between you"
                                 + " and them, using sprint jumps mobs cannot follow (magenta = jump)."),
@@ -546,13 +551,23 @@ public final class MovementAssist implements IModule, IConfigurable {
         return blocks.aborted();
     }
 
-    /** Water clutches poured, sources scooped back up, and clutches started. */
-    public int waterClutches() {
+    /** Fall clutches done (any item), buckets scooped back up, and clutches started. */
+    public int fallClutches() {
         return clutch.clutches();
+    }
+
+    /** Fall clutches done with one item kind. */
+    public int fallClutches(FallClutchPlanner.Kind k) {
+        return clutch.clutches(k);
     }
 
     public int clutchPickups() {
         return clutch.pickups();
+    }
+
+    /** What the clutch did last (diagnostics). */
+    public String clutchNote() {
+        return clutch.note();
     }
 
     public int clutchPlans() {

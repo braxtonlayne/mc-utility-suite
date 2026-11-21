@@ -70,6 +70,9 @@ neoForge {
             systemProperty 'utilitysuite.mixinAudit', 'true'
             systemProperty 'utilitysuite.playtest', 'true'
             systemProperty 'utilitysuite.moduleTiming', 'true'
+            if (project.hasProperty('playtestOnly')) {
+                systemProperty 'utilitysuite.playtestOnly', project.property('playtestOnly')
+            }
             // ./gradlew runPlaytest -PplaytestJfr: also record a Java Flight Recording (CPU + allocation samples) to
             // run/playtest/playtest.jfr for digging into the perf scenario (`jfr view allocation-by-site ...`).
             if (project.hasProperty('playtestJfr')) {

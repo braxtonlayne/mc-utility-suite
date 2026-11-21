@@ -15,6 +15,7 @@ public final class LevelVoxels implements MovementPhysics.Voxels {
 
     private static final byte AIR = 1;
     private static final byte SOLID = 2;
+    private static final byte FULL = 3;
 
     private final BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
     private final Long2ByteOpenHashMap cache = new Long2ByteOpenHashMap(1024);
@@ -32,10 +33,30 @@ public final class LevelVoxels implements MovementPhysics.Voxels {
         byte v = cache.get(key);
         if (v == 0) {
             pos.set(x, y, z);
-            BlockState st = level.getBlockState(pos);
-            v = !st.isAir() && !st.getCollisionShape(level, pos).isEmpty() ? SOLID : AIR;
+            v = read();
             cache.put(key, v);
         }
-        return v == SOLID;
+        return v >= SOLID;
+    }
+
+    @Override
+    public boolean fullBlock(int x, int y, int z) {
+        long key = BlockPos.asLong(x, y, z);
+        byte v = cache.get(key);
+        if (v == 0) {
+            pos.set(x, y, z);
+            v = read();
+            cache.put(key, v);
+        }
+        return v == FULL;
+    }
+
+    private byte read() {
+        BlockState st = level.getBlockState(pos);
+        if (st.isAir()) {
+            return AIR;
+        }
+        var shape = st.getCollisionShape(level, pos);
+        return shape.isEmpty() ? AIR : st.isCollisionShapeFullBlock(level, pos) ? FULL : SOLID;
     }
 }

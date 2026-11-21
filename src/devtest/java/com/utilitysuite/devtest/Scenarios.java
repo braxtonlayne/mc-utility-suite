@@ -19,19 +19,28 @@ final class Scenarios {
     private Scenarios() {
     }
 
+    /** With -PplaytestOnly=Name1,Name2 (scenario class names, e.g. Parkour), only those run (boot always runs). */
     static void addAll(List<Supplier<Scenario>> q) {
-        q.add(BootScenario::inWorld);
-        q.add(MenuScenario::build);
-        q.add(ArbiterScenario::build);
-        q.add(GoalScenario::build);
-        q.add(SurvivalScenario::build);
-        q.add(SchematicScenario::build);
-        q.add(WorldScenario::build);
-        q.add(TravelScenario::build);
-        q.add(ParkourScenario::build);
-        q.add(CombatScenario::build);
-        q.add(ToolsScenario::build);
-        q.add(PerfScenario::build);
+        add(q, "BootScenario", BootScenario::inWorld);
+        add(q, "MenuScenario", MenuScenario::build);
+        add(q, "ArbiterScenario", ArbiterScenario::build);
+        add(q, "GoalScenario", GoalScenario::build);
+        add(q, "SurvivalScenario", SurvivalScenario::build);
+        add(q, "SchematicScenario", SchematicScenario::build);
+        add(q, "WorldScenario", WorldScenario::build);
+        add(q, "TravelScenario", TravelScenario::build);
+        add(q, "ParkourScenario", ParkourScenario::build);
+        add(q, "CombatScenario", CombatScenario::build);
+        add(q, "ToolsScenario", ToolsScenario::build);
+        add(q, "PerfScenario", PerfScenario::build);
+    }
+
+    private static void add(List<Supplier<Scenario>> q, String cls, Supplier<Scenario> s) {
+        String only = System.getProperty("utilitysuite.playtestOnly", "");
+        if (only.isEmpty() || cls.equals("BootScenario")
+                || ("," + only + ",").contains("," + cls.replace("Scenario", "") + ",")) {
+            q.add(s);
+        }
     }
 
     /** Runs on the title screen before the world is created. */

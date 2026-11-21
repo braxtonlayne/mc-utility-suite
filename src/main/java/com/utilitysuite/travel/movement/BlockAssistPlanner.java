@@ -237,7 +237,7 @@ public final class BlockAssistPlanner {
         return Math.sqrt(dy * dy + dp * dp);
     }
 
-    private static double wrap(double d) {
+    static double wrap(double d) {
         d %= 360.0;
         if (d >= 180.0) {
             d -= 360.0;

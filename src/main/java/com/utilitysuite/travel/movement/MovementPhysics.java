@@ -22,6 +22,11 @@ public final class MovementPhysics {
     @FunctionalInterface
     public interface Voxels {
         boolean solid(int x, int y, int z);
+
+        /** A full cube (every face can be clicked where it is drawn); slabs, stairs, fences are solid but not full. */
+        default boolean fullBlock(int x, int y, int z) {
+            return solid(x, y, z);
+        }
     }
 
     public static final double HALF_WIDTH = 0.3;

@@ -255,11 +255,17 @@ Next:
       keeps the run going (a 2-high wall: a block to land on; a gap one too long: the far edge extended). Turn time
       at the no-snap cap is planned in; keys are re-expressed while the head turns; head returns to the run.
 - [x] Look style (NATURAL / FREE on the legit level): automated looks stay along the way you move by default.
-- [x] Water bucket clutch (`WaterClutchPlanner` + `WaterClutch`, default on): falling toward a lethal landing or one
+- [x] Water bucket clutch (`FallClutchPlanner` + `FallClutch`, default on): falling toward a lethal landing or one
       costing >= the set damage (default 6), pour from the hotbar on the latest tick that reaches the landing block (or
       a wall cell the hitbox passes, head cell included), scoop the water back up, turn back. Not in the Nether.
-- [ ] More block tricks: pillar-up (jump + place under), block clutch at the last tick (no bucket), neo around a
-      wall corner, ladder/vine placement.
+- [x] Block clutches: without a water bucket (or in the Nether) the same planner places powder snow, a cobweb,
+      slime (not while sneaking) or a hay bale (a fifth of the damage) on the landing block or a full-block wall
+      face. Powder snow is scooped back up. Playtested: hay and cobweb on a 14-block drop, no damage.
+- [ ] Ladder / vine clutch: planned (feet cell on a wall beside the fall) but off in the executor. In the playtest the
+      crosshair sat within 0.1 degrees of the planned wall face and the click ray still missed (grazing ray down a wall
+      the player hugs). Also: ladders cannot keep up with a terminal-speed fall (feet cell out of reach a tick early).
+- [ ] More block tricks: pillar-up (jump + place under), neo around a wall corner, break clutch blocks back (hay,
+      slime, ladder) after landing.
 - [ ] Multi-jump planner: chain JumpSearch over landing cells (A* over jump edges) for parkour routes and escapes;
       the combat runner/hunter roles reuse it.
 - [ ] Physics extras: slabs/stairs step-up, ice/slime/soul sand, ladders and vines, water, Speed/Jump Boost from the

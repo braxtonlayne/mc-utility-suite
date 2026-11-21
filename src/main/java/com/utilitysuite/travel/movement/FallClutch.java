@@ -20,21 +20,23 @@ import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 
 /**
- * Water bucket clutch, the in-game half of {@link WaterClutchPlanner}: falling toward a landing that would kill or
- * cost at least the configured damage, with a water bucket in the hotbar, take an EMERGENCY lease (CAMERA, HOTBAR,
- * WORLD_INTERACT), put the bucket in hand, turn the head down to the planned face (VISIBLE, through the capped
- * smoother: no snapping; the use packet carries the look), and pour the moment the face is under the crosshair within
- * reach. After landing in it, scoop the water back up (a pro never leaves a stray source) and turn back.
+ * Fall clutch, the in-game half of {@link FallClutchPlanner}: falling toward a landing that would kill or cost at least
+ * the configured damage, with a clutch item in the hotbar (a water bucket, or with blocks allowed: powder snow, cobweb,
+ * slime, hay bale; ladders and vines are planned but not used yet), take an EMERGENCY lease (CAMERA, HOTBAR,
+ * WORLD_INTERACT), put the item in hand, turn the head to the planned face (VISIBLE, through the capped smoother: no
+ * snapping; the use packet carries the look), and use it the moment the face is under the crosshair within reach.
+ * After a bucket clutch, scoop the water or powder snow back up (a pro never leaves a stray source) and turn back.
  * <p>
- * Re-plans every tick (the trajectory moves with the user's keys). Skipped in dimensions where water evaporates, for
- * players who take no fall damage, and while flying or gliding. The user's mouse preempts the lease (manual input
- * wins); Stop-All revokes it. Client thread only.
+ * Re-plans every tick (the trajectory moves with the user's keys). Water is skipped where it evaporates, slime while
+ * sneaking (no bounce means full damage); nothing runs for players who take no fall damage, or while flying or
+ * gliding. The user's mouse preempts the lease (manual input wins); Stop-All revokes it. Client thread only.
  */
-final class WaterClutch {
+final class FallClutch {
 
     enum Phase { IDLE, POUR, PICKUP, RETURN }
 
@@ -43,8 +45,15 @@ final class WaterClutch {
     /** Ticks in the water before scooping it up: the server must see the landing in water first. */
     static final int SETTLE_TICKS = 2;
     static final double REACH = 4.5;
+    /** Ticks of slack between starting the turn and the planned use (the smoother eases in; yaw and pitch together). */
+    static final int LEAD_TICKS = 6;
+    /** Ticks the last plan is kept when a re-plan finds nothing. */
+    static final int PLAN_GRACE_TICKS = 2;
 
-    final WaterClutchPlanner planner = new WaterClutchPlanner();
+    final FallClutchPlanner planner = new FallClutchPlanner();
+    /** Hotbar slot per {@link FallClutchPlanner.Kind}, refreshed each idle tick (-1: none). */
+    private final int[] kindSlot = new int[FallClutchPlanner.KINDS.length];
+    private FallClutchPlanner.Kind kind;
     private final CameraAim aim = new CameraAim(0.3f);
     private final BlockPos.MutableBlockPos sup = new BlockPos.MutableBlockPos();
     private final BlockPos.MutableBlockPos water = new BlockPos.MutableBlockPos();
@@ -57,16 +66,31 @@ final class WaterClutch {
     private float returnYaw;
     private float returnPitch;
     private long poured = Long.MIN_VALUE;
+    private boolean hasPlan;
+    private int graceTicks;
+    private long planSupport;
+    private int planFace;
+    private long planCell;
 
     // settings
     float minDamage = 6f;
     boolean pickup = true;
+    boolean useBlocks = true;
 
     // counters
     private int clutches;
     private int pickups;
     private int plans;
+    private final int[] kindCounts = new int[FallClutchPlanner.KINDS.length];
     private float lastLandDamage;
+    /** Last thing that happened (constants only: read by the HUD and the playtest, nothing built per tick). */
+    private String note = "idle";
+    private InteractionResult lastUse;
+    private int dbgUseTick = -9;
+    private int dbgTicksToLand = -9;
+    private float dbgAngle = -1f;
+    private int dbgPick;
+    private double dbgY;
 
     boolean active() {
         return phase != Phase.IDLE;
@@ -79,30 +103,33 @@ final class WaterClutch {
                 if (p.onGround() || p.getDeltaMovement().y >= 0 || !eligible(mc, p)) {
                     return;
                 }
-                int s = hotbarSlot(p.getInventory(), Items.WATER_BUCKET);
-                if (s < 0) {
+                int kinds = kindsAtHand(mc, p);
+                if (kinds == 0) {
                     return;
                 }
                 float health = p.getHealth() + p.getAbsorptionAmount();
                 float yaw = p.getYRot();
                 if (!planner.plan(now, yaw, p.isSprinting(), userF, userS, health, minDamage, yaw, p.getXRot(),
-                        ParkourBlocks.PLAN_DEG_PER_TICK, w)) {
+                        ParkourBlocks.PLAN_DEG_PER_TICK, kinds, w)) {
                     return;
                 }
                 // start turning while there is time: no need for a lease many ticks before the head must move
                 double turn = BlockAssistPlanner.angle(yaw, p.getXRot(), planner.aimYaw(), planner.aimPitch());
-                if (planner.useTick() > Math.ceil(turn / ParkourBlocks.PLAN_DEG_PER_TICK) + 3) {
+                if (planner.useTick()
+                        > FallClutchPlanner.turnTicks(turn, ParkourBlocks.PLAN_DEG_PER_TICK) + LEAD_TICKS) {
                     return;
                 }
-                var granted = Services.arbiter().request(LeaseRequest.of("water_clutch", ControlPriority.EMERGENCY,
+                var granted = Services.arbiter().request(LeaseRequest.of("fall_clutch", ControlPriority.EMERGENCY,
                         null, ControlChannel.CAMERA, ControlChannel.HOTBAR, ControlChannel.WORLD_INTERACT));
                 if (granted.isEmpty()) {
                     return;
                 }
                 lease = granted.get();
                 plans++;
+                note = "planned";
                 lastLandDamage = planner.landDamage();
-                slot = s;
+                kind = planner.kind();
+                slot = kindSlot[kind.ordinal()];
                 heading = yaw;
                 returnYaw = yaw;
                 returnPitch = p.getXRot();
@@ -111,6 +138,7 @@ final class WaterClutch {
                 if (p.getInventory().selected != slot) {
                     Services.input().selectHotbarSlot(lease, slot);
                 }
+                hasPlan = false;
                 phase = Phase.POUR;
                 pourStep(mc, p, now, userF, userS, w);
             }
@@ -122,28 +150,65 @@ final class WaterClutch {
 
     private boolean eligible(Minecraft mc, LocalPlayer p) {
         return !p.getAbilities().invulnerable && !p.getAbilities().flying && !p.isFallFlying() && !p.isPassenger()
-                && !p.isSpectator() && !p.isInWater() && !p.onClimbable()
-                && !mc.level.dimensionType().ultraWarm() && !Services.arbiter().isAutomationStopped();
+                && !p.isSpectator() && !p.isInWater() && !p.onClimbable() && !p.isInPowderSnow
+                && !Services.arbiter().isAutomationStopped();
+    }
+
+    /** Bit set of the clutch kinds in the hotbar that work here; fills {@link #kindSlot}. */
+    private int kindsAtHand(Minecraft mc, LocalPlayer p) {
+        int kinds = 0;
+        Inventory inv = p.getInventory();
+        for (FallClutchPlanner.Kind k : FallClutchPlanner.KINDS) {
+            int s = -1;
+            if (k == FallClutchPlanner.Kind.WATER ? !mc.level.dimensionType().ultraWarm()
+                    : useBlocks && !(k == FallClutchPlanner.Kind.SLIME && p.isShiftKeyDown())
+                    && k.mode != FallClutchPlanner.Mode.CLIMB) {
+                // ladders and vines are planned but not used yet: in the playtest the crosshair sat on the planned wall
+                // face (within 0.1 degrees) and the click ray still missed it; see docs/ROADMAP.md
+                s = hotbarSlot(inv, ITEMS[k.ordinal()]);
+            }
+            kindSlot[k.ordinal()] = s;
+            if (s >= 0) {
+                kinds |= k.bit();
+            }
+        }
+        return kinds;
     }
 
     private void pourStep(Minecraft mc, LocalPlayer p, MovementPhysics now, int userF, int userS,
                           MovementPhysics.Voxels w) {
         if (!leaseOk(ControlChannel.WORLD_INTERACT) || p.onGround() || p.isInWater()
-                || p.getInventory().getItem(slot).getItem() != Items.WATER_BUCKET) {
-            finish(p); // landed (too late or in water), or the bucket is gone
+                || p.getInventory().getItem(slot).getItem() != ITEMS[kind.ordinal()]) {
+            note = p.onGround() ? "landed before use" : "item gone or lease lost";
+            finish(p); // landed (too late or in water), or the item is gone
             return;
         }
         float health = p.getHealth() + p.getAbsorptionAmount();
         if (!planner.plan(now, heading, p.isSprinting(), userF, userS, health, minDamage, p.getYRot(),
-                p.getXRot(), ParkourBlocks.PLAN_DEG_PER_TICK, w)) {
-            finish(p); // no longer needed (or no longer possible)
-            return;
+                p.getXRot(), ParkourBlocks.PLAN_DEG_PER_TICK, kind.bit(), w)) {
+            // The head eases in slower near the end than planned and the real fall drifts a little from the
+            // prediction: keep the last plan a tick or two and use it if the crosshair gets there.
+            if (!hasPlan || ++graceTicks > PLAN_GRACE_TICKS) {
+                note = "replan found nothing";
+                finish(p); // no longer needed (or no longer possible)
+                return;
+            }
+        } else {
+            hasPlan = true;
+            graceTicks = 0;
+            planSupport = planner.support();
+            planFace = planner.face();
+            planCell = planner.cell();
+            dbgUseTick = planner.useTick();
+            dbgTicksToLand = planner.ticksToLand();
         }
-        long support = planner.support();
-        int faceId = planner.face();
-        double hx = faceX(support, faceId);
-        double hy = faceY(support, faceId);
-        double hz = faceZ(support, faceId);
+        long support = planSupport;
+        int faceId = planFace;
+        dbgY = p.getY();
+        dbgAngle = (float) BlockAssistPlanner.angle(p.getYRot(), p.getXRot(), planner.aimYaw(), planner.aimPitch());
+        double hx = faceX(support, faceId, p.getX());
+        double hy = faceY(support, faceId, p.getEyeY());
+        double hz = faceZ(support, faceId, p.getZ());
         double dx = hx - p.getX();
         double dy = hy - p.getEyeY();
         double dz = hz - p.getZ();
@@ -159,6 +224,9 @@ final class WaterClutch {
         sup.set(Packed.x(support), Packed.y(support), Packed.z(support));
         if (!(hr instanceof BlockHitResult bhr) || bhr.getType() != HitResult.Type.BLOCK
                 || !bhr.getBlockPos().equals(sup) || bhr.getDirection() != Direction.from3DDataValue(faceId)) {
+            note = "aiming";
+            dbgPick = hr instanceof BlockHitResult b2 && b2.getType() == HitResult.Type.BLOCK
+                    ? (b2.getBlockPos().equals(sup) ? 2 : 1) : 0;
             return;
         }
         // direct game call: re-check the lease right before it
@@ -166,29 +234,42 @@ final class WaterClutch {
             finish(p);
             return;
         }
-        InteractionResult r = mc.gameMode.useItem(p, InteractionHand.MAIN_HAND);
+        // a water bucket picks its own target; blocks (and the powder snow bucket) are placed on the face clicked
+        InteractionResult r = kind == FallClutchPlanner.Kind.WATER
+                ? mc.gameMode.useItem(p, InteractionHand.MAIN_HAND)
+                : mc.gameMode.useItemOn(p, InteractionHand.MAIN_HAND, bhr);
+        lastUse = r;
+        note = r.consumesAction() ? "used" : "use refused";
         if (r.consumesAction()) {
             p.swing(InteractionHand.MAIN_HAND);
             clutches++;
-            poured = planner.waterCell();
+            kindCounts[kind.ordinal()]++;
+            poured = planCell;
+            boolean bucket = kind == FallClutchPlanner.Kind.WATER || kind == FallClutchPlanner.Kind.POWDER_SNOW;
+            if (!bucket) {
+                startReturn();
+                return;
+            }
             phase = Phase.PICKUP;
             ticks = 0;
             aim.reset();
         }
     }
 
-    /** In (or onto) the poured water: wait for the server to see it, then scoop the source back up. */
+    /** In (or on) the poured water or powder snow: wait for the server to see it, then scoop it back up. */
     private void pickupStep(Minecraft mc, LocalPlayer p) {
         if (!pickup || !leaseOk(ControlChannel.WORLD_INTERACT) || ++ticks > MAX_PICKUP_TICKS) {
             startReturn();
             return;
         }
         water.set(Packed.x(poured), Packed.y(poured), Packed.z(poured));
-        if (!mc.level.getFluidState(water).is(FluidTags.WATER) || !mc.level.getFluidState(water).isSource()) {
+        boolean snow = kind == FallClutchPlanner.Kind.POWDER_SNOW;
+        if (snow ? !mc.level.getBlockState(water).is(Blocks.POWDER_SNOW)
+                : !mc.level.getFluidState(water).is(FluidTags.WATER) || !mc.level.getFluidState(water).isSource()) {
             startReturn(); // flowed away or already gone
             return;
         }
-        if (!(p.onGround() || p.isInWater()) || ticks <= SETTLE_TICKS) {
+        if (!(p.onGround() || p.isInWater() || p.isInPowderSnow) || ticks <= SETTLE_TICKS) {
             return;
         }
         int s = p.getInventory().getItem(slot).getItem() == Items.BUCKET ? slot
@@ -208,7 +289,7 @@ final class WaterClutch {
         float yaw = horiz < 0.35 ? p.getYRot() : (float) Math.toDegrees(Math.atan2(-dx, dz));
         float pitch = (float) Math.toDegrees(-Math.atan2(dy, horiz));
         aim.aim(Services.input(), lease, yaw, pitch, RotationMode.VISIBLE, 10f);
-        HitResult hr = p.pick(REACH, 1.0f, true);
+        HitResult hr = p.pick(REACH, 1.0f, !snow);
         if (!(hr instanceof BlockHitResult bhr) || bhr.getType() != HitResult.Type.BLOCK
                 || !bhr.getBlockPos().equals(water)) {
             return;
@@ -271,6 +352,10 @@ final class WaterClutch {
         }
     }
 
+    /** Clutch item per {@link FallClutchPlanner.Kind}, by ordinal. */
+    static final Item[] ITEMS = {Items.WATER_BUCKET, Items.POWDER_SNOW_BUCKET, Items.COBWEB, Items.SLIME_BLOCK,
+            Items.LADDER, Items.VINE, Items.HAY_BLOCK};
+
     static int hotbarSlot(Inventory inv, Item item) {
         if (inv.getItem(inv.selected).getItem() == item) {
             return inv.selected;
@@ -283,19 +368,19 @@ final class WaterClutch {
         return -1;
     }
 
-    private static double faceX(long support, int face) {
+    private static double faceX(long support, int face, double eye) {
         int dx = Direction.from3DDataValue(face).getStepX();
-        return Packed.x(support) + (dx == 0 ? 0.5 : (dx > 0 ? 1.0 : 0.0));
+        return dx == 0 ? FallClutchPlanner.aimOnFace(Packed.x(support), eye) : Packed.x(support) + (dx > 0 ? 1.0 : 0.0);
     }
 
-    private static double faceY(long support, int face) {
+    private static double faceY(long support, int face, double eye) {
         int dy = Direction.from3DDataValue(face).getStepY();
-        return Packed.y(support) + (dy == 0 ? 0.5 : (dy > 0 ? 1.0 : 0.0));
+        return dy == 0 ? FallClutchPlanner.aimOnFace(Packed.y(support), eye) : Packed.y(support) + (dy > 0 ? 1.0 : 0.0);
     }
 
-    private static double faceZ(long support, int face) {
+    private static double faceZ(long support, int face, double eye) {
         int dz = Direction.from3DDataValue(face).getStepZ();
-        return Packed.z(support) + (dz == 0 ? 0.5 : (dz > 0 ? 1.0 : 0.0));
+        return dz == 0 ? FallClutchPlanner.aimOnFace(Packed.z(support), eye) : Packed.z(support) + (dz > 0 ? 1.0 : 0.0);
     }
 
     int clutches() {
@@ -308,6 +393,16 @@ final class WaterClutch {
 
     int plans() {
         return plans;
+    }
+
+    /** Clutches done with one kind. */
+    int clutches(FallClutchPlanner.Kind k) {
+        return kindCounts[k.ordinal()];
+    }
+
+    String note() {
+        return note + " [use " + dbgUseTick + "/land " + dbgTicksToLand + ", angle " + dbgAngle + ", pick "
+                + dbgPick + ", y " + dbgY + ", kind " + kind + ", last use " + lastUse + "]";
     }
 
     float lastLandDamage() {

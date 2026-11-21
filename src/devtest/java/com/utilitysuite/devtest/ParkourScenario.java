@@ -10,6 +10,7 @@ import com.utilitysuite.core.api.Services;
 import com.utilitysuite.core.api.SimKey;
 import com.utilitysuite.travel.Packed;
 import com.utilitysuite.travel.TravelBootstrap;
+import com.utilitysuite.travel.movement.FallClutchPlanner;
 import com.utilitysuite.travel.movement.MovementAssist;
 import com.utilitysuite.travel.movement.ParkourCourse;
 import com.utilitysuite.travel.movement.ParkourRun;
@@ -125,6 +126,8 @@ final class ParkourScenario {
         blockLane(s, lease, "wall", 12, true);
         blockLane(s, lease, "gap", 18, false);
         waterClutch(s, 26);
+        blockClutch(s, 34, "hay_block", FallClutchPlanner.Kind.HAY, false, 3f);
+        blockClutch(s, 42, "cobweb", FallClutchPlanner.Kind.COBWEB, false, 1f);
         // --- escape path from a zombie ---
         s.cmd(() -> "summon minecraft:zombie " + (Arena.cx + 4.5) + " " + (Arena.FLOOR + 1) + " " + (Arena.cz + 0.5)
                 + " {NoAI:1b,PersistenceRequired:1b}");
@@ -239,14 +242,14 @@ final class ParkourScenario {
         s.waitTicks(10);
         s.run("clutch: drop", () -> {
             H.setting(MovementAssist.ID, "water_clutch", true);
-            before[0] = TravelBootstrap.movement().waterClutches();
+            before[0] = TravelBootstrap.movement().fallClutches();
             hp[0] = H.p().getHealth();
         });
         s.cmd(() -> "tp @s " + (Arena.cx + OX + dx + 0.5) + " " + (Arena.FLOOR + 1 + drop) + " "
                 + (Arena.cz + OZ + 0.5) + " 0 0");
         boolean[] shot = new boolean[1];
         s.waitUpTo("clutch: fall", 20 * 6, () -> {
-            if (!shot[0] && TravelBootstrap.movement().waterClutches() > before[0]) {
+            if (!shot[0] && TravelBootstrap.movement().fallClutches() > before[0]) {
                 shot[0] = true;
                 Shots.take(s, "water-clutch");
             }
@@ -271,12 +274,68 @@ final class ParkourScenario {
                 bucket |= p.getInventory().getItem(i).is(Items.WATER_BUCKET);
             }
             s.check("water clutch: a " + drop + "-block fall lands in poured water, unhurt, water picked back up",
-                    ma.waterClutches() > before[0] && p.getHealth() >= hp[0] && bucket && water == 0,
+                    ma.fallClutches() > before[0] && p.getHealth() >= hp[0] && bucket && water == 0,
                     Harness.fmt("clutches %d, pickups %d, health %.1f -> %.1f, water bucket back %s, water left %d,"
-                                    + " pitch now %.1f", ma.waterClutches() - before[0], ma.clutchPickups(), hp[0],
+                                    + " pitch now %.1f", ma.fallClutches() - before[0], ma.clutchPickups(), hp[0],
                             p.getHealth(), bucket, water, p.getXRot()));
             Harness.command("gamerule fallDamage false");
         });
+    }
+
+    /**
+     * Block clutch without a bucket: only {@code item} in the hotbar, dropped from 14 blocks (11 damage). With
+     * {@code wall}, a stone wall stands right beside the fall (east), for ladders. Must use that kind and lose no more
+     * than {@code maxLoss} health.
+     */
+    private static void blockClutch(Scenario s, int dx, String item, FallClutchPlanner.Kind kind, boolean wall,
+                                    float maxLoss) {
+        int drop = 14;
+        float[] hp = new float[1];
+        int[] before = new int[3];
+        s.cmd(() -> fillWorld(dx - 3, 0, -3, dx + 3, drop + 4, 3, "air"));
+        s.cmd(() -> fillWorld(dx - 2, 0, -2, dx + 2, 0, 2, "minecraft:smooth_stone"));
+        if (wall) {
+            s.cmd(() -> fillWorld(dx + 1, 1, -1, dx + 1, drop + 2, 1, "minecraft:stone"));
+        }
+        s.cmd("clear @s");
+        s.cmd("give @s minecraft:" + item + " 4");
+        s.cmd("effect give @s minecraft:instant_health 1 10 true");
+        s.cmd("gamerule fallDamage true");
+        s.waitTicks(10);
+        s.run(kind + " clutch: drop", () -> {
+            H.setting(MovementAssist.ID, "water_clutch", true);
+            H.setting(MovementAssist.ID, "clutch_blocks", true);
+            before[0] = TravelBootstrap.movement().fallClutches();
+            before[1] = TravelBootstrap.movement().fallClutches(kind);
+            before[2] = TravelBootstrap.movement().clutchPlans();
+            hp[0] = H.p().getHealth();
+        });
+        // a wall: stand close to it (x .7), as a fall along a cliff face would be
+        s.cmd(() -> "tp @s " + (Arena.cx + OX + dx + (wall ? 0.7 : 0.5)) + " " + (Arena.FLOOR + 1 + drop) + " "
+                + (Arena.cz + OZ + 0.5) + " 0 0");
+        boolean[] shot = new boolean[1];
+        s.waitUpTo(kind + " clutch: fall", 20 * 8, () -> {
+            if (!shot[0] && TravelBootstrap.movement().fallClutches() > before[0]) {
+                shot[0] = true;
+                Shots.take(s, kind.name().toLowerCase(java.util.Locale.ROOT) + "-clutch");
+            }
+            // left the teleport height, then down and still
+            return H.p().getY() < Arena.FLOOR + drop - 1 && H.p().onGround() && H.p().getDeltaMovement().y > -0.1;
+        });
+        s.waitTicks(30);
+        s.run(kind + " clutch: result", () -> {
+            var p = H.p();
+            MovementAssist ma = TravelBootstrap.movement();
+            int used = ma.fallClutches(kind) - before[1];
+            s.check(kind + " clutch: a " + drop + "-block fall with only " + item + " in the hotbar",
+                    used > 0 && p.getHealth() >= hp[0] - maxLoss,
+                    Harness.fmt("%s clutches %d, plans %d, last: %s, health %.1f -> %.1f (allowed loss %.1f), y %.2f,"
+                                    + " pitch now %.1f", kind, used, ma.clutchPlans() - before[2], ma.clutchNote(),
+                            hp[0],
+                            p.getHealth(), maxLoss, p.getY() - Arena.FLOOR, p.getXRot()));
+            Harness.command("gamerule fallDamage false");
+        });
+        s.cmd(() -> fillWorld(dx - 3, 1, -3, dx + 3, drop + 4, 3, "air"));
     }
 
     private static String fillWorld(int x0, int y0, int z0, int x1, int y1, int z1, String block) {
