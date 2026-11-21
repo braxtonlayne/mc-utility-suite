@@ -22,11 +22,16 @@ import java.util.List;
 
 /**
  * Tab-GUI: the classic arrow-key category list in the top-left corner, off by default. Up/Down move, Right/Enter opens a
- * category or toggles the highlighted module, Left goes back. Keys are read from {@link InputEvent.Key} only while the
- * module is enabled, a world is loaded and no screen is open; nothing is drawn otherwise, nor under Clean-Screen or F1.
- * Module lists are cached per category (refreshed on navigation and once a second), so rendering allocates nothing.
+ * category or toggles the highlighted module, Left goes back. Keys arrive raw from
+ * {@code mixin.ui.KeyboardHandlerTabGuiMixin} through {@link #consumesKey} and are swallowed (never reaching vanilla key
+ * mappings or {@link InputEvent.Key} listeners) only while the list is visible: module enabled, world loaded, no screen
+ * open, not under Clean-Screen, F1 or F3. Module lists are cached per category (refreshed on navigation and once a
+ * second), so rendering and key handling allocate nothing. Public only for the mixin's static hook.
  */
-final class TabGui implements IModule, IConfigurable, LayeredDraw.Layer {
+public final class TabGui implements IModule, IConfigurable, LayeredDraw.Layer {
+
+    /** The registered instance (client thread only); null until {@link UiBootstrap} creates it. */
+    private static TabGui instance;
 
     static final String ID = "tab_gui";
     private static final int MAX = 48;
@@ -42,6 +47,10 @@ final class TabGui implements IModule, IConfigurable, LayeredDraw.Layer {
     private boolean enabled;
     private boolean enterToggles = true;
     private int ticks;
+
+    TabGui() {
+        instance = this;
+    }
 
     // ---- IModule ----------------------------------------------------------------------------------------------------
 
@@ -113,28 +122,57 @@ final class TabGui implements IModule, IConfigurable, LayeredDraw.Layer {
 
     // ---- input ------------------------------------------------------------------------------------------------------
 
-    /** NeoForge {@link InputEvent.Key} listener (registered from {@link UiBootstrap}); cheap early-out when off. */
-    void onKey(InputEvent.Key event) {
-        if (!enabled || event.getAction() == GLFW.GLFW_RELEASE) {
-            return;
+    /**
+     * Raw-key hook for {@code KeyboardHandlerTabGuiMixin} (HEAD of {@code KeyboardHandler.keyPress}, client thread):
+     * runs the navigation for a consumed press/repeat and returns true when the key must not reach vanilla. Returns
+     * false at once for any key that is not a navigation key, and for every press while the list is hidden. A release
+     * is swallowed exactly when its press was (see {@link TabGuiNav#decide}). Allocation free.
+     */
+    public static boolean consumesKey(long windowPointer, int key, int action) {
+        TabGui gui = instance;
+        if (gui == null || TabGuiNav.slotOf(key) < 0) {
+            return false;
         }
         Minecraft mc = Minecraft.getInstance();
-        if (mc.player == null || mc.screen != null || mc.options.hideGui) {
-            return;
+        if (windowPointer != mc.getWindow().getWindow()) {
+            return false; // vanilla ignores other windows too
         }
-        int key = event.getKey();
+        boolean visible = action != GLFW.GLFW_RELEASE && gui.visible(mc);
+        int decision = gui.nav.decide(key, action, visible, gui.enterToggles);
+        if (decision == TabGuiNav.NAVIGATE) {
+            gui.navigate(key);
+        }
+        return decision != TabGuiNav.PASS;
+    }
+
+    /**
+     * Former {@link InputEvent.Key} listener, still registered by {@link UiBootstrap}. Intentionally empty: navigation
+     * now runs from {@link #consumesKey} so a key is never handled twice. The registration can be dropped.
+     */
+    void onKey(InputEvent.Key event) {
+        // handled by consumesKey (raw-key mixin); see class javadoc
+    }
+
+    /** True while the list is on screen: the same conditions {@link #render} draws under. */
+    private boolean visible(Minecraft mc) {
+        if (!enabled || mc.player == null || mc.screen != null || mc.options.hideGui
+                || mc.getDebugOverlay().showDebugScreen()) {
+            return false;
+        }
+        try {
+            return !Services.modState().isCleanScreen();
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
+    private void navigate(int key) {
         TabGuiNav.Result r;
         switch (key) {
-            case GLFW.GLFW_KEY_UP -> r = nav.up(moduleCount);
-            case GLFW.GLFW_KEY_DOWN -> r = nav.down(moduleCount);
-            case GLFW.GLFW_KEY_RIGHT -> r = right();
-            case GLFW.GLFW_KEY_ENTER, GLFW.GLFW_KEY_KP_ENTER -> {
-                if (!enterToggles || event.getAction() != GLFW.GLFW_PRESS) {
-                    return;
-                }
-                r = right();
-            }
-            case GLFW.GLFW_KEY_LEFT -> r = nav.left();
+            case TabGuiNav.KEY_UP -> r = nav.up(moduleCount);
+            case TabGuiNav.KEY_DOWN -> r = nav.down(moduleCount);
+            case TabGuiNav.KEY_RIGHT, TabGuiNav.KEY_ENTER, TabGuiNav.KEY_KP_ENTER -> r = right();
+            case TabGuiNav.KEY_LEFT -> r = nav.left();
             default -> {
                 return;
             }
