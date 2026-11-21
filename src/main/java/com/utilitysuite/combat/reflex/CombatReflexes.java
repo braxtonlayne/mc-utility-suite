@@ -9,8 +9,10 @@ import com.utilitysuite.core.api.ControlPriority;
 import com.utilitysuite.core.api.IActionArbiter;
 import com.utilitysuite.core.api.IAutopilot;
 import com.utilitysuite.core.api.IConfigurable;
+import com.utilitysuite.core.api.IGoalEngine;
 import com.utilitysuite.core.api.IInputSmoother;
 import com.utilitysuite.core.api.IModule;
+import com.utilitysuite.core.api.JobSnapshot;
 import com.utilitysuite.core.api.LeaseEndReason;
 import com.utilitysuite.core.api.LeaseListener;
 import com.utilitysuite.core.api.LeaseRequest;
@@ -33,6 +35,7 @@ import net.minecraft.world.phys.EntityHitResult;
 
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Defensive combat reflexes on top of the {@link ThreatTracker}: the shield reflex (A5), projectile dodge and the
@@ -41,7 +44,10 @@ import java.util.List;
  * Runs from the client tick, not the module tick, so it also works while the module list ticks nothing. Gating: each
  * reflex runs when this module and its setting are on and either the Combat Assistant is on, or the assistant is off
  * and the autopilot allows that reflex ({@link IAutopilot#mayAct} is asked before every action, and the action is
- * noted with constant reason strings).
+ * noted with constant reason strings). The fuse back-off is also armed while a goal job is running ("back off during
+ * jobs", {@link JobEscapeGate}); then it takes its own EMERGENCY move lease, which pauses the job, and releases it as
+ * soon as the blast is no longer a threat so the arbiter hands the job its resume callback. The autopilot is never
+ * asked in that case.
  * <p>
  * Input: while the assistant is engaged its COMBAT lease is used (no preemption of the fight); otherwise an
  * autopilot chain lease, otherwise a short EMERGENCY lease of only the channels needed. Keys only, through
@@ -55,6 +61,7 @@ public final class CombatReflexes implements IModule, IConfigurable, LeaseListen
     public static final String SHIELD = "shield";
     public static final String DODGE = "dodge";
     public static final String ESCAPE = "threat_escape";
+    public static final String ESCAPE_DURING_JOBS = "escape_during_jobs";
     public static final String SHIELD_TURN = "shield_turn";
     public static final String FRONT_CONE = "shield_front_cone";
 
@@ -75,6 +82,12 @@ public final class CombatReflexes implements IModule, IConfigurable, LeaseListen
     private boolean shieldOn = true;
     private boolean dodgeOn = true;
     private boolean escapeOn = true;
+    private boolean escapeDuringJobs = true;
+    /** Goal job running or replanning, refreshed every {@link JobEscapeGate#POLL_INTERVAL_TICKS} ticks. */
+    private boolean jobActiveCached;
+    private int jobPollCounter;
+    /** The current escape was armed only by the job gate (own EMERGENCY lease, autopilot not involved). */
+    private boolean escapeForJob;
     private boolean shieldTurn;
     private double frontCone = ShieldDecision.DEFAULT_FRONT_CONE_DEG;
 
@@ -122,12 +135,15 @@ public final class CombatReflexes implements IModule, IConfigurable, LeaseListen
         boolean apOn = ap != null && ap.isOn();
         boolean shieldArmed = enabled && shieldOn && (assistantOn || apOn && ap.allows(IAutopilot.Reflex.SHIELD));
         boolean dodgeArmed = enabled && dodgeOn && (assistantOn || apOn && ap.allows(IAutopilot.Reflex.DODGE));
-        boolean escapeArmed = enabled && escapeOn
-                && (assistantOn || apOn && ap.allows(IAutopilot.Reflex.THREAT_ESCAPE));
-        boolean feed = ap != null && (apOn || assistantOn);
+        boolean apEscape = apOn && ap.allows(IAutopilot.Reflex.THREAT_ESCAPE);
         if (p == null || mc.level == null) {
             return;
         }
+        pollJob();
+        // a job paused by our own back-off still counts until the back-off ends
+        boolean jobGate = jobActiveCached || escaping && escapeForJob;
+        boolean escapeArmed = JobEscapeGate.armed(enabled, escapeOn, escapeDuringJobs, assistantOn, apEscape, jobGate);
+        boolean feed = ap != null && (apOn || assistantOn);
         if (!shieldArmed && !dodgeArmed && !escapeArmed && !feed) {
             if (raised || escaping || published) {
                 standDown(ap);
@@ -157,6 +173,7 @@ public final class CombatReflexes implements IModule, IConfigurable, LeaseListen
         }
         if (escaping && (escapeLease == null || !escapeLease.isActive())) {
             escaping = false;
+            escapeForJob = false;
             escapeLease = null;
             escKey = null;
             escKey2 = null;
@@ -165,7 +182,7 @@ public final class CombatReflexes implements IModule, IConfigurable, LeaseListen
         tickShield(p, mc, ap, assistantOn, shieldArmed, arbiter);
         // while the assistant is engaged it owns movement (its spacing/strafe would fight a second key source)
         boolean fighting = assistant.lease() != null;
-        tickEscape(p, ap, assistantOn, escapeArmed && !fighting, arbiter);
+        tickEscape(p, ap, assistantOn, apEscape, escapeArmed && !fighting, arbiter);
         if (!escaping && !raised && !fighting) {
             tickDodge(p, ap, assistantOn, dodgeArmed, arbiter);
         }
@@ -263,7 +280,31 @@ public final class CombatReflexes implements IModule, IConfigurable, LeaseListen
         raisedViaAutopilot = false;
     }
 
-    private void tickEscape(LocalPlayer p, IAutopilot ap, boolean assistantOn, boolean armed, IActionArbiter arbiter) {
+    /**
+     * Refreshes {@link #jobActiveCached} once every {@link JobEscapeGate#POLL_INTERVAL_TICKS} ticks
+     * ({@link IGoalEngine#activeJob()} returns an Optional). Not polled at all while the job gate cannot arm anything;
+     * a missing goal engine counts as no job.
+     */
+    private void pollJob() {
+        if (!JobEscapeGate.shouldPoll(enabled, escapeOn, escapeDuringJobs)) {
+            jobActiveCached = false;
+            jobPollCounter = 0;
+            return;
+        }
+        if (JobEscapeGate.pollDue(jobPollCounter)) {
+            IGoalEngine goals = Services.goalsOrNull();
+            boolean active = false;
+            if (goals != null) {
+                Optional<JobSnapshot> job = goals.activeJob();
+                active = job != null && job.isPresent() && JobEscapeGate.jobActive(job.get().status());
+            }
+            jobActiveCached = active;
+        }
+        jobPollCounter = JobEscapeGate.nextPollCounter(jobPollCounter);
+    }
+
+    private void tickEscape(LocalPlayer p, IAutopilot ap, boolean assistantOn, boolean apEscape, boolean armed,
+                            IActionArbiter arbiter) {
         boolean want = armed && threats.blastTicks != Integer.MAX_VALUE
                 && !arbiter.isManualOverrideActive(ControlChannel.MOVEMENT);
         if (want) {
@@ -277,7 +318,8 @@ public final class CombatReflexes implements IModule, IConfigurable, LeaseListen
             }
             return;
         }
-        boolean viaAp = !assistantOn;
+        // only through the autopilot when it is on and allows the reflex; armed by the job gate alone -> own lease
+        boolean viaAp = JobEscapeGate.viaAutopilot(assistantOn, apEscape) && ap != null;
         if (!escaping && viaAp && !ap.mayAct(IAutopilot.Reflex.THREAT_ESCAPE, planner.tapTicks(),
                 threats.blastDamage)) {
             return;
@@ -290,6 +332,7 @@ public final class CombatReflexes implements IModule, IConfigurable, LeaseListen
         if (!escaping) {
             escaping = true;
             escapeViaAutopilot = viaAp;
+            escapeForJob = !assistantOn && !viaAp;
             escapes++;
             if (viaAp) {
                 ap.noteActed(IAutopilot.Reflex.THREAT_ESCAPE, REASON_ESCAPE);
@@ -335,6 +378,11 @@ public final class CombatReflexes implements IModule, IConfigurable, LeaseListen
             ap.noteDone(IAutopilot.Reflex.THREAT_ESCAPE);
         }
         escapeViaAutopilot = false;
+        if (escapeForJob) {
+            // the job is PAUSED by our lease until it resumes; keep the gate armed until the next poll corrects it
+            jobActiveCached = true;
+        }
+        escapeForJob = false;
     }
 
     private void tickDodge(LocalPlayer p, IAutopilot ap, boolean assistantOn, boolean armed, IActionArbiter arbiter) {
@@ -476,6 +524,7 @@ public final class CombatReflexes implements IModule, IConfigurable, LeaseListen
         }
         if (lease == escapeLease) {
             escaping = false;
+            escapeForJob = false;
             escapeLease = null;
             escKey = null;
             escKey2 = null;
@@ -564,6 +613,9 @@ public final class CombatReflexes implements IModule, IConfigurable, LeaseListen
         escapeLease = null;
         raised = false;
         escaping = false;
+        escapeForJob = false;
+        jobActiveCached = false;
+        jobPollCounter = 0;
         escKey = null;
         escKey2 = null;
         escSprint = false;
@@ -582,6 +634,7 @@ public final class CombatReflexes implements IModule, IConfigurable, LeaseListen
         shieldOn = profile.getBool(ID, SHIELD, true);
         dodgeOn = profile.getBool(ID, DODGE, true);
         escapeOn = profile.getBool(ID, ESCAPE, true);
+        escapeDuringJobs = profile.getBool(ID, ESCAPE_DURING_JOBS, true);
         shieldTurn = profile.getBool(ID, SHIELD_TURN, false);
         frontCone = profile.getDouble(ID, FRONT_CONE, ShieldDecision.DEFAULT_FRONT_CONE_DEG);
     }
@@ -600,6 +653,9 @@ public final class CombatReflexes implements IModule, IConfigurable, LeaseListen
                         "Tap a strafe key to step out of an arrow's path. Never steps off a ledge."),
                 SettingSpec.bool(ESCAPE, "Back off from fuses", true, "",
                         "Walk away from a hissing creeper or lit TNT until outside the blast. The camera stays put."),
+                SettingSpec.bool(ESCAPE_DURING_JOBS, "Back off during jobs", true, "",
+                        "Also back off from fuses while a goal job runs, even with the Combat Assistant and autopilot "
+                                + "off. The job pauses and resumes once the blast is no longer a threat."),
                 SettingSpec.bool(SHIELD_TURN, "Turn to block", false, "",
                         "Less legit: turn (smoothly, speed-capped) to block hits from outside the view.").asAdvanced(),
                 SettingSpec.decimal(FRONT_CONE, "Shield front cone", ShieldDecision.DEFAULT_FRONT_CONE_DEG, 30, 90, "",
