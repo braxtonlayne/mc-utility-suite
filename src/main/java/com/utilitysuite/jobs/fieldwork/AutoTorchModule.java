@@ -48,7 +48,7 @@ public final class AutoTorchModule extends FieldModule {
     private Item torch;
 
     public AutoTorchModule(MinecraftInventoryView inventory) {
-        super(ID, ControlPriority.GOAL);
+        super(ID, ControlPriority.TRAVEL); // outranks a job (GOAL): the job pauses for the torch and resumes
         this.inventory = inventory;
     }
 

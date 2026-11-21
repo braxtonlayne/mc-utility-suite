@@ -10,8 +10,13 @@
   (sparse, deterministic, side as sign).
 - **New package `jobs/fieldwork`**, four modules registered in `JobsBootstrap` (all off by default, JOBS tab, each
   `IModule + IConfigurable`, each with an advanced "Relaxed (less legit)" setting, key `relaxed`):
-  - `auto_torch` (`AutoTorchModule`), `lava_plug` (`LavaPlugModule`, lease at SURVIVAL), `vein_work`
-    (`VeinWorkModule`), `crop_work` (`CropWorkModule`).
+  - `auto_torch` (`AutoTorchModule`, lease at TRAVEL so it outranks a running job: the job pauses for the torch and
+    resumes through `onResumable`), `lava_plug` (`LavaPlugModule`, lease at SURVIVAL), `vein_work`
+    (`VeinWorkModule`, GOAL), `crop_work` (`CropWorkModule`, GOAL).
+  - Only the user's own input (MANUAL_OVERRIDE) or Stop-All ends a run; a higher module taking the lease briefly
+    (e.g. the survival autopilot's auto-tool swap triggered by our attack) pauses it and the lease is re-requested.
+  - Crop Work only picks targets while the player stands still and drops the target when they move (look where you
+    move).
   - Shared: `FieldHands` (lease WORLD_INTERACT+CAMERA+HOTBAR, slot select via `IInputSmoother`, swap from main
     inventory via `IContainerClicker` SWAP, smoothed visible look + USE/ATTACK via the core; Relaxed: silent look and a
     direct `useItemOn` / destroy call after re-checking the WORLD_INTERACT lease), `FieldRules` (torch decision, filler
