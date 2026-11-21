@@ -123,5 +123,9 @@
   "module.utilitysuite.spawn_geometry": "Spawn Geometry",
   "module.utilitysuite.freelook": "Freelook",
   "module.utilitysuite.render_filters": "Render Filters",
-  "module.utilitysuite.tab_gui": "Tab-GUI"
+  "module.utilitysuite.tab_gui": "Tab-GUI",
+  "setting.utilitysuite.autopilot.black_box_always": "Record while off",
+  "setting.utilitysuite.autopilot.black_box_always.tooltip": "Keep recording health and dangers while the autopilot is off, so a death during a plain job can still be looked at afterwards. Records only; nothing acts while it is off.",
+  "setting.utilitysuite.combat_reflexes.escape_during_jobs": "Back off during jobs",
+  "setting.utilitysuite.combat_reflexes.escape_during_jobs.tooltip": "Also back off from fuses while a goal job runs, even with the Combat Assistant and autopilot off. The job pauses and resumes once the blast is no longer a threat."
 }
