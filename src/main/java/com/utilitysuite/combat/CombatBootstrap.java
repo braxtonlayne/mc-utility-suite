@@ -10,6 +10,9 @@ import com.utilitysuite.combat.assistant.mc.MinecraftCombatWorld;
 import com.utilitysuite.combat.coach.FightCoach;
 import com.utilitysuite.combat.coach.FightCoachHud;
 import com.utilitysuite.combat.coach.ThreatTracker;
+import com.utilitysuite.combat.hud.TargetHud;
+import com.utilitysuite.combat.reflex.CombatReflexes;
+import com.utilitysuite.combat.trigger.TriggerAssist;
 import com.utilitysuite.core.api.Services;
 import net.minecraft.resources.ResourceLocation;
 import net.neoforged.bus.api.IEventBus;
@@ -31,6 +34,9 @@ public final class CombatBootstrap {
     private static AllyRosterModule allies;
     private static FightCoach coach;
     private static ThreatTracker threats;
+    private static CombatReflexes reflexes;
+    private static TriggerAssist trigger;
+    private static TargetHud targetHud;
 
     private CombatBootstrap() {
     }
@@ -45,9 +51,17 @@ public final class CombatBootstrap {
         coach = new FightCoach(world, assistant, allies.roster(), threats,
                 () -> Services.modState().isCleanScreen());
 
+        reflexes = new CombatReflexes(assistant, threats, world);
+        trigger = new TriggerAssist(world, allies.roster());
+        targetHud = new TargetHud(world, assistant, allies.roster());
+
         Services.modules().register(assistant);
         Services.modules().register(coach);
         Services.modules().register(allies);
+        Services.modules().register(reflexes);
+        Services.modules().register(trigger);
+        Services.modules().register(targetHud);
+        assistant.bindModuleRegistry(Services.modules());
 
         CombatEventBridge.install(assistant);
         AllyPickHandler pick = new AllyPickHandler(allies);
@@ -71,7 +85,20 @@ public final class CombatBootstrap {
             if (mc.player != null && mc.level != null) {
                 assistant.autopilotTick();
             }
+            reflexes.clientTick();
         });
+        bus.addListener(targetHud::onJoin);
+        bus.addListener(targetHud::onLeave);
+        modBus.addListener(RegisterGuiLayersEvent.class, event -> event.registerAbove(VanillaGuiLayers.CROSSHAIR,
+                ResourceLocation.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID, "target_hud"), targetHud::render));
+    }
+
+    public static CombatReflexes reflexes() {
+        return reflexes;
+    }
+
+    public static TargetHud targetHud() {
+        return targetHud;
     }
 
     public static CombatAssistant assistant() {

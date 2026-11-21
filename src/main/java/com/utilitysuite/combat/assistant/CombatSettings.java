@@ -45,6 +45,7 @@ public final class CombatSettings {
     public static final String FOOD_OBJECTIVE = "food_objective";
     public static final String FOOD_RANGE = "food_range";
     public static final String EDGE_KNOCK = "tactic_edge_knock";
+    public static final String TACTIC_UTILITY = "tactic_utility";
 
     public TargetSelector.Mode engageMode = TargetSelector.Mode.REACTIVE;
     public TargetSelector.Targets targets = TargetSelector.Targets.HOSTILE;
@@ -54,6 +55,7 @@ public final class CombatSettings {
     public boolean foodObjective = true;
     public double foodRange = 12.0;
     public boolean edgeKnock = true;
+    public boolean tacticUtility = true;
     public boolean engageRequiresLos = true;
 
     public double disengageRadius = 16.0;
@@ -87,6 +89,7 @@ public final class CombatSettings {
         holdGap = p.getBool(id, HOLD_GAP, true);
         foodObjective = p.getBool(id, FOOD_OBJECTIVE, true);
         edgeKnock = p.getBool(id, EDGE_KNOCK, true);
+        tacticUtility = p.getBool(id, TACTIC_UTILITY, true);
         wholeInventory = p.getBool(id, WHOLE_INVENTORY, true);
         swapBack = p.getBool(id, SWAP_BACK, true);
         keepTotem = p.getBool(id, KEEP_TOTEM, true);
@@ -160,6 +163,9 @@ public final class CombatSettings {
                 SettingSpec.bool(EDGE_KNOCK, "Edge knock", true, "Tactics",
                         "When the target stands near a drop or lava, circle to the far side and sprint-hit it toward"
                                 + " the edge."),
+                SettingSpec.bool(TACTIC_UTILITY, "Read the fight", true, "Tactics",
+                        "Weigh both sides' damage, health and healing: keep distance from a crit-hopper in an even"
+                                + " trade, and back off when losing badly with nothing to heal."),
                 SettingSpec.decimal(DISENGAGE_RADIUS, "Disengage radius", 16.0, 6.0, 48.0, "",
                         "Stop when the target gets farther than this many blocks."),
                 SettingSpec.decimal(ALLY_DEFENSE_RANGE, "Ally defense range", 12.0, 2.0, 32.0, "",

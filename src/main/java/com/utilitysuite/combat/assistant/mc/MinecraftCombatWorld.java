@@ -216,6 +216,7 @@ public final class MinecraftCombatWorld implements CombatWorld, LineOfSight.Soli
         out.tvy = v.y;
         out.tvz = v.z;
         out.targetBlocking = t.isBlocking();
+        out.targetHealth = t.getHealth() + t.getAbsorptionAmount();
         out.crosshairOnTarget = mc.hitResult instanceof EntityHitResult ehr && ehr.getEntity() == t;
         out.lineOfSight = LineOfSight.clear(out.px, out.eyeY, out.pz, t.getX(), t.getEyeY(), t.getZ(), this,
                 LOS_MAX_STEPS);
@@ -413,6 +414,20 @@ public final class MinecraftCombatWorld implements CombatWorld, LineOfSight.Soli
             }
         }
         return SustainExtras.KIND_NONE;
+    }
+
+    /**
+     * The same edge/lava probe the assistant's spacing uses, at a horizontal offset from the local player's feet (for
+     * the dodge and escape reflexes). False when there is no player. Allocation free.
+     */
+    public boolean hazardAtOffset(double dx, double dz) {
+        Minecraft mc = Minecraft.getInstance();
+        LocalPlayer p = mc.player;
+        if (p == null || mc.level == null) {
+            return false;
+        }
+        level = mc.level;
+        return isHazard(p.getX() + dx, p.getY(), p.getZ() + dz);
     }
 
     /** Lava/fire/harmful blocks at or under the probe column, or a drop deeper than {@value #CLIFF_DEPTH} blocks. */

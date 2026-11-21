@@ -384,4 +384,69 @@ class CombatAssistantBehaviourTest {
         tick(30);
         assertEquals(CombatState.DORMANT, assistant.state());
     }
+
+    // ---- A8: broad tactic by utility -------------------------------------------------------------------------------
+
+    @Test
+    void readTheFightBacksOffWhenLosingBadlyWithNothingToHeal() {
+        assistant.config().sustain = false; // isolate the utility from the sustain retreat
+        world.self.attackStrength = 0.2f;
+        engage();
+        assertEquals(com.utilitysuite.combat.tactics.TacticUtility.Tactic.FIGHT, assistant.broadTactic());
+        world.self.health = 3f; // took 17 in one tick
+        tick(2);
+        assertEquals(com.utilitysuite.combat.tactics.TacticUtility.Tactic.FLEE, assistant.broadTactic());
+        assertTrue(backend.isDown(SimKey.BACK), "backs off");
+        assertFalse(backend.isDown(SimKey.FORWARD));
+    }
+
+    @Test
+    void readTheFightOffKeepsTheOldBehaviour() {
+        assistant.config().sustain = false;
+        assistant.config().tacticUtility = false;
+        world.self.attackStrength = 0.2f;
+        engage();
+        world.self.health = 3f;
+        tick(2);
+        assertEquals(com.utilitysuite.combat.tactics.TacticUtility.Tactic.FIGHT, assistant.broadTactic());
+    }
+
+    // ---- hand-off to the player package's offhand manager ----------------------------------------------------------
+
+    @Test
+    void totemKeeperStandsAsideWhileTheOffhandManagerIsOn() {
+        boolean[] on = {true};
+        registry.register(new com.utilitysuite.core.api.IModule() {
+            @Override
+            public String id() {
+                return "offhand_manager";
+            }
+
+            @Override
+            public com.utilitysuite.core.api.ModuleCategory category() {
+                return com.utilitysuite.core.api.ModuleCategory.TOOLS;
+            }
+
+            @Override
+            public boolean isEnabled() {
+                return on[0];
+            }
+
+            @Override
+            public void setEnabled(boolean enabled) {
+                on[0] = enabled;
+            }
+
+            @Override
+            public void onTick() {
+            }
+        });
+        assistant.bindModuleRegistry(registry);
+        world.self.totemInvSlot = 20;
+        tick(60);
+        assertTrue(backend.containerClicks.isEmpty(), "the offhand manager owns the offhand");
+        on[0] = false;
+        tick(60);
+        assertFalse(backend.containerClicks.isEmpty(), "keeper resumes when it is off");
+    }
 }

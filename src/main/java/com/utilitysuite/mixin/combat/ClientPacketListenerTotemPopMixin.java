@@ -1,0 +1,37 @@
+package com.utilitysuite.mixin.combat;
+
+import com.utilitysuite.combat.hud.TargetHud;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.multiplayer.ClientPacketListener;
+import net.minecraft.network.protocol.game.ClientboundEntityEventPacket;
+import net.minecraft.world.entity.Entity;
+import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+
+/**
+ * Totem pop counting for the target HUD: forwards entity event 35 (totem of undying used) to {@link TargetHud}.
+ * <p>
+ * Why a mixin: no NeoForge client event exposes entity status events, and event 35 is the only signal a client gets
+ * that another entity used a totem. TAIL runs only on the client thread (on the network thread
+ * {@code ensureRunningOnSameThread} throws before reaching it). Read-only.
+ */
+@Mixin(ClientPacketListener.class)
+public abstract class ClientPacketListenerTotemPopMixin {
+
+    @Inject(method = "handleEntityEvent", at = @At("TAIL"))
+    private void utilitysuite$countTotemPop(ClientboundEntityEventPacket packet, CallbackInfo ci) {
+        if (packet.getEventId() != 35) {
+            return;
+        }
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.level == null) {
+            return;
+        }
+        Entity e = packet.getEntity(mc.level);
+        if (e != null) {
+            TargetHud.onTotemPop(e.getId());
+        }
+    }
+}
