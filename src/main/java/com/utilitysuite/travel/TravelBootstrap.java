@@ -5,6 +5,11 @@ import com.utilitysuite.core.api.SuiteEvent;
 import com.utilitysuite.core.input.KeybindManager;
 import com.utilitysuite.travel.autopilot.TravelAutopilot;
 import com.utilitysuite.travel.bridge.BridgeAssist;
+import com.utilitysuite.travel.mobility.ElytraSwap;
+import com.utilitysuite.travel.mobility.Fly;
+import com.utilitysuite.travel.mobility.MountJump;
+import com.utilitysuite.travel.mobility.MoveToggles;
+import com.utilitysuite.travel.mobility.VelocityScale;
 import com.utilitysuite.travel.terrain.TerrainAssist;
 import com.utilitysuite.travel.terrain.TerrainHooks;
 import net.minecraft.client.Minecraft;
@@ -58,7 +63,31 @@ public final class TravelBootstrap {
         NeoForge.EVENT_BUS.addListener(movement::onMovementInput);
         NeoForge.EVENT_BUS.addListener(movement::onRenderLevel);
         NeoForge.EVENT_BUS.addListener(TravelBootstrap::onTickPost);
+
+        // mobility modules (all off by default)
+        elytraSwap = new ElytraSwap();
+        toggles = new MoveToggles();
+        mountJump = new MountJump();
+        fly = new Fly();
+        velocity = new VelocityScale();
+        Services.modules().register(elytraSwap);
+        Services.modules().register(toggles);
+        Services.modules().register(mountJump);
+        Services.modules().register(fly);
+        Services.modules().register(velocity);
+        onToggleSprint = toggles::toggleSprint;
+        onToggleSneak = toggles::toggleSneak;
+        NeoForge.EVENT_BUS.addListener(toggles::onMovementInput);
+        NeoForge.EVENT_BUS.addListener(mountJump::onMovementInput);
     }
+
+    private static ElytraSwap elytraSwap;
+    private static MoveToggles toggles;
+    private static MountJump mountJump;
+    private static Fly fly;
+    private static VelocityScale velocity;
+    private static Runnable onToggleSprint;
+    private static Runnable onToggleSneak;
 
     private static void onTickPost(ClientTickEvent.Post event) {
         Minecraft mc = Minecraft.getInstance();
@@ -66,6 +95,8 @@ public final class TravelBootstrap {
             return;
         }
         TravelKeys.tick(onAutopilotKey, onBridgeKey, onBridgeMarkKey);
+        TravelKeys.tickToggles(onToggleSprint, onToggleSneak);
+        elytraSwap.tick(); // also the autopilot's ELYTRA_SWAP reflex while the module is off
     }
 
     public static TerrainAssist terrain() {

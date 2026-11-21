@@ -334,7 +334,9 @@ public final class MovementAssist implements IModule, IConfigurable {
         if (arbiter.isAutomationStopped()) {
             return "automation stopped";
         }
-        if (!assistAutomation && arbiter.holder(ControlChannel.MOVEMENT).isPresent()) {
+        // a latched toggle-sprint is the user's own choice, not automation driving the movement
+        if (!assistAutomation && arbiter.holder(ControlChannel.MOVEMENT).isPresent()
+                && !arbiter.isHeldBy(ControlChannel.MOVEMENT, com.utilitysuite.travel.mobility.MoveToggles.ID)) {
             return "automation drives movement";
         }
         return null;
