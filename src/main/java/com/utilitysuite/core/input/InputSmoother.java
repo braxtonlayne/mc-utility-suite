@@ -29,6 +29,19 @@ import java.util.random.RandomGenerator;
  */
 public final class InputSmoother implements IInputSmoother, IContainerClicker {
 
+    /** Retarget the guard's smoothed turn only when the wanted look moved more than this (degrees). */
+    static final float GUARD_DEAD_BAND = 0.3f;
+    private boolean guardOn;
+    private boolean guardRecorded;
+    private float guardYaw;
+    private float guardPitch;
+    private float guardTargetYaw = Float.NaN;
+    private float guardTargetPitch;
+    private int foreignTurns;
+    private float foreignHeading = Float.NaN;
+    private long foreignHeadingTick = Long.MIN_VALUE / 2;
+    private java.util.function.Supplier<ControlLease> cameraHolderLookup;
+
     private static final SimKey[] KEYS = SimKey.all();
     private static final double TICK_SECONDS = 0.05;
     /** A retarget closer than this to the running target bends the running curve instead of restarting it. */
@@ -442,9 +455,88 @@ public final class InputSmoother implements IInputSmoother, IContainerClicker {
 
     // ---- tick -------------------------------------------------------------------------------------------------------
 
+    // ---- foreign rotation guard ------------------------------------------------------------------------------------
+
+    @Override
+    public void setForeignRotationGuard(boolean on) {
+        guardOn = on;
+        if (!on) {
+            guardRecorded = false;
+        }
+    }
+
+    /** Who holds CAMERA (asked only when a foreign turn needs a smoothed target). */
+    public void setCameraHolderLookup(java.util.function.Supplier<ControlLease> lookup) {
+        cameraHolderLookup = lookup;
+    }
+
+    /**
+     * Right before the movement packet ({@code LocalPlayer.sendPosition} HEAD, the last point code outside the core
+     * can have turned the player this tick; a path library turns there): undoes a rotation made since
+     * {@link #preTick()} and steers toward it through the smoother for the CAMERA holder instead. Nothing sends or
+     * renders the snapped angles.
+     */
+    public void captureForeignRotation() {
+        if (!guardOn || !guardRecorded || !backend.isReady()) {
+            return;
+        }
+        guardRecorded = false;
+        float y = backend.yaw();
+        float p = backend.pitch();
+        if (Math.abs(wrapDeg(y - guardYaw)) < 0.01f && Math.abs(p - guardPitch) < 0.01f) {
+            return;
+        }
+        backend.setRotation(guardYaw, guardPitch);
+        foreignTurns++;
+        foreignHeading = y;
+        foreignHeadingTick = tick;
+        boolean moved = Float.isNaN(guardTargetYaw) || Math.abs(wrapDeg(y - guardTargetYaw)) > GUARD_DEAD_BAND
+                || Math.abs(p - guardTargetPitch) > GUARD_DEAD_BAND || !hasTarget;
+        if (moved && cameraHolderLookup != null) {
+            ControlLease holder = cameraHolderLookup.get();
+            if (holder != null && holder.isActive() && holder.covers(ControlChannel.CAMERA)
+                    && setRotationTarget(holder, RotationTarget.visible(y, p))) {
+                guardTargetYaw = y;
+                guardTargetPitch = p;
+            }
+        }
+    }
+
+    /**
+     * The heading foreign code last wanted (captured this tick or the one before), or NaN: its movement keys were meant
+     * along it while the camera still turns toward it.
+     */
+    public float foreignHeading() {
+        return guardOn && tick - foreignHeadingTick <= 2 ? foreignHeading : Float.NaN;
+    }
+
+    /** Rotations undone by the foreign rotation guard (diagnostics). */
+    public boolean isForeignRotationGuardOn() {
+        return guardOn;
+    }
+
+    public int foreignTurns() {
+        return foreignTurns;
+    }
+
+    private static float wrapDeg(float d) {
+        d %= 360f;
+        if (d >= 180f) {
+            d -= 360f;
+        } else if (d < -180f) {
+            d += 360f;
+        }
+        return d;
+    }
+
     /** ClientTickEvent.Pre: tap expiry, stale-lease cleanup and re-asserting held keys. */
     public void preTick() {
         tick++;
+        if (guardOn && backend.isReady()) {
+            guardYaw = backend.yaw();
+            guardPitch = backend.pitch();
+            guardRecorded = true;
+        }
         for (int k = 0; k < KEYS.length; k++) {
             if (!managed[k]) {
                 continue;

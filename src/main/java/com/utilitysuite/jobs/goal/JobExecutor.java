@@ -30,6 +30,8 @@ import com.utilitysuite.jobs.planner.PlanContext;
 import com.utilitysuite.jobs.planner.PlanStep;
 import com.utilitysuite.jobs.planner.StepKind;
 import com.utilitysuite.jobs.planner.StepRole;
+import com.utilitysuite.jobs.planner.StripRoutePlanner;
+import it.unimi.dsi.fastutil.longs.LongArrayList;
 
 import java.util.ArrayList;
 import java.util.EnumSet;
@@ -85,9 +87,23 @@ public final class JobExecutor implements LeaseListener {
         public int maxCandidates = 16;
         public boolean batchErrands = true;
         public boolean depositAfterGather = false;
+        /** LIKE_A_PLAYER: no predicted or hidden ore targets; the backend mines only what it can see. */
+        public MiningStyle miningStyle = MiningStyle.LIKE_A_PLAYER;
     }
 
-    enum Phase { START, PLANNING, MINE_CANDIDATE, MINE_SCAN, WAIT_DRIVER, WAIT_ACTION, BUILD_WAIT }
+    enum Phase { START, PLANNING, MINE_CANDIDATE, MINE_SCAN, STRIP, STRIP_ORE, WAIT_DRIVER, WAIT_ACTION, BUILD_WAIT }
+
+    /** Strip mine (LIKE_A_PLAYER): tunnel length per route, blocks dug per segment, how far ore is looked up. */
+    static final int STRIP_LENGTH = 32;
+    static final int STRIP_SEGMENT = 4;
+    static final int ROUTE_RADIUS = STRIP_LENGTH + 8;
+    static final int ROUTE_MAX_ORES = 4096;
+    /** Routes tried per mine step before falling back to the backend's own legit exploring. */
+    static final int MAX_ROUTES = 6;
+    /** Longest stop to mine what a segment uncovered (ticks). */
+    static final int STRIP_ORE_TICKS = 20 * 45;
+    /** Lowest strip level (keeps the tunnel off the bedrock layers). */
+    static final int STRIP_MIN_Y = -59;
 
     static final class Job {
         final long id;
@@ -112,6 +128,14 @@ public final class JobExecutor implements LeaseListener {
         boolean resumeRequested;
         List<WorldObservation> candidates = List.of();
         int candidateIdx;
+        /** LIKE_A_PLAYER strip mine: the route, how far it is dug, and ore the tunnel has uncovered. */
+        StripRoutePlanner.Route route;
+        int routeT;
+        int segFrom;
+        int dugCells;
+        int routesTried;
+        final LongArrayList exposed = new LongArrayList();
+        long oreStartTick;
         long lastProgressTick;
         int lastProgress;
         long bestDistSq = Long.MAX_VALUE;
@@ -133,6 +157,7 @@ public final class JobExecutor implements LeaseListener {
 
     private final Deps deps;
     private final Settings settings;
+    private final StripRoutePlanner routePlanner = new StripRoutePlanner();
     private final List<Job> jobs = new ArrayList<>();
     private Job active;
     private ControlLease lease;
@@ -322,7 +347,8 @@ public final class JobExecutor implements LeaseListener {
             }
             j.resumeRequested = false;
             j.preempted = false;
-            if (j.phase == Phase.MINE_CANDIDATE || j.phase == Phase.MINE_SCAN || j.phase == Phase.WAIT_DRIVER) {
+            if (j.phase == Phase.MINE_CANDIDATE || j.phase == Phase.MINE_SCAN || j.phase == Phase.WAIT_DRIVER
+                    || j.phase == Phase.STRIP || j.phase == Phase.STRIP_ORE) {
                 driver().resume();
             }
             j.lastProgressTick = now();
@@ -522,6 +548,14 @@ public final class JobExecutor implements LeaseListener {
             j.lastProgress = progress;
             j.lastProgressTick = now();
             DataSourceMode mode = modeFor(j);
+            if (settings.miningStyle == MiningStyle.LIKE_A_PLAYER) {
+                // a player does not walk to ore behind solid stone; what the suite knows only picks where to dig
+                j.routesTried = 0;
+                if (!startStrip(j, step)) {
+                    startScan(j, step, progress);
+                }
+                return;
+            }
             if (mode == DataSourceMode.OBSERVED_ONLY) {
                 startScan(j, step, progress);
                 return;
@@ -557,6 +591,13 @@ public final class JobExecutor implements LeaseListener {
             return;
         }
         MiningDriver.Status st = d.status();
+        if (j.phase == Phase.STRIP || j.phase == Phase.STRIP_ORE) {
+            tickStrip(j, step, progress, st);
+            if (j.phase == Phase.STRIP || j.phase == Phase.STRIP_ORE) {
+                stuckCheck(j, step, progress);
+            }
+            return;
+        }
         if (j.phase == Phase.MINE_CANDIDATE) {
             long c = j.candidates.get(j.candidateIdx).packedPos();
             String dim = j.candidates.get(j.candidateIdx).dimension();
@@ -589,18 +630,220 @@ public final class JobExecutor implements LeaseListener {
             startScan(j, step, progress);
             return;
         }
+        stuckCheck(j, step, progress);
+    }
+
+    private void stuckCheck(Job j, PlanStep step, int progress) {
         if (now() - j.lastProgressTick > settings.stuckTicks) {
             if (!replan(j, step, "No progress for " + settings.stuckTicks / 20 + " s on '" + step.label() + "'")) {
                 return;
             }
             j.lastProgressTick = now();
-            d.cancel();
+            driver().cancel();
             alternative(j, step, progress);
+        }
+    }
+
+    // ---- strip mining (LIKE_A_PLAYER) ---------------------------------------------------------------------------
+
+    /**
+     * Picks a strip mine that happens to run past the most known ore ({@link StripRoutePlanner}) and heads for its
+     * start under the player's feet. False when there is no ore band for the block, no knowledge, or no route touches
+     * any ore. The knowledge only picks the route; the job mines just what the tunnel uncovers.
+     */
+    private boolean startStrip(Job j, PlanStep step) {
+        int[] band = MiningStyle.band(step.blockIds());
+        IWorldKnowledgeService k = deps.knowledge().get();
+        if (band == null || k == null || j.routesTried >= MAX_ROUTES) {
+            return false;
+        }
+        String dim = deps.actions().dimension();
+        long me = deps.actions().playerPos();
+        int minY = Math.max(band[0], STRIP_MIN_Y);
+        int maxY = band[1];
+        // the query radius is spherical: centre it in the band so every level of every tunnel is inside
+        int half = (maxY - minY) / 2 + 2;
+        int radius = (int) Math.ceil(Math.sqrt((double) ROUTE_RADIUS * ROUTE_RADIUS + (double) half * half));
+        long centre = PackedPos.pack(PackedPos.x(me), minY + (maxY - minY) / 2, PackedPos.z(me));
+        List<WorldObservation> obs = k.findCandidates(new CandidateQuery(Set.copyOf(step.blockIds()), dim, centre,
+                radius, ROUTE_MAX_ORES, DataSourceMode.HYBRID));
+        long[] ores = new long[obs.size()];
+        int n = 0;
+        for (WorldObservation o : obs) {
+            if (!k.isVerifiedMiss(o.dimension(), o.packedPos())
+                    && !deps.isProtected().test(o.dimension(), o.packedPos())) {
+                ores[n++] = o.packedPos();
+            }
+        }
+        StripRoutePlanner.Route r = routePlanner.best(java.util.Arrays.copyOf(ores, n), PackedPos.x(me),
+                PackedPos.y(me), PackedPos.z(me), minY, maxY, STRIP_LENGTH);
+        j.routesTried++;
+        if (r == null) {
+            return false;
+        }
+        j.route = r;
+        j.routeT = 0;
+        j.segFrom = 0;
+        j.exposed.clear();
+        j.bestDistSq = Long.MAX_VALUE;
+        j.phase = Phase.STRIP;
+        driver().cancel();
+        driver().gotoCoord(r.cell(0), 0); // dig down (or up) to the tunnel level
+        setReason(j, "Strip mining for " + step.label() + " at y " + r.y() + ", heading " + heading(r));
+        markChanged(j);
+        return true;
+    }
+
+    private static String heading(StripRoutePlanner.Route r) {
+        return r.dx() > 0 ? "east" : r.dx() < 0 ? "west" : r.dz() > 0 ? "south" : "north";
+    }
+
+    private void tickStrip(Job j, PlanStep step, int progress, MiningDriver.Status st) {
+        MiningDriver d = driver();
+        if (st == MiningDriver.Status.FAILED) {
+            if (!replan(j, step, "Strip mine: " + d.failureReason())) {
+                return;
+            }
+            alternative(j, step, progress);
+            return;
+        }
+        if (j.phase == Phase.STRIP_ORE) {
+            pruneExposed(j, step);
+            if (j.exposed.isEmpty() || now() - j.oreStartTick > STRIP_ORE_TICKS) {
+                d.cancel();
+                j.phase = Phase.STRIP;
+                nextSegment(j, step, progress);
+            } else if (st == MiningDriver.Status.IDLE || st == MiningDriver.Status.ARRIVED) {
+                d.mineByYield(step.itemId(), step.count() - progress, step.blockIds());
+            }
+            return;
+        }
+        if (st == MiningDriver.Status.RUNNING) {
+            // digging down to the level (or along a segment) counts as progress while the gap keeps closing
+            long d2 = PackedPos.distSq(deps.actions().playerPos(), j.route.cell(j.routeT));
+            if (d2 < j.bestDistSq) {
+                j.bestDistSq = d2;
+                j.lastProgressTick = now();
+            }
+            // Baritone digs within reach without stepping: every block opened in the segment is progress too
+            if (j.routeT > 0 && (now() % 10) == 0) {
+                int dug = dugCells(j);
+                if (dug > j.dugCells) {
+                    j.dugCells = dug;
+                    j.lastProgressTick = now();
+                }
+            }
+            return;
+        }
+        // at the tunnel start, or a segment is dug: mine what it uncovered, as a player would
+        collectExposed(j, step);
+        if (!j.exposed.isEmpty()) {
+            j.phase = Phase.STRIP_ORE;
+            j.oreStartTick = now();
+            d.setMiningStyle(MiningStyle.LIKE_A_PLAYER, step.blockIds());
+            d.mineByYield(step.itemId(), step.count() - progress, step.blockIds());
+            setReason(j, "Mining " + j.exposed.size() + " uncovered " + step.label());
+            return;
+        }
+        nextSegment(j, step, progress);
+    }
+
+    private void nextSegment(Job j, PlanStep step, int progress) {
+        StripRoutePlanner.Route r = j.route;
+        if (j.routeT >= r.length()) {
+            if (!startStrip(j, step)) {
+                setReason(j, "No more ore along a strip mine nearby; exploring");
+                startScan(j, step, progress);
+            }
+            return;
+        }
+        int from = j.routeT + 1;
+        int to = Math.min(r.length(), j.routeT + STRIP_SEGMENT);
+        long end = r.cell(to);
+        j.segFrom = from;
+        j.routeT = to;
+        j.lastProgressTick = now(); // a dug segment is progress, even before any ore drops
+        j.bestDistSq = Long.MAX_VALUE;
+        j.dugCells = 0;
+        setReason(j, "Strip mining for " + step.label() + " at y " + r.y() + ", heading " + heading(r) + ", block "
+                + to + "/" + r.length());
+        driver().clearArea(r.cell(from), PackedPos.pack(PackedPos.x(end), r.y() + 1, PackedPos.z(end)));
+    }
+
+    /** Open (non-solid) cells of the segment being dug; unloaded cells count as closed. */
+    private int dugCells(Job j) {
+        StripRoutePlanner.Route r = j.route;
+        String dim = deps.actions().dimension();
+        int n = 0;
+        for (int t = j.segFrom; t <= j.routeT; t++) {
+            long c = r.cell(t);
+            for (int h = 0; h < 2; h++) {
+                String b = deps.actions().blockAtIfLoaded(dim, PackedPos.pack(PackedPos.x(c), r.y() + h,
+                        PackedPos.z(c)));
+                if (b != null && b.endsWith("air")) {
+                    n++;
+                }
+            }
+        }
+        return n;
+    }
+
+    /** Ore in the walls, floor and ceiling of the tunnel cells dug since the last look (and at the start). */
+    private void collectExposed(Job j, PlanStep step) {
+        StripRoutePlanner.Route r = j.route;
+        String dim = deps.actions().dimension();
+        for (int t = j.segFrom; t <= j.routeT; t++) {
+            long c = r.cell(t);
+            int x = PackedPos.x(c);
+            int z = PackedPos.z(c);
+            for (int h = 0; h < 2; h++) {
+                int y = r.y() + h;
+                addIfOre(j, step, dim, x + 1, y, z);
+                addIfOre(j, step, dim, x - 1, y, z);
+                addIfOre(j, step, dim, x, y, z + 1);
+                addIfOre(j, step, dim, x, y, z - 1);
+                addIfOre(j, step, dim, x, h == 0 ? y - 1 : y + 1, z);
+            }
+        }
+        j.segFrom = j.routeT + 1;
+    }
+
+    /** Drops mined entries; ore next to a mined one is uncovered now (a vein), so it joins the list. */
+    private void pruneExposed(Job j, PlanStep step) {
+        String dim = deps.actions().dimension();
+        for (int i = j.exposed.size() - 1; i >= 0; i--) {
+            long p = j.exposed.getLong(i);
+            String b = deps.actions().blockAtIfLoaded(dim, p);
+            if (b == null || step.blockIds().contains(b)) {
+                continue;
+            }
+            j.exposed.removeLong(i);
+            int x = PackedPos.x(p);
+            int y = PackedPos.y(p);
+            int z = PackedPos.z(p);
+            addIfOre(j, step, dim, x + 1, y, z);
+            addIfOre(j, step, dim, x - 1, y, z);
+            addIfOre(j, step, dim, x, y + 1, z);
+            addIfOre(j, step, dim, x, y - 1, z);
+            addIfOre(j, step, dim, x, y, z + 1);
+            addIfOre(j, step, dim, x, y, z - 1);
+        }
+    }
+
+    private void addIfOre(Job j, PlanStep step, String dim, int x, int y, int z) {
+        long p = PackedPos.pack(x, y, z);
+        if (j.exposed.contains(p) || deps.isProtected().test(dim, p)) {
+            return;
+        }
+        String b = deps.actions().blockAtIfLoaded(dim, p);
+        if (b != null && step.blockIds().contains(b)) {
+            j.exposed.add(p);
         }
     }
 
     private void startScan(Job j, PlanStep step, int progress) {
         j.phase = Phase.MINE_SCAN;
+        driver().setMiningStyle(settings.miningStyle, step.blockIds());
         driver().mineByYield(step.itemId(), step.count() - progress, step.blockIds());
         markChanged(j);
     }
@@ -614,13 +857,19 @@ public final class JobExecutor implements LeaseListener {
 
     /** Next-best candidate, or loaded-chunk scanning (HYBRID / OBSERVED), or a fresh candidate query. */
     private void alternative(Job j, PlanStep step, int progress) {
+        if (settings.miningStyle == MiningStyle.LIKE_A_PLAYER) {
+            if (!startStrip(j, step)) {
+                startScan(j, step, progress);
+            }
+            return;
+        }
         DataSourceMode mode = modeFor(j);
         if (j.phase == Phase.MINE_CANDIDATE && j.candidateIdx + 1 < j.candidates.size()) {
             j.candidateIdx++;
             approachCandidate(j);
             return;
         }
-        if (mode == DataSourceMode.SIMULATED_ONLY) {
+        if (mode == DataSourceMode.SIMULATED_ONLY && settings.miningStyle == MiningStyle.KNOWN_ORES) {
             j.candidates = queryCandidates(step, mode, j.request.cost());
             j.candidateIdx = 0;
             if (j.candidates.isEmpty()) {

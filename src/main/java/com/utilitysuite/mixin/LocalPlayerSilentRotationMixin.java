@@ -1,5 +1,6 @@
 package com.utilitysuite.mixin;
 
+import com.utilitysuite.core.input.ForeignRotationHook;
 import com.utilitysuite.core.input.SilentRotation;
 import net.minecraft.client.player.LocalPlayer;
 import org.spongepowered.asm.mixin.Mixin;
@@ -29,6 +30,9 @@ public abstract class LocalPlayerSilentRotationMixin {
 
     @Inject(method = "sendPosition", at = @At("HEAD"))
     private void utilitysuite$swapInSilentRotation(CallbackInfo ci) {
+        // first: a path library may have just turned the player (it does so right before this packet); the core turns
+        // that into a smoothed, capped turn so no snapped angle is sent or rendered
+        ForeignRotationHook.beforeSendPosition();
         if (!SilentRotation.isActive()) {
             return;
         }

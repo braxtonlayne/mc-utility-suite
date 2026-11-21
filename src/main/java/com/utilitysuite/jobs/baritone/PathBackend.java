@@ -36,6 +36,18 @@ interface PathBackend {
      */
     long firstPathPos(LongPredicate test);
 
+    /**
+     * Legit mining: only ore the player could see, strip-mining at {@code yLevel} to find more. Off: the backend's
+     * loaded-chunk scan targets ore anywhere.
+     */
+    void setLegitMining(boolean legit, int yLevel);
+
+    /** Digs out the box between the corners (inclusive). */
+    void clearArea(int x1, int y1, int z1, int x2, int y2, int z2);
+
+    /** A {@link #clearArea} is still running. */
+    boolean isBuilding();
+
     /** Applies suite-wide Baritone settings (quiet chat, auto-tool on). */
     void configure();
 }

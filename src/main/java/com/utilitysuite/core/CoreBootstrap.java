@@ -1,26 +1,32 @@
 package com.utilitysuite.core;
 
 import com.utilitysuite.UtilitySuiteMod;
+import com.utilitysuite.core.api.ControlChannel;
 import com.utilitysuite.core.api.ProfileConfig;
 import com.utilitysuite.core.api.Services;
 import com.utilitysuite.core.arbiter.ActionArbiter;
 import com.utilitysuite.core.config.ConfigStore;
 import com.utilitysuite.core.config.ModState;
 import com.utilitysuite.core.config.ProfileIds;
+import com.utilitysuite.core.input.ForeignRotationHook;
 import com.utilitysuite.core.input.InputSmoother;
 import com.utilitysuite.core.input.KeybindManager;
 import com.utilitysuite.core.input.ManualInputHooks;
 import com.utilitysuite.core.input.MinecraftInputBackend;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ServerData;
+import net.minecraft.client.player.Input;
 import net.minecraft.client.server.IntegratedServer;
 import net.minecraft.network.chat.Component;
+import net.minecraft.util.Mth;
 import net.minecraft.world.level.storage.LevelResource;
+import net.neoforged.bus.api.EventPriority;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.loading.FMLPaths;
 import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
 import net.neoforged.neoforge.client.event.InputEvent;
+import net.neoforged.neoforge.client.event.MovementInputUpdateEvent;
 import net.neoforged.neoforge.client.event.RenderFrameEvent;
 import net.neoforged.neoforge.common.NeoForge;
 
@@ -61,12 +67,14 @@ public final class CoreBootstrap {
         Services.registerModules(modules);
 
         smoother = new InputSmoother(new MinecraftInputBackend(), new Random());
+        ForeignRotationHook.install(smoother);
         Services.registerInput(smoother);
         Services.registerClicker(smoother);
 
         arbiter = new ActionArbiter();
         arbiter.bind(smoother, modules, events);
         Services.registerArbiter(arbiter);
+        smoother.setCameraHolderLookup(() -> arbiter.holder(ControlChannel.CAMERA).orElse(null));
 
         manualInput = new ManualInputHooks(arbiter, smoother);
 
@@ -85,6 +93,8 @@ public final class CoreBootstrap {
         bus.addListener(CoreBootstrap::onTickPre);
         bus.addListener(CoreBootstrap::onTickPost);
         bus.addListener(CoreBootstrap::onFrame);
+        // first, before any module reads the keys or the look: undo foreign turns (see setForeignRotationGuard)
+        bus.addListener(EventPriority.HIGHEST, CoreBootstrap::onMovementInput);
         bus.addListener(CoreBootstrap::onLogin);
         bus.addListener(CoreBootstrap::onLogout);
         bus.addListener(manualInput::onKey);
@@ -128,6 +138,29 @@ public final class CoreBootstrap {
             smoother.postTick();
         }
         modState.tick();
+    }
+
+    private static void onMovementInput(MovementInputUpdateEvent event) {
+        Minecraft mc = Minecraft.getInstance();
+        if (event.getEntity() != mc.player || !smoother.isForeignRotationGuardOn()) {
+            return;
+        }
+        float heading = smoother.foreignHeading();
+        if (!Float.isNaN(heading)) {
+            // keys were meant along the wanted heading; the camera still looks the old way
+            Input in = event.getInput();
+            double d = Math.toRadians(Mth.wrapDegrees(mc.player.getYRot() - heading));
+            double f = in.forwardImpulse;
+            double s = in.leftImpulse;
+            double cos = Math.cos(d);
+            double sin = Math.sin(d);
+            in.forwardImpulse = (float) (f * cos - s * sin);
+            in.leftImpulse = (float) (s * cos + f * sin);
+            in.up = in.forwardImpulse > 0.05f;
+            in.down = in.forwardImpulse < -0.05f;
+            in.left = in.leftImpulse > 0.05f;
+            in.right = in.leftImpulse < -0.05f;
+        }
     }
 
     private static void onFrame(RenderFrameEvent.Pre event) {

@@ -166,6 +166,13 @@ chain, and it works with modded content and JEI. The research and design notes a
       3); 3) walk to open ground, farther each try (up to 3). Line of sight always respected.
 - [ ] Same ladder for every placement and interaction (Build Assist, bridging, chests): add "pillar up one block"
       and "dig a pocket" rungs, and log which rung worked so the planner learns what the terrain needs.
+- [x] Mining style "Like a player" (default; "Known ores" = walk straight to known/predicted ore): the job strip-mines
+      a 1x2 tunnel from under the player's feet, choosing the level and direction (`jobs/planner/StripRoutePlanner`)
+      whose walls, floor and ceiling would uncover the most known ore, whole veins counted. It only mines ore the
+      tunnel actually exposes, follows veins, then digs on in 4-block segments. Playtest: 4 coal, no replans.
+- [ ] Caving and quarry route variants (walk an open cave that passes the most ore; a small quarry over a dense spot).
+- [x] Baritone no longer snaps the head (2026-11-21): its rotations are captured right before the movement packet,
+      undone, and replayed as a smoothed turn (cap 450 deg/s); the movement keys are re-aimed to its heading.
 - [x] Playtest evidence: a screenshot on every failed check (run/playtest/shots/fail/) and a rolling trace of long
       steps every 5 s (run/playtest/shots/trace/<scenario>/, last 12 kept).
 

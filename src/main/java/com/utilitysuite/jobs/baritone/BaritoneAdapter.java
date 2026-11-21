@@ -13,6 +13,7 @@ import com.utilitysuite.core.api.RotationTarget;
 import com.utilitysuite.core.api.Services;
 import com.utilitysuite.core.api.SimKey;
 import com.utilitysuite.jobs.goal.MiningDriver;
+import com.utilitysuite.jobs.goal.MiningStyle;
 import com.utilitysuite.jobs.planner.PackedPos;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
@@ -55,7 +56,7 @@ public final class BaritoneAdapter implements MiningDriver {
     private static final Logger LOG = LoggerFactory.getLogger("utilitysuite/baritone");
     private static final int GRACE_TICKS = 6;
 
-    private enum Mode { NONE, MINE, GOTO, FOLLOW, INTERACT }
+    private enum Mode { NONE, MINE, GOTO, FOLLOW, INTERACT, CLEAR }
 
     private enum InteractPhase { PATH, AIM, USED }
 
@@ -76,6 +77,9 @@ public final class BaritoneAdapter implements MiningDriver {
     private int gz;
     private int range;
     private long[] path = new long[0];
+    /** CLEAR: the far corner (the near one is the goal fields). */
+    private long clearB;
+    private long savedClearB;
     private int pathIndex;
     private ControlLease interactLease;
     private InteractPhase interactPhase = InteractPhase.PATH;
@@ -149,6 +153,35 @@ public final class BaritoneAdapter implements MiningDriver {
     }
 
     @Override
+    public void setMiningStyle(MiningStyle style, List<String> candidateBlocks) {
+        PathBackend b = backend();
+        if (b == null) {
+            return;
+        }
+        boolean legit = style == MiningStyle.LIKE_A_PLAYER;
+        int level = MiningStyle.STAY;
+        if (legit) {
+            var p = Minecraft.getInstance().player;
+            int feet = p == null ? 64 : p.blockPosition().getY();
+            level = MiningStyle.stripLevel(candidateBlocks, feet);
+            if (level == MiningStyle.STAY) {
+                level = feet;
+            }
+        }
+        b.setLegitMining(legit, level);
+    }
+
+    @Override
+    public void clearArea(long cornerA, long cornerB) {
+        if (!start(Mode.CLEAR)) {
+            return;
+        }
+        setGoal(cornerA, 0);
+        clearB = cornerB;
+        backend.clearArea(gx, gy, gz, PackedPos.x(cornerB), PackedPos.y(cornerB), PackedPos.z(cornerB));
+    }
+
+    @Override
     public void gotoCoord(long packedPos, int range) {
         if (!start(Mode.GOTO)) {
             return;
@@ -210,6 +243,7 @@ public final class BaritoneAdapter implements MiningDriver {
         savedRange = range;
         savedPath = path;
         savedPathIndex = pathIndex;
+        savedClearB = clearB;
     }
 
     private void restoreSuspended() {
@@ -218,6 +252,7 @@ public final class BaritoneAdapter implements MiningDriver {
         setGoal(savedGoal, savedRange);
         path = savedPath;
         pathIndex = savedPathIndex;
+        clearB = savedClearB;
         savedMode = Mode.NONE;
         paused = true;
     }
@@ -259,6 +294,7 @@ public final class BaritoneAdapter implements MiningDriver {
             case MINE -> backend.mine(mineBlocks);
             case GOTO -> backend.goTo(gx, gy, gz, range);
             case FOLLOW -> backend.goTo(gx, gy, gz, 1);
+            case CLEAR -> backend.clearArea(gx, gy, gz, PackedPos.x(clearB), PackedPos.y(clearB), PackedPos.z(clearB));
             case INTERACT -> {
                 interactPhase = InteractPhase.PATH;
                 backend.goToBlock(gx, gy, gz);
@@ -397,9 +433,33 @@ public final class BaritoneAdapter implements MiningDriver {
 
     // ---- tick -------------------------------------------------------------------------------------------------------
 
+    /** Ticks the look guard stays on after Baritone goes idle (it may still turn while finishing a move). */
+    static final int GUARD_LINGER_TICKS = 10;
+    private long lastBusyTick = Long.MIN_VALUE / 2;
+    private boolean guardOn;
+
+    /**
+     * Baritone turns the player itself (straight to the block it mines or the next node): while it works, the core
+     * turns those into capped, smoothed turns (IInputSmoother#setForeignRotationGuard). No head snapping.
+     */
+    private void guardLookTurns() {
+        boolean busy = checked && backend != null
+                && (backend.isPathing() || backend.isMining() || backend.isGoalActive() || backend.isBuilding()
+                || (mode != Mode.NONE && status == Status.RUNNING));
+        if (busy) {
+            lastBusyTick = ticks;
+        }
+        boolean want = ticks - lastBusyTick <= GUARD_LINGER_TICKS;
+        if (want != guardOn) {
+            guardOn = want;
+            Services.input().setForeignRotationGuard(want);
+        }
+    }
+
     /** Called once per client tick (post) by the jobs bootstrap. Cheap when idle; no allocation. */
     public void tick() {
         ticks++;
+        guardLookTurns();
         LeasedNavigation run = currentRun;
         if (run != null) {
             run.update();
@@ -426,6 +486,11 @@ public final class BaritoneAdapter implements MiningDriver {
                 }
             }
             case GOTO -> tickGoal(graceOver);
+            case CLEAR -> {
+                if (graceOver && !backend.isBuilding()) {
+                    status = Status.ARRIVED;
+                }
+            }
             case FOLLOW -> {
                 if (graceOver && backend.isInGoal()) {
                     if (++pathIndex >= path.length) {

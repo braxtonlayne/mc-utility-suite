@@ -206,6 +206,7 @@ public final class ActionArbiter implements IActionArbiter {
         }
         Lease h = holders[i];
         if (h != null && ControlPriority.EMERGENCY.outranks(h.priority())) {
+            LOG.info("Manual input {} preempted {} on {}", input, h.moduleId(), channel);
             deactivate(h, LeaseEndReason.MANUAL_OVERRIDE, BY_MANUAL);
             suspend(h);
             notifyPreempted(h, LeaseEndReason.MANUAL_OVERRIDE, BY_MANUAL);

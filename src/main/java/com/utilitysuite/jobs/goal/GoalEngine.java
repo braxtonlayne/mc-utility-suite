@@ -222,6 +222,11 @@ public final class GoalEngine implements IGoalEngine, IModule, IConfigurable {
         s.candidateRadius = profile.getInt(ID, "candidate_radius", 256);
         s.batchErrands = profile.getBool(ID, "batch_errands", true);
         s.depositAfterGather = profile.getBool(ID, "deposit_after_gather", false);
+        try {
+            s.miningStyle = MiningStyle.valueOf(profile.getString(ID, "mining_style", MiningStyle.LIKE_A_PLAYER.name()));
+        } catch (IllegalArgumentException e) {
+            s.miningStyle = MiningStyle.LIKE_A_PLAYER;
+        }
         planner.get().setEfficiencyTools(new com.utilitysuite.jobs.planner.EfficiencyTools.Settings(
                 profile.getBool(ID, "efficiency_tools", true), profile.getInt(ID, "shovel_after", 24),
                 profile.getInt(ID, "axe_after", 12)));
@@ -244,6 +249,10 @@ public final class GoalEngine implements IGoalEngine, IModule, IConfigurable {
         return List.of(
                 SettingSpec.choice("default_cost", "Default cost profile", CostProfile.FASTEST, "",
                         "Used when a command has no cost= modifier"),
+                SettingSpec.choice("mining_style", "Mining style", MiningStyle.LIKE_A_PLAYER, "",
+                        "LIKE_A_PLAYER: mine only ore you can see and strip-mine at a good depth for it, like a"
+                                + " player. KNOWN_ORES: head straight for ore the suite knows of, even behind stone"
+                                + " (faster, less legit)."),
                 SettingSpec.bool("batch_errands", "Batch shared errands", true, "",
                         "Fetch and mine for queued jobs on the same trip"),
                 SettingSpec.bool("deposit_after_gather", "Deposit after gathering", false, "",

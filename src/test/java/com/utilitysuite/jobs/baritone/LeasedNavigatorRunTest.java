@@ -51,6 +51,9 @@ class LeasedNavigatorRunTest {
         @Override public boolean isPathing() { return pathing; }
         @Override public long firstPathPos(LongPredicate test) { return Long.MIN_VALUE; }
         @Override public void configure() { }
+        @Override public void clearArea(int x1, int y1, int z1, int x2, int y2, int z2) { log.add("clear"); }
+        @Override public boolean isBuilding() { return false; }
+        @Override public void setLegitMining(boolean legit, int yLevel) { log.add("legit " + legit + " " + yLevel); }
     }
 
     private ActionArbiter arbiter;

@@ -93,6 +93,11 @@ final class Fakes {
         }
 
         @Override
+        public void clearArea(long a, long b) {
+            issued("clear " + PackedPos.format(a) + " to " + PackedPos.format(b));
+        }
+
+        @Override
         public void followPath(long[] packedPositions) {
             issued("follow");
         }

@@ -5,6 +5,7 @@ import com.utilitysuite.core.api.ControlChannel;
 import com.utilitysuite.core.api.ControlLease;
 import com.utilitysuite.core.api.ControlPriority;
 import com.utilitysuite.core.api.IContainerClicker;
+import com.utilitysuite.core.api.IInputSmoother;
 import com.utilitysuite.core.api.LeaseRequest;
 import com.utilitysuite.core.api.RotationTarget;
 import com.utilitysuite.core.api.SimKey;
@@ -146,6 +147,41 @@ class InputSmootherTest {
         assertTrue(smoother.selectHotbarSlot(l, 4));
         assertEquals(4, backend.selectedSlot);
         assertFalse(smoother.selectHotbarSlot(l, 9));
+    }
+
+    @Test
+    void aForeignSnapIsUndoneAndBecomesASmoothedTurn() {
+        ControlLease l = lease(ControlChannel.CAMERA);
+        smoother.setCameraHolderLookup(() -> l);
+        smoother.setForeignRotationGuard(true);
+        backend.yaw = 0f;
+        backend.pitch = 0f;
+        smoother.preTick();
+        backend.yaw = 180f; // a path library turns the player all the way round in one tick
+        backend.pitch = 30f;
+        smoother.captureForeignRotation();
+        assertEquals(0f, backend.yaw, 1e-4, "the snap is undone before the packet");
+        assertEquals(180f, smoother.foreignHeading(), 1e-4, "the keys are re-aimed along the wanted heading");
+        assertFalse(smoother.isRotationSettled(1f), "a smoothed turn toward it runs instead");
+        float last = backend.yaw;
+        float worst = 0f;
+        for (int i = 0; i < 2000 && smoother.isVisibleRotationMoving(); i++) {
+            smoother.onFrame(1 / 60.0);
+            worst = Math.max(worst, Math.abs(backend.yaw - last));
+            last = backend.yaw;
+        }
+        assertTrue(worst <= IInputSmoother.MAX_TURN_DEG_PER_SEC / 60.0 + 1e-3, "capped per frame: " + worst);
+        assertEquals(180f, Math.abs(backend.yaw), 1e-3);
+    }
+
+    @Test
+    void theGuardIsOffByDefault() {
+        backend.yaw = 0f;
+        smoother.preTick();
+        backend.yaw = 90f;
+        smoother.captureForeignRotation();
+        assertEquals(90f, backend.yaw, 1e-4);
+        assertTrue(Float.isNaN(smoother.foreignHeading()));
     }
 
     @Test

@@ -31,6 +31,17 @@ public interface MiningDriver {
      */
     void mineByYield(String itemId, int desiredItemCount, List<String> candidateBlocks);
 
+    /**
+     * Digs out every block in the box between the two packed corners (inclusive): a tunnel segment, or one ore block
+     * the tunnel has uncovered. Status goes ARRIVED when done.
+     */
+    default void clearArea(long cornerA, long cornerB) {
+    }
+
+    /** How the next {@link #mineByYield} finds ore (see {@link MiningStyle}); applies until changed. */
+    default void setMiningStyle(MiningStyle style, List<String> candidateBlocks) {
+    }
+
     /** Paths to within {@code range} blocks of the packed position. */
     void gotoCoord(long packedPos, int range);
 

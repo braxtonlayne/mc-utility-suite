@@ -39,6 +39,32 @@ final class BaritoneBridge implements PathBackend {
         s.chatControl.value = false;
         s.desktopNotifications.value = false;
         s.mineScanDroppedItems.value = true;
+        // Look: Baritone turns the real camera, which the core guard turns into capped, smoothed turns. Its own "free
+        // look" would instead send snapped angles in packets behind the camera (silent snapping: not allowed).
+        s.freeLook.value = false;
+        s.blockFreeLook.value = false;
+        s.elytraFreeLook.value = false;
+        s.smoothLook.value = false;
+        s.randomLooking.value = 0.0;
+        s.randomLooking113.value = 0.0;
+    }
+
+    @Override
+    public void setLegitMining(boolean legit, int yLevel) {
+        Settings s = BaritoneAPI.getSettings();
+        s.legitMine.value = legit;
+        s.legitMineYLevel.value = yLevel;
+        s.legitMineIncludeDiagonals.value = true;
+    }
+
+    @Override
+    public void clearArea(int x1, int y1, int z1, int x2, int y2, int z2) {
+        baritone().getBuilderProcess().clearArea(new BlockPos(x1, y1, z1), new BlockPos(x2, y2, z2));
+    }
+
+    @Override
+    public boolean isBuilding() {
+        return baritone().getBuilderProcess().isActive();
     }
 
     @Override

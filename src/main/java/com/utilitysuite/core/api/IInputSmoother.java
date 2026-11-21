@@ -24,6 +24,15 @@ public interface IInputSmoother {
     /** True when the current target is reached within {@code toleranceDeg} (or no target is set). */
     boolean isRotationSettled(float toleranceDeg);
 
+    /**
+     * Guards against code outside the core turning the player (a path library aiming at the block it mines): while on,
+     * any rotation made between the start of a tick and the movement input is undone and becomes a smoothed, capped
+     * VISIBLE target for whoever holds CAMERA, and the movement keys are re-aimed along the wanted heading so the walk
+     * stays on course while the head catches up. No head snapping, whoever asks for the turn. Client thread only.
+     */
+    default void setForeignRotationGuard(boolean on) {
+    }
+
     // ---- server-visible pose (packet layer) ---------------------------------------------------------------------
 
     /**

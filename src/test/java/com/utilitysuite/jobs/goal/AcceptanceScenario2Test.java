@@ -239,8 +239,55 @@ class AcceptanceScenario2Test {
     }
 
     @Test
+    void likeAPlayerIgnoresPredictedOreAndMinesWhatItSees() {
+        useKnowledge = true;
+        long hidden = PackedPos.pack(10, -58, 10);
+        knowledge.predict(hidden, "minecraft:deepslate_diamond_ore", 0.9);
+        actions.blocks.put(hidden, "minecraft:deepslate_diamond_ore");
+        inv.add("minecraft:iron_pickaxe", 1);
+        assertEquals(MiningStyle.LIKE_A_PLAYER, exec.settings().miningStyle, "the default");
+
+        exec.submit(new GoalRequest.Gather(DIAMOND, 2, CostProfile.FASTEST, DataSourceMode.HYBRID));
+        tick(3);
+        assertTrue(driver.log.stream().noneMatch(l -> l.startsWith("goto")), "never walks to hidden ore: " + driver.log);
+        assertTrue(driver.log.stream().anyMatch(l -> l.startsWith("mine ")), driver.log.toString());
+    }
+
+    @Test
+    void likeAPlayerStripMinesAlongTheOreAndMinesWhatTheTunnelUncovers() {
+        useKnowledge = true;
+        // a vein beside the +x line under the player, inside diamond's band
+        long a = PackedPos.pack(4, -58, 1);
+        long b = PackedPos.pack(5, -58, 1);
+        knowledge.predict(a, "minecraft:deepslate_diamond_ore", 0.9);
+        knowledge.predict(b, "minecraft:deepslate_diamond_ore", 0.9);
+        actions.blocks.put(a, "minecraft:deepslate_diamond_ore");
+        actions.blocks.put(b, "minecraft:deepslate_diamond_ore");
+        inv.add("minecraft:iron_pickaxe", 1);
+
+        long id = exec.submit(new GoalRequest.Gather(DIAMOND, 2, CostProfile.FASTEST, DataSourceMode.HYBRID));
+        tick(3);
+        assertEquals("goto 0 -58 0", driver.log.get(driver.log.size() - 1), "digs down under its feet first");
+        assertTrue(snap(id).reason().contains("heading east"), snap(id).reason());
+        driver.status = MiningDriver.Status.ARRIVED;
+        tick(1);
+        assertEquals("clear 1 -58 0 to 4 -57 0", driver.log.get(driver.log.size() - 1), "first tunnel segment");
+        driver.status = MiningDriver.Status.ARRIVED;
+        tick(1);
+        assertEquals("mine minecraft:diamond x2", driver.log.get(driver.log.size() - 1), "mines the ore it uncovered");
+        // the wall ore is mined, which uncovers the rest of the vein behind it
+        actions.blocks.put(a, "minecraft:air");
+        tick(1);
+        assertEquals("mine minecraft:diamond x2", driver.log.get(driver.log.size() - 1), "still on the vein");
+        actions.blocks.put(b, "minecraft:air");
+        tick(1);
+        assertEquals("clear 5 -58 0 to 8 -57 0", driver.log.get(driver.log.size() - 1), driver.log.toString());
+    }
+
+    @Test
     void verifiedMissFallsThroughToTheNextCandidate() {
         useKnowledge = true;
+        exec.settings().miningStyle = MiningStyle.KNOWN_ORES; // predicted targets are a KNOWN_ORES feature
         long miss = PackedPos.pack(10, -58, 10);
         long hit = PackedPos.pack(20, -58, 20);
         knowledge.predict(miss, "minecraft:deepslate_diamond_ore", 0.9);

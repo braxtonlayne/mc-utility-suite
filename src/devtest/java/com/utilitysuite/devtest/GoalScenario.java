@@ -120,8 +120,38 @@ final class GoalScenario {
             s.check("Baritone available", Services.navigator().isAvailable(), "navigator available="
                     + Services.navigator().isAvailable());
         });
+        // no head snapping: the fastest look change between two ticks while Baritone works, in degrees per real
+        // second (the smoother's cap is time based: a slow frame may legitimately turn more than 22.5 deg per tick)
+        float[] look = {Float.NaN, 0f, 0f};
+        long[] lookNs = new long[1];
+        int[] snapNotes = new int[1];
+        int[] turnAt = new int[1];
         s.step("gather job runs", t -> {
             String d = describe(jobId[0]);
+            var lp = H.p();
+            if (!Float.isNaN(look[0])) {
+                float turn = (float) Math.hypot(net.minecraft.util.Mth.wrapDegrees(lp.getYRot() - look[0]),
+                        lp.getXRot() - look[1]);
+                double sec = Math.max(0.001, (System.nanoTime() - lookNs[0]) / 1.0e9);
+                // the smoother turns per rendered frame: a tick window can hold up to one extra frame's turn (<= 50 ms)
+                float dTurn = turn < 1f ? 0f : (float) (turn / (Math.max(sec, 0.05) + 0.05));
+                if (dTurn > look[2]) {
+                    look[2] = dTurn;
+                    turnAt[0] = t;
+                }
+                if (dTurn > 450f && snapNotes[0]++ < 6) {
+                    var sm = (com.utilitysuite.core.input.InputSmoother) Services.input();
+                    s.note(Harness.fmt("fast turn t=%d: %.1f deg in %.0f ms (%.0f deg/s), yaw %.1f -> %.1f, pitch %.1f"
+                                    + " -> %.1f, guard %s, foreign turns %d, camera holder %s, %s", t, turn,
+                            sec * 1000, dTurn, look[0], lp.getYRot(), look[1], lp.getXRot(),
+                            sm.isForeignRotationGuardOn(), sm.foreignTurns(),
+                            Services.arbiter().holder(com.utilitysuite.core.api.ControlChannel.CAMERA)
+                                    .map(l -> l.moduleId()).orElse("none"), d));
+                }
+            }
+            lookNs[0] = System.nanoTime();
+            look[0] = lp.getYRot();
+            look[1] = lp.getXRot();
             job(jobId[0]).ifPresent(j -> {
                 String st = j.currentStep();
                 if (st != null && !st.isEmpty() && (steps.isEmpty() || !steps.get(steps.size() - 1).equals(st))) {
@@ -170,6 +200,8 @@ final class GoalScenario {
             Optional<JobSnapshot> j = job(jobId[0]);
             String seq = String.join(" > ", steps).toLowerCase();
             s.note("step sequence: " + String.join(" > ", steps));
+            s.check("no head snapping while Baritone works (fastest turn <= 500 deg/s with one frame of slack; cap 450)",
+                    look[2] <= 500f, Harness.fmt("fastest turn %.0f deg/s at tick %d", look[2], turnAt[0]));
             s.check("started from an empty inventory and bootstrapped its own tools (wood + pickaxe steps)",
                     (seq.contains("wood") || seq.contains("log")) && seq.contains("pick"), "steps: " + seq);
             s.note("ends with: pickaxes " + H.count("minecraft:wooden_pickaxe") + " wooden / "
