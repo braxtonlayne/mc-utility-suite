@@ -36,10 +36,17 @@
   unchanged (it only runs while engaged).
 
 ## Not done / follow-ups
-- A8 integration: `combat/tactics/TacticUtility` and `OpponentModel` are written and tested (engine free) but see the
-  status in the commit log / below for how far they are wired into `CombatAssistant`.
+- A8 status: `TacticUtility` + `OpponentModel` (engine free, tested) are wired into `CombatAssistant` behind the
+  "Read the fight" setting (`tactic_utility`, default on; off = previous behaviour). FLEE backs off (aim kept on the
+  target, like the existing sustain retreat), KITE widens the spacing band by 0.5, RETREAT_HEAL and FIGHT leave the
+  existing sustain/spacing loop in charge. `StrafePlanner` intervals follow the opponent's strafe bias. Own DPS is
+  measured from the target's health drops (`CombatSnapshot.targetHealth`, new), opponent DPS from damage taken while
+  engaged; floors 4 / 1.5 before any hit. Not done: shield-use rate is recorded but not yet used (e.g. to time the
+  axe shield break), and the existing `TacticsPlanner` (HOLD_GAP / EDGE_KNOCK) does not read the broad tactic.
 - Shield vs. assistant SwingGate: the reflex lowers the shield when the weapon is charged and a living entity is under
   the crosshair; the assistant swings on its own next tick. No shared "swing intent" flag yet.
+- Dodge and fuse back-off stand aside while the assistant is engaged (it owns movement in a fight); the shield
+  reflex still works then, on the assistant's lease. Merging dodge into the assistant's own movement is a follow-up.
 - Dodge uses a conservative 0.12 blocks/tick strafe speed; fast close arrows are often not fully reachable (it still
   taps; `DodgePlanner.reachable()` reports it). Needs in-game tuning.
 - Not playtested in a client (no runClient in this run).

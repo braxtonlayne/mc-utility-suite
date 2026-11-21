@@ -2,7 +2,6 @@ package com.utilitysuite.combat.reflex;
 
 import com.utilitysuite.combat.assistant.CombatAssistant;
 import com.utilitysuite.combat.assistant.mc.MinecraftCombatWorld;
-import com.utilitysuite.combat.coach.ThreatMath;
 import com.utilitysuite.combat.coach.ThreatTracker;
 import com.utilitysuite.core.api.ControlChannel;
 import com.utilitysuite.core.api.ControlLease;
@@ -150,9 +149,24 @@ public final class CombatReflexes implements IModule, IConfigurable, LeaseListen
         if (arbiter.isAutomationStopped()) {
             return;
         }
+        // a borrowed lease (the assistant's or a chain lease) can end without telling us: the core released its keys
+        if (raised && (shieldLease == null || !shieldLease.isActive())) {
+            raised = false;
+            shieldLease = null;
+            turnYaw = Float.NaN;
+        }
+        if (escaping && (escapeLease == null || !escapeLease.isActive())) {
+            escaping = false;
+            escapeLease = null;
+            escKey = null;
+            escKey2 = null;
+            escSprint = false;
+        }
         tickShield(p, mc, ap, assistantOn, shieldArmed, arbiter);
-        tickEscape(p, ap, assistantOn, escapeArmed, arbiter);
-        if (!escaping && !raised) {
+        // while the assistant is engaged it owns movement (its spacing/strafe would fight a second key source)
+        boolean fighting = assistant.lease() != null;
+        tickEscape(p, ap, assistantOn, escapeArmed && !fighting, arbiter);
+        if (!escaping && !raised && !fighting) {
             tickDodge(p, ap, assistantOn, dodgeArmed, arbiter);
         }
         releaseIdleLeases();
@@ -231,7 +245,10 @@ public final class CombatReflexes implements IModule, IConfigurable, LeaseListen
 
     private void lowerShield(IAutopilot ap) {
         ControlLease l = shieldLease;
-        if (l != null && l.isActive()) {
+        LocalPlayer p = Minecraft.getInstance().player;
+        // never cut someone else's use of the key (the assistant eating a golden apple on the same lease)
+        boolean ours = p == null || !p.isUsingItem() || p.getUseItem().getItem() instanceof ShieldItem;
+        if (l != null && l.isActive() && ours) {
             Services.input().setKeyHeld(l, SimKey.USE, false);
             if (!Float.isNaN(turnYaw) && l.covers(ControlChannel.CAMERA) && l == ownInteract) {
                 Services.input().clearRotation(l);
@@ -592,9 +609,5 @@ public final class CombatReflexes implements IModule, IConfigurable, LeaseListen
     @Override
     public void onSettingChanged(String key) {
         onProfileLoaded(Services.modState().profile());
-    }
-
-    static float relativeYaw(double dx, double dz, float viewYaw) {
-        return ThreatMath.relativeYaw(dx, dz, viewYaw);
     }
 }
