@@ -1,0 +1,7 @@
+{
+  "module.utilitysuite.auto_torch": "Auto-Torch",
+  "module.utilitysuite.lava_plug": "Lava Plug",
+  "module.utilitysuite.vein_work": "Vein Work",
+  "module.utilitysuite.crop_work": "Crop Work",
+  "message.utilitysuite.lava_plug_no_blocks": "Lava opened, and no cobblestone or other filler block to plug it"
+}

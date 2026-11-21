@@ -1,7 +1,6 @@
 package com.utilitysuite.jobs.fieldwork;
 
 import com.utilitysuite.jobs.planner.PackedPos;
-import it.unimi.dsi.fastutil.longs.LongArrayFIFOQueue;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 
@@ -30,8 +29,10 @@ public final class VeinCollector {
     private static final int[] TREE_OFFSETS = buildTreeOffsets();
 
     private final LongOpenHashSet seen = new LongOpenHashSet(MAX_CAP * 4);
-    private final LongArrayFIFOQueue frontier = new LongArrayFIFOQueue(MAX_CAP);
-    private final LongArrayList found = new LongArrayList(MAX_CAP);
+    // FIFO as a list plus a head index: fastutil's FIFO queue shrinks (reallocates) on dequeue
+    private final LongArrayList frontier = new LongArrayList(MAX_CAP + 1);
+    private int head;
+    private final LongArrayList found = new LongArrayList(MAX_CAP + 1);
     private int[] offsets = ORE_OFFSETS;
     private int cap = DEFAULT_CAP;
     private boolean active;
@@ -40,11 +41,12 @@ public final class VeinCollector {
     public void begin(long start, boolean tree, int cap) {
         seen.clear();
         frontier.clear();
+        head = 0;
         found.clear();
         offsets = tree ? TREE_OFFSETS : ORE_OFFSETS;
         this.cap = Math.max(1, Math.min(MAX_CAP, cap));
         seen.add(start);
-        frontier.enqueue(start);
+        frontier.add(start);
         active = true;
     }
 
@@ -58,15 +60,15 @@ public final class VeinCollector {
             return true;
         }
         int used = 0;
-        while (!frontier.isEmpty() && found.size() < cap) {
-            long p = frontier.firstLong();
+        while (head < frontier.size() && found.size() < cap) {
+            long p = frontier.getLong(head);
             int x = PackedPos.x(p), y = PackedPos.y(p), z = PackedPos.z(p);
             int[] o = offsets;
             // one cell's neighbourhood per iteration; resume from the same cell when the budget runs out mid-way
             if (used + o.length / 3 > budget && used > 0) {
                 return false;
             }
-            frontier.dequeueLong();
+            head++;
             for (int i = 0; i < o.length; i += 3) {
                 int nx = x + o[i], ny = y + o[i + 1], nz = z + o[i + 2];
                 long n = PackedPos.pack(nx, ny, nz);
@@ -76,7 +78,7 @@ public final class VeinCollector {
                     if (found.size() >= cap) {
                         break;
                     }
-                    frontier.enqueue(n);
+                    frontier.add(n);
                 }
             }
         }
@@ -138,6 +140,7 @@ public final class VeinCollector {
     public void clear() {
         seen.clear();
         frontier.clear();
+        head = 0;
         found.clear();
         active = false;
     }
