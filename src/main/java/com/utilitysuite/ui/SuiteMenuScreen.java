@@ -14,6 +14,7 @@ import com.utilitysuite.core.input.KeybindManager;
 import com.utilitysuite.ui.kit.CollapsibleSection;
 import com.utilitysuite.ui.kit.GoalHeroCard;
 import com.utilitysuite.ui.kit.ItemIcons;
+import com.utilitysuite.ui.kit.MenuScale;
 import com.utilitysuite.ui.kit.PillButton;
 import com.utilitysuite.ui.kit.StyledTextField;
 import com.utilitysuite.ui.kit.ToggleSwitch;
@@ -279,6 +280,14 @@ public final class SuiteMenuScreen extends Screen {
         dragNode = null;
         hoverNode = null;
 
+        // GUI scale 3-4: lay out against the effective-scale-2 virtual size (render scales the pose to match)
+        if (minecraft != null && minecraft.getWindow() != null) {
+            double gs = minecraft.getWindow().getGuiScale();
+            if (MenuScale.applies(gs)) {
+                width = MenuScale.virtualSize(minecraft.getWindow().getWidth(), gs);
+                height = MenuScale.virtualSize(minecraft.getWindow().getHeight(), gs);
+            }
+        }
         ww = Math.min(UiTheme.WINDOW_W, (int) (width * 0.9f));
         wh = Math.min(UiTheme.WINDOW_H, (int) (height * 0.88f));
         wx = (width - ww) / 2;
@@ -319,8 +328,7 @@ public final class SuiteMenuScreen extends Screen {
 
         // right: Stop-All / Resume pill, Clean-Screen switch
         boolean stopped = automationStopped();
-        boolean narrow = ww < 560;
-        String stopLabel = stopped ? "Resume" : narrow ? "Stop" : "Stop all";
+        String stopLabel = stopped ? "Resume" : "Stop all";
         int stopW = f.width(stopLabel) + 20;
         PillButton stop = new PillButton(f, stopLabel, stopW, stopped ? PillButton.Style.SUCCESS
                 : PillButton.Style.DANGER, b -> toggleStopAll()).pill(true);
@@ -341,8 +349,8 @@ public final class SuiteMenuScreen extends Screen {
         clean.x = stop.x - 12 - ToggleSwitch.W;
         clean.y = wy + (UiTheme.TOP_BAR_H - ToggleSwitch.H) / 2;
         chrome.add(clean);
-        cleanLabel = narrow ? "" : "Clean screen"; // narrow: the switch's tooltip names it
-        cleanLabelX = narrow ? clean.x : clean.x - 6 - f.width(cleanLabel);
+        cleanLabel = "CLEAN"; // short caption so the switch is never unlabeled, even in a narrow window
+        cleanLabelX = clean.x - 6 - f.width(cleanLabel);
 
         // center: goal bar, centered over the content canvas, clamped between the two groups
         int regionL = leftEnd + 14;
@@ -388,7 +396,7 @@ public final class SuiteMenuScreen extends Screen {
         int tabH = Math.min(TAB_H, tabPitch - 2);
         for (int i = 0; i < tabs.length; i++) {
             Tab t = tabs[i];
-            SidebarTab st = new SidebarTab(f, t, t == tab, sidebarW - 16, tabH, enabledCount(t));
+            SidebarTab st = new SidebarTab(f, t, t == tab && !autopilotPage, sidebarW - 16, tabH, enabledCount(t));
             st.x = wx + 8;
             st.y = viewY + 8 + i * tabPitch;
             chrome.add(st);
@@ -601,8 +609,24 @@ public final class SuiteMenuScreen extends Screen {
 
     /** The autopilot bar's {x, y, w, h} in GUI pixels (playtest harness clicks it like a user would). */
     public int[] autopilotBarRect() {
-        return autopilotBar == null ? new int[4]
-                : new int[]{autopilotBar.x, autopilotBar.y, autopilotBar.w, autopilotBar.h};
+        if (autopilotBar == null) {
+            return new int[4];
+        }
+        double gs = guiScale();
+        return new int[]{(int) Math.round(MenuScale.toGui(autopilotBar.x, gs)),
+                (int) Math.round(MenuScale.toGui(autopilotBar.y, gs)),
+                (int) Math.round(MenuScale.toGui(autopilotBar.w, gs)),
+                (int) Math.round(MenuScale.toGui(autopilotBar.h, gs))};
+    }
+
+    /** The window's GUI scale (1 before the screen is attached). */
+    private double guiScale() {
+        return minecraft == null || minecraft.getWindow() == null ? 1.0 : minecraft.getWindow().getGuiScale();
+    }
+
+    /** GUI-px mouse coordinate to the menu's virtual layout px (identity below GUI scale 3). */
+    private double toVirtual(double guiCoord) {
+        return MenuScale.toVirtual(guiCoord, guiScale());
     }
 
     /** True while the autopilot's settings page fills the content canvas (preview / playtest harness). */
@@ -616,7 +640,12 @@ public final class SuiteMenuScreen extends Screen {
         IModule selected = selectedModule();
         try {
             if (autopilotPage && CoreBootstrap.autopilot() != null) {
-                SettingsRenderer.module(panel, CoreBootstrap.autopilot());
+                // back control; the bar above already is the on/off switch, so the card has none of its own
+                panel.button("< Back", "Close the autopilot page and return to " + tab.name().charAt(0)
+                        + tab.name().substring(1).toLowerCase(Locale.ROOT), 0, font.width("< Back") + 20,
+                        b -> toggleAutopilotPage());
+                panel.nextRow();
+                SettingsRenderer.module(panel, CoreBootstrap.autopilot(), false);
                 panel.paragraph("The autopilot is a layer over the modules: it runs the reflexes you allow here even when"
                         + " their own module is off. Every module stays in the categories on the left, including the"
                         + " ones the autopilot never uses.", Panel.DIM);
@@ -873,6 +902,8 @@ public final class SuiteMenuScreen extends Screen {
 
     @Override
     public boolean mouseClicked(double mx, double my, int button) {
+        mx = toVirtual(mx);
+        my = toVirtual(my);
         for (int i = chrome.size() - 1; i >= 0; i--) {
             UiNode n = chrome.get(i);
             if (chromeVisible(n) && n.contains(mx, my, n.x, n.y) && click(n, mx, my, button, n.x, n.y, false)) {
@@ -929,6 +960,10 @@ public final class SuiteMenuScreen extends Screen {
 
     @Override
     public boolean mouseDragged(double mx, double my, int button, double dx, double dy) {
+        mx = toVirtual(mx);
+        my = toVirtual(my);
+        dx = toVirtual(dx);
+        dy = toVirtual(dy);
         if (scrollDragging) {
             dragScrollbar(my);
             return true;
@@ -944,6 +979,8 @@ public final class SuiteMenuScreen extends Screen {
 
     @Override
     public boolean mouseReleased(double mx, double my, int button) {
+        mx = toVirtual(mx);
+        my = toVirtual(my);
         scrollDragging = false;
         if (dragNode != null) {
             dragNode.onRelease();
@@ -955,6 +992,8 @@ public final class SuiteMenuScreen extends Screen {
 
     @Override
     public boolean mouseScrolled(double mx, double my, double scrollX, double scrollY) {
+        mx = toVirtual(mx);
+        my = toVirtual(my);
         if (inList(mx, my)) {
             listScroll = Math.max(0, Math.min(maxListScroll(), listScroll - (int) Math.round(scrollY * 20)));
             return true;
@@ -1089,6 +1128,26 @@ public final class SuiteMenuScreen extends Screen {
 
     @Override
     public void render(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
+        double gs = guiScale();
+        float f = (float) MenuScale.factor(gs);
+        if (f == 1f) {
+            renderScaled(g, mouseX, mouseY, partialTick);
+            return;
+        }
+        // effective scale 2 at GUI scale 3-4: virtual layout px -> GUI px by 2 / guiScale
+        g.pose().pushPose();
+        g.pose().scale(f, f, 1f);
+        MenuScale.setActive(f);
+        try {
+            renderScaled(g, (int) MenuScale.toVirtual(mouseX, gs), (int) MenuScale.toVirtual(mouseY, gs),
+                    partialTick);
+        } finally {
+            MenuScale.reset();
+            g.pose().popPose();
+        }
+    }
+
+    private void renderScaled(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
         long now = Util.getMillis();
         float open = UiRenderUtils.easeOut((now - openedAt) / (float) UiTheme.OPEN_MS);
         boolean animating = open < 1f;
@@ -1292,7 +1351,7 @@ public final class SuiteMenuScreen extends Screen {
         UiRenderUtils.panel(g, x, y, w, 18, 9, UiTheme.fade(0xF5181B22, alpha), UiTheme.fade(0xFF30384A, alpha));
         UiRenderUtils.dot(g, x + 8, y + 6, 6, UiTheme.fade(UiTheme.ACCENT, alpha));
         if (alpha > 0.1f) {
-            g.enableScissor(x + 18, y, x + 18 + tw, y + 18);
+            UiRenderUtils.scissor(g, x + 18, y, x + 18 + tw, y + 18);
             UiRenderUtils.text(g, font, s, x + 18, y + 5, UiTheme.fade(UiTheme.TEXT_SECONDARY, alpha));
             g.disableScissor();
         }

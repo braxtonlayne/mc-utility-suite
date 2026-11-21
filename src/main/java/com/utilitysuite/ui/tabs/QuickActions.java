@@ -48,6 +48,21 @@ final class QuickActions {
         p.nextRow();
     }
 
+    /** "Label" with a switch on the right for a state that toggles (e.g. Water Walk); rebuilds after a change. */
+    static void switchRow(Panel p, String label, String tooltip, boolean active, Runnable toggle) {
+        p.toggle(label, active, 0, p.width(), v -> {
+            if (v != active) {
+                try {
+                    toggle.run();
+                } catch (RuntimeException e) {
+                    p.toast("Not available right now");
+                }
+            }
+            p.rebuild();
+        }).tooltip(tooltip == null ? "" : tooltip);
+        p.nextRow();
+    }
+
     /** "Label" with a single action pill on the right. */
     static void actionRow(Panel p, String label, String tooltip, String buttonLabel, PillButton.Style style,
                           Runnable action) {

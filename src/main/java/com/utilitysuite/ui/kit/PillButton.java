@@ -8,7 +8,7 @@ import java.util.function.Consumer;
 /** Flat button: primary (accent), secondary, ghost, danger (solid / soft) and success, optionally fully rounded. */
 public final class PillButton extends UiNode {
 
-    public enum Style { PRIMARY, SECONDARY, GHOST, DANGER, DANGER_SOFT, SUCCESS }
+    public enum Style { PRIMARY, SECONDARY, GHOST, OUTLINE, DANGER, DANGER_SOFT, SUCCESS }
 
     public static final int H = 16;
 
@@ -82,6 +82,11 @@ public final class PillButton extends UiNode {
             case PRIMARY -> {
                 bg = hover ? UiTheme.ACCENT_HOVER : UiTheme.ACCENT;
                 fg = UiTheme.ON_ACCENT;
+            }
+            case OUTLINE -> {
+                bg = hover ? UiTheme.CONTROL : 0;
+                border = UiTheme.ACCENT_BORDER;
+                fg = hover ? UiTheme.TEXT : UiTheme.ACCENT;
             }
             case GHOST -> {
                 bg = hover ? UiTheme.CONTROL : 0;

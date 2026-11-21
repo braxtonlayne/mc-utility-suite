@@ -10,6 +10,7 @@ import net.minecraft.Util;
 import net.minecraft.client.Minecraft;
 import net.minecraft.resources.ResourceLocation;
 import net.neoforged.bus.api.IEventBus;
+import net.neoforged.neoforge.client.event.InputEvent;
 import net.neoforged.neoforge.client.event.RegisterGuiLayersEvent;
 
 /**
@@ -20,6 +21,7 @@ import net.neoforged.neoforge.client.event.RegisterGuiLayersEvent;
 public final class UiBootstrap {
 
     private static SuiteHud hud;
+    private static TabGui tabGui;
 
     private UiBootstrap() {
     }
@@ -28,6 +30,9 @@ public final class UiBootstrap {
         hud = new SuiteHud();
         Services.modules().register(hud);
         hud.subscribe();
+        tabGui = new TabGui(); // off by default; reads arrow keys only while enabled
+        Services.modules().register(tabGui);
+        net.neoforged.neoforge.common.NeoForge.EVENT_BUS.addListener(InputEvent.Key.class, tabGui::onKey);
         KeybindManager.setOpenMenuHandler(UiBootstrap::openMenu);
         modBus.addListener(UiBootstrap::onRegisterLayers);
         TravelTab.registerPanels();
@@ -45,6 +50,7 @@ public final class UiBootstrap {
                 hud.infoStrip());
         event.registerAboveAll(ResourceLocation.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID, "module_list"),
                 hud.moduleList());
+        event.registerAboveAll(ResourceLocation.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID, "tab_gui"), tabGui);
     }
 
     /** Opens the menu (key handler; also usable from other code on the client thread). */

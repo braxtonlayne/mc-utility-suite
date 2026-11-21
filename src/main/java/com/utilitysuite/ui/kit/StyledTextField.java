@@ -76,7 +76,7 @@ public final class StyledTextField extends UiNode {
         if (prompt) {
             UiRenderUtils.chevron(g, sx + 8, sy + (h - 5) / 2, 0, f ? UiTheme.ACCENT : UiTheme.TEXT_MUTED);
         }
-        g.enableScissor(sx + 1, sy + 1, Math.min(sx + w - 1, box.getX() + box.getWidth() + 1), sy + h - 1); // long hints never spill out of the frame
+        UiRenderUtils.scissor(g, sx + 1, sy + 1, Math.min(sx + w - 1, box.getX() + box.getWidth() + 1), sy + h - 1); // long hints never spill out of the frame
         box.render(g, mouseX, mouseY, 0f);
         g.disableScissor();
     }

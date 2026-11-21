@@ -29,7 +29,8 @@ public final class CardNode extends UiNode {
         this.titleW = font.width(this.title);
         if (subtitle != null && !subtitle.isEmpty()) {
             int left = room - titleW - 8;
-            this.subtitle = left > 30 ? UiRenderUtils.ellipsize(font, subtitle, left) : "";
+            // a subtitle is shown whole or not at all: a cut-off description reads worse than none
+            this.subtitle = font.width(subtitle) <= left ? subtitle : "";
         } else {
             this.subtitle = "";
         }

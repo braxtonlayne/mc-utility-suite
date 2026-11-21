@@ -137,7 +137,7 @@ public final class JobsTab {
                 p.text("+ " + (steps.size() - n) + " more", Panel.GRAY);
             }
             if (steps.isEmpty()) {
-                p.text("No plan steps.", Panel.GRAY);
+                p.paragraph("No plan steps.", Panel.GRAY);
             }
         }
     }
@@ -167,7 +167,7 @@ public final class JobsTab {
             p.text("+ " + (pv.steps().size() - n) + " more steps", Panel.GRAY);
         }
         if (pv.steps().isEmpty()) {
-            p.text("No steps needed.", Panel.GRAY);
+            p.paragraph("No steps needed.", Panel.GRAY);
         }
         if (!pv.missingMaterials().isEmpty() || !pv.warnings().isEmpty()) {
             p.gap(4);
