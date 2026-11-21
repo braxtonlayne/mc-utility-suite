@@ -112,7 +112,9 @@ public final class JobsBootstrap {
             return;
         }
         MapRecipeSource recipes = MinecraftRecipeSource.snapshot(manager, level.registryAccess());
-        planner = new DependencyPlanner(recipes, HarvestTable.vanilla(), FuelTable.vanilla());
+        DependencyPlanner fresh = new DependencyPlanner(recipes, HarvestTable.vanilla(), FuelTable.vanilla());
+        fresh.setEfficiencyTools(planner.efficiencyTools()); // keep the user's settings across recipe reloads
+        planner = fresh;
     }
 
     private static ItemNameMatcher matcher() {

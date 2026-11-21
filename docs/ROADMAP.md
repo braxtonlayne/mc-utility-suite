@@ -245,8 +245,21 @@ Next:
 - [x] Overlay: predicted landing (green safe, yellow fall damage, red nothing survivable) and the blocks a sprint
       jump from here can land on (brighter: higher than you). Only while moving; Clean-Screen hides it.
 - [ ] Yaw correction for air steering by legit level (keys only at Legit, small visible yaw at Balanced, silent yaw
-      at Relaxed), and a fall-survival mode (water bucket clutch when the landing is lethal).
-- [ ] Escape-path overlay: multi-jump search toward safety or away from a pursuer.
+      at Relaxed). (Fall survival: see the water bucket clutch below.)
+- [x] Escape-path overlay (`EscapePlanner`): Dijkstra over walk and sprint-jump moves within 12 blocks, picks the
+      route leaving the most room from nearby hostiles / players (jumps count extra against mobs). Orange steps,
+      magenta jumps; only while a threat is near.
+- [x] Movement benchmark (`ParkourCourse`, 19 segments, easiest first; sim test + in-game scenario 8b): 19/19.
+- [x] SafeWalk yields to valid jumps; with SafeWalk on, a jump that costs health is invalid unless you jump.
+- [x] Parkour blocks (`BlockAssistPlanner` + `ParkourBlocks`, default on): mid-jump, one block from the hotbar when it
+      keeps the run going (a 2-high wall: a block to land on; a gap one too long: the far edge extended). Turn time
+      at the no-snap cap is planned in; keys are re-expressed while the head turns; head returns to the run.
+- [x] Look style (NATURAL / FREE on the legit level): automated looks stay along the way you move by default.
+- [x] Water bucket clutch (`WaterClutchPlanner` + `WaterClutch`, default on): falling toward a lethal landing or one
+      costing >= the set damage (default 6), pour from the hotbar on the latest tick that reaches the landing block (or
+      a wall cell the hitbox passes, head cell included), scoop the water back up, turn back. Not in the Nether.
+- [ ] More block tricks: pillar-up (jump + place under), block clutch at the last tick (no bucket), neo around a
+      wall corner, ladder/vine placement.
 - [ ] Multi-jump planner: chain JumpSearch over landing cells (A* over jump edges) for parkour routes and escapes;
       the combat runner/hunter roles reuse it.
 - [ ] Physics extras: slabs/stairs step-up, ice/slime/soul sand, ladders and vines, water, Speed/Jump Boost from the

@@ -76,6 +76,8 @@ public final class JumpSearch {
      */
     public boolean shouldEdgeJump(MovementPhysics now, float yawDeg, boolean sprint, float health,
                                   MovementPhysics.Voxels w) {
+        lastWalk = Double.NaN;
+        lastJump = Double.NaN;
         if (!now.onGround) {
             return false;
         }

@@ -29,6 +29,10 @@ public final class VanillaRecipes {
         r.add(crafting("diamond_pickaxe", 1, true, of(3, "diamond"), of(2, "stick")));
         r.add(crafting("stone_sword", 1, true, of(2, STONE_TOOL), of(1, "stick")));
         r.add(crafting("wooden_sword", 1, true, of(2, PLANKS), of(1, "stick")));
+        r.add(crafting("wooden_shovel", 1, true, of(1, PLANKS), of(2, "stick")));
+        r.add(crafting("stone_shovel", 1, true, of(1, STONE_TOOL), of(2, "stick")));
+        r.add(crafting("wooden_axe", 1, true, of(3, PLANKS), of(2, "stick")));
+        r.add(crafting("stone_axe", 1, true, of(3, STONE_TOOL), of(2, "stick")));
         r.add(crafting("furnace", 1, true, of(8, STONE_TOOL)));
         r.add(crafting("chest", 1, true, of(8, PLANKS)));
         r.add(crafting("hopper", 1, true, of(5, "iron_ingot"), of(1, "chest")));

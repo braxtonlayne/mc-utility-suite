@@ -7,6 +7,12 @@ package com.utilitysuite.core.api;
  */
 public interface IInputSmoother {
 
+    /**
+     * HARD RULE, no head snapping: no automated look change (camera or server-visible) turns faster than this,
+     * whatever speed a {@code RotationTarget} asks for. Modules plan time-critical turns with it.
+     */
+    double MAX_TURN_DEG_PER_SEC = 450.0;
+
     // ---- camera -------------------------------------------------------------------------------------------------
 
     /** Starts (or retargets) a curved, eased rotation toward the target. Needs CAMERA. */

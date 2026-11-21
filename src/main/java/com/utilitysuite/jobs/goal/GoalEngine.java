@@ -222,6 +222,9 @@ public final class GoalEngine implements IGoalEngine, IModule, IConfigurable {
         s.candidateRadius = profile.getInt(ID, "candidate_radius", 256);
         s.batchErrands = profile.getBool(ID, "batch_errands", true);
         s.depositAfterGather = profile.getBool(ID, "deposit_after_gather", false);
+        planner.get().setEfficiencyTools(new com.utilitysuite.jobs.planner.EfficiencyTools.Settings(
+                profile.getBool(ID, "efficiency_tools", true), profile.getInt(ID, "shovel_after", 24),
+                profile.getInt(ID, "axe_after", 12)));
         try {
             defaultCost = CostProfile.valueOf(profile.getString(ID, "default_cost", CostProfile.FASTEST.name()));
         } catch (IllegalArgumentException e) {
@@ -245,6 +248,13 @@ public final class GoalEngine implements IGoalEngine, IModule, IConfigurable {
                         "Fetch and mine for queued jobs on the same trip"),
                 SettingSpec.bool("deposit_after_gather", "Deposit after gathering", false, "",
                         "Put gathered items into a known container near the start point"),
+                SettingSpec.bool("efficiency_tools", "Right tool first (pro habit)", true, "Tools",
+                        "Before digging a lot of dirt, sand or gravel, get a shovel; before felling a lot of logs, an axe"
+                                + " (yours, from storage, or crafted). Not on the Cheapest profile."),
+                SettingSpec.integer("shovel_after", "Shovel from (blocks)", 24, 4, 512, "Tools",
+                        "Shovel material in one job that makes a shovel worth getting.").asAdvanced(),
+                SettingSpec.integer("axe_after", "Axe from (logs)", 12, 2, 512, "Tools",
+                        "Logs in one job that make an axe worth getting.").asAdvanced(),
                 SettingSpec.integer("stuck_seconds", "Stuck timeout (s)", 15, 5, 120, "Replanning",
                         "Seconds without progress before trying an alternative").asAdvanced(),
                 SettingSpec.integer("max_replans", "Replans per step", 3, 1, 10, "Replanning",

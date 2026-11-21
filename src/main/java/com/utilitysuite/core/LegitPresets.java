@@ -55,7 +55,8 @@ public final class LegitPresets {
             knob(BRIDGE, "hide_sprint", true, true, false),
             knob(COMBAT, "aim_speed", 0.75, 1.0, 2.0),
             knob(COMBAT, "los_timeout_ticks", 60, 100, 200),
-            knob(COMBAT, "engage_requires_los", true, true, false));
+            knob(COMBAT, "engage_requires_los", true, true, false),
+            knob("movement_assist", "look_style", "NATURAL", "NATURAL", "FREE"));
 
     private LegitPresets() {
     }

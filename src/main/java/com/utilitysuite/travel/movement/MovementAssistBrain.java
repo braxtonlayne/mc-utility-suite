@@ -29,6 +29,8 @@ public final class MovementAssistBrain {
      * edge). The user pressing jump themselves always goes through: that is their call.
      */
     public boolean safeOnly;
+    /** Set by decide: at an edge where neither walking off nor jumping lands (a block might still save a jump). */
+    private boolean edgeNoLanding;
 
     private final JumpSearch search = new JumpSearch();
     private final MovementPhysics a = new MovementPhysics();
@@ -54,6 +56,7 @@ public final class MovementAssistBrain {
         forward = KEEP;
         strafe = KEEP;
         corrected = false;
+        edgeNoLanding = false;
         if (now.onGround) {
             if (edgeJump && !userJump && userForward > 0 && search.shouldEdgeJump(now, yaw, sprinting, health, w)
                     && (!safeOnly || search.landDamage() <= 0f)) {
@@ -61,6 +64,8 @@ public final class MovementAssistBrain {
             } else if (sprintHop && !userJump && sprinting && userForward > 0 && hopGains(now, yaw, w)) {
                 jump = true;
             }
+            edgeNoLanding = !jump && edgeJump && !userJump && userForward > 0
+                    && search.lastWalkScore() <= JumpSearch.NO_LANDING && search.lastJumpScore() <= JumpSearch.NO_LANDING;
             // predicted landing of a jump from here (the overlay's "if you jump now")
             double sc = search.evaluate(now, Math.max(userForward, 0), userStrafe, yaw, sprinting, true, health, w);
             capture(sc);
@@ -176,6 +181,11 @@ public final class MovementAssistBrain {
     }
 
     /** The shared search, for callers that want more (reach maps, automated drivers). */
+    /** At an edge where neither walking off nor jumping lands: only a placed block could save the run. */
+    public boolean edgeNoLanding() {
+        return edgeNoLanding;
+    }
+
     public JumpSearch search() {
         return search;
     }

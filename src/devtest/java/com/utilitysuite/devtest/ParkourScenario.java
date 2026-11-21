@@ -14,6 +14,8 @@ import com.utilitysuite.travel.movement.MovementAssist;
 import com.utilitysuite.travel.movement.ParkourCourse;
 import com.utilitysuite.travel.movement.ParkourRun;
 import com.utilitysuite.travel.terrain.TerrainAssist;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.item.Items;
 
 /**
  * Scenario 8b: the movement benchmark in the real game, and the escape path.
@@ -120,6 +122,9 @@ final class ParkourScenario {
         Shots.add(s, "parkour-finish");
         s.cmd(() -> Arena.tp(0.5, 0.5, 0f));
         s.waitTicks(10);
+        blockLane(s, lease, "wall", 12, true);
+        blockLane(s, lease, "gap", 18, false);
+        waterClutch(s, 26);
         // --- escape path from a zombie ---
         s.cmd(() -> "summon minecraft:zombie " + (Arena.cx + 4.5) + " " + (Arena.FLOOR + 1) + " " + (Arena.cz + 0.5)
                 + " {NoAI:1b,PersistenceRequired:1b}");
@@ -153,6 +158,125 @@ final class ParkourScenario {
             }
         });
         return s;
+    }
+
+    /**
+     * Parkour blocks. {@code wall}: a 2-high wall across the lane at z+9; the runner sprints at it and holds jump
+     * from two blocks out (a player trying to get over). Otherwise a 4-air gap (z+11..z+14, one block more than a
+     * sprint jump clears) and the runner holds only forward + sprint. Either way the run must end past the obstacle
+     * with a block placed.
+     */
+    private static void blockLane(Scenario s, ControlLease[] lease, String name, int dx, boolean wall) {
+        int[] before = new int[1];
+        double[] minY = {Double.MAX_VALUE};
+        boolean[] shot = new boolean[1];
+        s.cmd(() -> fillWorld(dx - 3, 0, -1, dx + 3, 4, 27, "air"));
+        if (wall) {
+            s.cmd(() -> fillWorld(dx - 1, 0, 0, dx + 1, 0, 22, "minecraft:smooth_stone"));
+            s.cmd(() -> fillWorld(dx - 2, 1, 9, dx + 2, 2, 9, "minecraft:stone_bricks"));
+        } else {
+            s.cmd(() -> fillWorld(dx - 1, 0, 0, dx + 1, 0, 10, "minecraft:smooth_stone"));
+            s.cmd(() -> fillWorld(dx - 1, 0, 15, dx + 1, 0, 25, "minecraft:smooth_stone"));
+        }
+        s.cmd("clear @s");
+        s.cmd("give @s minecraft:cobblestone 32");
+        s.cmd(() -> "tp @s " + (Arena.cx + OX + dx + 0.5) + " " + (Arena.FLOOR + 1) + " " + (Arena.cz + OZ + 0.5)
+                + " 0 10");
+        s.waitTicks(15);
+        s.run(name + ": runner", () -> {
+            H.setting(MovementAssist.ID, "parkour_blocks", true);
+            before[0] = TravelBootstrap.movement().blocksPlaced();
+            lease[0] = Services.arbiter().request(LeaseRequest.of("parkour_runner", ControlPriority.TRAVEL, null,
+                    ControlChannel.MOVEMENT)).orElseThrow();
+            Services.input().setKeyHeld(lease[0], SimKey.FORWARD, true);
+            Services.input().setKeyHeld(lease[0], SimKey.SPRINT, true);
+        });
+        double goalZ = wall ? 10.5 : 15.5;
+        s.waitUpTo(name + ": run", 20 * 10, () -> {
+            var p = H.p();
+            double z = p.getZ() - Arena.cz - OZ;
+            minY[0] = Math.min(minY[0], p.getY());
+            if (wall && z >= 7.0) {
+                Services.input().setKeyHeld(lease[0], SimKey.JUMP, true);
+            }
+            if (!shot[0] && TravelBootstrap.movement().blocksPlaced() > before[0]) {
+                shot[0] = true;
+                Shots.take(s, "parkour-blocks-" + name);
+            }
+            return (p.onGround() && z > goalZ) || p.getY() < Arena.FLOOR - 3;
+        });
+        s.run(name + ": result", () -> {
+            Services.input().setKeyHeld(lease[0], SimKey.JUMP, false);
+            Services.input().setKeyHeld(lease[0], SimKey.FORWARD, false);
+            Services.input().setKeyHeld(lease[0], SimKey.SPRINT, false);
+            lease[0].close();
+            var p = H.p();
+            MovementAssist ma = TravelBootstrap.movement();
+            double z = p.getZ() - Arena.cz - OZ;
+            s.check("parkour blocks: " + (wall ? "jumping at a 2-high wall, a block to land on, over it"
+                            : "a gap one block too long, a block extends the far side, across"),
+                    z > goalZ && p.getY() >= Arena.FLOOR + 0.99 && ma.blocksPlaced() > before[0],
+                    Harness.fmt("z=+%.2f (goal +%.1f) y=%.2f min y %.2f; blocks placed %d, plans %d, aborts %d", z,
+                            goalZ, p.getY(), minY[0], ma.blocksPlaced() - before[0], ma.blockPlans(),
+                            ma.blockAborts()));
+        });
+    }
+
+    /**
+     * Water clutch: fall damage on, a water bucket in the hotbar, dropped from 14 blocks (11 damage, enough to
+     * clutch, not enough to kill if it fails). Must land unhurt, with the water scooped back into the bucket.
+     */
+    private static void waterClutch(Scenario s, int dx) {
+        int drop = 14;
+        float[] hp = new float[1];
+        int[] before = new int[1];
+        s.cmd(() -> fillWorld(dx - 3, 0, -3, dx + 3, drop + 4, 3, "air"));
+        s.cmd(() -> fillWorld(dx - 2, 0, -2, dx + 2, 0, 2, "minecraft:smooth_stone"));
+        s.cmd("clear @s");
+        s.cmd("give @s minecraft:water_bucket");
+        s.cmd("effect give @s minecraft:instant_health 1 10 true");
+        s.cmd("gamerule fallDamage true");
+        s.waitTicks(10);
+        s.run("clutch: drop", () -> {
+            H.setting(MovementAssist.ID, "water_clutch", true);
+            before[0] = TravelBootstrap.movement().waterClutches();
+            hp[0] = H.p().getHealth();
+        });
+        s.cmd(() -> "tp @s " + (Arena.cx + OX + dx + 0.5) + " " + (Arena.FLOOR + 1 + drop) + " "
+                + (Arena.cz + OZ + 0.5) + " 0 0");
+        boolean[] shot = new boolean[1];
+        s.waitUpTo("clutch: fall", 20 * 6, () -> {
+            if (!shot[0] && TravelBootstrap.movement().waterClutches() > before[0]) {
+                shot[0] = true;
+                Shots.take(s, "water-clutch");
+            }
+            return H.p().onGround() && !H.p().isInWater();
+        });
+        s.waitTicks(30); // scoop + turn back
+        s.run("clutch: result", () -> {
+            var p = H.p();
+            MovementAssist ma = TravelBootstrap.movement();
+            int water = 0;
+            BlockPos.MutableBlockPos m = new BlockPos.MutableBlockPos();
+            for (int x = -2; x <= 2; x++) {
+                for (int z = -2; z <= 2; z++) {
+                    m.set(Arena.cx + OX + dx + x, Arena.FLOOR + 1, Arena.cz + OZ + z);
+                    if (p.level().getFluidState(m).isSource()) {
+                        water++;
+                    }
+                }
+            }
+            boolean bucket = false;
+            for (int i = 0; i < 9; i++) {
+                bucket |= p.getInventory().getItem(i).is(Items.WATER_BUCKET);
+            }
+            s.check("water clutch: a " + drop + "-block fall lands in poured water, unhurt, water picked back up",
+                    ma.waterClutches() > before[0] && p.getHealth() >= hp[0] && bucket && water == 0,
+                    Harness.fmt("clutches %d, pickups %d, health %.1f -> %.1f, water bucket back %s, water left %d,"
+                                    + " pitch now %.1f", ma.waterClutches() - before[0], ma.clutchPickups(), hp[0],
+                            p.getHealth(), bucket, water, p.getXRot()));
+            Harness.command("gamerule fallDamage false");
+        });
     }
 
     private static String fillWorld(int x0, int y0, int z0, int x1, int y1, int z1, String block) {

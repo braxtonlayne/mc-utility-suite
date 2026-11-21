@@ -36,6 +36,9 @@ import java.util.List;
  */
 public final class MovementAssist implements IModule, IConfigurable {
 
+    /** NATURAL: automated looks stay along the way you move. FREE: look wherever the job needs (less legit). */
+    public enum LookStyle { NATURAL, FREE }
+
     public static final String ID = "movement_assist";
     static final String K_EDGE = "edge_jump";
     static final String K_STEER = "air_steer";
@@ -43,8 +46,13 @@ public final class MovementAssist implements IModule, IConfigurable {
     static final String K_OVERLAY = "overlay";
     static final String K_REACH = "reach_overlay";
     static final String K_AUTOMATION = "assist_automation";
+    static final String K_BLOCKS = "parkour_blocks";
+    static final String K_LOOK = "look_style";
     static final String K_ESCAPE = "escape_path";
     static final String K_ESCAPE_PLAYERS = "escape_players";
+    static final String K_CLUTCH = "water_clutch";
+    static final String K_CLUTCH_MIN = "clutch_min_damage";
+    static final String K_CLUTCH_PICKUP = "clutch_pickup";
     static final int ESCAPE_EVERY_TICKS = 10;
     static final double MOB_RANGE = 16.0;
     static final double PLAYER_RANGE = 32.0;
@@ -57,6 +65,14 @@ public final class MovementAssist implements IModule, IConfigurable {
     private final MovementPhysics now = new MovementPhysics();
     private final LevelVoxels voxels = new LevelVoxels();
     private final EscapePlanner escape = new EscapePlanner();
+    private final ParkourBlocks blocks = new ParkourBlocks();
+    private boolean blocksOn;
+    private final WaterClutch clutch = new WaterClutch();
+    private boolean clutchOn;
+    private final MovementPhysics hop = new MovementPhysics();
+    private boolean wasOnGround = true;
+    /** Airborne because of a jump (left the ground going up), not a fall or knockback. */
+    private boolean jumpAir;
     private final java.util.List<net.minecraft.world.entity.LivingEntity> threatBuffer = new java.util.ArrayList<>();
     private static final net.minecraft.world.level.entity.EntityTypeTest<net.minecraft.world.entity.Entity,
             net.minecraft.world.entity.LivingEntity> LIVING =
@@ -108,30 +124,38 @@ public final class MovementAssist implements IModule, IConfigurable {
             escapeCount = 0;
             return;
         }
+        Input in = event.getInput();
+        fillNow(mc, p);
+        if (clutchOn) {
+            // before the skip checks: it runs while sneaking, in water (scooping it back up) and under automation
+            clutch.tick(mc, p, now, sign(in.forwardImpulse), sign(in.leftImpulse), voxels);
+            clutch.compensate(in, p.getYRot());
+            if (clutch.active()) {
+                blocks.release();
+            }
+        }
         String skipped = skip(p);
         if (skipped != null) {
+            blocks.release();
             status = skipped;
             showLanding = false;
             reachCount = 0;
             escapeCount = 0;
             return;
         }
-        Input in = event.getInput();
+        if (p.onGround()) {
+            jumpAir = false;
+        } else if (wasOnGround && p.getDeltaMovement().y > 0.2) {
+            jumpAir = true;
+        }
+        wasOnGround = p.onGround();
         if (in.shiftKeyDown) {
             status = "sneaking";
+            blocks.release();
             showLanding = false;
             return;
         }
-        Vec3 v = p.getDeltaMovement();
         boolean sprinting = p.isSprinting();
-        double attr = p.getAttributeValue(Attributes.MOVEMENT_SPEED);
-        now.set(p.getX(), p.getY(), p.getZ(), v.x, v.y, v.z, p.onGround());
-        now.speed = sprinting ? attr / 1.3 : attr; // the attribute already carries the sprint modifier
-        now.jumpBoost = p.getJumpBoostPower();
-        now.fallDistance = p.fallDistance;
-        BlockPos below = p.getBlockPosBelowThatAffectsMyMovement();
-        now.slipperiness = mc.level.getBlockState(below).getBlock().getFriction();
-        voxels.begin(mc.level);
         int userF = sign(in.forwardImpulse);
         int userS = sign(in.leftImpulse);
         float health = p.getHealth() + p.getAbsorptionAmount();
@@ -160,13 +184,28 @@ public final class MovementAssist implements IModule, IConfigurable {
             in.left = brain.strafe() > 0;
             in.right = brain.strafe() < 0;
         }
+        if (blocksOn && brain.edgeNoLanding() && !blocks.active() && now.onGround
+                && ParkourBlocks.blockSlot(p.getInventory(), mc.level) >= 0) {
+            // an edge nothing clears: jump anyway when the jump plus one block keeps the run going
+            hop.copyFrom(now).tick(userF, userS, p.getYRot(), sprinting, true, voxels);
+            if (!hop.onGround && blocks.planner.plan(hop, p.getYRot(), sprinting, userF, userS, health,
+                    p.getYRot(), p.getXRot(), ParkourBlocks.PLAN_DEG_PER_TICK, 1, voxels)) {
+                in.jumping = true;
+                jumpingThisTick = true;
+                edgeJumps++;
+            }
+        }
+        if (blocksOn && !clutch.active()) {
+            blocks.tick(mc, p, now, sprinting, userF, userS, health, jumpAir, voxels);
+            blocks.compensate(in, p.getYRot());
+        }
         if (brain.corrected() && !wasCorrecting) {
             corrections++;
         }
         wasCorrecting = brain.corrected();
 
         // overlay state
-        moving = !now.onGround || v.x * v.x + v.z * v.z > 0.0025;
+        moving = !now.onGround || now.vx * now.vx + now.vz * now.vz > 0.0025;
         showLanding = overlay && moving && (brain.hasLanding() || !now.onGround);
         landingLethal = brain.lethal();
         landingDamage = brain.landDamage();
@@ -253,6 +292,19 @@ public final class MovementAssist implements IModule, IConfigurable {
             return "automation drives movement";
         }
         return null;
+    }
+
+    /** The physics replica's view of the player this tick. */
+    private void fillNow(Minecraft mc, LocalPlayer p) {
+        Vec3 v = p.getDeltaMovement();
+        double attr = p.getAttributeValue(Attributes.MOVEMENT_SPEED);
+        now.set(p.getX(), p.getY(), p.getZ(), v.x, v.y, v.z, p.onGround());
+        now.speed = p.isSprinting() ? attr / 1.3 : attr; // the attribute already carries the sprint modifier
+        now.jumpBoost = p.getJumpBoostPower();
+        now.fallDistance = p.fallDistance;
+        BlockPos below = p.getBlockPosBelowThatAffectsMyMovement();
+        now.slipperiness = mc.level.getBlockState(below).getBlock().getFriction();
+        voxels.begin(mc.level);
     }
 
     private static int sign(float f) {
@@ -373,6 +425,8 @@ public final class MovementAssist implements IModule, IConfigurable {
     public void setEnabled(boolean enabled) {
         this.enabled = enabled;
         if (!enabled) {
+            clutch.release();
+            blocks.release();
             showLanding = false;
             reachCount = 0;
             escapeCount = 0;
@@ -386,6 +440,8 @@ public final class MovementAssist implements IModule, IConfigurable {
 
     @Override
     public void onWorldUnload() {
+        blocks.release();
+        clutch.release();
         showLanding = false;
         reachCount = 0;
         escapeCount = 0;
@@ -403,6 +459,17 @@ public final class MovementAssist implements IModule, IConfigurable {
         overlay = p.getBool(ID, K_OVERLAY, true);
         reachOverlay = p.getBool(ID, K_REACH, true);
         assistAutomation = p.getBool(ID, K_AUTOMATION, false);
+        blocksOn = p.getBool(ID, K_BLOCKS, true);
+        blocks.setNaturalLook(!"FREE".equals(p.getString(ID, K_LOOK, LookStyle.NATURAL.name())));
+        if (!blocksOn) {
+            blocks.release();
+        }
+        clutchOn = p.getBool(ID, K_CLUTCH, true);
+        clutch.minDamage = (float) p.getInt(ID, K_CLUTCH_MIN, 6);
+        clutch.pickup = p.getBool(ID, K_CLUTCH_PICKUP, true);
+        if (!clutchOn) {
+            clutch.release();
+        }
         escapeOverlay = p.getBool(ID, K_ESCAPE, true);
         escapePlayers = p.getBool(ID, K_ESCAPE_PLAYERS, true);
         if (!escapeOverlay) {
@@ -430,6 +497,20 @@ public final class MovementAssist implements IModule, IConfigurable {
                         "Show where you will land: green safe, yellow fall damage, red nothing survivable."),
                 SettingSpec.bool(K_REACH, "Jump reach", true, "Overlay",
                         "Outline the blocks a sprint jump from here can land on (brighter: higher than you)."),
+                SettingSpec.bool(K_BLOCKS, "Parkour blocks", true, "",
+                        "Mid-jump, if one block keeps you going (a wall you cannot clear, a gap one block too long),"
+                                + " turn your head, place a block from the hotbar and turn back. Uses your blocks."),
+                SettingSpec.choice(K_LOOK, "Look style", LookStyle.NATURAL, "",
+                        "NATURAL: automated looks stay along the way you are moving (aim ahead, turn back after)."
+                                + " FREE: look wherever is quickest for the job (less legit)."),
+                SettingSpec.bool(K_CLUTCH, "Water clutch", true, "",
+                        "Falling toward a landing that would kill you or cost the damage below, with a water bucket in"
+                                + " the hotbar: look down and pour it the last moment it reaches, so you land in water."
+                                + " Not in the Nether."),
+                SettingSpec.integer(K_CLUTCH_MIN, "Clutch at damage", 6, 1, 20, "",
+                        "Fall damage (half-hearts) that is worth a clutch. Lethal falls are always clutched."),
+                SettingSpec.bool(K_CLUTCH_PICKUP, "Pick the water back up", true, "",
+                        "After landing in the clutch water, scoop it back into the bucket."),
                 SettingSpec.bool(K_ESCAPE, "Escape path", true, "Overlay",
                         "When hostile mobs (or players) are near, draw the route that leaves the most room between you"
                                 + " and them, using sprint jumps mobs cannot follow (magenta = jump)."),
@@ -450,6 +531,32 @@ public final class MovementAssist implements IModule, IConfigurable {
     /** Why the assist did or did not act on the last movement tick (status, playtest). */
     public String status() {
         return status;
+    }
+
+    /** Blocks placed by Parkour blocks, placements planned, and plans given up. */
+    public int blocksPlaced() {
+        return blocks.placed();
+    }
+
+    public int blockPlans() {
+        return blocks.plans();
+    }
+
+    public int blockAborts() {
+        return blocks.aborted();
+    }
+
+    /** Water clutches poured, sources scooped back up, and clutches started. */
+    public int waterClutches() {
+        return clutch.clutches();
+    }
+
+    public int clutchPickups() {
+        return clutch.pickups();
+    }
+
+    public int clutchPlans() {
+        return clutch.plans();
     }
 
     public int edgeJumps() {

@@ -13,7 +13,7 @@ package com.utilitysuite.core.input;
 public final class RotationLimits {
 
     /** Hard ceiling on angular speed, degrees per second (combined yaw and pitch). */
-    public static final double MAX_DEG_PER_SEC = 450.0;
+    public static final double MAX_DEG_PER_SEC = com.utilitysuite.core.api.IInputSmoother.MAX_TURN_DEG_PER_SEC;
     /** The same cap per client tick (50 ms): the most a server-visible angle may change between two packets. */
     public static final double MAX_DEG_PER_TICK = MAX_DEG_PER_SEC * 0.05;
 

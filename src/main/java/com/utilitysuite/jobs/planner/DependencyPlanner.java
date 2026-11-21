@@ -51,6 +51,7 @@ public final class DependencyPlanner {
     private final RecipeSource recipes;
     private final HarvestTable harvest;
     private final FuelTable fuels;
+    private volatile EfficiencyTools.Settings efficiency = EfficiencyTools.Settings.DEFAULT;
 
     public DependencyPlanner(RecipeSource recipes, HarvestTable harvest, FuelTable fuels) {
         this.recipes = recipes;
@@ -122,6 +123,15 @@ public final class DependencyPlanner {
         return cost == CostProfile.FASTEST || cost == CostProfile.SAFEST;
     }
 
+    /** Pro-player tool habit (shovel / axe before a lot of digging or felling); see {@link EfficiencyTools}. */
+    public void setEfficiencyTools(EfficiencyTools.Settings s) {
+        efficiency = s == null ? EfficiencyTools.Settings.OFF : s;
+    }
+
+    public EfficiencyTools.Settings efficiencyTools() {
+        return efficiency;
+    }
+
     public Plan plan(Target target, PlanContext ctx) {
         return plan(List.of(target), ctx);
     }
@@ -184,6 +194,9 @@ public final class DependencyPlanner {
         final Map<String, Double> costMemo = new HashMap<>();
         int toolTier;
         int unresolvedCount;
+        /** Blocks of each efficiency-tool kind this plan digs, and whether that tool is already arranged. */
+        final int[] digDemand = new int[EfficiencyTools.Kind.values().length];
+        final boolean[] digToolArranged = new boolean[EfficiencyTools.Kind.values().length];
         double fuelCredit;
 
         Session(PlanContext ctx) {
@@ -283,6 +296,7 @@ public final class DependencyPlanner {
                     }
                 }
             }
+            noteDigging(blocks, n, depth);
             boolean ok = ensureTool(tier, depth + 1);
             Node node = touch(hand ? StepKind.GATHER : StepKind.MINE, item, null, blocks, tier, PlanStep.NO_POS, role);
             node.count += n;
@@ -315,6 +329,43 @@ public final class DependencyPlanner {
                 vinv.merge(item, extra, Integer::sum);
             }
             return ok;
+        }
+
+        /**
+         * Counts what this plan digs per efficiency-tool kind and, once a kind passes its threshold, arranges the tool
+         * (on hand, from storage, else crafted) before the digging step. CHEAPEST promises no extra tools.
+         */
+        void noteDigging(List<String> blocks, int n, int depth) {
+            EfficiencyTools.Settings eff = efficiency;
+            if (!eff.enabled() || blocks.isEmpty() || ctx.cost() == CostProfile.CHEAPEST) {
+                return;
+            }
+            EfficiencyTools.Kind k = EfficiencyTools.kindOf(blocks.get(0));
+            if (k == null) {
+                return;
+            }
+            int i = k.ordinal();
+            digDemand[i] += n;
+            if (digToolArranged[i] || digDemand[i] < eff.threshold(k)) {
+                return;
+            }
+            digToolArranged[i] = true;
+            for (Map.Entry<String, Integer> e : vinv.entrySet()) {
+                if (e.getValue() > 0 && EfficiencyTools.isTool(e.getKey(), k)) {
+                    return; // already carrying one
+                }
+            }
+            for (String tool : EfficiencyTools.tools(k)) {
+                if (storageAvailable(tool) > 0) {
+                    fetch(tool, 1, StepRole.TOOL);
+                    return;
+                }
+            }
+            boolean stone = toolTier >= 1 || vinv.getOrDefault("minecraft:cobblestone", 0) >= 3;
+            String tool = EfficiencyTools.craftable(k, stone);
+            produce(tool, 1, StepRole.TOOL, depth + 1, true);
+            warnings.add("Pro habit: " + DisplayNames.plural(tool, 1) + " first (" + digDemand[i]
+                    + " blocks to dig; change in Goal settings)");
         }
 
         /** Makes sure a pickaxe of at least {@code tier} is held; tools are kept, not consumed. */
