@@ -221,3 +221,31 @@ Next tactics (backlog, roughly in order):
 - [ ] Pursuit for the hunter: follow a fleeing player with Baritone, predict jumps over gaps, avoid the ambush above.
 - [ ] Evasion for the runner role: pick escape routes over gaps or water, then switch to HOLD_GAP on the far side.
 - [ ] Food objective extras: cook the meat in a nearby furnace or smoker, fish when no animals, wheat into bread.
+
+## Movement augmentation (user request 2026-11-21)
+
+One engine-free movement brain shared by the player-assist, the overlay and every automated driver (combat, bridge,
+the future hunter). "If me and some friends are doing parkour, I can't fail at it."
+
+Done:
+- [x] `travel/movement/MovementPhysics`: vanilla 1.21.1 player motion replica (ground/air acceleration, sprint-jump
+      boost, friction, gravity and drag, Y-then-X-then-Z voxel collision). Verified: jump apex 1.2522, 12 ticks
+      airborne, sprint 0.2806 blocks/tick, edge sprint jump clears 3 air blocks but not 4 (vanilla's flat limit).
+- [x] `JumpSearch`: mid-air steering (best of the 9 key combos held to landing) and the edge decision (jump on the
+      last tick before walking off, only when it lands better). Score: progress along the heading minus fall damage;
+      lethal falls count as no landing, so with no jump possible it picks the least damaging landing. Allocation free.
+
+Next:
+- [ ] Input augmentation path in core.input: an "assist" layer that adds to the user's own keys (jump tap at the
+      edge, air-strafe keys) instead of a lease that replaces them; manual keys still win when they disagree.
+- [ ] Movement Assist module: auto edge-jump while sprinting, mid-air trajectory correction (keys only at Legit, small
+      yaw correction at Balanced, silent yaw at Relaxed), sprint efficiency (keep sprint, hit jumps on the optimal
+      tick, avoid ceiling bonks), and a fall-survival mode.
+- [ ] Overlay (WorldOverlays, batched, Sodium-safe): landing cells within jump reach, the predicted landing of the
+      current trajectory, and an "escape path" (multi-jump search toward safety or away from a pursuer).
+- [ ] Multi-jump planner: chain JumpSearch over landing cells (A* over jump edges) for parkour routes and escapes;
+      the combat runner/hunter roles reuse it.
+- [ ] Physics extras: slabs/stairs step-up, ice/slime/soul sand, ladders and vines, water, Speed/Jump Boost from the
+      player's effects, head-hitter jumps.
+- [ ] Packet timing (single-player or allow-listed servers, Relaxed level only): hold movement packets for a tick or
+      two so a correction lands in the same server tick.
