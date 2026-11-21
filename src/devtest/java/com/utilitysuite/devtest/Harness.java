@@ -287,6 +287,9 @@ public final class Harness {
             stepTicks = 0;
         } else {
             stepTicks++;
+            if (stepTicks % Shots.TRACE_EVERY_TICKS == 0) {
+                Shots.trace(s, def.name(), stepTicks);
+            }
         }
     }
 

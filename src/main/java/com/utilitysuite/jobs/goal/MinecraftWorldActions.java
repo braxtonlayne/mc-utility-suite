@@ -75,7 +75,9 @@ public final class MinecraftWorldActions implements WorldActions {
     /** Timer value when the recipe was placed for the current craft; -1 until placed. */
     private int placedAt = -1;
     /** True once this action walked to open ground to find a station spot (only tried once per action). */
-    private boolean walkedForSpot;
+    /** Walks to open ground made while looking for a station spot (each one searches farther out). */
+    private int spotWalks;
+    private static final int MAX_SPOT_WALKS = 3;
     /** Ticks to wait for a recipe unlock packet before giving up on a locked recipe. */
     private static final int RECIPE_UNLOCK_WAIT = 20;
     private PlanStep step;
@@ -159,7 +161,7 @@ public final class MinecraftWorldActions implements WorldActions {
         message = "";
         timer = 0;
         placedAt = -1;
-        walkedForSpot = false;
+        spotWalks = 0;
         stationPos = Long.MIN_VALUE;
         transferred = Map.of();
     }
@@ -188,7 +190,14 @@ public final class MinecraftWorldActions implements WorldActions {
                     phase = Phase.SELECT_ITEM;
                     timer = 0;
                 } else if (st == MiningDriver.Status.FAILED || st == MiningDriver.Status.UNAVAILABLE || timer > 400) {
-                    fail("No free spot to place " + station + " (could not walk to open ground)");
+                    if (spotWalks < MAX_SPOT_WALKS && st != MiningDriver.Status.UNAVAILABLE) {
+                        driver.get().cancel();
+                        phase = Phase.SELECT_ITEM; // look again; the next walk goes to a farther ring
+                        timer = 0;
+                    } else {
+                        fail("No free spot to place " + station + " (could not walk to open ground after "
+                                + spotWalks + " tries)");
+                    }
                 }
             }
             case AIM_PLACE -> aimAndPlace(mc);
@@ -265,16 +274,17 @@ public final class MinecraftWorldActions implements WorldActions {
         Services.input().selectHotbarSlot(lease, hotbar);
         long spot = findPlacementSpot(Minecraft.getInstance());
         if (spot == Long.MIN_VALUE) {
-            // Typically inside a tree canopy after chopping: walk once to open ground below/near it and look again.
-            long ground = walkedForSpot ? Long.MIN_VALUE : findOpenGround(Minecraft.getInstance());
+            // Typically inside a tree canopy after chopping: walk to open ground and look again, farther each try.
+            long ground = spotWalks >= MAX_SPOT_WALKS ? Long.MIN_VALUE
+                    : findOpenGround(Minecraft.getInstance(), spotWalks == 0 ? 0 : 2 + spotWalks * 3, 6 + spotWalks * 4);
             if (ground != Long.MIN_VALUE && driver.get().isAvailable()) {
-                walkedForSpot = true;
+                spotWalks++;
                 driver.get().gotoCoord(ground, 0);
                 phase = Phase.CLEAR_WALK;
                 timer = 0;
                 return;
             }
-            fail("No free spot to place " + station);
+            fail("No free spot to place " + station + (spotWalks > 0 ? " after " + spotWalks + " walks" : ""));
             return;
         }
         stationPos = spot;
@@ -602,11 +612,11 @@ public final class MinecraftWorldActions implements WorldActions {
      * Nearest standable ground column (ignoring leaves) within 6 blocks: air for feet and head on a sturdy block.
      * Not per tick: only when no station spot was found.
      */
-    private long findOpenGround(Minecraft mc) {
+    private long findOpenGround(Minecraft mc, int minRing, int maxRing) {
         LocalPlayer p = mc.player;
         Level level = mc.level;
         BlockPos c = p.blockPosition();
-        for (int ring = 0; ring <= 6; ring++) {
+        for (int ring = minRing; ring <= maxRing; ring++) {
             for (int dx = -ring; dx <= ring; dx++) {
                 for (int dz = -ring; dz <= ring; dz++) {
                     if (Math.max(Math.abs(dx), Math.abs(dz)) != ring) {

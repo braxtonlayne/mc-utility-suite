@@ -145,3 +145,21 @@ chain, and it works with modded content and JEI. The research and design notes a
 - [ ] Compatibility playtest: JEI plus one content mod; `gather <modded item>` plans and runs.
 - [ ] Stretch: "beat the game" chain (nether → blaze rods/pearls → stronghold → dragon).
 - Optional: natural-language goals turned into GoalParser commands by the local LFM3 1.7B tool-calling server.
+
+## Legit tuning and proactive automation (user direction 2026-11-21)
+
+- Automation repositions and retries on its own when something is out of reach or not visible (walk to a spot that
+  works, try again, with a cap and a clear status) instead of skipping or giving up.
+- Line of sight is respected by default (no placing or hitting through walls). Each system has a "Require line of
+  sight" setting; turning it off is an explicit, less-legit choice.
+- [x] Build Assist: aims at a visible point on any support face (it used to aim at the face centre, which its own
+      placed blocks could cover), skips a cell only when no face is visible, and the reach walker then moves to a
+      spot that sees it. Setting "Require line of sight" (on).
+- [ ] Global "legit level" preset (e.g. Legit / Balanced / Relaxed) in the top bar or the PRESET control of column 2
+      that drives the per-system knobs together: line of sight, rotation speed and smoothing, silent rotation, reach
+      margin, placement delays, combat aim and engagement.
+- [ ] Combat Assistant: the same line-of-sight setting (today it disengages after the LOS timeout).
+- [ ] Goal engine station placement (crafting table, furnace): its own line-of-sight setting; it currently always
+      requires a visible top face and walks to open ground once. Make the walk retry with new spots (up to a cap).
+- [x] Playtest evidence: a screenshot on every failed check (run/playtest/shots/fail/) and a rolling trace of long
+      steps every 5 s (run/playtest/shots/trace/<scenario>/, last 12 kept).

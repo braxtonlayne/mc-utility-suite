@@ -8,11 +8,11 @@ public final class UiTheme {
 
     // ---- surfaces ---------------------------------------------------------------------------------------------------
     public static final int BACKDROP = 0x55000000;
-    public static final int WINDOW = 0xE8111318;
-    public static final int SIDEBAR = 0xF00D0F13;
-    public static final int CARD = 0xFF181B22;
-    public static final int CARD_HOVER = 0xFF1E222B;
-    public static final int BORDER = 0xFF262A36;
+    public static final int WINDOW = 0xFF141416;
+    public static final int SIDEBAR = 0xFF101012;
+    public static final int CARD = 0xFF1A1A1E;
+    public static final int CARD_HOVER = 0xFF202025;
+    public static final int BORDER = 0xFF2A2A2E;
     /** Inputs, tracks and inset blocks: darker than a card. */
     public static final int FIELD = 0xFF0F1116;
     public static final int FIELD_BORDER_HOVER = 0xFF363B4A;
@@ -54,16 +54,22 @@ public final class UiTheme {
     public static final int HUD_PILL = 0xCC111318;
 
     // ---- metrics ----------------------------------------------------------------------------------------------------
-    public static final int WINDOW_W = 660;
-    public static final int WINDOW_H = 410;
+    public static final int WINDOW_W = 880;
+    public static final int WINDOW_H = 470;
     public static final int TOP_BAR_H = 38;
-    public static final int SIDEBAR_W = 136;
+    public static final int SIDEBAR_W = 128;
     public static final int SIDEBAR_W_COMPACT = 104;
+    /** Column 2 (module list) of the three-column layout; hidden below {@link #THREE_COLUMN_MIN_W}. */
+    public static final int LIST_W = 176;
+    public static final int LIST_W_COMPACT = 144;
+    public static final int THREE_COLUMN_MIN_W = 560;
+    /** The list column background, between the sidebar and the window. */
+    public static final int LIST_BG = 0xFF121214;
     public static final int CONTENT_PAD = 14;
     public static final int CARD_GAP = 8;
     public static final int CARD_PAD = 12;
-    public static final int RADIUS = 6;
-    public static final int RADIUS_SMALL = 4;
+    public static final int RADIUS = 4;
+    public static final int RADIUS_SMALL = 3;
     public static final long OPEN_MS = 120L;
     public static final long TOGGLE_MS = 120L;
 

@@ -30,6 +30,12 @@ public final class StandingSpotFinder {
 
     private final long[] best;
     private final double[] bestDist;
+    /** On (default, legit): the support face must be visible from the eye. Off: any face in reach counts. */
+    private boolean requireLineOfSight = true;
+
+    public void setRequireLineOfSight(boolean on) {
+        requireLineOfSight = on;
+    }
 
     public StandingSpotFinder(int maxCandidates) {
         best = new long[Math.max(1, maxCandidates)];
@@ -68,7 +74,7 @@ public final class StandingSpotFinder {
                         continue;
                     }
                     if (!isStandable(world, volume, ox, oy, oz, tx, ty, tz, fx, fy, fz)
-                            || !seesSupportFace(world, tx, ty, tz, fx, fy, fz, ex, ey, ez, r2)) {
+                            || !seesSupportFace(world, tx, ty, tz, fx, fy, fz, ex, ey, ez, r2, requireLineOfSight)) {
                         continue;
                     }
                     double dx = fx + 0.5 - px, dy = fy - py, dz = fz + 0.5 - pz;
@@ -119,7 +125,7 @@ public final class StandingSpotFinder {
 
     /** Any solid neighbour of the target whose shared face is in reach and visible from the eye. */
     private static boolean seesSupportFace(WorldProbe world, int tx, int ty, int tz, int fx, int fy, int fz,
-                                           double ex, double ey, double ez, double r2) {
+                                           double ex, double ey, double ez, double r2, boolean los) {
         for (int d = 0; d < 6; d++) {
             if (world.probe(tx + DX[d], ty + DY[d], tz + DZ[d], -1) != PlacementStatus.W_OTHER) {
                 continue;
@@ -131,6 +137,9 @@ public final class StandingSpotFinder {
                 continue;
             }
             // The clicked face points from the support into the target: the eye must be on that side.
+            if (!los) {
+                return true; // in reach; placement goes straight to the face, no view needed
+            }
             if (vx * DX[d] + vy * DY[d] + vz * DZ[d] <= 0.05) {
                 continue;
             }

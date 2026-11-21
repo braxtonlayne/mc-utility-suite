@@ -12,14 +12,15 @@ public record SchematicSettings(boolean buildAssist, boolean silentRotation, int
                                 double placementDelayTicks, int scanBudget, int rescanTicks, boolean ghostPreview,
                                 int ghostDistance, boolean anyPlanksWhenHidden, boolean deepslateAsStone,
                                 String scaffoldItem, String strictItems, int projectChests, int layersPerPhase,
-                                int swapSlot, boolean autoNavigate, boolean walkToReach) {
+                                int swapSlot, boolean autoNavigate, boolean walkToReach,
+                                boolean requireLineOfSight) {
 
     public static final String GROUP_ASSIST = "Build Assist";
     public static final String GROUP_PREVIEW = "Preview";
     public static final String GROUP_MATERIALS = "Materials";
 
     public static final SchematicSettings DEFAULTS = new SchematicSettings(true, false, 4, 20, 4.0, 2048, 100, true,
-            48, true, false, "minecraft:dirt", "", 2, 4, 8, true, true);
+            48, true, false, "minecraft:dirt", "", 2, 4, 8, true, true, true);
 
     public static List<SettingSpec> specs() {
         SchematicSettings d = DEFAULTS;
@@ -40,6 +41,9 @@ public record SchematicSettings(boolean buildAssist, boolean silentRotation, int
                         "Ask the navigator to path to a distant build site"),
                 SettingSpec.bool("walkToReach", "Walk to reach blocks", d.walkToReach, GROUP_ASSIST,
                         "When no missing block can be placed from where you stand, walk to a spot that reaches one"),
+                SettingSpec.bool("requireLineOfSight", "Require line of sight", d.requireLineOfSight, GROUP_ASSIST,
+                        "On (legit): only faces you can see; walks around the build for the rest. "
+                                + "Off: hidden faces are placed directly (servers only check reach)"),
                 SettingSpec.text("scaffoldItem", "Scaffold block", d.scaffoldItem, GROUP_ASSIST,
                         "Temporary support block, removed at the end"),
                 SettingSpec.bool("ghostPreview", "Ghost preview", d.ghostPreview, GROUP_PREVIEW,
@@ -82,7 +86,8 @@ public record SchematicSettings(boolean buildAssist, boolean silentRotation, int
                 clamp(p.getInt(id, "layersPerPhase", d.layersPerPhase), 1, 64),
                 clamp(p.getInt(id, "swapSlot", d.swapSlot + 1), 1, 9) - 1,
                 p.getBool(id, "autoNavigate", d.autoNavigate),
-                p.getBool(id, "walkToReach", d.walkToReach));
+                p.getBool(id, "walkToReach", d.walkToReach),
+                p.getBool(id, "requireLineOfSight", d.requireLineOfSight));
     }
 
     /** The substitution rules these settings describe. */

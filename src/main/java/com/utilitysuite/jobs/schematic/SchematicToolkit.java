@@ -165,6 +165,7 @@ public final class SchematicToolkit implements IModule, IConfigurable {
         assist.configure(settings.silentRotation(), settings.placementsPerWindow(), settings.windowTicks(),
                 settings.placementDelayTicks(), settings.swapSlot());
         assist.setWalkToReach(settings.walkToReach());
+        assist.setRequireLineOfSight(settings.requireLineOfSight());
     }
 
     private static IModState modState() {

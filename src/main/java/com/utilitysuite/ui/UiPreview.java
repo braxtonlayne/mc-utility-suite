@@ -134,6 +134,18 @@ public final class UiPreview {
             add("tab " + t, () -> menu.selectTab(t));
             add("shot " + t, () -> shot(mc, t.name().toLowerCase(java.util.Locale.ROOT)));
         }
+        // three-column layout: a module opened in column 3, then a cross-category search
+        add("open module", () -> menu.selectModule(SuiteMenuScreen.Tab.TRAVEL, "terrain_assist"));
+        add("shot module-detail", () -> shot(mc, "module-detail"));
+        add("search", () -> {
+            menu.setState(SuiteMenuScreen.K_SEARCH, "water");
+            menu.requestRebuild();
+        });
+        add("shot search", () -> shot(mc, "search"));
+        add("search off", () -> {
+            menu.setState(SuiteMenuScreen.K_SEARCH, "");
+            menu.selectModule(SuiteMenuScreen.Tab.TRAVEL, "");
+        });
         add("demo on", () -> {
             demo = true;
             menu.selectTab(SuiteMenuScreen.Tab.JOBS);

@@ -2,8 +2,13 @@ package com.utilitysuite.ui;
 
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.utilitysuite.UtilitySuiteMod;
+import com.utilitysuite.core.CoreBootstrap;
+import com.utilitysuite.core.api.IConfigurable;
 import com.utilitysuite.core.api.IGoalEngine;
+import com.utilitysuite.core.api.IModule;
 import com.utilitysuite.core.api.JobSnapshot;
+import com.utilitysuite.core.api.ModuleCategory;
+import com.utilitysuite.core.api.SettingSpec;
 import com.utilitysuite.core.api.Services;
 import com.utilitysuite.core.input.KeybindManager;
 import com.utilitysuite.ui.kit.CollapsibleSection;
@@ -35,7 +40,9 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 
 import java.util.ArrayList;
+import java.util.EnumMap;
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -64,6 +71,31 @@ public final class SuiteMenuScreen extends Screen {
             this.label = label;
         }
 
+        ModuleCategory category() {
+            return ModuleCategory.valueOf(name());
+        }
+
+        /** Short tag chip shown in front of a module row (column 2). */
+        String chip() {
+            return switch (this) {
+                case JOBS -> "AUTO";
+                case WORLD -> "VISUAL";
+                case TRAVEL -> "MOVE";
+                case COMBAT -> "COMBAT";
+                case TOOLS -> "TOOL";
+            };
+        }
+
+        int chipColor() {
+            return switch (this) {
+                case JOBS -> 0xFF38BDF8;
+                case WORLD -> 0xFFA78BFA;
+                case TRAVEL -> 0xFF34D399;
+                case COMBAT -> 0xFFF87171;
+                case TOOLS -> 0xFFFBBF24;
+            };
+        }
+
         Item icon() {
             return switch (this) {
                 case JOBS -> Items.IRON_PICKAXE;
@@ -85,6 +117,12 @@ public final class SuiteMenuScreen extends Screen {
     private static Tab lastTab = Tab.JOBS;
     private static final int[] SCROLL = new int[Tab.values().length];
     private static final Map<String, String> STATE = new HashMap<>();
+    /** Column 2 selection per category: "" = the category's overview page, else a module id. */
+    private static final Map<Tab, String> SELECTED = new EnumMap<>(Tab.class);
+    static final String K_SEARCH = "menu.search";
+    private static final int ROW_H = 18;
+    private static final int ROW_H_SUB = 27;
+    private static final int SEARCH_H = 18;
 
     private final Screen parent;
     private final long openedAt = Util.getMillis();
@@ -102,6 +140,9 @@ public final class SuiteMenuScreen extends Screen {
     private int ww;
     private int wh;
     private int sidebarW;
+    private int listX;
+    private int listW;
+    private int listTop;
     private int viewX;
     private int viewY;
     private int viewW;
@@ -116,6 +157,14 @@ public final class SuiteMenuScreen extends Screen {
     private int titleW;
     private String cleanLabel = "";
     private int cleanLabelX;
+
+    private String versionText = "";
+
+    // column 2: module list
+    private StyledTextField searchField;
+    private List<UiNode> listNodes = List.of();
+    private int listContentH;
+    private int listScroll;
 
     // content
     private Panel panel;
@@ -226,17 +275,24 @@ public final class SuiteMenuScreen extends Screen {
         dragNode = null;
         hoverNode = null;
 
-        ww = Math.min(UiTheme.WINDOW_W, (int) (width * 0.85f));
-        wh = Math.min(UiTheme.WINDOW_H, (int) (height * 0.85f));
+        ww = Math.min(UiTheme.WINDOW_W, (int) (width * 0.9f));
+        wh = Math.min(UiTheme.WINDOW_H, (int) (height * 0.88f));
         wx = (width - ww) / 2;
         wy = (height - wh) / 2;
-        sidebarW = ww < 520 ? UiTheme.SIDEBAR_W_COMPACT : UiTheme.SIDEBAR_W;
-        viewX = wx + sidebarW + 1;
+        sidebarW = ww < 640 ? UiTheme.SIDEBAR_W_COMPACT : UiTheme.SIDEBAR_W;
+        listX = wx + sidebarW + 1;
+        // column 2 only when the content column keeps a usable width; otherwise the two-column layout (overview pages)
+        listW = ww < UiTheme.THREE_COLUMN_MIN_W ? 0 : ww < 720 ? UiTheme.LIST_W_COMPACT : UiTheme.LIST_W;
+        viewX = listX + (listW > 0 ? listW + 1 : 0);
         viewY = wy + UiTheme.TOP_BAR_H + 1;
         viewW = wx + ww - viewX;
         viewH = wy + wh - viewY - 1;
+        if (versionText.isEmpty()) {
+            versionText = modVersion();
+        }
 
         buildChrome();
+        buildList();
         buildContent();
         signature = signature();
     }
@@ -244,7 +300,7 @@ public final class SuiteMenuScreen extends Screen {
     private void buildChrome() {
         Font f = font;
         // left: title + profile pill
-        titleW = f.width("Utility Suite");
+        titleW = f.width(TITLE) + (versionText.isEmpty() ? 0 : 8 + f.width(versionText) + 8);
         String profile = safeProfile();
         int leftEnd = wx + 24 + titleW; // the title is drawn at wx + 24 (after the accent dot)
         boolean showProfile = ww >= 470;
@@ -321,7 +377,7 @@ public final class SuiteMenuScreen extends Screen {
         int tabH = Math.min(TAB_H, tabPitch - 2);
         for (int i = 0; i < tabs.length; i++) {
             Tab t = tabs[i];
-            SidebarTab st = new SidebarTab(f, t, t == tab, sidebarW - 16, tabH);
+            SidebarTab st = new SidebarTab(f, t, t == tab, sidebarW - 16, tabH, enabledCount(t));
             st.x = wx + 8;
             st.y = viewY + 8 + i * tabPitch;
             chrome.add(st);
@@ -329,11 +385,202 @@ public final class SuiteMenuScreen extends Screen {
         refreshFooter();
     }
 
+    // ---- column 2: search + module list -----------------------------------------------------------------------------
+
+    private static final String TITLE = "UTILITY SUITE";
+
+    private static String modVersion() {
+        try {
+            return net.neoforged.fml.ModList.get().getModContainerById(UtilitySuiteMod.MOD_ID)
+                    .map(c -> "v" + c.getModInfo().getVersion()).orElse("");
+        } catch (RuntimeException e) {
+            return "";
+        }
+    }
+
+    private static int enabledCount(Tab t) {
+        try {
+            int n = 0;
+            for (IModule m : Services.modules().byCategory(t.category())) {
+                if (m.isEnabled()) {
+                    n++;
+                }
+            }
+            return n;
+        } catch (RuntimeException e) {
+            return 0;
+        }
+    }
+
+    /** The module selected in column 2 for the current tab, or null for the overview page. */
+    private IModule selectedModule() {
+        if (listW == 0) {
+            return null;
+        }
+        String id = SELECTED.getOrDefault(tab, "");
+        if (id.isEmpty()) {
+            return null;
+        }
+        try {
+            Optional<IModule> m = Services.modules().byId(id);
+            return m.isPresent() && m.get().category() == tab.category() ? m.get() : null;
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    /** Selects a column-2 entry ("" = overview) in a category, switching to that category if needed. */
+    void selectModule(Tab t, String moduleId) {
+        SELECTED.put(t, moduleId == null ? "" : moduleId);
+        if (t != tab) {
+            SCROLL[tab.ordinal()] = scrollTarget;
+            tab = t;
+            lastTab = t;
+        }
+        SCROLL[tab.ordinal()] = 0;
+        builtTab = null; // reset the content scroll for the new page
+        focusNode = null;
+        rebuildKeepingFocus();
+    }
+
+    private void buildList() {
+        if (listW == 0) {
+            searchField = null;
+            listNodes = List.of();
+            return;
+        }
+        Font f = font;
+        int pad = 8;
+        searchField = new StyledTextField(f, K_SEARCH, "Search modules, settings…", listW - 2 * pad, SEARCH_H);
+        searchField.x = listX + pad;
+        searchField.y = viewY + pad;
+        EditBox box = searchField.box();
+        box.setMaxLength(64);
+        box.setValue(state(K_SEARCH, ""));
+        box.setResponder(v -> {
+            if (!v.equals(state(K_SEARCH, ""))) {
+                setState(K_SEARCH, v);
+                listScroll = 0;
+                requestRebuild();
+            }
+        });
+        registerField(searchField);
+        chrome.add(searchField);
+        listTop = searchField.y + SEARCH_H + 6;
+
+        List<UiNode> out = new ArrayList<>();
+        int y = 0;
+        int rowW = listW - 2 * 4;
+        String q = state(K_SEARCH, "").trim().toLowerCase(Locale.ROOT);
+        String sel = SELECTED.getOrDefault(tab, "");
+        try {
+            if (q.isEmpty()) {
+                y = addCaption(out, tab.label.toUpperCase(Locale.ROOT), y, rowW);
+                y = addRow(out, new ModuleRow(f, tab, "", "Overview", "", false, true, sel.isEmpty(), rowW), y);
+                List<IModule> mods = Services.modules().byCategory(tab.category());
+                if (!mods.isEmpty()) {
+                    y = addCaption(out, "MODULES", y + 4, rowW);
+                }
+                for (IModule m : mods) {
+                    y = addRow(out, new ModuleRow(f, tab, m.id(), SettingsRenderer.describe(m)[0], "", m.isEnabled(),
+                            false, m.id().equals(sel), rowW), y);
+                }
+            } else {
+                int found = 0;
+                for (Tab t : Tab.values()) {
+                    boolean captioned = false;
+                    for (IModule m : Services.modules().byCategory(t.category())) {
+                        String match = searchMatch(m, q);
+                        if (match == null) {
+                            continue;
+                        }
+                        if (!captioned) {
+                            y = addCaption(out, t.label.toUpperCase(Locale.ROOT), y + (found > 0 ? 4 : 0), rowW);
+                            captioned = true;
+                        }
+                        found++;
+                        y = addRow(out, new ModuleRow(f, t, m.id(), SettingsRenderer.describe(m)[0], match,
+                                m.isEnabled(), false, t == tab && m.id().equals(sel), rowW), y);
+                    }
+                }
+                if (found == 0) {
+                    y = addCaption(out, "NO MATCHES", y, rowW);
+                }
+            }
+        } catch (RuntimeException e) {
+            UtilitySuiteMod.LOGGER.warn("Module list failed to build", e);
+        }
+        listNodes = out;
+        listContentH = y;
+        listScroll = Math.max(0, Math.min(listScroll, maxListScroll()));
+    }
+
+    /** "" when the module's name/description/id matches, the matching setting's label, or null. */
+    private static String searchMatch(IModule m, String q) {
+        String[] d = SettingsRenderer.describe(m);
+        if (d[0].toLowerCase(Locale.ROOT).contains(q) || d[1].toLowerCase(Locale.ROOT).contains(q)
+                || m.id().contains(q)) {
+            return "";
+        }
+        if (m instanceof IConfigurable c) {
+            for (SettingSpec s : c.settings()) {
+                if (s.label().toLowerCase(Locale.ROOT).contains(q) || s.key().toLowerCase(Locale.ROOT).contains(q)) {
+                    return s.label();
+                }
+            }
+            // second pass: groups and descriptions ("water" finds Terrain Assist's surface mode)
+            for (SettingSpec s : c.settings()) {
+                if (s.group().toLowerCase(Locale.ROOT).contains(q) || s.tooltip().toLowerCase(Locale.ROOT).contains(q)) {
+                    return s.label();
+                }
+            }
+        }
+        return null;
+    }
+
+    private static int addCaption(List<UiNode> out, String text, int y, int w) {
+        CaptionRow c = new CaptionRow(text, w);
+        c.x = 4;
+        c.y = y;
+        out.add(c);
+        return y + c.h;
+    }
+
+    private static int addRow(List<UiNode> out, UiNode row, int y) {
+        row.x = 4;
+        row.y = y;
+        out.add(row);
+        return y + row.h + 1;
+    }
+
+    private int listViewH() {
+        return wy + wh - 1 - listTop;
+    }
+
+    private int maxListScroll() {
+        return Math.max(0, listContentH + 6 - listViewH());
+    }
+
+    private boolean inList(double mx, double my) {
+        return listW > 0 && mx >= listX && mx < listX + listW && my >= listTop && my < wy + wh - 1;
+    }
+
+    private int listSx(UiNode n) {
+        return listX + n.x;
+    }
+
+    private int listSy(UiNode n) {
+        return listTop + n.y - listScroll;
+    }
+
     private void buildContent() {
         int canvasW = viewW - 2 * UiTheme.CONTENT_PAD;
         panel = new Panel(this, font, canvasW);
+        IModule selected = selectedModule();
         try {
-            switch (tab) {
+            if (selected != null) {
+                SettingsRenderer.module(panel, selected);
+            } else switch (tab) {
                 case JOBS -> JobsTab.build(panel);
                 case WORLD -> WorldTab.build(panel);
                 case TRAVEL -> TravelTab.build(panel);
@@ -580,6 +827,20 @@ public final class SuiteMenuScreen extends Screen {
                 return true;
             }
         }
+        if (inList(mx, my)) {
+            for (int i = listNodes.size() - 1; i >= 0; i--) {
+                UiNode n = listNodes.get(i);
+                int sx = listSx(n);
+                int sy = listSy(n);
+                if (n.contains(mx, my, sx, sy) && click(n, mx, my, button, sx, sy, false)) {
+                    dragNode = null; // rows act on press; nothing to drag
+                    return true;
+                }
+            }
+            setFocused(null);
+            focus(null);
+            return true;
+        }
         int max = maxScroll();
         if (max > 0 && button == 0 && mx >= viewX + viewW - 9 && mx < viewX + viewW && inView(mx, my)) {
             scrollDragging = true;
@@ -642,6 +903,10 @@ public final class SuiteMenuScreen extends Screen {
 
     @Override
     public boolean mouseScrolled(double mx, double my, double scrollX, double scrollY) {
+        if (inList(mx, my)) {
+            listScroll = Math.max(0, Math.min(maxListScroll(), listScroll - (int) Math.round(scrollY * 20)));
+            return true;
+        }
         if (inView(mx, my)) {
             scrollTarget -= (int) Math.round(scrollY * 32);
             clampScroll();
@@ -790,6 +1055,7 @@ public final class SuiteMenuScreen extends Screen {
         drawWindow(g);
         drawTopBar(g, mouseX, mouseY);
         drawSidebar(g, mouseX, mouseY);
+        drawList(g, mouseX, mouseY);
         drawContent(g, mouseX, mouseY);
         drawToast(g);
         updateHover(mouseX, mouseY, now);
@@ -819,17 +1085,68 @@ public final class SuiteMenuScreen extends Screen {
         UiRenderUtils.roundedRect(g, wx, wy, ww, wh, UiTheme.RADIUS, UiTheme.WINDOW | 0xFF000000);
         UiRenderUtils.roundedRect(g, wx, viewY, sidebarW, wy + wh - viewY, UiTheme.RADIUS, UiTheme.SIDEBAR,
                 UiRenderUtils.BL);
+        if (listW > 0) {
+            g.fill(listX, viewY, listX + listW, wy + wh - 1, UiTheme.LIST_BG);
+            UiRenderUtils.vLine(g, listX + listW, viewY, wy + wh - 1, UiTheme.BORDER);
+        }
         UiRenderUtils.hLine(g, wx + 1, wx + ww - 1, wy + UiTheme.TOP_BAR_H, UiTheme.BORDER);
         UiRenderUtils.vLine(g, wx + sidebarW, viewY, wy + wh - 1, UiTheme.BORDER);
-        UiRenderUtils.roundedOutline(g, wx, wy, ww, wh, UiTheme.RADIUS, 0xFF2A2F3B);
+        UiRenderUtils.roundedOutline(g, wx, wy, ww, wh, UiTheme.RADIUS, UiTheme.BORDER);
+    }
+
+    private void drawList(GuiGraphics g, int mouseX, int mouseY) {
+        if (listW == 0) {
+            return;
+        }
+        boolean mouseIn = inList(mouseX, mouseY);
+        int mx = mouseIn ? mouseX : -10000;
+        int my = mouseIn ? mouseY : -10000;
+        int top = listTop;
+        int bottom = wy + wh - 1;
+        UiRenderUtils.clip(g, listX, top, listW, bottom - top);
+        for (int i = 0; i < listNodes.size(); i++) {
+            UiNode n = listNodes.get(i);
+            int sy = listSy(n);
+            if (sy + n.h < top || sy > bottom) {
+                continue;
+            }
+            n.render(g, font, listSx(n), sy, mx, my);
+        }
+        UiRenderUtils.endClip(g);
+        int max = maxListScroll();
+        if (max > 0) {
+            int trackH = bottom - top - 8;
+            int thumbH = Math.max(14, trackH * (bottom - top) / (bottom - top + max));
+            int thumbY = top + 4 + Math.round((trackH - thumbH) * (listScroll / (float) max));
+            UiRenderUtils.roundedRect(g, listX + listW - 4, thumbY, 2, thumbH, 1, 0x706B7280);
+        }
+    }
+
+    /** Small caps text at 0.75 scale (chips, captions, version). */
+    static void smallText(GuiGraphics g, Font font, String s, int x, int y, int color) {
+        g.pose().pushPose();
+        g.pose().translate(x, y, 0);
+        g.pose().scale(0.75f, 0.75f, 1f);
+        g.drawString(font, s, 0, 0, color, false);
+        g.pose().popPose();
+    }
+
+    static int smallWidth(Font font, String s) {
+        return (int) Math.ceil(font.width(s) * 0.75f);
     }
 
     private void drawTopBar(GuiGraphics g, int mx, int my) {
         int ty = wy + (UiTheme.TOP_BAR_H - 8) / 2;
-        UiRenderUtils.dot(g, wx + 14, ty + 1, 6, UiTheme.ACCENT);
-        UiRenderUtils.text(g, font, "Utility Suite", wx + 24, ty, UiTheme.TEXT);
+        UiRenderUtils.roundedRect(g, wx + 12, ty, 3, 8, 1, UiTheme.ACCENT);
+        UiRenderUtils.text(g, font, TITLE, wx + 20, ty, UiTheme.TEXT);
+        if (!versionText.isEmpty()) {
+            int vx = wx + 20 + font.width(TITLE) + 6;
+            int vw = smallWidth(font, versionText) + 8;
+            UiRenderUtils.panel(g, vx, ty - 1, vw, 10, 2, UiTheme.CONTROL, UiTheme.CONTROL_BORDER);
+            smallText(g, font, versionText, vx + 4, ty + 2, UiTheme.TEXT_DIM);
+        }
         if (profilePillW > 0) {
-            int px = wx + 24 + titleW + 8;
+            int px = wx + 20 + titleW + 8;
             int py = wy + (UiTheme.TOP_BAR_H - 14) / 2;
             UiRenderUtils.panel(g, px, py, profilePillW, 14, 7, UiTheme.CONTROL, UiTheme.CONTROL_BORDER);
             UiRenderUtils.dot(g, px + 5, py + 5, 4, UiTheme.TEXT_MUTED);
@@ -936,6 +1253,15 @@ public final class SuiteMenuScreen extends Screen {
                 found = n;
             }
         }
+        if (found == null && inList(mouseX, mouseY)) {
+            for (int i = listNodes.size() - 1; i >= 0; i--) {
+                UiNode n = listNodes.get(i);
+                if (!n.tooltipText().isEmpty() && n.contains(mouseX, mouseY, listSx(n), listSy(n))) {
+                    found = n;
+                    break;
+                }
+            }
+        }
         if (found == null && inView(mouseX, mouseY)) {
             for (int i = nodes.size() - 1; i >= 0; i--) {
                 UiNode n = nodes.get(i);
@@ -990,13 +1316,18 @@ public final class SuiteMenuScreen extends Screen {
         private final boolean active;
         private final ItemStack icon;
         private final String label;
+        private final String badge;
 
-        SidebarTab(Font f, Tab t, boolean active, int w, int h) {
+        SidebarTab(Font f, Tab t, boolean active, int w, int h, int enabled) {
             super(w, h);
             this.t = t;
             this.active = active;
             this.icon = ItemIcons.stack(t.icon());
-            this.label = UiRenderUtils.ellipsize(f, t.label, w - 40);
+            this.badge = enabled > 0 ? Integer.toString(enabled) : "";
+            this.label = UiRenderUtils.ellipsize(f, t.label, w - 40 - (badge.isEmpty() ? 0 : 14));
+            if (!badge.isEmpty()) {
+                tooltip(enabled + (enabled == 1 ? " module" : " modules") + " on in " + t.label);
+            }
         }
 
         @Override
@@ -1016,6 +1347,14 @@ public final class SuiteMenuScreen extends Screen {
             UiRenderUtils.item(g, icon, sx + 10, sy + (h - 12) / 2, 12);
             UiRenderUtils.text(g, font, label, sx + 30, sy + (h - 8) / 2,
                     active ? UiTheme.TEXT : hover ? UiTheme.TEXT_SECONDARY : UiTheme.TEXT_DIM);
+            if (!badge.isEmpty()) {
+                int bw = Math.max(10, smallWidth(font, badge) + 6);
+                int bx = sx + w - 6 - bw;
+                int by = sy + (h - 10) / 2;
+                UiRenderUtils.roundedRect(g, bx, by, bw, 10, 2, active ? UiTheme.CONTROL_HOVER : UiTheme.CONTROL);
+                smallText(g, font, badge, bx + (bw - smallWidth(font, badge)) / 2, by + 3,
+                        active ? UiTheme.TEXT : UiTheme.TEXT_DIM);
+            }
         }
 
         @Override
@@ -1024,6 +1363,108 @@ public final class SuiteMenuScreen extends Screen {
                 return false;
             }
             selectTab(t);
+            return true;
+        }
+    }
+
+    // ---- column 2 rows ----------------------------------------------------------------------------------------------
+
+    /** Dim small-caps group caption ("MODULES", a category name in search results). */
+    private static final class CaptionRow extends UiNode {
+        private final String text;
+
+        CaptionRow(String text, int w) {
+            super(w, 14);
+            this.text = text;
+        }
+
+        @Override
+        public void render(GuiGraphics g, Font font, int sx, int sy, int mouseX, int mouseY) {
+            smallText(g, font, text, sx + 6, sy + 5, UiTheme.TEXT_MUTED);
+        }
+    }
+
+    /**
+     * One entry of the module list: tag chip, name (white when on, grey when off), an optional matched-setting line in
+     * search results and an on/off dot. Left click opens it in column 3; right click turns the module on or off.
+     */
+    private final class ModuleRow extends UiNode {
+        private final Tab target;
+        private final String moduleId;
+        private final String name;
+        private final String sub;
+        private final boolean enabled;
+        private final boolean overview;
+        private final boolean selected;
+        private final String chip;
+
+        ModuleRow(Font f, Tab target, String moduleId, String name, String sub, boolean enabled, boolean overview,
+                  boolean selected, int w) {
+            super(w, sub.isEmpty() ? ROW_H : ROW_H_SUB);
+            this.target = target;
+            this.moduleId = moduleId;
+            this.overview = overview;
+            this.selected = selected;
+            this.enabled = enabled;
+            this.chip = overview ? "PAGE" : target.chip();
+            int chipW = smallWidth(f, chip) + 8;
+            this.name = UiRenderUtils.ellipsize(f, name, w - 10 - chipW - 6 - 12);
+            this.sub = sub.isEmpty() ? "" : UiRenderUtils.ellipsize(f, "setting: " + sub, (int) ((w - 16) / 0.75f));
+            tooltip(overview ? "Quick actions and status for " + target.label
+                    : "Click to open · right-click to turn " + (enabled ? "off" : "on"));
+        }
+
+        @Override
+        public boolean interactive() {
+            return true;
+        }
+
+        @Override
+        public void render(GuiGraphics g, Font font, int sx, int sy, int mouseX, int mouseY) {
+            boolean hover = inside(mouseX, mouseY, sx, sy, w, h);
+            if (selected) {
+                UiRenderUtils.roundedRect(g, sx, sy, w, h, UiTheme.RADIUS_SMALL, UiTheme.CARD_HOVER);
+                UiRenderUtils.roundedRect(g, sx, sy + 4, 2, h - 8, 1, UiTheme.ACCENT);
+            } else if (hover) {
+                UiRenderUtils.roundedRect(g, sx, sy, w, h, UiTheme.RADIUS_SMALL, 0x0FFFFFFF);
+            }
+            int chipColor = overview ? UiTheme.TEXT_DIM : target.chipColor();
+            int cw = smallWidth(font, chip) + 8;
+            int cy = sy + (ROW_H - 10) / 2;
+            UiRenderUtils.roundedRect(g, sx + 6, cy, cw, 10, 2, UiTheme.fade(chipColor, 0.16f));
+            smallText(g, font, chip, sx + 10, cy + 3, chipColor);
+            boolean on = overview || enabled;
+            UiRenderUtils.text(g, font, name, sx + 6 + cw + 6, sy + (ROW_H - 8) / 2,
+                    selected ? UiTheme.TEXT : on ? UiTheme.TEXT_SECONDARY : UiTheme.TEXT_MUTED);
+            if (!overview) {
+                UiRenderUtils.dot(g, sx + w - 9, sy + (ROW_H - 4) / 2, 4, enabled ? UiTheme.RUNNING : UiTheme.TRACK_OFF);
+            }
+            if (!sub.isEmpty()) {
+                smallText(g, font, sub, sx + 8, sy + ROW_H + 1, UiTheme.TEXT_DIM);
+            }
+        }
+
+        @Override
+        public boolean onClick(double mouseX, double mouseY, int button, int sx, int sy) {
+            if (button == 1 && !overview) {
+                try {
+                    Optional<IModule> m = Services.modules().byId(moduleId);
+                    if (m.isPresent()) {
+                        boolean v = !m.get().isEnabled();
+                        CoreBootstrap.modules().setModuleEnabled(moduleId, v, Services.modState().profile());
+                        Services.modState().markDirty();
+                        setStatus(name + (v ? " on" : " off"));
+                        requestRebuild();
+                    }
+                } catch (RuntimeException e) {
+                    setStatus("Could not change " + name);
+                }
+                return true;
+            }
+            if (button != 0) {
+                return false;
+            }
+            selectModule(target, moduleId);
             return true;
         }
     }

@@ -29,6 +29,7 @@ import net.minecraft.world.item.Item;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
 
 import java.util.BitSet;
@@ -113,6 +114,7 @@ public final class BuildAssist implements LeaseListener {
     private final StandingSpotFinder spotFinder = new StandingSpotFinder(4);
     private final ReachWalker.Host walkHost = new WalkHost();
     private boolean walkToReach = true;
+    private boolean requireLineOfSight = true;
     private boolean stalledLastTick;
     private LocalPlayer walkPlayer;
 
@@ -132,6 +134,13 @@ public final class BuildAssist implements LeaseListener {
     }
 
     /** "Walk to reach blocks" setting. Turning it off cancels a walk in progress. */
+    /** "Require line of sight" setting (on by default): off places hidden faces directly instead of skipping them. */
+    public void setRequireLineOfSight(boolean on) {
+        requireLineOfSight = on;
+        spotFinder.setRequireLineOfSight(on);
+        blockedCells.clear();
+    }
+
     public void setWalkToReach(boolean on) {
         if (walkToReach && !on) {
             walker.reset();
@@ -498,15 +507,94 @@ public final class BuildAssist implements LeaseListener {
         return -1;
     }
 
-    /** Aim point: centre of the shared face between the target and its support (or the target's centre). */
-    private boolean aim(LocalPlayer player, IInputSmoother input) {
-        double hx = targetX + 0.5, hy = targetY + 0.5, hz = targetZ + 0.5;
-        if (targetFace >= 0 && plan.kind(targetStep) != BuildPlan.REMOVE_SCAFFOLD) {
-            Direction d = DIRS[targetFace];
-            hx += d.getStepX() * 0.5;
-            hy += d.getStepY() * 0.5;
-            hz += d.getStepZ() * 0.5;
+    /** Offsets across a face, centre first: a block placed earlier often covers the centre but not a corner. */
+    private static final double[] FACE_OFFSETS_U = {0, -0.3, 0.3, 0, 0, -0.3, 0.3, -0.3, 0.3};
+    private static final double[] FACE_OFFSETS_V = {0, 0, 0, -0.3, 0.3, -0.3, -0.3, 0.3, 0.3};
+    private double aimX;
+    private double aimY;
+    private double aimZ;
+
+    /**
+     * Picks the support face and the point on it to aim at: the first sampled point (centre first) whose ray from
+     * the eye hits that support on that face. Runs once per target (up to 6 faces x 9 rays), never per tick.
+     *
+     * @return false when no support face is visible from here
+     */
+    private boolean chooseVisibleAim(LocalPlayer player, double reach) {
+        Level level = player.level();
+        Vec3 eye = player.getEyePosition();
+        double r2 = reach * reach;
+        for (int pass = 0; pass < DIRS.length; pass++) {
+            // try the planned face first, then every other solid neighbour
+            int d = pass == 0 ? targetFace : (pass <= targetFace ? pass - 1 : pass);
+            if (d < 0) {
+                continue;
+            }
+            Direction toSupport = DIRS[d];
+            int sx = targetX + toSupport.getStepX(), sy = targetY + toSupport.getStepY();
+            int sz = targetZ + toSupport.getStepZ();
+            if (probe.probe(sx, sy, sz, -1) != PlacementStatus.W_OTHER) {
+                continue;
+            }
+            Direction clicked = toSupport.getOpposite();
+            double cx = targetX + 0.5 + toSupport.getStepX() * 0.5;
+            double cy = targetY + 0.5 + toSupport.getStepY() * 0.5;
+            double cz = targetZ + 0.5 + toSupport.getStepZ() * 0.5;
+            // the two axes spanning the face
+            Direction.Axis axis = toSupport.getAxis();
+            for (int i = 0; i < FACE_OFFSETS_U.length; i++) {
+                double u = FACE_OFFSETS_U[i], v = FACE_OFFSETS_V[i];
+                double px = cx + (axis == Direction.Axis.X ? 0 : u);
+                double py = cy + (axis == Direction.Axis.Y ? 0 : axis == Direction.Axis.X ? u : v);
+                double pz = cz + (axis == Direction.Axis.Z ? 0 : v);
+                double ex = px - eye.x, ey = py - eye.y, ez = pz - eye.z;
+                if (ex * ex + ey * ey + ez * ez > r2) {
+                    continue;
+                }
+                // end just inside the support so the ray reaches the face
+                Vec3 end = new Vec3(px + toSupport.getStepX() * 0.05, py + toSupport.getStepY() * 0.05,
+                        pz + toSupport.getStepZ() * 0.05);
+                BlockHitResult hit = level.clip(new net.minecraft.world.level.ClipContext(eye, end,
+                        net.minecraft.world.level.ClipContext.Block.OUTLINE,
+                        net.minecraft.world.level.ClipContext.Fluid.NONE, player));
+                if (hit.getType() == HitResult.Type.BLOCK && hit.getDirection() == clicked
+                        && hit.getBlockPos().getX() == sx && hit.getBlockPos().getY() == sy
+                        && hit.getBlockPos().getZ() == sz) {
+                    targetFace = d;
+                    aimX = px;
+                    aimY = py;
+                    aimZ = pz;
+                    return true;
+                }
+            }
         }
+        return false;
+    }
+
+    /** Aim point: a visible point on the support face (or the target's centre when removing scaffold). */
+    private boolean aim(LocalPlayer player, IInputSmoother input) {
+        boolean removing = plan.kind(targetStep) == BuildPlan.REMOVE_SCAFFOLD;
+        if (!aimSet) {
+            if (removing || targetFace < 0) {
+                aimX = targetX + 0.5;
+                aimY = targetY + 0.5;
+                aimZ = targetZ + 0.5;
+            } else if (!chooseVisibleAim(player, player.blockInteractionRange())) {
+                if (requireLineOfSight) {
+                    // No face of this cell is visible from here: skip it until the player moves (the reach walker
+                    // then finds a spot that sees it).
+                    blockedCells.set(targetCell);
+                    blockedFrom = player.blockPosition().asLong();
+                    clearTarget();
+                    return false;
+                }
+                Direction d = DIRS[targetFace]; // line of sight off: aim at the centre, place() goes direct
+                aimX = targetX + 0.5 + d.getStepX() * 0.5;
+                aimY = targetY + 0.5 + d.getStepY() * 0.5;
+                aimZ = targetZ + 0.5 + d.getStepZ() * 0.5;
+            }
+        }
+        double hx = aimX, hy = aimY, hz = aimZ;
         double dx = hx - player.getX(), dy = hy - player.getEyeY(), dz = hz - player.getZ();
         float yaw = (float) (Math.toDegrees(Math.atan2(dz, dx)) - 90.0);
         float pitch = (float) -Math.toDegrees(Math.atan2(dy, Math.sqrt(dx * dx + dz * dz)));
@@ -530,11 +618,15 @@ public final class BuildAssist implements LeaseListener {
         int nx = targetX + toSupport.getStepX(), ny = targetY + toSupport.getStepY(), nz = targetZ + toSupport.getStepZ();
         Direction clickedFace = toSupport.getOpposite();
         boolean placed = false;
+        boolean direct = silent;
         if (!silent) {
             HitResult hr = mc.hitResult;
             if (hr instanceof BlockHitResult bhr && hr.getType() == HitResult.Type.BLOCK
                     && bhr.getBlockPos().equals(cursorPos.set(nx, ny, nz)) && bhr.getDirection() == clickedFace) {
                 placed = input.scheduleKeyTap(lease, SimKey.USE, 1, 2);
+            } else if (!requireLineOfSight) {
+                // Aimed, but something is in the way: place straight onto the face (servers only check reach).
+                direct = true;
             } else if (aimTicks < AIM_TIMEOUT_TICKS) {
                 return; // something is in the line of sight; wait for the crosshair (times out in aim())
             } else {
@@ -542,8 +634,9 @@ public final class BuildAssist implements LeaseListener {
                 blockedCells.set(targetCell);
                 blockedFrom = player.blockPosition().asLong();
             }
-        } else {
-            // Silent rotation: the crosshair follows the user's camera, so build the hit result from the target face.
+        }
+        if (direct) {
+            // Hit result built from the target face (silent rotation, or a face hidden from the crosshair).
             // Direct game call, so re-check the lease here (it may have been revoked earlier this tick).
             if (lease == null || !lease.isActive()
                     || !lease.covers(com.utilitysuite.core.api.ControlChannel.WORLD_INTERACT)) {

@@ -105,11 +105,28 @@ class WalkToReachTest {
             w.set(1, y, 0, "minecraft:stone");
         }
         long[] out = new long[4];
-        int n = new StandingSpotFinder(4).find(w, null, 0, 0, 0, 0, 3, 0, 6, 1, 0.5, REACH, out);
+        StandingSpotFinder finder = new StandingSpotFinder(4);
+        finder.setRequireLineOfSight(true);
+        int n = finder.find(w, null, 0, 0, 0, 0, 3, 0, 6, 1, 0.5, REACH, out);
         assertTrue(n > 0);
         for (int i = 0; i < n; i++) {
             assertTrue(BlockPos.getX(out[i]) <= 0, "stands on the open side of the wall");
         }
+    }
+
+    @Test
+    void withoutLineOfSightAnySpotInReachOfTheSupportFaceCounts() {
+        // Same wall with line of sight turned off: the nearest spot may be behind the wall.
+        FakeWorld w = ground(null);
+        for (int y = 1; y <= 4; y++) {
+            w.set(1, y, 0, "minecraft:stone");
+        }
+        long[] out = new long[4];
+        StandingSpotFinder finder = new StandingSpotFinder(4);
+        finder.setRequireLineOfSight(false);
+        int n = finder.find(w, null, 0, 0, 0, 0, 3, 0, 6, 1, 0.5, REACH, out);
+        assertTrue(n > 0);
+        assertTrue(BlockPos.getX(out[0]) > 1, "nearest spot to a player east of the wall is east of it");
     }
 
     // ---- state machine ----------------------------------------------------------------------------------------------

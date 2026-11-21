@@ -113,6 +113,9 @@ public final class Scenario {
     public boolean check(String name, boolean pass, String evidence) {
         checks.add(new Check(name, pass, evidence, false));
         PlaytestMod.LOG.info("[playtest] {} :: {} -> {} ({})", id, name, pass ? "PASS" : "FAIL", evidence);
+        if (!pass) {
+            Shots.failure(this, name);
+        }
         return pass;
     }
 
