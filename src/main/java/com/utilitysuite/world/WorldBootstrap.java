@@ -8,6 +8,7 @@ import com.utilitysuite.core.input.KeybindManager;
 import com.utilitysuite.world.blast.BlastOverlayModule;
 import com.utilitysuite.world.camera.FreelookModule;
 import com.utilitysuite.world.camera.ScoutCameraModule;
+import com.utilitysuite.world.filters.RenderFiltersModule;
 import com.utilitysuite.world.lighting.LightOverlayModule;
 import com.utilitysuite.world.spawn.SpawnGeometryModule;
 import com.utilitysuite.world.knowledge.KnowledgeLedger;
@@ -78,6 +79,7 @@ public final class WorldBootstrap {
         BlastOverlayModule blastOverlay = new BlastOverlayModule();
         SpawnGeometryModule spawnGeometry = new SpawnGeometryModule(oreSim::profile);
         FreelookModule freelook = new FreelookModule();
+        RenderFiltersModule renderFilters = new RenderFiltersModule();
         modBus.addListener(RegisterGuiLayersEvent.class, e -> e.registerBelow(VanillaGuiLayers.CHAT,
                 ResourceLocation.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID, "minimap"), minimap.hud()));
         Services.registerWaypoints(waypoints.store());
@@ -85,7 +87,7 @@ public final class WorldBootstrap {
 
         IModuleRegistry registry = Services.modules();
         for (WorldModule m : new WorldModule[] {knowledge, overlays, oreSim, radar, camera, waypoints, minimap,
-                lightOverlay, blastOverlay, spawnGeometry, freelook}) {
+                lightOverlay, blastOverlay, spawnGeometry, freelook, renderFilters}) {
             registry.register(m);
             runtime.add(m);
         }
