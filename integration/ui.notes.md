@@ -43,6 +43,7 @@
   `mixin/` package and was not added.
 - `TimelineScreen` keeps its own layout (not scaled); it fits at GUI scale 4 but stays small.
 - The new reflex chips' "lit" state for SHIELD..OFFHAND follows `Autopilot.allows`, which is still a stub (true while
-  on) until the autopilot package adds per-reflex settings.
+  on) until the autopilot package adds per-reflex settings. **Resolved 2026-11-21:** per-reflex settings are merged, so
+  the chips now follow them.
 - Not verified in a running client (runClient is off limits for this run): check the menu at GUI scale 3 and 4
   (text-field caret, tooltips near the edges, scissor edges) in the next playtest.

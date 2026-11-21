@@ -361,6 +361,13 @@ has run in a game client yet**. Details, caveats and the playtest list: `docs/st
       light-radius requeue for the light overlay.
 - [ ] Autopilot bar chips and legit-preset notes for the remaining new modules (auto_fish / auto_reconnect server
       rules note).
+- [ ] Goal jobs back off a lit creeper: strip mining should ask the autopilot's danger model to pause and back off
+      (found in the 16:43 Goal playtest).
+- [ ] Camera momentum pitch check on takeover, also with invert-mouse on.
+- [ ] Dodge strafe speed tuning in game (0.12 blocks/tick is a guess).
+- [ ] Takeover voice lines (see Deferred): clips, sound event, off-by-default setting.
+- [ ] Rerun the Goal playtest with hands off the game window (the 16:48 rerun paused on a real mouse press).
+- [ ] Still untested in game: dodge, black-box dump, danger ranking under several hazards, humanized turn feel.
 
 ### Deferred
 
