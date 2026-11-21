@@ -13,6 +13,11 @@ public interface InputBackend {
     /** True when a local player exists (keys and camera can be driven). */
     boolean isReady();
 
+    /** The user's "Invert Mouse" option: vertical mouse motion maps to the opposite pitch direction. */
+    default boolean invertMouseY() {
+        return false;
+    }
+
     /** Automation starts driving the key: remember the user's state and set it down. */
     void pressKey(SimKey key);
 

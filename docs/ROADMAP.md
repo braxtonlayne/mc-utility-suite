@@ -346,9 +346,12 @@ has run in a game client yet**. Details, caveats and the playtest list: `docs/st
 - [ ] Pearl clutch in game (ledge search, smoothed turn, throw); only the ranking exists.
 - [ ] Dodge and fuse back-off while the Combat Assistant is engaged (it owns movement in a fight today).
 - [ ] Late better bid cannot preempt a reflex that is already acting.
-- [ ] Black box and vitals feed only run while the autopilot is on. Post `SuiteEvent.PlayerDied` from the core.
-- [ ] Tab-GUI arrow keys are not swallowed (needs a small `KeyboardHandler.keyPress` mixin).
-- [ ] `TimelineScreen` at the effective menu scale; sub-grouping for long category lists.
+- [x] Black box keeps recording vitals while the autopilot is off (`black_box_always`, default on; rows marked
+      `"off":true`; never acts). Unit-tested only. Still open: post `SuiteEvent.PlayerDied` from the core.
+- [x] Tab-GUI arrow keys are swallowed by `mixin/ui/KeyboardHandlerTabGuiMixin` (HEAD of `KeyboardHandler.keyPress`).
+      Target checked against the 21.1.265 jars; **not yet loaded in a client** (run the mixin audit).
+- [x] `TimelineScreen` at the effective menu scale (unit-tested; look at GUI scale 3 and 4).
+- [ ] Sub-grouping for long category lists.
 - [ ] Strip job: place torches at `isTorchStep` cells and glance at `wallGlances` points. Auto-Torch wall placement.
 - [ ] Vein Work walking to out-of-reach blocks; cocoa replanting.
 - [ ] Opponent model shield-use rate (axe shield break); `TacticsPlanner` reading the broad tactic; shared swing
@@ -361,12 +364,18 @@ has run in a game client yet**. Details, caveats and the playtest list: `docs/st
       light-radius requeue for the light overlay.
 - [ ] Autopilot bar chips and legit-preset notes for the remaining new modules (auto_fish / auto_reconnect server
       rules note).
-- [ ] Goal jobs back off a lit creeper: strip mining should ask the autopilot's danger model to pause and back off
-      (found in the 16:43 Goal playtest).
-- [ ] Camera momentum pitch check on takeover, also with invert-mouse on.
+- [x] Goal jobs back off a lit creeper: `combat_reflexes` setting `escape_during_jobs` (default on) arms the threat
+      escape while a goal job runs, on its own EMERGENCY lease; the job pauses and resumes. Unit-tested only.
+- [x] Camera momentum pitch check honours invert-mouse (`MomentumRelease.start(.., invertMouse)`, read through
+      `InputBackend.invertMouseY`). Unit-tested; feel on takeover still to check in game.
 - [ ] Dodge strafe speed tuning in game (0.12 blocks/tick is a guess).
 - [ ] Takeover voice lines (see Deferred): clips, sound event, off-by-default setting.
 - [ ] Rerun the Goal playtest with hands off the game window (the 16:48 rerun paused on a real mouse press).
+- [ ] Second volley, in game: mixin audit for the Tab-GUI key mixin (20 mixins now); creeper back-off during a strip
+      job (pause, resume, does it walk back into the blast spot); black-box rows while the autopilot is off;
+      Timeline at GUI scale 3 and 4; World/Travel "Go back" rows and the Freecam switch.
+- [ ] Drop the empty `TabGui.onKey` listener registration in `UiBootstrap`.
+- [ ] One lease per module: a shield lease and the job-escape move lease from `combat_reflexes` replace each other.
 - [ ] Still untested in game: dodge, black-box dump, danger ranking under several hazards, humanized turn feel.
 
 ### Deferred

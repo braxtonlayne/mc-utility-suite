@@ -535,7 +535,7 @@ public final class InputSmoother implements IInputSmoother, IContainerClicker {
                     && (curve.isActive() || lagging);
             clearRotationInternal();
             if (handOver) {
-                momentum.start(lastVelYaw, lastVelPitch); // A10: ease out instead of stopping dead
+                momentum.start(lastVelYaw, lastVelPitch, backend.invertMouseY()); // A10: ease out instead of stopping dead
             }
         }
         cancel(lease);

@@ -120,3 +120,37 @@ left in place and can be removed once the playtest is done.
 - Goal rerun (16:48): no death, no head snapping (fastest turn 306 deg/s), but the job paused on a real GLFW
   mouse press in the game window ("Manual input ATTACK_OR_USE preempted goal_engine") -- a click on the window
   during the run, which the manual-wins rule handles as designed. Rerun Goal with hands off the game window.
+
+## Second volley (tiered) (16:50-17:00)
+
+Eight tasks, sized by tier, each on its own worktree branch. All eight merged into main with `--no-ff`
+(`compileJava` after each merge). No unmerged branches. The branches
+`refs/heads/worktree-wf_3487b1d8-562-2` to `refs/heads/worktree-wf_3487b1d8-562-9` are kept, not deleted, not pushed.
+
+| Tier | Task | What landed |
+|------|------|-------------|
+| opus | Job creeper back-off (`-562-2`) | `combat_reflexes` setting `escape_during_jobs` ("Back off during jobs", default on). THREAT_ESCAPE arms while a goal job is RUNNING/REPLANNING even with the Combat Assistant and autopilot off, on the module's own EMERGENCY MOVEMENT lease; the job is preempted to PAUSED and resumes through the arbiter's `onResumable`. Job state is polled every 10 ticks into a cached flag. `JobEscapeGate` + 7 tests. |
+| opus | Tab-GUI key consumption (`-562-3`) | Client mixin `mixin/ui/KeyboardHandlerTabGuiMixin` (HEAD of `KeyboardHandler.keyPress`, cancels only when `TabGui.consumesKey` says so). Pure decision in `TabGuiNav.decide` (a release is swallowed exactly when its press was). 8 new tests. |
+| opus | Black box while off (`-562-4`) | Setting `black_box_always` ("Record while off", default on). `Autopilot.tickWhileOff()` samples vitals and records rows marked `"off":true`, keeps the death / big-hit dumps, and never schedules, leases or acts. Driven by a `ClientTickEvent.Post` listener. 7 new tests incl. an allocation test (200k off ticks). |
+| sonnet | Timeline at menu scale (`-562-5`) | `TimelineScreen` lays out in `MenuScale` virtual pixels, pose-scaled, clicks and hover converted. `TimelineScreenLayoutTest`. |
+| sonnet | Travel/World quick rows (`-562-6`) | Both tabs share "Go back" label/title/description; World header pill 68 px; Freecam is a switch row. `QuickRowLabelsTest`. |
+| sonnet | Momentum with invert-mouse (`-562-7`) | `MomentumRelease.start(yaw, pitch, invertMouse)` flips the pitch check. The branch left the caller unwired; the coordinator added `InputBackend.invertMouseY()` (default false, real value in `MinecraftInputBackend`) and passes it from `InputSmoother`, so the fix is live. |
+| haiku | Legit knob test (`-562-8`) | `LegitPresetsRunKnobsTest` (5 tests) pinning shield_turn, shield_front_cone and the four relaxed-only field modules. Test only. |
+| haiku | Docs open items (`-562-9`) | Seven open items added to the roadmap; `integration/ui.notes.md` stub caveat marked resolved. |
+
+Results on main after the merges: `./gradlew test` passes, 885 tests, 0 failures, 0 errors, 0 skipped (was 849).
+Static input-rule grep: only the two allowed read-only `inv.selected ==` comparisons in `travel/movement`.
+
+Nothing in this volley has run in a game client. Needs an in-game pass:
+
+- Mixin audit (`runClient`, audit on) for the new `KeyboardHandlerTabGuiMixin`; then Tab-GUI arrows/Enter with a
+  key mapping bound to an arrow key, F1/F3/Clean-Screen hiding it.
+- A lit creeper next to a running strip-mine job: the job pauses, the player backs off, the job resumes. Watch
+  whether the resumed path walks straight back into the blast spot (nothing in `JobExecutor` changed).
+- Black-box rows and a death dump with the autopilot off; that the tick listener registers in the real game.
+- Timeline screen at GUI scale 3 and 4; World/Travel "Go back" rows and the Freecam switch.
+- Camera momentum on takeover with invert-mouse on and off.
+
+Known leftovers: `UiBootstrap` still registers the now-empty `TabGui.onKey`; the arbiter allows one lease per
+module, so a shield lease and the job-escape move lease from `combat_reflexes` replace each other (older than this
+volley); the new settings use inline labels, no lang keys.

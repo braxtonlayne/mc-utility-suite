@@ -36,7 +36,7 @@
 
 ## Not done / caveats
 
-- **Tab-GUI key consumption.** NeoForge 21.1's `InputEvent.Key` is not cancellable and fires after vanilla has
+- **Tab-GUI key consumption (resolved 2026-11-21 by `mixin/ui/KeyboardHandlerTabGuiMixin`, not yet loaded in a client; original note follows).** NeoForge 21.1's `InputEvent.Key` is not cancellable and fires after vanilla has
   processed the key, so consumed arrow keys still reach other `InputEvent.Key` listeners and any key mapping bound to an
   arrow key (vanilla binds none by default). Truly swallowing them needs a small client mixin on
   `KeyboardHandler.keyPress` (HEAD, cancellable) that asks `TabGui` whether it consumed the key; that mixin belongs to the

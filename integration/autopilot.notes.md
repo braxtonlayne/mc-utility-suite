@@ -58,5 +58,6 @@ Owned: `core/autopilot/**` (+ tests). No edits outside it; no core.api changes. 
 ## Not done
 
 - No preemption of an acting reflex by a much better late bid (the acting reflex always holds the turn).
-- The black box records nothing while the autopilot is off.
+- The black box now records vitals while the autopilot is off (setting `black_box_always`, default on; rows carry
+  `"off":true`). Driven by its own `ClientTickEvent.Post` listener; unit-tested, not yet seen in a client.
 - Not playtested in game (no runClient in this run); unit tests only.

@@ -52,6 +52,11 @@ public final class MinecraftInputBackend implements InputBackend {
     }
 
     @Override
+    public boolean invertMouseY() {
+        return Minecraft.getInstance().options.invertYMouse().get();
+    }
+
+    @Override
     public boolean isReady() {
         return Minecraft.getInstance().player != null;
     }
