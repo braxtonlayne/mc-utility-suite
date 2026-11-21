@@ -15,7 +15,6 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.LayeredDraw;
-import net.neoforged.neoforge.client.event.InputEvent;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.List;
@@ -24,7 +23,7 @@ import java.util.List;
  * Tab-GUI: the classic arrow-key category list in the top-left corner, off by default. Up/Down move, Right/Enter opens a
  * category or toggles the highlighted module, Left goes back. Keys arrive raw from
  * {@code mixin.ui.KeyboardHandlerTabGuiMixin} through {@link #consumesKey} and are swallowed (never reaching vanilla key
- * mappings or {@link InputEvent.Key} listeners) only while the list is visible: module enabled, world loaded, no screen
+ * mappings) only while the list is visible: module enabled, world loaded, no screen
  * open, not under Clean-Screen, F1 or F3. Module lists are cached per category (refreshed on navigation and once a
  * second), so rendering and key handling allocate nothing. Public only for the mixin's static hook.
  */
@@ -143,14 +142,6 @@ public final class TabGui implements IModule, IConfigurable, LayeredDraw.Layer {
             gui.navigate(key);
         }
         return decision != TabGuiNav.PASS;
-    }
-
-    /**
-     * Former {@link InputEvent.Key} listener, still registered by {@link UiBootstrap}. Intentionally empty: navigation
-     * now runs from {@link #consumesKey} so a key is never handled twice. The registration can be dropped.
-     */
-    void onKey(InputEvent.Key event) {
-        // handled by consumesKey (raw-key mixin); see class javadoc
     }
 
     /** True while the list is on screen: the same conditions {@link #render} draws under. */
