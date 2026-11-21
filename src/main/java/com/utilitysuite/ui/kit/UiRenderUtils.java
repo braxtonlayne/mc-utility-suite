@@ -163,7 +163,21 @@ public final class UiRenderUtils {
 
     /** Scissor to a rectangle in GUI coordinates (pair with {@link #endClip}). */
     public static void clip(GuiGraphics g, int x, int y, int w, int h) {
-        g.enableScissor(x, y, x + w, y + h);
+        scissor(g, x, y, x + w, y + h);
+    }
+
+    /**
+     * Scissor to a rectangle given in the caller's layout px. Vanilla scissors ignore the pose stack, so inside the
+     * menu's effective-scale pass ({@link MenuScale#active()} != 1) the edges are converted to GUI px, rounded outward.
+     */
+    public static void scissor(GuiGraphics g, int x0, int y0, int x1, int y1) {
+        double f = MenuScale.active();
+        if (f == 1.0) {
+            g.enableScissor(x0, y0, x1, y1);
+        } else {
+            g.enableScissor(MenuScale.scissorMin(x0, f), MenuScale.scissorMin(y0, f), MenuScale.scissorMax(x1, f),
+                    MenuScale.scissorMax(y1, f));
+        }
     }
 
     public static void endClip(GuiGraphics g) {
