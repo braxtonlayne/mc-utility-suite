@@ -28,6 +28,7 @@ import com.utilitysuite.ui.SuiteHud;
 import com.utilitysuite.ui.TimelineScreen;
 import com.utilitysuite.ui.kit.CardNode;
 import com.utilitysuite.ui.kit.PillButton;
+import com.utilitysuite.ui.kit.UiRenderUtils;
 import com.utilitysuite.ui.kit.UiTheme;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
@@ -92,7 +93,7 @@ public final class ToolsTab {
                 p.toast("Automation resumed");
                 p.rebuild();
             }).pill(true), 0);
-            p.text("No module may take control until you resume.", UiTheme.DANGER_TEXT);
+            p.paragraph("No module may take control until you resume.", UiTheme.DANGER_TEXT);
         }
         List<IModule> mods = Services.modules().byCategory(ModuleCategory.TOOLS);
         for (IModule m : mods) {
@@ -107,16 +108,33 @@ public final class ToolsTab {
 
     // ---- custom module panels ---------------------------------------------------------------------------------------
 
+    private static final String K_DEPOSIT_HELP = "tools.deposit_help";
+
     public static void registerPanels() {
         ModulePanels.register(SmartInventory.ID, (p, m) -> {
             if (!(m instanceof SmartInventory inv)) {
                 return;
             }
-            p.paragraph("Quick Deposit: open a chest or shulker box and press R (rebind under Controls > Utility "
-                    + "Suite > Quick deposit) to move matching items in, or click the Deposit / Dump buttons beside "
-                    + "the container. The Deposit buttons switch is in the Deposit group below.", Panel.GRAY);
+            // help: one line that expands on request instead of a six-line paragraph
+            boolean helpOpen = p.flag(K_DEPOSIT_HELP);
+            int hw = p.width();
+            p.rowLabel(UiRenderUtils.firstThatFits(p.font(), hw - 52, "Quick Deposit: open a chest or shulker box, "
+                    + "press R", "Quick Deposit: open a chest, press R", "Quick Deposit: press R"), 0, hw - 52, Panel.DIM);
+            p.button(helpOpen ? "Less" : "More", helpOpen ? "Hide the details" : "How Quick Deposit works", hw - 44,
+                    44, PillButton.Style.GHOST, b -> {
+                        p.setFlag(K_DEPOSIT_HELP, !helpOpen);
+                        p.rebuild();
+                    });
+            p.nextRow();
+            if (helpOpen) {
+                p.paragraph("Open a chest or shulker box and press R (rebind under Controls > Utility Suite > Quick"
+                        + " deposit) to move matching items in, or click the Deposit / Dump buttons beside the"
+                        + " container. The Deposit buttons switch is in the Deposit group below.", Panel.DIM);
+            }
             p.gap(6);
-            p.text("Pinned hotbar slots (never overwritten or dumped)", Panel.DIM);
+            p.rowLabel("Pinned slots", 0, p.width(), Panel.DIM)
+                    .tooltip("Pinned hotbar slots are never overwritten or dumped");
+            p.nextRow();
             int bw = Math.min(26, (p.width() - 8 * 4) / 9);
             for (int i = 0; i < 9; i++) {
                 int slot = i;
@@ -174,7 +192,7 @@ public final class ToolsTab {
         List<Rule> list = rules.rules();
         if (list.isEmpty()) {
             p.paragraph("No rules yet. Example: If inventory >= 90% full, deposit at Base Chest and resume.",
-                    Panel.GRAY);
+                    Panel.DIM);
         }
         String editing = p.state(K_EDITING, "");
         for (Rule r : list) {
@@ -420,7 +438,7 @@ public final class ToolsTab {
         boolean inWorld = !ProfileIds.GLOBAL.equals(active.profileId());
         p.card("Profiles", "active: " + active.profileId());
         if (!inWorld) {
-            p.text("No world loaded: editing the global defaults.", Panel.GRAY);
+            p.paragraph("No world loaded: editing the global defaults.", Panel.DIM);
             return;
         }
         int w = p.width();
@@ -504,7 +522,7 @@ public final class ToolsTab {
         SettingsRenderer.settings(p, ModState.CORE, CORE_SPECS, new SettingsAccess(global, ModState.CORE,
                 k -> CoreBootstrap.applyCoreSettings(), Services.modState()::markDirty));
         p.text("Clean-Screen is " + (Services.modState().isCleanScreen() ? "on" : "off")
-                + " (switch it in the top bar).", Panel.GRAY);
+                + " (switch it in the top bar).", Panel.DIM);
     }
 
     /** Lower-case enum label helper for other tabs. */

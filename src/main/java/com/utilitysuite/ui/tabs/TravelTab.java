@@ -43,9 +43,8 @@ public final class TravelTab {
     private static void quickActions(Panel p) {
         p.card("Quick actions", "water walk, step, take me back");
         Services.modules().find(TerrainAssist.class).ifPresent(t -> {
-            QuickActions.stateRow(p, "Water Walk", "Walk on top of water (and lava if allowed in Terrain Assist). "
-                            + "Sneak to sink. Also on the Terrain surface key.", t.isSurfaceActive(), "Active", "Off",
-                    "Start", "Stop", t::toggleSurfaceMode);
+            QuickActions.switchRow(p, "Water Walk", "Walk on top of water (and lava if allowed in Terrain Assist). "
+                    + "Sneak to sink. Also on the Terrain surface key.", t.isSurfaceActive(), t::toggleSurfaceMode);
             QuickActions.settingRow(p, t, "surface_mode");
             QuickActions.settingRow(p, t, "step");
             QuickActions.settingRow(p, t, "no_slowdown");
@@ -53,7 +52,7 @@ public final class TravelTab {
         IWaypointService wps = Services.waypointsOrNull();
         if (wps != null) {
             QuickActions.actionRow(p, "Walk back along your trail", "Take Me Back: follows the recorded breadcrumbs",
-                    "Take Me Back", PillButton.Style.SECONDARY, () -> WorldTab.takeMeBack(p, wps));
+                    "Go back", PillButton.Style.SECONDARY, () -> WorldTab.takeMeBack(p, wps));
         }
     }
 

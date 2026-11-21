@@ -28,6 +28,7 @@ import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.function.Consumer;
 
 /**
@@ -100,7 +101,7 @@ public final class WorldTab {
             VisualPresets.Preset preset = all.get(i);
             int col = i % perRow;
             p.button(preset.name(), preset.tooltip(), col * (bw + gap), bw,
-                    preset == VisualPresets.CLEAN ? PillButton.Style.SECONDARY : PillButton.Style.PRIMARY,
+                    isApplied(p, preset) ? PillButton.Style.PRIMARY : PillButton.Style.OUTLINE, // fill = applied
                     b -> applyPreset(p, preset));
             if (col == perRow - 1 || i == all.size() - 1) {
                 p.nextRow();
@@ -125,8 +126,25 @@ public final class WorldTab {
             }
         }
         Services.modState().markDirty();
+        p.setState(K_APPLIED_PRESET, preset.name());
         p.toast("Preset applied: " + preset.name() + (missing > 0 ? " (some modules not installed)" : ""));
         p.rebuild();
+    }
+
+    private static final String K_APPLIED_PRESET = "world.applied_preset";
+
+    /** The preset last applied from this menu, while its module switches still match (changing one un-fills it). */
+    static boolean isApplied(Panel p, VisualPresets.Preset preset) {
+        if (!preset.name().equals(p.state(K_APPLIED_PRESET, ""))) {
+            return false;
+        }
+        for (VisualPresets.Toggle t : preset.toggles()) {
+            Optional<IModule> m = Services.modules().byId(t.moduleId());
+            if (m.isPresent() && m.get().isEnabled() != t.enabled()) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static boolean writeSetting(ProfileConfig profile, VisualPresets.Setting s) {
@@ -209,7 +227,7 @@ public final class WorldTab {
         IWaypointService wps = Services.waypointsOrNull();
         if (wps == null) {
             p.card("Waypoints", "not available");
-            p.text("Waypoints are not available (world module not loaded).", Panel.GRAY);
+            p.paragraph("Waypoints are not available (world module not loaded).", Panel.GRAY);
             return;
         }
         List<Waypoint> all = wps.all();
@@ -223,7 +241,7 @@ public final class WorldTab {
                 PillButton.Style.PRIMARY, b -> addHere(p, wps));
         p.nextRow();
         if (all.isEmpty()) {
-            p.text("No waypoints yet. Press Add here (a name is optional).", Panel.GRAY);
+            p.paragraph("No waypoints yet. Press Add here (a name is optional).", Panel.GRAY);
             return;
         }
         p.gap(4);

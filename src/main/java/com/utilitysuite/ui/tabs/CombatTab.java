@@ -56,18 +56,21 @@ public final class CombatTab {
         Optional<IModule> assistant = Services.modules().byId(ASSISTANT);
         if (assistant.isEmpty()) {
             p.card("Auto-Fight", "not installed", 0, CardNode.Tone.HERO);
-            p.text("The combat assistant is not installed.", Panel.GRAY);
+            p.paragraph("The combat assistant is not installed.", Panel.GRAY);
         } else {
             IModule a = assistant.get();
             boolean on = a.isEnabled();
-            ChipNode chip = new ChipNode(p.font(), on ? "Armed" : "Off", on ? UiTheme.RUNNING : UiTheme.TEXT_MUTED);
-            p.card("Auto-Fight", "Defensive combat assistance", ToggleSwitch.W + chip.w + 18, CardNode.Tone.HERO);
+            ChipNode chip = on ? new ChipNode(p.font(), "Armed", UiTheme.RUNNING) : null; // the switch already says off
+            p.card("Auto-Fight", "Defensive combat assistance", ToggleSwitch.W + (chip == null ? 8 : chip.w + 18),
+                    CardNode.Tone.HERO);
             p.cardToggle(on, "module." + ASSISTANT, v -> {
                 CoreBootstrap.modules().setModuleEnabled(ASSISTANT, v, Services.modState().profile());
                 Services.modState().markDirty();
                 p.rebuild();
             }).tooltip("Defensive combat assistance: engages only after you attack or are attacked");
-            p.headerNode(chip, ToggleSwitch.W + 10);
+            if (chip != null) {
+                p.headerNode(chip, ToggleSwitch.W + 10);
+            }
             p.paragraph("Engages only after you attack or are attacked, never on its own. Your own keys and mouse "
                     + "always win; Stop-All ends it at once.", Panel.DIM);
             p.gap(2);
@@ -112,7 +115,7 @@ public final class CombatTab {
         AllyRosterModule mod = CombatBootstrap.allies();
         if (mod == null) {
             p.card("Ally roster", "not available");
-            p.text("The ally roster is not available.", Panel.GRAY);
+            p.paragraph("The ally roster is not available.", Panel.GRAY);
             return;
         }
         AllyRoster roster = mod.roster();
