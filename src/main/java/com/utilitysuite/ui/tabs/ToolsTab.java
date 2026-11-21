@@ -9,6 +9,7 @@ import com.utilitysuite.core.api.Services;
 import com.utilitysuite.core.api.SettingSpec;
 import com.utilitysuite.core.config.ModState;
 import com.utilitysuite.core.config.ProfileIds;
+import com.utilitysuite.core.input.InputSettings;
 import com.utilitysuite.core.input.KeybindManager;
 import com.utilitysuite.tools.ToolsBootstrap;
 import com.utilitysuite.tools.inventory.PinnedSlots;
@@ -63,7 +64,13 @@ public final class ToolsTab {
             SettingSpec.decimal(ModState.KEY_MOUSE_THRESHOLD_PX, "Mouse override threshold (px)", 6.0, 0.5, 50.0, "",
                     "Mouse movement per tick that counts as you taking the camera."),
             SettingSpec.decimal(ModState.KEY_CAMERA_SPEED, "Camera turn speed (deg/s)", 240.0, 30.0, 450.0, "",
-                    "Base speed of automated camera turns. Hard-capped at 450: automation never snaps your head."));
+                    "Base speed of automated camera turns. Hard-capped at 450: automation never snaps your head."),
+            SettingSpec.bool(InputSettings.KEY_HUMANIZATION, "Humanized timing", true, "",
+                    "Turn time by Fitts's law, varied reaction delays and aim points. Only ever slower, never past 450 deg/s."),
+            SettingSpec.decimal(InputSettings.KEY_SKILL_OVERRIDE, "Humanized skill (-1 = per session)", -1.0, -1.0, 1.0, "",
+                    "Fixed skill from 0 (slow, loose) to 1 (quick, tight). -1 draws one per session between 0.6 and 0.9."),
+            SettingSpec.bool(InputSettings.KEY_MOMENTUM_RELEASE, "Camera momentum on takeover", true, "",
+                    "When you move the mouse during an automated turn, the turn eases out over about 0.2 s instead of stopping dead."));
 
     private ToolsTab() {
     }

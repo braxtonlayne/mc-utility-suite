@@ -98,8 +98,8 @@ shared with the Latency Simulator), same as today.
       clutch, parkour timing, parkour blocks). It runs those reflexes even while Movement Assist is off, draws nothing.
 - [x] Classic enabled-module list on the HUD (HUD status line > "Enabled module list", off by default): top-right,
       longest name first, category colours, Autopilot on top while on.
-- [ ] More reflexes for the autopilot as they land: threat escape (walk the escape path), self-defence (Combat
-      Assistant), auto-eat / totem in danger, ladder/vine clutch.
+- [x] More reflexes (2026-11-21 parallel run, see the end of this file): shield, dodge, threat escape (back off a
+      fuse), elytra swap, offhand. Still open: self-defence (Combat Assistant), auto-eat, ladder/vine clutch.
 - [ ] Classic look beyond the bar and the list (keep the three-column layout below): optional "Classic" theme with
       square panels, per-category accent headers and bracketed key hints; decide with the user how far to go.
 
@@ -292,3 +292,80 @@ Next:
       player's effects, head-hitter jumps.
 - [ ] Packet timing (single-player or allow-listed servers, Relaxed level only): hold movement packets for a tick or
       two so a correction lands in the same server tick.
+
+## Parallel feature run (2026-11-21, ideas list `docs/research/ideas-2026-11-21.md`)
+
+All eight packages are merged on main. Compiled and unit-tested only (849 tests, 0 failures); **nothing in this section
+has run in a game client yet**. Details, caveats and the playtest list: `docs/state/run-2026-11-21-parallel.md` and
+`integration/<package>.notes.md`.
+
+### Done (A: upgrades)
+
+- [x] A1 Danger model and reflex scheduler (`core/autopilot/DangerModel`, `ReflexScheduler`), fed by fall clutch (FALL,
+      VOID), terrain (LAVA), threat tracker (PROJECTILE, EXPLOSION, MELEE), vitals (LOW_HEALTH, DROWNING, FIRE) and
+      Lava Plug. Per-reflex settings for shield, dodge, threat escape, elytra swap, offhand.
+- [x] A2 Early staging (`FallRiskEstimator`, `FallStaging`): clutch item pulled into the hotbar and preselected, no
+      camera movement.
+- [x] A3 Reflex chain: one shared EMERGENCY lease (`ReflexChain.chainLease`) for fall clutch, shield, dodge, threat
+      escape and elytra swap. No contract change was needed.
+- [x] A4 Dodge and threat escape (`DodgePlanner`, keys only, never turns the camera).
+- [x] A5 Shield reflex (`ShieldDecision`, module `combat_reflexes`).
+- [x] A6 Clutch ladder (`ClutchLadder`): block clutch, elytra deploy, water steer, glide guard. Pearl is ranked only.
+- [x] A7 Humanization in the core (`Humanizer`, `PrimitiveRandom`): Fitts turn time (only ever slower, 450 deg/s cap
+      kept), log-normal reactions, aim spread, per-session skill. Settings on the Tools tab core list.
+- [x] A8 Tactic utility and opponent model (`TacticUtility`, `OpponentModel`), behind "Read the fight".
+- [x] A9 Strip-route fluid cost, torch cadence and wall-glance planning (`StripRoutePlanner`).
+- [x] A10 Black box (dump on death or a big hit), "Autopilot: <reflex>" HUD line, camera momentum release.
+
+### Done (B: menu polish)
+
+- [x] B1 effective scale 2 at GUI scale 3-4 (`ui/kit/MenuScale`), B3 CLEAN caption and "Stop all", B4 reflex chips,
+      B5 autopilot page, B6 wrapped empty states, B7 outlined presets, B8 Water Walk switch and "Go back", B9 Tools
+      help collapse. (B2 was already done in 68f275a.)
+
+### Done (C: new modules)
+
+- [x] Movement: Toggle Sprint / Toggle Sneak (`move_toggles`), Elytra Swap (`elytra_swap`, also a reflex), Mount Jump
+      Charge (`mount_jump`), Fly (`fly`) and Velocity Scale (`velocity_scale`), both Relaxed-only and gated to
+      single-player / allow-list.
+- [x] Render: Freelook, radar tracers and richer nametags, Light Levels, Blast Radius, Spawn Geometry (slime chunks,
+      spawn spheres), Render Filters.
+- [x] Player: Auto-Fish, Offhand Manager (the combat totem keeper stands aside while it is on), Auto-Respawn,
+      Auto-Reconnect, Quick Pearl key.
+- [x] World work: Crop Work, Vein Work (tree feller / vein miner), Auto-Torch, Lava Plug.
+- [x] Combat: Trigger Assist, Target HUD and visual range alert.
+- [x] Misc: Tab-GUI (off by default), Dot-Commands.
+- [x] Integration: lang fragments (36 keys) and 7 new mixins merged; humanization settings on the Tools tab;
+      `LegitPresets` knobs for `combat_reflexes` (shield_turn, shield_front_cone) and the four field modules (relaxed).
+
+### Open (found during the run)
+
+- [ ] **In-game verification of everything** (first thing next session): `./gradlew runClient` for the mixin audit
+      (7 new mixins: totem pop, velocity, 5 render filters), the menu at GUI scale 3 and 4, then a playtest pass.
+- [ ] Spark profiling pass for the new overlays and scans (mandate step 6 beyond the allocation tests).
+- [ ] Pearl clutch in game (ledge search, smoothed turn, throw); only the ranking exists.
+- [ ] Dodge and fuse back-off while the Combat Assistant is engaged (it owns movement in a fight today).
+- [ ] Late better bid cannot preempt a reflex that is already acting.
+- [ ] Black box and vitals feed only run while the autopilot is on. Post `SuiteEvent.PlayerDied` from the core.
+- [ ] Tab-GUI arrow keys are not swallowed (needs a small `KeyboardHandler.keyPress` mixin).
+- [ ] `TimelineScreen` at the effective menu scale; sub-grouping for long category lists.
+- [ ] Strip job: place torches at `isTorchStep` cells and glance at `wallGlances` points. Auto-Torch wall placement.
+- [ ] Vein Work walking to out-of-reach blocks; cocoa replanting.
+- [ ] Opponent model shield-use rate (axe shield break); `TacticsPlanner` reading the broad tactic; shared swing
+      intent between the shield reflex and `SwingGate`.
+- [ ] Fitts target width from the real hitbox (needs a width on `RotationTarget`).
+- [ ] Toggle Sprint release on the real sprint key (needs a core/input hook); staging should skip water in the Nether.
+- [ ] Quick Pearl: restore the moved stack when its lease is preempted mid-throw.
+- [ ] Auto-Reconnect resume: an `IGoalEngine` accessor for the active job's original `GoalRequest`.
+- [ ] Blast overlay for beds / respawn anchors, wither skulls, fireballs; freelook orbit in third person; targeted
+      light-radius requeue for the light overlay.
+- [ ] Autopilot bar chips and legit-preset notes for the remaining new modules (auto_fish / auto_reconnect server
+      rules note).
+
+### Deferred
+
+- Takeover voice lines (C, Misc): needs the local Zonos TTS server on the GPU to pre-generate clips, and the clips
+  cannot be reviewed by ear in an unattended run. Next: generate clips, add a sound event and an off-by-default
+  setting keyed on `IAutopilot.noteActed`.
+- A8 hunter-bot reuse and LFM/Raon-driven opponents: only the engine-free `TacticUtility` / `OpponentModel` were in
+  scope; the hunter bot is a separate feature.

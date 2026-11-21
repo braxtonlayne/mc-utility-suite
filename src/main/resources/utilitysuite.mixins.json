@@ -8,14 +8,21 @@
     "LocalPlayerSilentRotationMixin",
     "MouseHandlerManualLookMixin",
     "combat.ClientPacketListenerDamageMixin",
+    "combat.ClientPacketListenerTotemPopMixin",
     "travel.ClientPacketListenerCorrectionMixin",
-    "travel.LivingEntityFluidSurfaceMixin",
+    "travel.ClientPacketListenerVelocityMixin",
     "travel.LiquidBlockSolidSurfaceMixin",
+    "travel.LivingEntityFluidSurfaceMixin",
     "travel.PlayerSafeWalkMixin",
     "world.BlockFaceHidingMixin",
     "world.ClientLevelBlockUpdateMixin",
+    "world.ClientLevelDataTimeMixin",
     "world.EntityTurnFreecamMixin",
-    "world.LightTextureFullbrightMixin"
+    "world.GameRendererFiltersMixin",
+    "world.LevelRendererWeatherMixin",
+    "world.LevelWeatherOverrideMixin",
+    "world.LightTextureFullbrightMixin",
+    "world.ParticleEngineFilterMixin"
   ],
   "injectors": {
     "defaultRequire": 1

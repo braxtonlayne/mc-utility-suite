@@ -56,7 +56,13 @@ public final class LegitPresets {
             knob(COMBAT, "aim_speed", 0.75, 1.0, 2.0),
             knob(COMBAT, "los_timeout_ticks", 60, 100, 200),
             knob(COMBAT, "engage_requires_los", true, true, false),
-            knob("movement_assist", "look_style", "NATURAL", "NATURAL", "FREE"));
+            knob("movement_assist", "look_style", "NATURAL", "NATURAL", "FREE"),
+            knob("combat_reflexes", "shield_turn", false, false, true),
+            knob("combat_reflexes", "shield_front_cone", 70.0, 70.0, 90.0),
+            knob("auto_torch", "relaxed", false, false, true),
+            knob("lava_plug", "relaxed", false, false, true),
+            knob("vein_work", "relaxed", false, false, true),
+            knob("crop_work", "relaxed", false, false, true));
 
     private LegitPresets() {
     }
