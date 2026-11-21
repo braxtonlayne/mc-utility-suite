@@ -94,3 +94,16 @@ left in place and can be removed once the playtest is done.
 2. Menu check at GUI scale 4, then the playtest list above, most dangerous first (reflex chain, shield, dodge).
 3. Re-apply the legit level in the menu if the profile was on Relaxed.
 4. Spark pass; then pick up the Open items in the ROADMAP.
+
+## In-game checks after the merge (16:22-16:36)
+
+- Mixin audit (`runPlaytest`, audit on): all 19 mixins applied, no failures.
+- Menu playtest PASS; the menu now shows three columns at GUI scale 4 (B1 works).
+- Parkour playtest PASS: autopilot water clutch and parkour gap block with Movement Assist off still work under the
+  new scheduler and chain lease.
+- Combat playtest PASS, with a new autopilot lane (Combat Assistant off): the offhand shield is raised against a
+  skeleton, and the player backs off a lit creeper (2.4 -> 6.3 blocks).
+- Fixed a devtest bug that had broken the gap-ambush lane before this run: `s.cmd(Arena.fill(...))` built the command
+  before the arena centre was picked, so it filled at (0, 0). Combat and Travel fills are now deferred lambdas.
+- Still untested in-game: dodge, the black-box dump, the danger-model ranking under several hazards, humanized turn
+  feel, and every new module outside combat reflexes.

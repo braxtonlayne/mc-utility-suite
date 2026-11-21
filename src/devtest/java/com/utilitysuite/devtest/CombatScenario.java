@@ -129,7 +129,9 @@ final class CombatScenario {
         proactive(s, ca);
         gapAmbush(s, ca);
         foodObjective(s, ca);
+        autopilotReflexes(s, ca);
         s.always("disarm", () -> {
+            com.utilitysuite.core.CoreBootstrap.setAutopilot(false);
             H.setting(CombatAssistant.ID, "engage_mode", "REACTIVE");
             Harness.command(Arena.fill(-6, 0, 4, -5, 0, 10, "stone"));
             Harness.command("kill @e[type=minecraft:cow]");
@@ -139,6 +141,67 @@ final class CombatScenario {
             Harness.command("effect give @s minecraft:instant_health 1 5 true");
         });
         return s;
+    }
+
+    /**
+     * Autopilot lane: Combat Assistant off, the autopilot on with its defaults. A skeleton in front must get the
+     * offhand shield raised, and a lit creeper next to the player must make it back off. Whatever fires here can only
+     * have come through the autopilot. The creeper has explosion radius 0 so the arena survives.
+     */
+    private static void autopilotReflexes(Scenario s, CombatAssistant ca) {
+        var rx = CombatBootstrap.reflexes();
+        int[] before = new int[3];
+        double[] dist = new double[2];
+        boolean[] sawRaised = new boolean[1];
+        s.cmd("kill @e[type=!minecraft:player]");
+        s.cmd("effect give @s minecraft:instant_health 1 5 true");
+        s.cmd("effect give @s minecraft:resistance 120 4 true");
+        s.cmd("clear @s");
+        s.cmd("item replace entity @s weapon.offhand with minecraft:shield");
+        s.cmd(() -> Arena.tp(0.5, 0.5, 0f));
+        s.run("autopilot only", () -> {
+            H.enable(CombatAssistant.ID, false);
+            H.enable(com.utilitysuite.combat.reflex.CombatReflexes.ID, true);
+            com.utilitysuite.core.CoreBootstrap.setAutopilot(true);
+            before[0] = rx.shieldRaises();
+            before[1] = rx.escapes();
+            before[2] = rx.dodges();
+            s.check("autopilot lane armed: assistant off, autopilot on, shield in the offhand",
+                    !ca.isEnabled() && com.utilitysuite.core.CoreBootstrap.autopilot().isOn()
+                            && H.p().getOffhandItem().is(net.minecraft.world.item.Items.SHIELD),
+                    "assistant=" + ca.isEnabled() + " offhand=" + H.p().getOffhandItem());
+        });
+        s.cmd(() -> "summon minecraft:skeleton " + (Arena.cx + 0.5) + " " + (Arena.FLOOR + 1) + " " + (Arena.cz + 9.5)
+                + " {PersistenceRequired:1b,Rotation:[180f,0f]}");
+        s.waitUpTo("shield raised against the skeleton", 20 * 12, () -> {
+            sawRaised[0] |= H.p().isBlocking() || H.p().isUsingItem();
+            return rx.shieldRaises() > before[0] && sawRaised[0];
+        });
+        Shots.add(s, "autopilot-shield");
+        s.run("shield result", () -> s.check("autopilot raises the offhand shield against a skeleton (assistant off)",
+                rx.shieldRaises() > before[0],
+                "raises " + before[0] + " -> " + rx.shieldRaises() + ", dodges " + before[2] + " -> " + rx.dodges()
+                        + ", saw using item=" + sawRaised[0] + ", hp=" + Harness.fmt("%.1f", H.p().getHealth())));
+        s.cmd("kill @e[type=minecraft:skeleton]");
+        s.cmd("kill @e[type=minecraft:arrow]");
+        s.cmd(() -> Arena.tp(0.5, 0.5, 0f));
+        s.waitTicks(20);
+        s.cmd(() -> "summon minecraft:creeper " + (Arena.cx + 0.5) + " " + (Arena.FLOOR + 1) + " " + (Arena.cz + 2.5)
+                + " {NoAI:1b,PersistenceRequired:1b,ignited:1b,Fuse:50,ExplosionRadius:0b}");
+        s.run("creeper placed", () -> dist[0] = H.p().position().distanceTo(
+                new net.minecraft.world.phys.Vec3(Arena.cx + 0.5, Arena.FLOOR + 1, Arena.cz + 2.5)));
+        s.waitUpTo("back off the lit creeper", 45, () -> rx.escapes() > before[1]);
+        s.waitTicks(30);
+        s.run("escape result", () -> {
+            dist[1] = H.p().position().distanceTo(
+                    new net.minecraft.world.phys.Vec3(Arena.cx + 0.5, Arena.FLOOR + 1, Arena.cz + 2.5));
+            s.check("autopilot backs off a lit creeper (assistant off)",
+                    rx.escapes() > before[1] && dist[1] > dist[0] + 1.5,
+                    Harness.fmt("escapes %d -> %d, distance %.2f -> %.2f", before[1], rx.escapes(), dist[0],
+                            dist[1]));
+        });
+        s.cmd("kill @e[type=minecraft:creeper]");
+        s.run("autopilot off", () -> com.utilitysuite.core.CoreBootstrap.setAutopilot(false));
     }
 
     private static String idleZombie(double dx, double dy, double dz, String extra) {
@@ -178,7 +241,7 @@ final class CombatScenario {
         int[] swingsBefore = new int[1];
         boolean[] sawHold = new boolean[1];
         double[] minY = {Double.MAX_VALUE};
-        s.cmd(Arena.fill(-6, 0, 4, -5, 0, 10, "air"));
+        s.cmd(() -> Arena.fill(-6, 0, 4, -5, 0, 10, "air"));
         s.cmd(() -> Arena.tp(-9.5, 7.5, -90f));
         s.waitTicks(10);
         s.cmd(() -> idleZombie(-2.5, 1, 7.5, ""));
@@ -209,7 +272,7 @@ final class CombatScenario {
         Shots.add(s, "combat-gap-hit");
         s.cmd("kill @e[type=minecraft:zombie]");
         s.waitUpTo("DORMANT after gap", 100, () -> ca.state() == CombatState.DORMANT);
-        s.cmd(Arena.fill(-6, 0, 4, -5, 0, 10, "stone"));
+        s.cmd(() -> Arena.fill(-6, 0, 4, -5, 0, 10, "stone"));
     }
 
     /** No food anywhere: the assistant hunts a nearby cow and picks up the beef. */

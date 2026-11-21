@@ -227,9 +227,9 @@ final class TravelScenario {
         boolean[] shot = new boolean[1];
         double[] minY = {Double.MAX_VALUE};
         // gap x-13..x-15 (three air blocks), landing platform x-16..x-22, lane z-2..z+2
-        s.cmd(Arena.fill(-22, 1, -2, -13, 4, 2, "air"));
-        s.cmd(Arena.fill(-15, -4, -2, -13, 0, 2, "air"));
-        s.cmd(Arena.fill(-22, 0, -2, -16, 0, 2, "stone"));
+        s.cmd(() -> Arena.fill(-22, 1, -2, -13, 4, 2, "air"));
+        s.cmd(() -> Arena.fill(-15, -4, -2, -13, 0, 2, "air"));
+        s.cmd(() -> Arena.fill(-22, 0, -2, -16, 0, 2, "stone"));
         s.cmd(() -> Arena.tp(-3.5, 0.5, 90f));
         s.waitTicks(10);
         s.run("movement assist on", () -> {
