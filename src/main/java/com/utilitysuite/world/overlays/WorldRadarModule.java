@@ -21,6 +21,8 @@ import net.minecraft.tags.FluidTags;
 import net.minecraft.util.Mth;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.monster.Enemy;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.item.BowItem;
 import net.minecraft.world.item.CrossbowItem;
@@ -79,6 +81,15 @@ public final class WorldRadarModule extends WorldModule {
     private boolean aimArc;
     private int radius;
     private int trailRadius;
+    private boolean mobs;
+    private boolean tracers;
+    private int maxMobs;
+
+    private static final int MAX_MOBS = 128;
+    private final LivingEntity[] mobList = new LivingEntity[MAX_MOBS];
+    private int mobCount;
+    private final NametagCache tags = new NametagCache(NametagCache.DEFAULT_FORMAT,
+            s -> Minecraft.getInstance().font.width(s));
 
     private final ItemEntity[] items = new ItemEntity[MAX_ITEMS];
     private final boolean[] itemHighlight = new boolean[MAX_ITEMS];
@@ -103,6 +114,12 @@ public final class WorldRadarModule extends WorldModule {
                         "Outlines chunks that look freshly generated (liquids still settling when they arrived)."),
                 SettingSpec.bool("aim_arc", "Aim arc", true, "Groups",
                         "Predicted path of the bow, crossbow, pearl, snowball, egg, trident or wind charge you hold."),
+                SettingSpec.bool("mobs", "Hostile mobs", false, "Groups",
+                        "Boxes and tags (health, armour, distance) on hostile mobs."),
+                SettingSpec.bool("tracers", "Tracers", false, "Display",
+                        "Lines from the crosshair to tracked players and hostile mobs."),
+                SettingSpec.integer("max_mobs", "Max mobs", 48, 4, 128, "Advanced",
+                        "Cap on hostile mobs tracked (nearest found first in the entity list).").asAdvanced(),
                 SettingSpec.integer("radius", "Radius", 64, 8, 256, "Display", "Players, items and blocks beyond this "
                         + "distance are not shown."),
                 SettingSpec.integer("trail_radius", "Trail radius (chunks)", 12, 2, 32, "Display",
@@ -125,6 +142,9 @@ public final class WorldRadarModule extends WorldModule {
         rareDrops = bool(p, "rare_drops");
         trails = bool(p, "trails");
         aimArc = bool(p, "aim_arc");
+        mobs = bool(p, "mobs");
+        tracers = bool(p, "tracers");
+        maxMobs = integer(p, "max_mobs");
         radius = integer(p, "radius");
         trailRadius = integer(p, "trail_radius");
         itemFilter.set(text(p, "item_highlight"), text(p, "item_junk"), bool(p, "show_other_items"));
@@ -153,6 +173,9 @@ public final class WorldRadarModule extends WorldModule {
     private void clearItems() {
         java.util.Arrays.fill(items, null);
         itemCount = 0;
+        java.util.Arrays.fill(mobList, null);
+        mobCount = 0;
+        tags.clear();
     }
 
     @Override
@@ -190,6 +213,26 @@ public final class WorldRadarModule extends WorldModule {
             items[i] = null;
         }
         itemCount = n;
+        int m = 0;
+        if (mobs && self != null && level != null) {
+            double r2 = WorldRuntime.sq(radius);
+            int cap = Math.min(maxMobs, MAX_MOBS);
+            for (Entity e : level.entitiesForRendering()) {
+                if (m >= cap) {
+                    break;
+                }
+                if (e instanceof LivingEntity le && e instanceof Enemy && le.isAlive() && le.distanceToSqr(self) <= r2) {
+                    mobList[m++] = le;
+                }
+            }
+        }
+        for (int i = m; i < mobCount; i++) {
+            mobList[i] = null;
+        }
+        mobCount = m;
+        if (ticks % 200 == 0) {
+            tags.sweep();
+        }
     }
 
     private ItemFilter.Verdict verdict(Item item) {
@@ -244,6 +287,26 @@ public final class WorldRadarModule extends WorldModule {
                 float rz = ctx.rz(z);
                 WorldRenderKit.box(ctx.lines, ctx.pose, rx - hw, ry, rz - hw, rx + hw, ry + p.getBbHeight(), rz + hw,
                         0xFFFFFFFF);
+                if (tracers) {
+                    tracer(ctx, mc, rx, ry + p.getBbHeight() * 0.5f, rz, 0xC0FFFFFF);
+                }
+            }
+        }
+        if (mobs) {
+            for (int i = 0; i < mobCount; i++) {
+                LivingEntity e = mobList[i];
+                if (e == null || e.isRemoved()) {
+                    continue;
+                }
+                float hw = e.getBbWidth() / 2f;
+                float rx = ctx.rx(Mth.lerp(pt, e.xOld, e.getX()));
+                float ry = ctx.ry(Mth.lerp(pt, e.yOld, e.getY()));
+                float rz = ctx.rz(Mth.lerp(pt, e.zOld, e.getZ()));
+                WorldRenderKit.box(ctx.lines, ctx.pose, rx - hw, ry, rz - hw, rx + hw, ry + e.getBbHeight(), rz + hw,
+                        0xFFFF5050);
+                if (tracers) {
+                    tracer(ctx, mc, rx, ry + e.getBbHeight() * 0.5f, rz, 0x90FF5050);
+                }
             }
         }
         if (storage || spawners) {
@@ -293,6 +356,12 @@ public final class WorldRadarModule extends WorldModule {
         if (aimArc) {
             drawAimArc(ctx, self, level);
         }
+    }
+
+    /** Line from just in front of the crosshair (camera look vector, camera-relative) to a target. */
+    private static void tracer(RenderContext ctx, Minecraft mc, float tx, float ty, float tz, int argb) {
+        org.joml.Vector3f look = mc.gameRenderer.getMainCamera().getLookVector();
+        WorldRenderKit.line(ctx.lines, ctx.pose, look.x, look.y, look.z, tx, ty, tz, argb);
     }
 
     private int storageColor(int value) {
@@ -434,6 +503,7 @@ public final class WorldRadarModule extends WorldModule {
         if (self == null || level == null) {
             return;
         }
+        tags.beginFrame();
         double r2 = WorldRuntime.sq(radius);
         float pt = ctx.partialTick;
         if (players) {
@@ -458,18 +528,31 @@ public final class WorldRadarModule extends WorldModule {
                 int health = Mth.ceil(p.getHealth() + p.getAbsorptionAmount());
                 int armour = p.getArmorValue();
                 int dist = (int) Math.sqrt(d2);
-                float w = ctx.font.width(name) + ctx.font.width(HEART) + ctx.font.width(WorldRenderKit.number(health))
-                        + ctx.font.width(SHIELD) + ctx.font.width(WorldRenderKit.number(armour))
-                        + ctx.font.width(SPACE) + ctx.font.width(WorldRenderKit.number(dist)) + ctx.font.width(METERS);
+                NametagCache.Entry tag = tags.get(p.getId(), health, armour, dist);
+                float w = ctx.font.width(name) + ctx.font.width(SPACE) + tag.width;
                 float tx = -w / 2f;
                 tx = WorldRenderKit.text(ctx.font, ctx.buffers, m, name, tx, 0xFFFFFFFF);
-                tx = WorldRenderKit.text(ctx.font, ctx.buffers, m, HEART, tx, 0xFFFF5555);
-                tx = WorldRenderKit.text(ctx.font, ctx.buffers, m, WorldRenderKit.number(health), tx, 0xFFFF5555);
-                tx = WorldRenderKit.text(ctx.font, ctx.buffers, m, SHIELD, tx, 0xFFAAAAFF);
-                tx = WorldRenderKit.text(ctx.font, ctx.buffers, m, WorldRenderKit.number(armour), tx, 0xFFAAAAFF);
                 tx = WorldRenderKit.text(ctx.font, ctx.buffers, m, SPACE, tx, 0xFFFFFFFF);
-                tx = WorldRenderKit.text(ctx.font, ctx.buffers, m, WorldRenderKit.number(dist), tx, 0xFFC0C0C0);
-                WorldRenderKit.text(ctx.font, ctx.buffers, m, METERS, tx, 0xFFC0C0C0);
+                WorldRenderKit.text(ctx.font, ctx.buffers, m, tag.text, tx, 0xFFFFB0B0);
+            }
+        }
+        if (mobs) {
+            for (int i = 0; i < mobCount; i++) {
+                LivingEntity e = mobList[i];
+                if (e == null || e.isRemoved()) {
+                    continue;
+                }
+                double x = Mth.lerp(pt, e.xOld, e.getX());
+                double y = Mth.lerp(pt, e.yOld, e.getY()) + e.getBbHeight() + 0.4;
+                double z = Mth.lerp(pt, e.zOld, e.getZ());
+                double dx = x - ctx.camX;
+                double dy = y - ctx.camY;
+                double dz = z - ctx.camZ;
+                int dist = (int) Math.sqrt(dx * dx + dy * dy + dz * dz);
+                NametagCache.Entry tag = tags.get(e.getId(), Mth.ceil(e.getHealth() + e.getAbsorptionAmount()),
+                        e.getArmorValue(), dist);
+                Matrix4f m = ctx.kit.beginLabel(ctx.pose, (float) dx, (float) dy, (float) dz);
+                WorldRenderKit.text(ctx.font, ctx.buffers, m, tag.text, -tag.width / 2f, 0xFFFFB0B0);
             }
         }
         if (rareDrops) {
