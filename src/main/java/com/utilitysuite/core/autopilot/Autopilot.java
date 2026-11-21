@@ -42,6 +42,7 @@ public final class Autopilot implements IModule, IConfigurable, IAutopilot {
     static final String K_REACH = "reach";
     static final String K_BLACKBOX = "black_box";
     static final String K_BLACKBOX_HIT = "black_box_hit";
+    static final String K_BLACKBOX_ALWAYS = "black_box_always";
 
     static final String WHY_DEATH = "death";
     static final String WHY_BIG_HIT = "big hit";
@@ -59,6 +60,8 @@ public final class Autopilot implements IModule, IConfigurable, IAutopilot {
     private boolean elytra = true;
     private boolean offhand = true;
     private boolean blackBoxOn = true;
+    private boolean blackBoxAlways = true;
+    private boolean lastSampledOff;
     private float bigHit = 6f;
     private Reach reach = Reach.ASSIST;
 
@@ -92,6 +95,8 @@ public final class Autopilot implements IModule, IConfigurable, IAutopilot {
         if (clock != TickClock.SYSTEM) {
             this.vitalsSource = source;
             this.vitalsTried = true;
+        } else {
+            registerOffTick();
         }
     }
 
@@ -125,30 +130,71 @@ public final class Autopilot implements IModule, IConfigurable, IAutopilot {
         if (!subscribed) {
             subscribe();
         }
-        VitalsMonitor.VitalsSource src = vitalsSource();
-        int vitalsEvent = VitalsMonitor.NOTHING;
-        if (src != null) {
-            src.sample(vitals);
-            vitalsEvent = vitalsMonitor.update(vitals, danger, bigHit);
-        }
+        int vitalsEvent = sampleVitals();
         if (chain.lease() != null) {
             chain.tick(arbiterOrNull());
         }
         if (blackBoxOn) {
-            float hp = vitals.present ? vitals.health : Float.NaN;
-            boolean anyDanger = danger.any();
-            if (anyDanger || Float.compare(hp, lastSampledHealth) != 0) {
-                lastSampledHealth = hp;
-                blackBox.record(clock.now(), hp, anyDanger ? danger.worst() : null, scheduler.active(),
-                        vitalsEvent == VitalsMonitor.NOTHING ? BlackBox.EV_SAMPLE : BlackBox.EV_DAMAGE,
-                        vitalsEvent == VitalsMonitor.DIED ? WHY_DEATH
-                                : vitalsEvent == VitalsMonitor.BIG_HIT ? WHY_BIG_HIT : null);
-            }
-            if (vitalsEvent == VitalsMonitor.DIED) {
-                dump(WHY_DEATH);
-            } else if (vitalsEvent == VitalsMonitor.BIG_HIT) {
-                dump(WHY_BIG_HIT);
-            }
+            recordTick(vitalsEvent, scheduler.active(), false);
+        }
+    }
+
+    /**
+     * The tick while the autopilot is off (the module registry only calls {@link #onTick} while it is on): with
+     * "Record while off" on, the black box keeps sampling vitals and still dumps on a death or a big hit, so deaths
+     * during plain goal jobs are diagnosable. Nothing acts here: no scheduler, no reflex chain, no lease, and nothing
+     * renders. Rows are marked {@link BlackBox#FLAG_OFF}. Cheap early-out when recording while off is not wanted.
+     * Allocation free.
+     */
+    void tickWhileOff() {
+        if (enabled || !blackBoxOn || !blackBoxAlways) {
+            return;
+        }
+        if (!subscribed) {
+            subscribe();
+        }
+        recordTick(sampleVitals(), null, true);
+    }
+
+    /** Samples the vitals into the danger model; returns the {@link VitalsMonitor} event. Allocation free. */
+    private int sampleVitals() {
+        VitalsMonitor.VitalsSource src = vitalsSource();
+        if (src == null) {
+            return VitalsMonitor.NOTHING;
+        }
+        src.sample(vitals);
+        return vitalsMonitor.update(vitals, danger, bigHit);
+    }
+
+    /** One black-box sample row (when something changed) and the death / big-hit dump. Allocation free. */
+    private void recordTick(int vitalsEvent, Reflex active, boolean off) {
+        float hp = vitals.present ? vitals.health : Float.NaN;
+        boolean anyDanger = danger.any();
+        if (anyDanger || Float.compare(hp, lastSampledHealth) != 0 || off != lastSampledOff) {
+            lastSampledHealth = hp;
+            lastSampledOff = off;
+            blackBox.record(clock.now(), hp, anyDanger ? danger.worst() : null, active,
+                    vitalsEvent == VitalsMonitor.NOTHING ? BlackBox.EV_SAMPLE : BlackBox.EV_DAMAGE,
+                    vitalsEvent == VitalsMonitor.DIED ? WHY_DEATH
+                            : vitalsEvent == VitalsMonitor.BIG_HIT ? WHY_BIG_HIT : null, off);
+        }
+        if (vitalsEvent == VitalsMonitor.DIED) {
+            dump(WHY_DEATH);
+        } else if (vitalsEvent == VitalsMonitor.BIG_HIT) {
+            dump(WHY_BIG_HIT);
+        }
+    }
+
+    /**
+     * Game only: a client tick listener that drives {@link #tickWhileOff}. Registered once from the production
+     * constructor; unit tests (no event bus) skip it and call {@link #tickWhileOff} directly.
+     */
+    private void registerOffTick() {
+        try {
+            net.neoforged.neoforge.common.NeoForge.EVENT_BUS.addListener(
+                    net.neoforged.neoforge.client.event.ClientTickEvent.Post.class, e -> tickWhileOff());
+        } catch (LinkageError | RuntimeException e) {
+            // no game (unit tests): recording while off is driven by tickWhileOff() directly
         }
     }
 
@@ -170,7 +216,7 @@ public final class Autopilot implements IModule, IConfigurable, IAutopilot {
         ISuiteEventBus bus = Services.eventsOrNull();
         if (bus != null) {
             bus.subscribe(SuiteEvent.PlayerDied.class, e -> {
-                if (enabled && blackBoxOn) {
+                if (blackBoxOn && (enabled || blackBoxAlways)) {
                     dump(WHY_DEATH);
                 }
             });
@@ -346,6 +392,7 @@ public final class Autopilot implements IModule, IConfigurable, IAutopilot {
         elytra = p.getBool(ID, K_ELYTRA, true);
         offhand = p.getBool(ID, K_OFFHAND, true);
         blackBoxOn = p.getBool(ID, K_BLACKBOX, true);
+        blackBoxAlways = p.getBool(ID, K_BLACKBOX_ALWAYS, true);
         bigHit = Math.max(1, p.getInt(ID, K_BLACKBOX_HIT, 6));
         try {
             reach = Reach.valueOf(p.getString(ID, K_REACH, Reach.ASSIST.name()));
@@ -424,6 +471,10 @@ public final class Autopilot implements IModule, IConfigurable, IAutopilot {
                 SettingSpec.bool(K_BLACKBOX, "Black box", true, "Black box",
                         "Keeps the last 10 seconds of health, dangers and reflex decisions, and saves them to"
                                 + " utilitysuite/blackbox when you die or take a big hit."),
+                SettingSpec.bool(K_BLACKBOX_ALWAYS, "Record while off", true, "Black box",
+                        "Keep recording health and dangers while the autopilot is off, so a death during a plain"
+                                + " job can still be looked at afterwards. Records only; nothing acts while it is"
+                                + " off."),
                 SettingSpec.integer(K_BLACKBOX_HIT, "Big hit (half hearts)", 6, 2, 40, "Black box",
                         "Losing at least this much health in one tick saves the black box."));
     }

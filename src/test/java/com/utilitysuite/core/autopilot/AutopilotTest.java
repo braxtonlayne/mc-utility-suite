@@ -7,6 +7,7 @@ import com.utilitysuite.core.api.ProfileConfig;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class AutopilotTest {
@@ -24,6 +25,37 @@ class AutopilotTest {
         for (Reflex r : Reflex.values()) {
             assertFalse(a.allows(r), r.name());
         }
+    }
+
+    @Test
+    void offStillNeverActsWhileTheBlackBoxRecords() {
+        DangerModelTest.ManualClock clock = new DangerModelTest.ManualClock();
+        BlackBoxTest.FakeVitals fake = new BlackBoxTest.FakeVitals();
+        fake.v.present = true;
+        fake.v.health = 4f; // low health: a live LOW_HEALTH hazard
+        fake.v.maxHealth = 20f;
+        fake.v.air = 300;
+        fake.v.maxAir = 300;
+        Autopilot a = new Autopilot(clock, fake);
+        a.onProfileLoaded(new ProfileConfig("t", new JsonObject()));
+        for (int i = 0; i < 10; i++) {
+            clock.t++;
+            a.tickWhileOff();
+        }
+        assertTrue(a.blackBox().size() > 0, "recording while off is on by default");
+        assertFalse(a.isOn());
+        for (Reflex r : Reflex.values()) {
+            assertFalse(a.allows(r), r.name());
+            assertFalse(a.mayAct(r, 1, 20f), r.name());
+            assertNull(a.chainLease(r, "test"), r.name());
+        }
+        assertNull(a.activeReflex());
+    }
+
+    @Test
+    void recordWhileOffIsASetting() {
+        Autopilot a = loaded(new ProfileConfig("t", new JsonObject()));
+        assertTrue(a.settings().stream().anyMatch(s -> s.key().equals(Autopilot.K_BLACKBOX_ALWAYS)));
     }
 
     @Test

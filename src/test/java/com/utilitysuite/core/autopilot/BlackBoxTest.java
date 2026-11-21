@@ -8,6 +8,8 @@ import com.utilitysuite.core.api.ProfileConfig;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
@@ -81,6 +83,100 @@ class BlackBoxTest {
         assertNull(a.dump("again"));
         clock.t += BlackBoxWriter.DEBOUNCE_TICKS;
         assertNotNull(a.dump("later"));
+    }
+
+    private static Autopilot offAutopilot(DangerModelTest.ManualClock clock, FakeVitals fake, boolean always) {
+        ProfileConfig p = new ProfileConfig("t", new JsonObject());
+        p.set(Autopilot.ID, Autopilot.K_BLACKBOX_ALWAYS, always);
+        Autopilot a = new Autopilot(clock, fake);
+        a.onProfileLoaded(p);
+        fake.v.present = true;
+        fake.v.health = 20f;
+        fake.v.maxHealth = 20f;
+        fake.v.air = 300;
+        fake.v.maxAir = 300;
+        return a;
+    }
+
+    @Test
+    void recordsWhileOffWhenAlwaysIsOn() {
+        DangerModelTest.ManualClock clock = new DangerModelTest.ManualClock();
+        FakeVitals fake = new FakeVitals();
+        Autopilot a = offAutopilot(clock, fake, true);
+        assertFalse(a.isOn());
+        for (int i = 0; i < 5; i++) {
+            clock.t++;
+            fake.v.health = 20f - i;
+            a.tickWhileOff();
+        }
+        assertEquals(5, a.blackBox().size(), "one row per changed health sample while off");
+        BlackBox.Snapshot s = a.blackBox().snapshot(clock.t, "test");
+        for (int i = 0; i < s.rows(); i++) {
+            assertTrue(s.autopilotOff(i), "row " + i + " is marked off");
+            assertNull(s.reflex(i), "no reflex while off");
+        }
+        assertTrue(s.toJson().contains("\"off\":true"));
+    }
+
+    @Test
+    void recordsNothingWhileOffWhenAlwaysIsOff() {
+        DangerModelTest.ManualClock clock = new DangerModelTest.ManualClock();
+        FakeVitals fake = new FakeVitals();
+        Autopilot a = offAutopilot(clock, fake, false);
+        for (int i = 0; i < 5; i++) {
+            clock.t++;
+            fake.v.health = 20f - i;
+            a.tickWhileOff();
+        }
+        clock.t++;
+        fake.v.health = 0f;
+        fake.v.dead = true;
+        a.tickWhileOff();
+        assertEquals(0, a.blackBox().size());
+        assertEquals(0, a.dumpCount());
+    }
+
+    @Test
+    void aDeathWhileOffDumpsRowsMarkedOff() {
+        DangerModelTest.ManualClock clock = new DangerModelTest.ManualClock();
+        FakeVitals fake = new FakeVitals();
+        Autopilot a = offAutopilot(clock, fake, true);
+        a.tickWhileOff();
+        clock.t++;
+        fake.v.health = 17f;
+        a.tickWhileOff();
+        clock.t++;
+        fake.v.health = 0f;
+        fake.v.dead = true;
+        a.tickWhileOff();
+        assertEquals(1, a.dumpCount(), "a death while off still saves the black box");
+        BlackBox.Snapshot s = a.blackBox().snapshot(clock.t, "check");
+        assertTrue(s.rows() >= 3);
+        for (int i = 0; i < s.rows(); i++) {
+            assertTrue(s.autopilotOff(i));
+        }
+        assertEquals("DAMAGE", s.event(s.rows() - 1));
+        assertEquals(Autopilot.WHY_DEATH, s.reason(s.rows() - 1));
+        assertFalse(a.isOn(), "recording never turns the autopilot on");
+        for (Reflex r : Reflex.values()) {
+            assertFalse(a.allows(r));
+            assertFalse(a.mayAct(r, 1, 20f));
+        }
+        assertNull(a.activeReflex());
+    }
+
+    @Test
+    void onRowsAreNotMarkedOffAndOffTickIsIgnoredWhileOn() {
+        DangerModelTest.ManualClock clock = new DangerModelTest.ManualClock();
+        FakeVitals fake = new FakeVitals();
+        Autopilot a = offAutopilot(clock, fake, true);
+        a.setEnabled(true);
+        a.onTick();
+        clock.t++;
+        fake.v.health = 18f;
+        a.tickWhileOff(); // the registry ticks it while on: the off tick is a no-op
+        assertEquals(1, a.blackBox().size());
+        assertFalse(a.blackBox().snapshot(clock.t, "x").autopilotOff(0));
     }
 
     static final class FakeVitals implements VitalsMonitor.VitalsSource {

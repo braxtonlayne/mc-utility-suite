@@ -5,8 +5,9 @@ import com.utilitysuite.core.api.IAutopilot.Reflex;
 
 /**
  * Flight recorder for the autopilot (idea A10): a ring buffer of the last {@link #CAPACITY} rows in primitive arrays
- * (tick, health, worst hazard, reflex, event, reason id). One sample row per autopilot tick plus one row per reflex
- * note, so the buffer covers well over {@link #WINDOW_TICKS} (10 s). Reasons are constant strings interned into a
+ * (tick, health, worst hazard, reflex, event, reason id). One sample row per tick (also while the autopilot is off when
+ * "Record while off" is on; those rows carry {@link #FLAG_OFF} and {@code "off":true} in the JSON) plus one row per
+ * reflex note, so the buffer covers well over {@link #WINDOW_TICKS} (10 s). Reasons are constant strings interned into a
  * small fixed table by identity, so recording is allocation free. {@link #snapshot} copies the last 10 s off the
  * ring (rare: a death or a big hit) and {@link Snapshot#toJson} formats it, off the client thread. Engine free.
  */
@@ -21,6 +22,8 @@ public final class BlackBox {
     public static final byte EV_DECLINED = 2;
     public static final byte EV_DONE = 3;
     public static final byte EV_DAMAGE = 4;
+    /** Row flag: recorded while the autopilot was off (vitals only; nothing could act). */
+    public static final byte FLAG_OFF = 1;
     private static final String[] EVENT_NAMES = {"SAMPLE", "ACTED", "DECLINED", "DONE", "DAMAGE"};
 
     private final long[] tick = new long[CAPACITY];
@@ -29,15 +32,23 @@ public final class BlackBox {
     private final byte[] reflex = new byte[CAPACITY];
     private final byte[] event = new byte[CAPACITY];
     private final short[] reason = new short[CAPACITY];
+    /** Per-row flags ({@link #FLAG_OFF}). */
+    private final byte[] flags = new byte[CAPACITY];
     private int head; // next write index
     private int size;
 
     private final String[] reasons = new String[MAX_REASONS];
     private int reasonCount;
 
-    /** Records one row. Allocation free. */
+    /** Records one row while the autopilot is on. Allocation free. */
     public void record(long t, float hp, HazardKind worst, Reflex rx, byte ev, String why) {
+        record(t, hp, worst, rx, ev, why, false);
+    }
+
+    /** Records one row; {@code autopilotOff} marks it as recorded while the autopilot was off. Allocation free. */
+    public void record(long t, float hp, HazardKind worst, Reflex rx, byte ev, String why, boolean autopilotOff) {
         int i = head;
+        flags[i] = autopilotOff ? FLAG_OFF : 0;
         tick[i] = t;
         health[i] = hp;
         hazard[i] = (byte) (worst == null ? -1 : worst.ordinal());
@@ -103,6 +114,7 @@ public final class BlackBox {
             s.reflex[out] = reflex[i] < 0 ? null : Reflex.values()[reflex[i]].name();
             s.event[out] = EVENT_NAMES[event[i]];
             s.reason[out] = reason[i] < 0 ? null : reasons[reason[i]];
+            s.off[out] = (flags[i] & FLAG_OFF) != 0;
             out++;
         }
         return s;
@@ -118,6 +130,7 @@ public final class BlackBox {
         final String[] reflex;
         final String[] event;
         final String[] reason;
+        final boolean[] off;
 
         Snapshot(String cause, long dumpTick, int n) {
             this.cause = cause;
@@ -128,6 +141,7 @@ public final class BlackBox {
             reflex = new String[n];
             event = new String[n];
             reason = new String[n];
+            off = new boolean[n];
         }
 
         public int rows() {
@@ -149,6 +163,11 @@ public final class BlackBox {
 
         public String reason(int row) {
             return reason[row];
+        }
+
+        /** True when the row was recorded while the autopilot was off. */
+        public boolean autopilotOff(int row) {
+            return off[row];
         }
 
         /** Compact JSON: {"cause":..,"rows":[{"t":-3,"hp":12.5,"hz":"FALL","rx":"FALL_CLUTCH","ev":"ACTED",..}]}. */
@@ -174,6 +193,9 @@ public final class BlackBox {
                 if (reason[i] != null) {
                     sb.append(",\"why\":");
                     str(sb, reason[i]);
+                }
+                if (off[i]) {
+                    sb.append(",\"off\":true");
                 }
                 sb.append('}');
             }
