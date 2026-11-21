@@ -36,6 +36,8 @@ public final class Scenario {
     long endNanos;
     int ticks;
     boolean aborted;
+    /** A step kills the player on purpose: the harness neither fails the scenario nor presses respawn itself. */
+    boolean deathExpected;
     String abortReason = "";
 
     public Scenario(String id, String title) {

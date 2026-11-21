@@ -244,7 +244,7 @@ public final class Harness {
             go(Phase.LEAVING);
             return;
         }
-        if (mc.player.isDeadOrDying()) {
+        if (mc.player.isDeadOrDying() && !s.deathExpected) {
             // A death invalidates the scenario (inventory gone, respawn far away): record it and respawn so the
             // remaining scenarios still run.
             if (mc.player.deathTime == 1) {

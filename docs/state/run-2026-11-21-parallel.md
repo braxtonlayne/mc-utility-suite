@@ -107,3 +107,7 @@ left in place and can be removed once the playtest is done.
   before the arena centre was picked, so it filled at (0, 0). Combat and Travel fills are now deferred lambdas.
 - Still untested in-game: dodge, the black-box dump, the danger-model ranking under several hazards, humanized turn
   feel, and every new module outside combat reflexes.
+- New `ModulesScenario` (`-PplaytestOnly=Modules`) PASS (16:42): `.t light_overlay` toggles locally and the line is
+  never sent; Offhand Manager moves a totem to the offhand at 8 HP; Auto-Respawn presses respawn by itself (the
+  harness's own respawn is off via `Scenario.deathExpected`); 14 new modules on at once for 2 s with a creeper in view
+  (light overlay, slime chunks, spawn spheres and Tab-GUI visible in `shots/modules-smoke.png`).
