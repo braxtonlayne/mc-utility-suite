@@ -117,3 +117,6 @@ left in place and can be removed once the playtest is done.
   camera, not a turn; the turn sampler now restarts its baseline when the player entity changes. Follow-up worth
   doing: let goal jobs ask the autopilot's THREAT_ESCAPE/DANGER model to pause the strip mine and back off a hissing
   creeper, the way a player would.
+- Goal rerun (16:48): no death, no head snapping (fastest turn 306 deg/s), but the job paused on a real GLFW
+  mouse press in the game window ("Manual input ATTACK_OR_USE preempted goal_engine") -- a click on the window
+  during the run, which the manual-wins rule handles as designed. Rerun Goal with hands off the game window.
