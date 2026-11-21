@@ -1,0 +1,12 @@
+{
+  "hud.utilitysuite.autopilot.reflex.fall_clutch": "Autopilot: clutch",
+  "hud.utilitysuite.autopilot.reflex.parkour": "Autopilot: parkour",
+  "hud.utilitysuite.autopilot.reflex.parkour_blocks": "Autopilot: parkour block",
+  "hud.utilitysuite.autopilot.reflex.totem": "Autopilot: totem",
+  "hud.utilitysuite.autopilot.reflex.shield": "Autopilot: shield",
+  "hud.utilitysuite.autopilot.reflex.dodge": "Autopilot: dodge",
+  "hud.utilitysuite.autopilot.reflex.threat_escape": "Autopilot: backing away",
+  "hud.utilitysuite.autopilot.reflex.elytra_swap": "Autopilot: elytra swap",
+  "hud.utilitysuite.autopilot.reflex.offhand": "Autopilot: offhand",
+  "message.utilitysuite.autopilot.black_box_saved": "Black box saved (%s)"
+}
