@@ -2,6 +2,10 @@ package com.utilitysuite.jobs;
 
 import com.utilitysuite.core.api.Services;
 import com.utilitysuite.jobs.baritone.BaritoneAdapter;
+import com.utilitysuite.jobs.fieldwork.AutoTorchModule;
+import com.utilitysuite.jobs.fieldwork.CropWorkModule;
+import com.utilitysuite.jobs.fieldwork.LavaPlugModule;
+import com.utilitysuite.jobs.fieldwork.VeinWorkModule;
 import com.utilitysuite.jobs.goal.GoalEngine;
 import com.utilitysuite.jobs.goal.GoalParser;
 import com.utilitysuite.jobs.goal.ItemNameMatcher;
@@ -93,6 +97,16 @@ public final class JobsBootstrap {
         Services.modules().register(engine);
         Services.modules().register(survival);
 
+        // field modules (all off by default): Auto-Torch, Lava Plug, Vein Work, Crop Work
+        AutoTorchModule autoTorch = new AutoTorchModule(inventory);
+        LavaPlugModule lavaPlug = new LavaPlugModule(inventory);
+        VeinWorkModule veinWork = new VeinWorkModule();
+        CropWorkModule cropWork = new CropWorkModule(inventory);
+        Services.modules().register(autoTorch);
+        Services.modules().register(lavaPlug);
+        Services.modules().register(veinWork);
+        Services.modules().register(cropWork);
+
         IEventBus bus = NeoForge.EVENT_BUS;
         bus.addListener((ClientTickEvent.Post e) -> {
             ticks++;
@@ -103,6 +117,9 @@ public final class JobsBootstrap {
         bus.addListener(storageModule::onScreenOpening);
         bus.addListener(storageModule::onScreenClosing);
         bus.addListener(survival::onLeftClickBlock);
+        bus.addListener(autoTorch::onLeftClickBlock);
+        bus.addListener(lavaPlug::onLeftClickBlock);
+        bus.addListener(veinWork::onLeftClickBlock);
     }
 
     /** Snapshot recipes on the client thread, then let planning read it from the worker. */
