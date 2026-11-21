@@ -47,4 +47,18 @@ public final class ThreatMath {
         }
         return d;
     }
+
+    /** World yaw (Minecraft convention: 0 = +Z, 90 = -X) of the direction (dx, dz). */
+    public static float worldYaw(double dx, double dz) {
+        return (float) Math.toDegrees(Math.atan2(-dx, dz));
+    }
+
+    /**
+     * Vanilla explosion damage to an unarmoured, fully exposed entity at {@code distance} from a blast of {@code power}
+     * (creeper 3, charged creeper 6, TNT 4): {@code (i*i + i) * 7 * power + 1} with {@code i = 1 - d / (2 * power)}.
+     */
+    public static double blastDamage(double distance, double power) {
+        double i = 1.0 - distance / (2.0 * power);
+        return i <= 0.0 ? 0.0 : (i * i + i) * 7.0 * power + 1.0;
+    }
 }

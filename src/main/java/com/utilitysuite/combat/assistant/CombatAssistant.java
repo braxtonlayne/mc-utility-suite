@@ -733,6 +733,9 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
             return;
         }
         keeperClock = 0;
+        if (offhandManagerActive()) {
+            return; // the Offhand Manager owns the offhand: never click at the same time
+        }
         int slot = world.totemRefillSlot();
         if (slot < 0 || !SustainExtras.shouldReplenishTotem(armed, keep, world.extrasAllowedHere(),
                 false, slot, false, arbiter.isManualOverrideActive(ControlChannel.HOTBAR), totemKeepCooldown)) {
@@ -759,6 +762,42 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         } else if (keeperLease != null) {
             releaseKeeper();
         }
+    }
+
+    /** Module id of the player package's offhand manager; while it is on it keeps the offhand instead of this keeper. */
+    static final String OFFHAND_MANAGER_ID = "offhand_manager";
+    private static final int OFFHAND_LOOKUP_RETRY = 1200;
+    private com.utilitysuite.core.api.IModule offhandManager;
+    private int offhandLookupWait;
+    private com.utilitysuite.core.api.IModuleRegistry moduleRegistry;
+
+    /** Registry used to find the Offhand Manager (set by the bootstrap; tests leave it unset). */
+    public void bindModuleRegistry(com.utilitysuite.core.api.IModuleRegistry registry) {
+        this.moduleRegistry = registry;
+        this.offhandManager = null;
+        this.offhandLookupWait = 0;
+    }
+
+    /** Cached registry lookup (an Optional only every {@value #OFFHAND_LOOKUP_RETRY} keeper checks until found). */
+    private boolean offhandManagerActive() {
+        com.utilitysuite.core.api.IModule m = offhandManager;
+        if (m == null) {
+            if (offhandLookupWait > 0) {
+                offhandLookupWait--;
+                return false;
+            }
+            com.utilitysuite.core.api.IModuleRegistry reg = moduleRegistry;
+            if (reg == null) {
+                return false;
+            }
+            offhandLookupWait = OFFHAND_LOOKUP_RETRY;
+            m = reg.byId(OFFHAND_MANAGER_ID).orElse(null);
+            if (m == null) {
+                return false;
+            }
+            offhandManager = m;
+        }
+        return m.isEnabled();
     }
 
     private void releaseKeeper() {
