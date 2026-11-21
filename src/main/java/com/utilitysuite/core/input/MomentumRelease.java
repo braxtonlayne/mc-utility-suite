@@ -16,6 +16,8 @@ public final class MomentumRelease {
     static final double STOP_DEG_PER_SEC = 2.0;
 
     private boolean active;
+    /** Vanilla "invert mouse": the raw mouse dy sign maps to the opposite pitch direction. Latched at start. */
+    private boolean pitchInverted;
     private double vYaw;
     private double vPitch;
     private double elapsed;
@@ -24,6 +26,15 @@ public final class MomentumRelease {
 
     /** Starts a release with the turn's current velocity (degrees per second), capped at the no-snap limit. */
     public void start(double yawDegPerSec, double pitchDegPerSec) {
+        start(yawDegPerSec, pitchDegPerSec, false);
+    }
+
+    /**
+     * Starts a release. {@code invertMouse} is the vanilla "invert mouse" option, read once by the caller on the
+     * client thread when the release begins; it flips the pitch sign of the "never against the user" check.
+     */
+    public void start(double yawDegPerSec, double pitchDegPerSec, boolean invertMouse) {
+        pitchInverted = invertMouse;
         double speed = Math.sqrt(yawDegPerSec * yawDegPerSec + pitchDegPerSec * pitchDegPerSec);
         if (!(speed >= STOP_DEG_PER_SEC) || Double.isInfinite(speed)) {
             cancel();
@@ -39,6 +50,7 @@ public final class MomentumRelease {
     /** Stops at once (Stop-All, world unload, new automated turn). */
     public void cancel() {
         active = false;
+        pitchInverted = false;
         vYaw = 0.0;
         vPitch = 0.0;
         lastYawStep = 0.0;
@@ -64,7 +76,8 @@ public final class MomentumRelease {
         if (userYawSign != 0 && userYawSign * vYaw < 0.0) {
             vYaw = 0.0;
         }
-        if (userPitchSign != 0 && userPitchSign * vPitch < 0.0) {
+        int pitchSign = pitchInverted ? -userPitchSign : userPitchSign;
+        if (pitchSign != 0 && pitchSign * vPitch < 0.0) {
             vPitch = 0.0;
         }
         // exact integral of v * exp(-t / tau) over the step, so the distance is frame-rate independent
