@@ -1,0 +1,101 @@
+package com.utilitysuite.core.autopilot;
+
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+import com.utilitysuite.core.api.HazardKind;
+import com.utilitysuite.core.api.IAutopilot.Reflex;
+import com.utilitysuite.core.api.ProfileConfig;
+import org.junit.jupiter.api.Test;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+
+class BlackBoxTest {
+
+    @Test
+    void wrapsAtCapacityAndKeepsTheNewest() {
+        BlackBox b = new BlackBox();
+        for (int i = 0; i < BlackBox.CAPACITY + 10; i++) {
+            b.record(i, 20f, null, null, BlackBox.EV_SAMPLE, null);
+        }
+        assertEquals(BlackBox.CAPACITY, b.size());
+        long now = BlackBox.CAPACITY + 9;
+        BlackBox.Snapshot s = b.snapshot(now, "test");
+        assertEquals(BlackBox.WINDOW_TICKS + 1, s.rows(), "only the last 10 s");
+        assertEquals(-BlackBox.WINDOW_TICKS, s.relTick(0), "oldest first");
+        assertEquals(0, s.relTick(s.rows() - 1));
+    }
+
+    @Test
+    void dumpKeepsOrderAndReasons() {
+        BlackBox b = new BlackBox();
+        b.record(10, 20f, HazardKind.FALL, null, BlackBox.EV_SAMPLE, null);
+        b.record(11, 20f, HazardKind.FALL, Reflex.FALL_CLUTCH, BlackBox.EV_ACTED, "water");
+        b.record(12, 20f, HazardKind.FALL, Reflex.FALL_CLUTCH, BlackBox.EV_DONE, null);
+        b.record(13, 4f, null, Reflex.SHIELD, BlackBox.EV_DECLINED, "no shield");
+        BlackBox.Snapshot s = b.snapshot(13, "death");
+        assertEquals(4, s.rows());
+        assertEquals("ACTED", s.event(1));
+        assertEquals("water", s.reason(1));
+        assertEquals("SHIELD", s.reflex(3));
+        assertEquals("no shield", s.reason(3));
+        JsonObject json = JsonParser.parseString(s.toJson()).getAsJsonObject();
+        assertEquals("death", json.get("cause").getAsString());
+        assertEquals(4, json.getAsJsonArray("rows").size());
+        assertEquals(-3, json.getAsJsonArray("rows").get(0).getAsJsonObject().get("t").getAsInt());
+    }
+
+    @Test
+    void reasonsAreInternedInAFixedTable() {
+        BlackBox b = new BlackBox();
+        assertEquals(b.intern("a"), b.intern("a"));
+        for (int i = 0; i < BlackBox.MAX_REASONS + 5; i++) {
+            b.intern("r" + i);
+        }
+        assertEquals(-1, b.intern("one too many"), "a full table records no reason rather than growing");
+    }
+
+    @Test
+    void autopilotDumpsOnABigHitAndDebounces() {
+        DangerModelTest.ManualClock clock = new DangerModelTest.ManualClock();
+        FakeVitals fake = new FakeVitals();
+        Autopilot a = new Autopilot(clock, fake);
+        a.onProfileLoaded(new ProfileConfig("t", new JsonObject()));
+        a.setEnabled(true);
+        fake.v.present = true;
+        fake.v.health = 20f;
+        fake.v.maxHealth = 20f;
+        fake.v.air = 300;
+        fake.v.maxAir = 300;
+        a.onTick();
+        clock.t++;
+        fake.v.health = 12f; // an 8 point hit, over the default 6
+        a.onTick();
+        assertEquals(1, a.dumpCount());
+        clock.t++;
+        fake.v.health = 0f;
+        fake.v.dead = true;
+        a.onTick();
+        assertEquals(1, a.dumpCount(), "a death right after the hit is debounced into the same dump");
+        assertNull(a.dump("again"));
+        clock.t += BlackBoxWriter.DEBOUNCE_TICKS;
+        assertNotNull(a.dump("later"));
+    }
+
+    static final class FakeVitals implements VitalsMonitor.VitalsSource {
+        final VitalsMonitor.Vitals v = new VitalsMonitor.Vitals();
+
+        @Override
+        public void sample(VitalsMonitor.Vitals out) {
+            out.present = v.present;
+            out.health = v.health;
+            out.maxHealth = v.maxHealth;
+            out.air = v.air;
+            out.maxAir = v.maxAir;
+            out.fireTicks = v.fireTicks;
+            out.fireImmune = v.fireImmune;
+            out.dead = v.dead;
+        }
+    }
+}
