@@ -154,3 +154,12 @@ Nothing in this volley has run in a game client. Needs an in-game pass:
 Known leftovers: `UiBootstrap` still registers the now-empty `TabGui.onKey`; the arbiter allows one lease per
 module, so a shield lease and the job-escape move lease from `combat_reflexes` replace each other (older than this
 volley); the new settings use inline labels, no lang keys.
+- 17:00 check on main after the second volley: mixin audit clean (KeyboardHandlerTabGuiMixin applies), Menu and
+  Modules playtests PASS.
+
+## Next session, first things
+
+1. Playtest a lit creeper next to a running strip-mine job (pause, back off, resume; does it walk back in?).
+2. Tab-GUI arrows/Enter in a real game; camera momentum with invert-mouse; Timeline at GUI scale 4.
+3. Dodge tuning in game; Fly/Velocity Scale after re-applying Relaxed.
+4. Remove the 16 kept worktrees under `.claude/worktrees/` once nothing on them is needed.
