@@ -369,6 +369,19 @@ public final class FallClutchPlanner {
         return lands;
     }
 
+    /** Predicted landing position (valid when {@link #lands()}). */
+    public double landX() {
+        return px[ticks];
+    }
+
+    public double landY() {
+        return landY;
+    }
+
+    public double landZ() {
+        return pz[ticks];
+    }
+
     public float aimYaw() {
         return aimYaw;
     }

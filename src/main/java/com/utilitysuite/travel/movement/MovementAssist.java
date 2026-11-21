@@ -58,6 +58,7 @@ public final class MovementAssist implements IModule, IConfigurable {
     static final String K_CLUTCH_STAGE = "clutch_stage";
     static final String K_CLUTCH_ELYTRA = "clutch_elytra";
     static final String K_GLIDE_GUARD = "glide_guard";
+    static final String K_WATER_STEER = "clutch_water_steer";
     static final int ESCAPE_EVERY_TICKS = 10;
     static final double MOB_RANGE = 16.0;
     static final double PLAYER_RANGE = 32.0;
@@ -519,6 +520,7 @@ public final class MovementAssist implements IModule, IConfigurable {
         clutch.staging.enabled = p.getBool(ID, K_CLUTCH_STAGE, true);
         clutch.elytraDeploy = p.getBool(ID, K_CLUTCH_ELYTRA, true);
         clutch.glideGuard = p.getBool(ID, K_GLIDE_GUARD, true);
+        clutch.waterSteer = p.getBool(ID, K_WATER_STEER, true);
         if (!clutchOn) {
             clutch.releaseAll();
         }
@@ -572,6 +574,9 @@ public final class MovementAssist implements IModule, IConfigurable {
                                 + " only moves once you are airborne; the slot comes back when the risk passes."),
                 SettingSpec.bool(K_CLUTCH_ELYTRA, "Deploy a worn elytra", true, "",
                         "Falling with an elytra on: open it with a jump tap when that saves more than a clutch."),
+                SettingSpec.bool(K_WATER_STEER, "Steer into water", true, "",
+                        "Falling hard with water a few blocks from the landing: hold the movement keys that carry"
+                                + " you into it (keys only, the camera stays)."),
                 SettingSpec.bool(K_GLIDE_GUARD, "Glide pull-up", true, "",
                         "Gliding toward the ground fast enough to get hurt: raise the nose (smoothed) until safe."),
                 SettingSpec.bool(K_ESCAPE, "Escape path", true, "Overlay",

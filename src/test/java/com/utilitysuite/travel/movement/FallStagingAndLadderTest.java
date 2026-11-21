@@ -106,6 +106,44 @@ class FallStagingAndLadderTest {
         assertEquals(ClutchLadder.Option.BLOCK, l.best(), "a damage-free block clutch beats the pearl's 5");
     }
 
+    private static final com.utilitysuite.travel.terrain.HazardWorld LAVA_EAST =
+            new com.utilitysuite.travel.terrain.HazardWorld() {
+                @Override
+                public boolean solid(int x, int y, int z) {
+                    return y < 64 || x == -3 && y == 64;
+                }
+
+                @Override
+                public boolean lava(int x, int y, int z) {
+                    return x == 2 && z == 0 && y == 63;
+                }
+
+                @Override
+                public boolean loaded(int x, int z) {
+                    return true;
+                }
+            };
+
+    @Test
+    void lavaAheadForTheDangerFeed() {
+        assertEquals(2, com.utilitysuite.travel.terrain.HazardScanner.lavaAhead(LAVA_EAST, 0, 64, 0, 1, 0, 3));
+        assertEquals(0, com.utilitysuite.travel.terrain.HazardScanner.lavaAhead(LAVA_EAST, 2, 64, 0, 0, 0, 3));
+        assertEquals(-1, com.utilitysuite.travel.terrain.HazardScanner.lavaAhead(LAVA_EAST, 0, 64, 0, -1, 0, 3));
+        assertEquals(-1, com.utilitysuite.travel.terrain.HazardScanner.lavaAhead(LAVA_EAST, 0, 64, 0, 1, 0, 1));
+    }
+
+    @Test
+    void elytraSwapFallTicks() {
+        assertTrue(com.utilitysuite.travel.mobility.ElytraSwapPlanner.menuSlot(3) == 39);
+        int t20 = ticksToFall(20, 0);
+        assertTrue(t20 > 15 && t20 < 30, "20 blocks from rest: " + t20);
+        assertTrue(ticksToFall(20, -2.0) < t20);
+    }
+
+    private static int ticksToFall(double h, double vy) {
+        return com.utilitysuite.travel.mobility.ElytraSwapPlanner.ticksToFall(h, vy);
+    }
+
     @Test
     void glideGuardPullsUpBeforeAHardHit() {
         assertTrue(GlideGuard.shouldPullUp(8.0, -0.8, 1.5, 4f));

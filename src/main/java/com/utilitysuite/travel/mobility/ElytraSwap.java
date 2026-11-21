@@ -193,18 +193,8 @@ public final class ElytraSwap implements IModule, IConfigurable {
         return 1000;
     }
 
-    /** Ticks to fall {@code height} blocks starting at vertical speed {@code vy} (vanilla gravity and drag). */
-    static int ticksToFall(double height, double vy) {
-        double fallen = 0.0;
-        double v = vy;
-        for (int t = 1; t <= 400; t++) {
-            v = (v - 0.08) * 0.98;
-            fallen -= v;
-            if (fallen >= height) {
-                return t;
-            }
-        }
-        return 400;
+    private static int ticksToFall(double height, double vy) {
+        return ElytraSwapPlanner.ticksToFall(height, vy);
     }
 
     @Override

@@ -43,7 +43,15 @@ import net.minecraft.world.phys.HitResult;
  */
 final class FallClutch {
 
-    enum Phase { IDLE, POUR, PICKUP, RETURN, DEPLOY, GLIDE }
+    enum Phase { IDLE, POUR, PICKUP, RETURN, DEPLOY, GLIDE, STEER }
+
+    /** Horizontal search radius (blocks) for water around the predicted landing. */
+    static final int WATER_RADIUS = 4;
+    private final com.utilitysuite.travel.HeldKeys steerKeys = new com.utilitysuite.travel.HeldKeys();
+    private int waterX;
+    private int waterY;
+    private int waterZ;
+    boolean waterSteer = true;
 
     static final String MODULE_ID = "fall_clutch";
     /** Ticks the elytra deploy waits for the glide to start before giving up. */
@@ -141,13 +149,10 @@ final class FallClutch {
                 float yaw = p.getYRot();
                 boolean planned = kinds != 0 && planner.plan(now, yaw, p.isSprinting(), userF, userS, health,
                         minDamage, yaw, p.getXRot(), ParkourBlocks.PLAN_DEG_PER_TICK, kinds, w);
-                // the option ladder: the placed clutch against deploying a worn elytra (water steering and the pearl
-                // are ranked by ClutchLadder too but have no in-game search yet)
+                // the option ladder: the placed clutch against deploying a worn elytra and steering into water (the
+                // pearl is ranked by ClutchLadder too but has no in-game ledge search yet)
                 boolean elytraWorn = elytraDeploy && p.getItemBySlot(EquipmentSlot.CHEST).getItem() == Items.ELYTRA
                         && net.minecraft.world.item.ElytraItem.isFlyEnabled(p.getItemBySlot(EquipmentSlot.CHEST));
-                if (!planned && !elytraWorn) {
-                    return;
-                }
                 if (!planned && (!planner.predictLanding(now, yaw, p.isSprinting(), userF, userS, w)
                         || planner.landDamage() < Math.min(minDamage, health))) {
                     return; // no harmful landing predicted
@@ -157,18 +162,28 @@ final class FallClutch {
                     ladder.offer(ClutchLadder.Option.BLOCK, planner.useTick(), planner.damageAfter());
                 }
                 ladder.offerElytra(elytraWorn);
+                if (waterSteer) {
+                    double off = findWater(mc, planner.landX(), planner.landY(), planner.landZ(),
+                            planner.ticksToLand());
+                    ladder.offerWaterSteer(off, off >= 0);
+                }
                 ClutchLadder.Option best = ladder.best();
                 if (best == null) {
                     return;
                 }
                 IAutopilot ap = Services.autopilotOrNull();
                 boolean scheduled = ap != null && ap.isOn() && ap.allows(IAutopilot.Reflex.FALL_CLUTCH);
-                if (best == ClutchLadder.Option.ELYTRA) {
-                    if (scheduled && !ap.mayAct(IAutopilot.Reflex.FALL_CLUTCH, 1, ladder.damageAverted())) {
+                if (best == ClutchLadder.Option.ELYTRA || best == ClutchLadder.Option.WATER_STEER) {
+                    if (scheduled && !ap.mayAct(IAutopilot.Reflex.FALL_CLUTCH,
+                            ladder.ticksNeeded(best), ladder.damageAverted())) {
                         ap.noteDeclined(IAutopilot.Reflex.FALL_CLUTCH, "another reflex goes first");
                         return;
                     }
-                    startDeploy(ap, scheduled);
+                    if (best == ClutchLadder.Option.ELYTRA) {
+                        startDeploy(ap, scheduled);
+                    } else {
+                        startSteer(ap, scheduled);
+                    }
                     return;
                 }
                 // start turning while there is time: no need for a lease many ticks before the head must move
@@ -210,6 +225,7 @@ final class FallClutch {
             case PICKUP -> pickupStep(mc, p);
             case RETURN -> returnStep();
             case DEPLOY -> deployStep(p);
+            case STEER -> steerStep(p);
             case GLIDE -> glideStep(mc, p);
         }
     }
@@ -446,6 +462,79 @@ final class FallClutch {
         lease = granted.get();
         chained = false;
         return true;
+    }
+
+    // ---- water steering (clutch ladder) ------------------------------------------------------------------------------
+
+    /**
+     * Nearest water at the landing height within {@link #WATER_RADIUS} of the predicted landing (horizontal offset in
+     * blocks, -1 when none). Fills {@link #waterX}/{@link #waterY}/{@link #waterZ}. At most 81 x 3 block reads.
+     */
+    private double findWater(Minecraft mc, double lx, double ly, double lz, int ticksLeft) {
+        int cx = (int) Math.floor(lx);
+        int cz = (int) Math.floor(lz);
+        int cy = (int) Math.floor(ly + 1.0e-6);
+        double best = -1.0;
+        for (int dx = -WATER_RADIUS; dx <= WATER_RADIUS; dx++) {
+            for (int dz = -WATER_RADIUS; dz <= WATER_RADIUS; dz++) {
+                double off = Math.sqrt((cx + dx + 0.5 - lx) * (cx + dx + 0.5 - lx)
+                        + (cz + dz + 0.5 - lz) * (cz + dz + 0.5 - lz));
+                if (best >= 0 && off >= best) {
+                    continue;
+                }
+                for (int y = cy - 1; y <= cy + 1; y++) {
+                    column.set(cx + dx, y, cz + dz);
+                    if (mc.level.getFluidState(column).is(FluidTags.WATER)
+                            && mc.level.getBlockState(column.set(cx + dx, y + 1, cz + dz))
+                            .getCollisionShape(mc.level, column).isEmpty()) {
+                        best = off;
+                        waterX = cx + dx;
+                        waterY = y;
+                        waterZ = cz + dz;
+                        break;
+                    }
+                }
+            }
+        }
+        return best;
+    }
+
+    private void startSteer(IAutopilot ap, boolean scheduled) {
+        if (!takeLease(ap, scheduled, ControlChannel.MOVEMENT)) {
+            return;
+        }
+        if (scheduled) {
+            ap.noteActed(IAutopilot.Reflex.FALL_CLUTCH, "steer to water");
+        }
+        note = "steer to water";
+        plans++;
+        phase = Phase.STEER;
+        ticks = 0;
+        steerKeys.reset();
+    }
+
+    /** Hold the forward/back and strafe keys that move the body toward the water cell (keys only, no camera). */
+    private void steerStep(LocalPlayer p) {
+        if (!leaseOk(ControlChannel.MOVEMENT) || p.onGround() || p.isInWater() || ++ticks > 100) {
+            if (p.isInWater()) {
+                clutches++;
+            }
+            steerKeys.releaseAll(Services.input(), lease);
+            release();
+            return;
+        }
+        double dx = waterX + 0.5 - p.getX();
+        double dz = waterZ + 0.5 - p.getZ();
+        double yaw = Math.toRadians(p.getYRot());
+        double sin = Math.sin(yaw);
+        double cos = Math.cos(yaw);
+        double fwd = -dx * sin + dz * cos;
+        double left = dx * cos + dz * sin;
+        IInputSmoother in = Services.input();
+        steerKeys.set(in, lease, SimKey.FORWARD, fwd > 0.25);
+        steerKeys.set(in, lease, SimKey.BACK, fwd < -0.25);
+        steerKeys.set(in, lease, SimKey.LEFT, left > 0.25);
+        steerKeys.set(in, lease, SimKey.RIGHT, left < -0.25);
     }
 
     // ---- elytra deploy (clutch ladder) and glide guard -------------------------------------------------------------

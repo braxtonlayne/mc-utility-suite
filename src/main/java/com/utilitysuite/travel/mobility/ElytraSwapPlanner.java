@@ -35,6 +35,20 @@ public final class ElytraSwapPlanner {
         return inventoryIndex < 9 ? 36 + inventoryIndex : inventoryIndex;
     }
 
+    /** Ticks to fall {@code height} blocks starting at vertical speed {@code vy} (vanilla gravity and drag). */
+    public static int ticksToFall(double height, double vy) {
+        double fallen = 0.0;
+        double v = vy;
+        for (int t = 1; t <= 400; t++) {
+            v = (v - 0.08) * 0.98;
+            fallen -= v;
+            if (fallen >= height) {
+                return t;
+            }
+        }
+        return 400;
+    }
+
     /** Fills the click plan swapping the chest slot with {@code inventoryIndex}; returns the click count. */
     public int planSwap(int inventoryIndex) {
         count = 0;
