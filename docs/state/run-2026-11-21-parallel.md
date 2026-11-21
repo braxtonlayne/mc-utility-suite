@@ -203,3 +203,4 @@ Known leftovers:
 2. Tab-GUI arrows/Enter in a real game; camera momentum with invert-mouse; Timeline at GUI scale 4.
 3. Dodge tuning in game; Fly/Velocity Scale after re-applying Relaxed.
 4. Remove the 23 kept worktrees under `.claude/worktrees/` once nothing on them is needed.
+- 17:12 check after the third volley: Combat playtest PASS (shield, creeper back-off, gap ambush with the split reflex leases); 912 unit tests, 0 failures.
