@@ -70,6 +70,8 @@ public final class Autopilot implements IModule, IConfigurable, IAutopilot {
             case PARKOUR -> parkour && reach == Reach.ASSIST;
             case PARKOUR_BLOCKS -> blocks && reach == Reach.ASSIST;
             case TOTEM -> totem;
+            // Contract stubs: allowed while the autopilot is on, until each gets its own setting here.
+            case SHIELD, DODGE, THREAT_ESCAPE, ELYTRA_SWAP, OFFHAND -> true;
         };
     }
 

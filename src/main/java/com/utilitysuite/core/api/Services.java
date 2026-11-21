@@ -20,6 +20,7 @@ public final class Services {
     private static volatile IStorageIndex storage;
     private static volatile IWaypointService waypoints;
     private static volatile IAutopilot autopilot;
+    private static volatile IHumanizer humanizer;
 
     private Services() {
     }
@@ -45,6 +46,10 @@ public final class Services {
     /** The opt-in autopilot, or null before the core is up (reflexes then act only through their own module). */
     public static IAutopilot autopilotOrNull() { return autopilot; }
     public static ISuiteEventBus eventsOrNull() { return events; }
+    /** Human-like timing and aim variation. Never null: {@link IHumanizer#NEUTRAL} until the core registers one. */
+    public static IHumanizer humanizer() { IHumanizer h = humanizer; return h != null ? h : IHumanizer.NEUTRAL; }
+    /** The autopilot's danger model. Never null: {@link IDangerModel#NONE} while there is no autopilot. */
+    public static IDangerModel danger() { IAutopilot a = autopilot; return a != null ? a.danger() : IDangerModel.NONE; }
 
     public static void registerArbiter(IActionArbiter s) { arbiter = s; }
     public static void registerInput(IInputSmoother s) { input = s; }
@@ -58,11 +63,12 @@ public final class Services {
     public static void registerStorage(IStorageIndex s) { storage = s; }
     public static void registerWaypoints(IWaypointService s) { waypoints = s; }
     public static void registerAutopilot(IAutopilot s) { autopilot = s; }
+    public static void registerHumanizer(IHumanizer s) { humanizer = s; }
 
     /** Test hook: clears every registration. */
     public static void resetForTests() {
         arbiter = null; input = null; clicker = null; modState = null; modules = null; events = null; goals = null;
-        navigator = null; worldKnowledge = null; storage = null; waypoints = null; autopilot = null;
+        navigator = null; worldKnowledge = null; storage = null; waypoints = null; autopilot = null; humanizer = null;
     }
 
     private static <T> T require(T value, String name) {
