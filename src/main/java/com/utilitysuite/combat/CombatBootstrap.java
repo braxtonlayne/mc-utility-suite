@@ -65,6 +65,13 @@ public final class CombatBootstrap {
         bus.addListener(threats::onJoin);
         bus.addListener(threats::onLeave);
         bus.addListener(ClientPlayerNetworkEvent.LoggingOut.class, event -> threats.clear());
+        // the autopilot's totem reflex runs here while the Combat Assistant module itself is off
+        bus.addListener(net.neoforged.neoforge.client.event.ClientTickEvent.Post.class, event -> {
+            net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
+            if (mc.player != null && mc.level != null) {
+                assistant.autopilotTick();
+            }
+        });
     }
 
     public static CombatAssistant assistant() {

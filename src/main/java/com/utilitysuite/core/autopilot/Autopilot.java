@@ -20,12 +20,14 @@ public final class Autopilot implements IModule, IConfigurable, IAutopilot {
     static final String K_CLUTCH = "reflex_fall_clutch";
     static final String K_PARKOUR = "reflex_parkour";
     static final String K_BLOCKS = "reflex_parkour_blocks";
+    static final String K_TOTEM = "reflex_totem";
     static final String K_REACH = "reach";
 
     private boolean enabled;
     private boolean clutch = true;
     private boolean parkour = true;
     private boolean blocks = true;
+    private boolean totem = true;
     private Reach reach = Reach.ASSIST;
 
     @Override
@@ -67,6 +69,7 @@ public final class Autopilot implements IModule, IConfigurable, IAutopilot {
             case FALL_CLUTCH -> clutch;
             case PARKOUR -> parkour && reach == Reach.ASSIST;
             case PARKOUR_BLOCKS -> blocks && reach == Reach.ASSIST;
+            case TOTEM -> totem;
         };
     }
 
@@ -80,6 +83,7 @@ public final class Autopilot implements IModule, IConfigurable, IAutopilot {
         clutch = p.getBool(ID, K_CLUTCH, true);
         parkour = p.getBool(ID, K_PARKOUR, true);
         blocks = p.getBool(ID, K_BLOCKS, true);
+        totem = p.getBool(ID, K_TOTEM, true);
         try {
             reach = Reach.valueOf(p.getString(ID, K_REACH, Reach.ASSIST.name()));
         } catch (IllegalArgumentException e) {
@@ -107,6 +111,9 @@ public final class Autopilot implements IModule, IConfigurable, IAutopilot {
         if (clutch) {
             sb.append("fall clutch");
         }
+        if (totem) {
+            sb.append(sb.isEmpty() ? "" : ", ").append("totem");
+        }
         if (reach == Reach.ASSIST) {
             if (parkour) {
                 sb.append(sb.isEmpty() ? "" : ", ").append("parkour");
@@ -128,6 +135,9 @@ public final class Autopilot implements IModule, IConfigurable, IAutopilot {
                 SettingSpec.bool(K_CLUTCH, "Fall clutch", true, "Reflexes",
                         "A fall that would hurt: look down and clutch with water, powder snow, hay, slime or cobweb"
                                 + " from the hotbar (Movement Assist's clutch settings apply)."),
+                SettingSpec.bool(K_TOTEM, "Keep a totem in the offhand", true, "Reflexes",
+                        "An empty offhand is refilled with a totem of undying from your inventory (one inventory click,"
+                                + " like a player). Single-player and allow-listed servers only."),
                 SettingSpec.bool(K_PARKOUR, "Parkour timing", true, "Reflexes",
                         "While you run forward: jump on the last tick before an edge, steer in the air toward a safe"
                                 + " landing. ASSIST only."),

@@ -14,7 +14,9 @@ public interface IAutopilot {
         /** While you run: edge jumps on the last tick and air steering toward a safe landing. */
         PARKOUR,
         /** Mid-jump: place one block when it keeps the run going. Uses blocks from the hotbar. */
-        PARKOUR_BLOCKS
+        PARKOUR_BLOCKS,
+        /** Keep a totem of undying in the offhand: an empty offhand is refilled from the inventory. */
+        TOTEM
     }
 
     /** How far the autopilot may go. */

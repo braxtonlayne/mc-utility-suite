@@ -145,6 +145,29 @@ class SustainExtrasTest {
     }
 
     @Test
+    void autopilotKeepsATotemWhileTheModuleIsOff() {
+        world.self.totemInvSlot = 20;
+        assistant.setEnabled(false);
+        com.utilitysuite.core.autopilot.Autopilot ap = new com.utilitysuite.core.autopilot.Autopilot();
+        ap.onProfileLoaded(new com.utilitysuite.core.api.ProfileConfig("t", new com.google.gson.JsonObject()));
+        Services.registerAutopilot(ap);
+        for (int i = 0; i < 30; i++) {
+            tick(1);
+            assistant.autopilotTick();
+        }
+        assertTrue(backend.containerClicks.isEmpty(), "autopilot off: nothing moves");
+        ap.setEnabled(true);
+        for (int i = 0; i < 30; i++) {
+            tick(1);
+            assistant.autopilotTick();
+        }
+        assertFalse(backend.containerClicks.isEmpty(), "autopilot on: the totem goes to the offhand");
+        int[] c = backend.containerClicks.get(0);
+        assertEquals(20, c[0]);
+        assertEquals(40, c[1], "offhand SWAP button");
+    }
+
+    @Test
     void keeperIdleWhenNotAllowedOrOffhandFull() {
         world.self.totemInvSlot = 20;
         world.allowed = false;

@@ -337,7 +337,7 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         if (totemCooldown > 0) {
             totemCooldown--;
         }
-        tickTotemKeeper();
+        tickTotemKeeper(enabled, settings.keepTotem);
         if (state == CombatState.DORMANT) {
             if (enabled && settings.engageMode == TargetSelector.Mode.PROACTIVE) {
                 tickProactive();
@@ -703,7 +703,23 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
     }
 
     /** Every few ticks while armed: refill an empty offhand with a totem under a short EMERGENCY hotbar lease. */
-    private void tickTotemKeeper() {
+    /**
+     * Autopilot path (client tick): while this module is off, the autopilot may still keep a totem in the offhand.
+     * Cheap early-out; no allocation.
+     */
+    public void autopilotTick() {
+        if (enabled) {
+            return; // onTick already runs the keeper with this module's own setting
+        }
+        com.utilitysuite.core.api.IAutopilot ap = Services.autopilotOrNull();
+        boolean allowed = ap != null && ap.allows(com.utilitysuite.core.api.IAutopilot.Reflex.TOTEM);
+        if (!allowed && keeperLease == null) {
+            return;
+        }
+        tickTotemKeeper(allowed, allowed);
+    }
+
+    private void tickTotemKeeper(boolean armed, boolean keep) {
         if (totemKeepCooldown > 0) {
             totemKeepCooldown--;
         }
@@ -713,12 +729,12 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
             }
             return;
         }
-        if (!enabled || !settings.keepTotem || ++keeperClock < SustainExtras.TOTEM_CHECK_INTERVAL) {
+        if (!armed || !keep || ++keeperClock < SustainExtras.TOTEM_CHECK_INTERVAL) {
             return;
         }
         keeperClock = 0;
         int slot = world.totemRefillSlot();
-        if (slot < 0 || !SustainExtras.shouldReplenishTotem(enabled, settings.keepTotem, world.extrasAllowedHere(),
+        if (slot < 0 || !SustainExtras.shouldReplenishTotem(armed, keep, world.extrasAllowedHere(),
                 false, slot, false, arbiter.isManualOverrideActive(ControlChannel.HOTBAR), totemKeepCooldown)) {
             return;
         }

@@ -42,6 +42,7 @@ class AutopilotTest {
         Autopilot a = loaded(p);
         a.setEnabled(true);
         assertTrue(a.allows(Reflex.FALL_CLUTCH));
+        assertTrue(a.allows(Reflex.TOTEM), "a totem is safety, not assistance");
         assertFalse(a.allows(Reflex.PARKOUR));
         assertFalse(a.allows(Reflex.PARKOUR_BLOCKS));
     }
