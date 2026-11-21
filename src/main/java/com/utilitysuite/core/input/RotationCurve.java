@@ -45,7 +45,7 @@ public final class RotationCurve {
     // ---- configuration ----------------------------------------------------------------------------------------------
 
     public void setBaseSpeed(double degPerSec) {
-        this.baseSpeedDegPerSec = Math.max(1.0, degPerSec);
+        this.baseSpeedDegPerSec = Math.min(RotationLimits.MAX_DEG_PER_SEC, Math.max(1.0, degPerSec));
     }
 
     public double baseSpeed() {
@@ -112,7 +112,8 @@ public final class RotationCurve {
         p2y = p0y + cy * 0.67 + nx * bend * 0.6;
         p2p = p0p + cp * 0.67 + ny * bend * 0.6;
 
-        double speed = baseSpeedDegPerSec * (speedScale > 0f ? speedScale : 1f);
+        // no-snap rule: no speed multiplier pushes a motion past the hard cap (InputSmoother also limits each step)
+        double speed = Math.min(RotationLimits.MAX_DEG_PER_SEC, baseSpeedDegPerSec * (speedScale > 0f ? speedScale : 1f));
         mainDuration = clamp(minDurationSec + dist / speed, minDurationSec, maxDurationSec);
         correctionDuration = overshoot > 1.0e-4 ? clamp(0.04 + overshoot / (speed * 0.5), 0.04, 0.3) : 0.0;
         noiseOffset = random.nextDouble() * 1000.0;

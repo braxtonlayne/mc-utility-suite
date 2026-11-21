@@ -27,6 +27,7 @@ public final class SettingsRenderer {
     private static final Map<String, String> BLURBS = Map.ofEntries(
             Map.entry("ally_roster", "Allies and the middle-click shortcut"),
             Map.entry("combat_assistant", "Fights back, or hunts on its own (Proactive)"),
+            Map.entry("movement_assist", "Edge jumps, air steering, landing overlay"),
             Map.entry("fight_coach", "Spacing, cooldown and retreat hints"),
             Map.entry("schematic_toolkit", "Import, bill of materials, build assist"),
             Map.entry("storage_memory", "Remembers what your containers hold"),

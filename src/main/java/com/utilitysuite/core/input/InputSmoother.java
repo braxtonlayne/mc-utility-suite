@@ -53,6 +53,11 @@ public final class InputSmoother implements IInputSmoother, IContainerClicker {
     private RotationMode rotationMode = RotationMode.VISIBLE;
     private boolean hasTarget;
     private boolean silentActive;
+    /** A SILENT rotation ended: the server-side angle eases back to the camera at the capped speed, then clears. */
+    private boolean silentReturning;
+    /** The no-snap limiter is behind the curve: keep stepping after the curve itself has finished. */
+    private boolean lagging;
+    private final float[] limited = new float[2];
     private float requestedYaw;
     private float requestedPitch;
 
@@ -117,17 +122,20 @@ public final class InputSmoother implements IInputSmoother, IContainerClicker {
         }
         float fromYaw;
         float fromPitch;
-        if (mode == RotationMode.SILENT && silentActive) {
+        if (mode == RotationMode.SILENT && (silentActive || silentReturning)) {
+            // continue from the angle the server last saw, never from the camera (that would be a server-side snap)
             fromYaw = SilentRotation.yaw();
             fromPitch = SilentRotation.pitch();
+            silentReturning = false;
         } else {
             fromYaw = backend.yaw();
             fromPitch = backend.pitch();
         }
         if (mode == RotationMode.VISIBLE && silentActive) {
             silentActive = false;
-            SilentRotation.clear();
+            silentReturning = true; // the server angle eases back to the camera instead of jumping
         }
+        lagging = false;
         curve.start(fromYaw, fromPitch, target.yaw(), target.pitch(), target.speed());
         rotationOwner = lease;
         rotationMode = mode;
@@ -151,15 +159,21 @@ public final class InputSmoother implements IInputSmoother, IContainerClicker {
     private void clearRotationInternal() {
         hasTarget = false;
         rotationOwner = null;
+        lagging = false;
         if (silentActive) {
             silentActive = false;
-            SilentRotation.clear();
+            silentReturning = true; // eased back in postTick: no server-side snap on release or Stop-All
         }
     }
 
     @Override
     public boolean isRotationSettled(float toleranceDeg) {
-        return !hasTarget || curve.remainingError() <= toleranceDeg;
+        return !hasTarget || (!lagging && curve.remainingError() <= toleranceDeg);
+    }
+
+    /** True while the server-side angle is easing back to the camera after a SILENT rotation. */
+    public boolean isSilentReturning() {
+        return silentReturning;
     }
 
     /** True while packets carry silent angles (the rendered camera belongs to the user). */
@@ -169,12 +183,12 @@ public final class InputSmoother implements IInputSmoother, IContainerClicker {
 
     /** True while a VISIBLE rotation is still moving the camera. */
     public boolean isVisibleRotationMoving() {
-        return hasTarget && rotationMode == RotationMode.VISIBLE && curve.isActive();
+        return hasTarget && rotationMode == RotationMode.VISIBLE && (curve.isActive() || lagging);
     }
 
     /** Per rendered frame: advances a VISIBLE rotation and writes it to the player. */
     public void onFrame(double dtSeconds) {
-        if (!hasTarget || rotationMode != RotationMode.VISIBLE || !curve.isActive()) {
+        if (!hasTarget || rotationMode != RotationMode.VISIBLE || (!curve.isActive() && !lagging)) {
             return;
         }
         if (rotationOwner == null || !rotationOwner.isActive()) {
@@ -184,8 +198,13 @@ public final class InputSmoother implements IInputSmoother, IContainerClicker {
         if (!backend.isReady()) {
             return;
         }
-        curve.advance(Math.min(Math.max(dtSeconds, 0.0), 0.1));
-        backend.setRotation(curve.yaw(), curve.pitch());
+        double dt = Math.min(Math.max(dtSeconds, 0.0), 0.1);
+        curve.advance(dt);
+        // no-snap rule: whatever the curve asks for, the camera moves at most the hard cap from where it is now
+        // (measured from the live camera, so the user's own mouse is never limited or fought)
+        lagging = !RotationLimits.step(backend.yaw(), backend.pitch(), curve.yaw(), curve.pitch(),
+                RotationLimits.MAX_DEG_PER_SEC * dt, limited);
+        backend.setRotation(limited[0], limited[1]);
     }
 
     // ---- keys -------------------------------------------------------------------------------------------------------
@@ -462,7 +481,22 @@ public final class InputSmoother implements IInputSmoother, IContainerClicker {
                 clearRotationInternal();
             } else {
                 curve.advance(TICK_SECONDS);
-                SilentRotation.set(curve.yaw(), curve.pitch());
+                // no-snap rule for the server-visible head: at most the per-tick cap between two packets
+                lagging = !RotationLimits.step(SilentRotation.yaw(), SilentRotation.pitch(), curve.yaw(),
+                        curve.pitch(), RotationLimits.MAX_DEG_PER_TICK, limited);
+                SilentRotation.set(limited[0], limited[1]);
+            }
+        }
+        if (silentReturning) {
+            if (!backend.isReady()) {
+                silentReturning = false; // no world, no server watching: nothing to ease
+                SilentRotation.clear();
+            } else if (RotationLimits.step(SilentRotation.yaw(), SilentRotation.pitch(), backend.yaw(),
+                    backend.pitch(), RotationLimits.MAX_DEG_PER_TICK, limited)) {
+                silentReturning = false;
+                SilentRotation.clear(); // packets carry the camera angle again; it is where the server head now is
+            } else {
+                SilentRotation.set(limited[0], limited[1]);
             }
         }
     }

@@ -74,6 +74,7 @@ final class TravelScenario {
         Shots.add(s, "travel-bridge");
         walkBridge(s, lease, "INSTANT", "BRIDGER", "AT_EDGE", true, 4, "walk-instant");
         walkBridge(s, lease, "LEGIT", "REAL", "OFF", false, 8, "walk-legit");
+        parkourJump(s, lease);
         // --- Water walk ---
         s.cmd(() -> Arena.tp(6.5, -6.5, 0f));
         s.run("surface mode", () -> {
@@ -187,6 +188,65 @@ final class TravelScenario {
             }
             H.setting(BridgeAssist.ID, "mode", "LINE");
         });
+    }
+
+    /**
+     * Movement Assist: the "user" (a movement lease) sprints west off the arena edge toward a 3-air-block gap and never
+     * presses jump. The assist must time the edge jump itself and land on the far platform; the landing overlay must be
+     * up while airborne (screenshot).
+     */
+    private static void parkourJump(Scenario s, ControlLease[] lease) {
+        var ma = TravelBootstrap.movement();
+        int[] jumpsBefore = new int[1];
+        boolean[] sawLanding = new boolean[1];
+        boolean[] shot = new boolean[1];
+        double[] minY = {Double.MAX_VALUE};
+        // gap x-13..x-15 (three air blocks), landing platform x-16..x-22, lane z-2..z+2
+        s.cmd(Arena.fill(-22, 1, -2, -13, 4, 2, "air"));
+        s.cmd(Arena.fill(-15, -4, -2, -13, 0, 2, "air"));
+        s.cmd(Arena.fill(-22, 0, -2, -16, 0, 2, "stone"));
+        s.cmd(() -> Arena.tp(-3.5, 0.5, 90f));
+        s.waitTicks(10);
+        s.run("movement assist on", () -> {
+            H.setting(com.utilitysuite.travel.movement.MovementAssist.ID, "edge_jump", true);
+            H.setting(com.utilitysuite.travel.movement.MovementAssist.ID, "air_steer", true);
+            H.setting(com.utilitysuite.travel.movement.MovementAssist.ID, "overlay", true);
+            H.setting(com.utilitysuite.travel.movement.MovementAssist.ID, "assist_automation", true);
+            H.enable(com.utilitysuite.travel.movement.MovementAssist.ID, true);
+            jumpsBefore[0] = ma.edgeJumps();
+            lease[0] = Services.arbiter().request(LeaseRequest.of("playtest_mover", ControlPriority.TRAVEL, null,
+                    ControlChannel.MOVEMENT)).orElseThrow();
+            Services.input().setKeyHeld(lease[0], SimKey.FORWARD, true);
+            Services.input().setKeyHeld(lease[0], SimKey.SPRINT, true);
+        });
+        s.waitUpTo("sprint west over the gap", 20 * 8, () -> {
+            minY[0] = Math.min(minY[0], H.p().getY());
+            if (!H.p().onGround()) {
+                sawLanding[0] |= ma.showingLanding();
+                if (!shot[0] && H.p().getX() < Arena.cx - 13.5) {
+                    shot[0] = true;
+                    Shots.take(s, "movement-parkour-airborne");
+                }
+            }
+            return (H.p().onGround() && H.p().getX() < Arena.cx - 16.5) || H.p().getY() < Arena.FLOOR - 2;
+        });
+        s.run("parkour result", () -> {
+            Services.input().setKeyHeld(lease[0], SimKey.FORWARD, false);
+            Services.input().setKeyHeld(lease[0], SimKey.SPRINT, false);
+            lease[0].close();
+            double x = H.p().getX() - Arena.cx;
+            s.check("movement assist times the edge jump and clears a 3-block gap",
+                    ma.edgeJumps() > jumpsBefore[0] && H.p().getY() >= Arena.FLOOR + 0.99 && x < -15.7,
+                    Harness.fmt("edge jumps %d -> %d, player x=cx%+.2f y=%.2f (min y %.2f), corrections %d",
+                            jumpsBefore[0], ma.edgeJumps(), x, H.p().getY(), minY[0], ma.corrections()));
+            s.check("landing overlay shown while airborne", sawLanding[0], "seen=" + sawLanding[0]);
+        });
+        Shots.add(s, "movement-parkour-landed");
+        s.run("movement assist off", () -> {
+            H.setting(com.utilitysuite.travel.movement.MovementAssist.ID, "assist_automation", false);
+            H.enable(com.utilitysuite.travel.movement.MovementAssist.ID, false);
+        });
+        s.cmd(() -> Arena.tp(0.5, 0.5, 0f));
     }
 
     /** The integrated server's copy of the local player (single-player only), or null. */

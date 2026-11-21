@@ -24,6 +24,7 @@ public final class TravelBootstrap {
     private static TerrainAssist terrain;
     private static TravelAutopilot autopilot;
     private static BridgeAssist bridge;
+    private static com.utilitysuite.travel.movement.MovementAssist movement;
     // Built once so the per-tick key dispatch allocates nothing (a bound method reference allocates per evaluation).
     private static Runnable onAutopilotKey;
     private static Runnable onBridgeKey;
@@ -38,7 +39,9 @@ public final class TravelBootstrap {
         bridge = new BridgeAssist();
         Services.modules().register(terrain);
         Services.modules().register(autopilot);
+        movement = new com.utilitysuite.travel.movement.MovementAssist();
         Services.modules().register(bridge);
+        Services.modules().register(movement);
         onAutopilotKey = autopilot::toggle;
         onBridgeKey = bridge::toggle;
         onBridgeMarkKey = bridge::mark;
@@ -50,6 +53,10 @@ public final class TravelBootstrap {
 
         NeoForge.EVENT_BUS.addListener(terrain::onRenderLevel);
         NeoForge.EVENT_BUS.addListener(terrain::onMovementInput);
+        movement.setSafeWalk(terrain::isSafeWalkActive);
+        terrain.setParkourJumping(movement::jumpingThisTick);
+        NeoForge.EVENT_BUS.addListener(movement::onMovementInput);
+        NeoForge.EVENT_BUS.addListener(movement::onRenderLevel);
         NeoForge.EVENT_BUS.addListener(TravelBootstrap::onTickPost);
     }
 
@@ -71,5 +78,9 @@ public final class TravelBootstrap {
 
     public static BridgeAssist bridge() {
         return bridge;
+    }
+
+    public static com.utilitysuite.travel.movement.MovementAssist movement() {
+        return movement;
     }
 }

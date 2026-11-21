@@ -29,7 +29,7 @@ class LegitPresetsTest {
             LegitPresets.apply(level, world, global);
             assertEquals(level, LegitPresets.current(world, global));
         }
-        assertEquals(600.0, global.getDouble("core", "camera_speed_deg_per_sec", 0), 1e-9);
+        assertEquals(450.0, global.getDouble("core", "camera_speed_deg_per_sec", 0), 1e-9);
         assertEquals("INSTANT", world.getString(LegitPresets.BRIDGE, "walk_pace", ""));
         assertFalse(world.getBool(LegitPresets.SCHEMATIC, "requireLineOfSight", true));
     }

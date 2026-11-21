@@ -236,13 +236,17 @@ Done:
       lethal falls count as no landing, so with no jump possible it picks the least damaging landing. Allocation free.
 
 Next:
-- [ ] Input augmentation path in core.input: an "assist" layer that adds to the user's own keys (jump tap at the
-      edge, air-strafe keys) instead of a lease that replaces them; manual keys still win when they disagree.
-- [ ] Movement Assist module: auto edge-jump while sprinting, mid-air trajectory correction (keys only at Legit, small
-      yaw correction at Balanced, silent yaw at Relaxed), sprint efficiency (keep sprint, hit jumps on the optimal
-      tick, avoid ceiling bonks), and a fall-survival mode.
-- [ ] Overlay (WorldOverlays, batched, Sodium-safe): landing cells within jump reach, the predicted landing of the
-      current trajectory, and an "escape path" (multi-jump search toward safety or away from a pursuer).
+- [x] Movement Assist module (Travel): applies MovementAssistBrain in NeoForge's MovementInputUpdateEvent, so it
+      adds to the keys you press (a jump on the right tick, a strafe/forward key on an axis you are not holding) and
+      never replaces one you hold. Edge jump, air steering (corrects only a miss, fall damage or a much lower landing;
+      with no survivable landing it leaves your keys alone), optional sprint hop (head-hitters included). Off while
+      sneaking, swimming, climbing, flying, after Stop-All, and while automation drives MOVEMENT unless "Assist
+      automation too" is on. Per-tick voxel cache keeps the search cheap.
+- [x] Overlay: predicted landing (green safe, yellow fall damage, red nothing survivable) and the blocks a sprint
+      jump from here can land on (brighter: higher than you). Only while moving; Clean-Screen hides it.
+- [ ] Yaw correction for air steering by legit level (keys only at Legit, small visible yaw at Balanced, silent yaw
+      at Relaxed), and a fall-survival mode (water bucket clutch when the landing is lethal).
+- [ ] Escape-path overlay: multi-jump search toward safety or away from a pursuer.
 - [ ] Multi-jump planner: chain JumpSearch over landing cells (A* over jump edges) for parkour routes and escapes;
       the combat runner/hunter roles reuse it.
 - [ ] Physics extras: slabs/stairs step-up, ice/slime/soul sand, ladders and vines, water, Speed/Jump Boost from the

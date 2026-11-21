@@ -42,7 +42,7 @@ public final class LegitPresets {
     public static final String COMBAT = "combat_assistant";
 
     public static final List<Knob> KNOBS = List.of(
-            core("camera_speed_deg_per_sec", 160.0, 240.0, 600.0),
+            core("camera_speed_deg_per_sec", 160.0, 240.0, 450.0),
             knob(SCHEMATIC, "requireLineOfSight", true, true, false),
             knob(SCHEMATIC, "silentRotation", false, false, true),
             knob(SCHEMATIC, "placementDelayTicks", 6.0, 4.0, 1.0),

@@ -158,6 +158,14 @@ public final class MovementPhysics {
         }
     }
 
+    /**
+     * True when a block is under the player's feet right now. Differs from {@link #onGround} on the tick the player
+     * steps off an edge: vanilla (and this replica) resolves Y before X/Z, so that tick still reports onGround.
+     */
+    public boolean supported(Voxels w) {
+        return standing(w);
+    }
+
     private boolean standing(Voxels w) {
         int by = floor(y - 0.01);
         return anySolid(x - HALF_WIDTH, x + HALF_WIDTH, by, by, z - HALF_WIDTH, z + HALF_WIDTH, w);

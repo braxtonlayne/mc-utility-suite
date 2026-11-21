@@ -33,7 +33,8 @@ class InputSmootherTest {
 
     @AfterEach
     void tearDown() {
-        smoother.releaseAll(); // clears the static SilentRotation state
+        smoother.releaseAll();
+        SilentRotation.clear(); // release eases the static server angle back over ticks; reset it between tests
     }
 
     private ControlLease lease(ControlChannel first, ControlChannel... rest) {
@@ -179,6 +180,10 @@ class InputSmootherTest {
         assertEquals(30f, SilentRotation.pitch(), 1e-3);
         assertTrue(smoother.isRotationSettled(0.01f));
         l.close();
+        assertTrue(SilentRotation.isActive(), "no server-side snap: the head eases back over a few ticks");
+        for (int i = 0; i < 20 && SilentRotation.isActive(); i++) {
+            smoother.postTick();
+        }
         assertFalse(SilentRotation.isActive(), "packets go back to the real camera");
     }
 

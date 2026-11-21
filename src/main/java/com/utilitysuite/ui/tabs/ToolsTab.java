@@ -61,8 +61,8 @@ public final class ToolsTab {
                     "After you touch the controls, automation waits this long before taking over again."),
             SettingSpec.decimal(ModState.KEY_MOUSE_THRESHOLD_PX, "Mouse override threshold (px)", 6.0, 0.5, 50.0, "",
                     "Mouse movement per tick that counts as you taking the camera."),
-            SettingSpec.decimal(ModState.KEY_CAMERA_SPEED, "Camera turn speed (deg/s)", 240.0, 30.0, 1080.0, "",
-                    "Base speed of automated camera turns."));
+            SettingSpec.decimal(ModState.KEY_CAMERA_SPEED, "Camera turn speed (deg/s)", 240.0, 30.0, 450.0, "",
+                    "Base speed of automated camera turns. Hard-capped at 450: automation never snaps your head."));
 
     private ToolsTab() {
     }

@@ -31,6 +31,8 @@ public final class JumpSearch {
     private double landX, landY, landZ;
     private float landDamage;
     private int landTicks;
+    private double lastWalk = NO_LANDING;
+    private double lastJump = NO_LANDING;
 
     /**
      * Mid-air steering.
@@ -77,17 +79,34 @@ public final class JumpSearch {
         if (!now.onGround) {
             return false;
         }
-        // only at an edge: walking on for one more tick must leave the ground
+        // only at an edge: walking on for one more tick must leave the ground. On the ground vy is about -0.078, so the
+        // Y-first collision keeps onGround true for the step-off tick itself: check what is under the feet after it.
         sim.copyFrom(now).tick(1, 0, yawDeg, sprint, false, w);
-        if (sim.onGround) {
+        if (sim.supported(w)) {
             return false;
         }
         double hx = -Math.sin(Math.toRadians(yawDeg));
         double hz = Math.cos(Math.toRadians(yawDeg));
         double walk = simulate(now, 1, 0, yawDeg, sprint, false, health, hx, hz, w);
         double jump = simulate(now, 1, 0, yawDeg, sprint, true, health, hx, hz, w);
+        lastWalk = walk;
+        lastJump = jump;
         store(1, 0, jump, sim.x, sim.y, sim.z, MovementPhysics.fallDamage(sim.fallDistance), lastTicks);
         return jump > walk + 0.05;
+    }
+
+    /**
+     * Scores holding the given keys (optionally jumping on the first tick) until landing; the landing is in
+     * {@link #landX()} etc. Used to judge the user's own keys and to draw the predicted landing.
+     */
+    public double evaluate(MovementPhysics now, int f, int s, float yawDeg, boolean sprint, boolean jumpFirst,
+                           float health, MovementPhysics.Voxels w) {
+        double hx = -Math.sin(Math.toRadians(yawDeg));
+        double hz = Math.cos(Math.toRadians(yawDeg));
+        double sc = simulate(now, f, s, yawDeg, sprint, jumpFirst, health, hx, hz, w);
+        store(f, s, sc, sim.x, sim.y, sim.z, sc <= NO_LANDING ? 0f : MovementPhysics.fallDamage(sim.fallDistance),
+                lastTicks);
+        return sc;
     }
 
     private int lastTicks;
@@ -170,5 +189,14 @@ public final class JumpSearch {
 
     public int landTicks() {
         return landTicks;
+    }
+
+    /** Scores of the last edge check (diagnostics): walking off vs jumping now. */
+    public double lastWalkScore() {
+        return lastWalk;
+    }
+
+    public double lastJumpScore() {
+        return lastJump;
     }
 }
