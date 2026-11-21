@@ -37,6 +37,8 @@ public final class CombatSnapshot {
     public double minX, minY, minZ, maxX, maxY, maxZ;
     public double tvx, tvy, tvz;
     public boolean targetBlocking, lineOfSight, crosshairOnTarget;
+    /** Target health plus absorption. */
+    public float targetHealth = 20f;
 
     // ---- hazards (relative to the player->target direction) -------------------------------------------------------
     public boolean hazardFront, hazardBack, hazardLeft, hazardRight;

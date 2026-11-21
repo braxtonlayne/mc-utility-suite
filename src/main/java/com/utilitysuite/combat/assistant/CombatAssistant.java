@@ -1,6 +1,8 @@
 package com.utilitysuite.combat.assistant;
 
 import com.utilitysuite.combat.allies.AllyRoster;
+import com.utilitysuite.combat.tactics.OpponentModel;
+import com.utilitysuite.combat.tactics.TacticUtility;
 import com.utilitysuite.core.api.ControlChannel;
 import com.utilitysuite.core.api.ControlLease;
 import com.utilitysuite.core.api.ControlPriority;
@@ -87,6 +89,19 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
     private final ShieldBreakSequencer shield = new ShieldBreakSequencer();
     private final AerialPlanner wind = new AerialPlanner();
     private final TacticsPlanner tactics = new TacticsPlanner();
+    private final OpponentModel opponents = new OpponentModel();
+    /** Damage this player dealt, per target (same ring structure, used for the own-DPS estimate). */
+    private final OpponentModel dealt = new OpponentModel();
+    private final TacticUtility utility = new TacticUtility();
+    private TacticUtility.Tactic broadTactic = TacticUtility.Tactic.FIGHT;
+    private long tacticClock;
+    private int lastTargetHealthId = -1;
+    private float lastTargetHealth;
+    /** Assumed DPS floors before any hit was seen (a sword at full charge is ~7). */
+    static final double MIN_OWN_DPS = 4.0;
+    static final double MIN_OPP_DPS = 1.5;
+    /** Extra blocks added to both ends of the spacing band while kiting. */
+    static final double KITE_EXTRA_SPACING = 0.5;
     private TacticsPlanner.Tactic lastTactic = TacticsPlanner.Tactic.NONE;
     private int tacticSwings;
     private final float[] aim = new float[2];
@@ -311,6 +326,8 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         losLostTicks = 0;
         shield.reset();
         tactics.reset();
+        utility.reset();
+        broadTactic = TacticUtility.Tactic.FIGHT;
         lastTactic = TacticsPlanner.Tactic.NONE;
         wind.reset();
         spacing.reset();
@@ -410,10 +427,13 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
             return;
         }
         float eff = s.effectiveHealth();
+        tacticClock++;
         if (lastHealth >= 0f && eff < lastHealth - 0.01f) {
             lastHitDamage = lastHealth - eff;
+            opponents.recordHit(targetId, tacticClock, lastHitDamage);
         }
         lastHealth = eff;
+        observeOpponent(s);
         if (!holdsLease() && !tryAcquire()) {
             return;
         }
@@ -488,6 +508,14 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
             }
         } else if (eating) {
             stopEating();
+        }
+
+        // ---- 1b. broad tactic by utility (FLEE backs off; KITE widens the spacing band) ------------------------
+        broadTactic = settings.tacticUtility ? chooseTactic(s) : TacticUtility.Tactic.FIGHT;
+        if (broadTactic == TacticUtility.Tactic.FLEE) {
+            aimAtTarget(s);
+            retreatMove(s);
+            return;
         }
 
         // ---- 2. wind-charge launch (owns camera + hotbar while active) ------------------------------------------
@@ -578,9 +606,45 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         }
     }
 
+    /** Feeds the opponent model and the damage-dealt model from this tick's snapshot. Allocation free. */
+    private void observeOpponent(CombatSnapshot s) {
+        opponents.observe(targetId, tacticClock, s.tx, s.tz, s.tvx, s.tvz, s.px, s.pz, s.targetOnGround,
+                s.targetBlocking);
+        if (targetId == lastTargetHealthId && s.targetHealth < lastTargetHealth - 0.01f) {
+            dealt.recordHit(targetId, tacticClock, lastTargetHealth - s.targetHealth);
+        }
+        lastTargetHealthId = targetId;
+        lastTargetHealth = s.targetHealth;
+    }
+
+    private TacticUtility.Tactic chooseTactic(CombatSnapshot s) {
+        TacticUtility u = utility;
+        u.ownHealth = s.effectiveHealth();
+        u.ownMaxHealth = s.maxHealth > 0f ? s.maxHealth : 20f;
+        u.oppHealth = s.targetHealth;
+        u.ownDps = Math.max(MIN_OWN_DPS, dealt.dps(targetId, tacticClock));
+        u.oppDps = Math.max(MIN_OPP_DPS, opponents.dps(targetId, tacticClock));
+        u.healingItems = s.gappleSlot >= 0 || s.sustainInvSlot >= 0 ? 1 : 0;
+        u.distance = s.horizontalDistance();
+        u.oppHopRate = opponents.hopRate(targetId);
+        return u.choose();
+    }
+
+    /** Broad tactic of the last engaged tick (FIGHT while the setting is off). */
+    public TacticUtility.Tactic broadTactic() {
+        return broadTactic;
+    }
+
+    /** Opponent habits (strafe bias, crit-hop cadence, shield use, damage dealt) of recent targets. */
+    public OpponentModel opponents() {
+        return opponents;
+    }
+
     private void movement(CombatSnapshot s) {
         double d = s.horizontalDistance();
-        int fwd = spacing.update(d, settings.spacingMin, settings.spacingMax, s.hazardFront, s.hazardBack);
+        double kite = broadTactic == TacticUtility.Tactic.KITE ? KITE_EXTRA_SPACING : 0.0;
+        int fwd = spacing.update(d, settings.spacingMin + kite, settings.spacingMax + kite, s.hazardFront,
+                s.hazardBack);
         int side = StrafePlanner.NONE;
         if (settings.strafe && d <= settings.spacingMax + 1.0) {
             side = strafe.update(s.hazardLeft, s.hazardRight, input.nextGaussianTicks(30, 8, 15, 50));

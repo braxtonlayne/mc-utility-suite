@@ -216,6 +216,7 @@ public final class MinecraftCombatWorld implements CombatWorld, LineOfSight.Soli
         out.tvy = v.y;
         out.tvz = v.z;
         out.targetBlocking = t.isBlocking();
+        out.targetHealth = t.getHealth() + t.getAbsorptionAmount();
         out.crosshairOnTarget = mc.hitResult instanceof EntityHitResult ehr && ehr.getEntity() == t;
         out.lineOfSight = LineOfSight.clear(out.px, out.eyeY, out.pz, t.getX(), t.getEyeY(), t.getZ(), this,
                 LOS_MAX_STEPS);
