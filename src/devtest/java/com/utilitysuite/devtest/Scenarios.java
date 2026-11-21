@@ -28,6 +28,7 @@ final class Scenarios {
         q.add(SchematicScenario::build);
         q.add(WorldScenario::build);
         q.add(TravelScenario::build);
+        q.add(ParkourScenario::build);
         q.add(CombatScenario::build);
         q.add(ToolsScenario::build);
         q.add(PerfScenario::build);

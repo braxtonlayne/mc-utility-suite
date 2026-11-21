@@ -77,6 +77,11 @@ public final class BridgeAssist implements IModule, IConfigurable {
     private static final int VERIFY_TICKS = 8;
     private static final int MAX_RETRIES = 3;
     private static final float BRIDGE_PITCH = 78f;
+    /** Steady-pose tuning: ignore aim changes smaller than this, and turn slower than a normal aim. */
+    private static final float AIM_DEAD_BAND_DEG = 1.5f;
+    private static final float AIM_SPEED = 0.6f;
+    /** Past-the-edge distance the pitch is computed for while the face is still hidden (where it will show). */
+    private static final double PITCH_BEYOND_MIN = 0.18;
 
     private boolean enabled = true;
 
@@ -114,7 +119,7 @@ public final class BridgeAssist implements IModule, IConfigurable {
     private final LeaseRequest request = slot.request(ControlPriority.TRAVEL, 0, ControlChannel.MOVEMENT,
             ControlChannel.CAMERA, ControlChannel.WORLD_INTERACT, ControlChannel.HOTBAR);
     private final HeldKeys keys = new HeldKeys();
-    private final CameraAim aim = new CameraAim(0.5f);
+    private final CameraAim aim = new CameraAim(AIM_DEAD_BAND_DEG);
     private final BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
     private final WalkBridge walk = new WalkBridge();
     private final java.util.function.IntSupplier walkSlot = () -> {
@@ -276,11 +281,14 @@ public final class BridgeAssist implements IModule, IConfigurable {
         boolean visible = beyond > 0.05;
 
         double moveYaw = Angles.yawTo(px + 0.5 - player.getX(), pz + 0.5 - player.getZ());
-        if (visible) {
-            aim.aim(input, lease, Angles.yawTo(hx, hz), Angles.pitchTo(horizontal, hy), rotationMode, 1.0f);
-        } else {
-            aim.aim(input, lease, moveYaw + 180.0, BRIDGE_PITCH, rotationMode, 1.0f);
-        }
+        // One steady bridger pose (no per-block head swings): yaw straight back along the bridge direction (the face
+        // spans the lane, so a centred player hits it without yaw corrections), pitch from how far the eye is past the
+        // face plane. Aiming at the face point itself made the yaw swing wildly: that point is almost straight down,
+        // so centimetre moves changed the horizontal direction by tens of degrees.
+        double backYaw = Angles.yawTo(-dirX, -dirZ);
+        double pitch = Math.max(BRIDGE_PITCH - 8f, Math.min(88.0,
+                Angles.pitchTo(Math.max(beyond, PITCH_BEYOND_MIN), hy)));
+        aim.aim(input, lease, backYaw, pitch, rotationMode, AIM_SPEED);
 
         keys.set(input, lease, SimKey.SNEAK, true);
         int mask = beyond < 0.2 ? MoveKeys.forDirection(player.getYRot(), moveYaw) : 0;

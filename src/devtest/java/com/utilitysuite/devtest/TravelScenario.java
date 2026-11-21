@@ -57,8 +57,33 @@ final class TravelScenario {
             boolean started = TravelBootstrap.bridge().start();
             s.check("bridge starts", started, "running=" + TravelBootstrap.bridge().isRunning());
         });
-        s.waitUpTo("bridge stops", 20 * 40, () -> !TravelBootstrap.bridge().isRunning());
+        // head steadiness: once the camera first faces back along the bridge (west, yaw 90), how far it wanders
+        float[] look = {Float.NaN, Float.NaN, 0f, 0f, 0f, 999f, -999f}; // last yaw, last pitch, yaw dev max, travel, max step, pitch min, pitch max
+        boolean[] settled = new boolean[1];
+        s.waitUpTo("bridge stops", 20 * 40, () -> {
+            float yaw = H.p().getYRot();
+            float pitch = H.p().getXRot();
+            float dev = Math.abs(net.minecraft.util.Mth.wrapDegrees(yaw - 90f));
+            if (!settled[0] && dev < 3f) {
+                settled[0] = true;
+            } else if (settled[0]) {
+                float step = Math.abs(net.minecraft.util.Mth.wrapDegrees(yaw - look[0])) + Math.abs(pitch - look[1]);
+                look[2] = Math.max(look[2], dev);
+                look[3] += step;
+                look[4] = Math.max(look[4], step);
+                look[5] = Math.min(look[5], pitch);
+                look[6] = Math.max(look[6], pitch);
+            }
+            look[0] = yaw;
+            look[1] = pitch;
+            return !TravelBootstrap.bridge().isRunning();
+        });
         s.run("bridge result", () -> {
+            s.check("bridge look is one steady pose (no per-block head swings)", settled[0] && look[2] <= 8f
+                            && look[4] <= 10f && look[6] - look[5] <= 20f,
+                    Harness.fmt("settled=%s, yaw off the bridge line max %.1f deg, head travel %.1f deg, largest tick"
+                                    + " step %.1f deg, pitch %.1f..%.1f", settled[0], look[2], look[3], look[4], look[5],
+                            look[6]));
             int placed = 0;
             for (int dx = 13; dx <= 20; dx++) {
                 if (!H.block(Arena.cx + dx, Arena.FLOOR, Arena.cz).isAir()) {

@@ -43,12 +43,30 @@ public final class MovementAssist implements IModule, IConfigurable {
     static final String K_OVERLAY = "overlay";
     static final String K_REACH = "reach_overlay";
     static final String K_AUTOMATION = "assist_automation";
+    static final String K_ESCAPE = "escape_path";
+    static final String K_ESCAPE_PLAYERS = "escape_players";
+    static final int ESCAPE_EVERY_TICKS = 10;
+    static final double MOB_RANGE = 16.0;
+    static final double PLAYER_RANGE = 32.0;
+    static final double MOB_SPEED = 0.2;
+    static final double PLAYER_SPEED = 0.28;
     static final int REACH_EVERY_TICKS = 5;
 
     private final MovementAssistBrain brain = new MovementAssistBrain();
     private final JumpReach reach = new JumpReach();
     private final MovementPhysics now = new MovementPhysics();
     private final LevelVoxels voxels = new LevelVoxels();
+    private final EscapePlanner escape = new EscapePlanner();
+    private final java.util.List<net.minecraft.world.entity.LivingEntity> threatBuffer = new java.util.ArrayList<>();
+    private static final net.minecraft.world.level.entity.EntityTypeTest<net.minecraft.world.entity.Entity,
+            net.minecraft.world.entity.LivingEntity> LIVING =
+            net.minecraft.world.level.entity.EntityTypeTest.forClass(net.minecraft.world.entity.LivingEntity.class);
+    private boolean escapeOverlay = true;
+    private boolean escapePlayers = true;
+    private int escapeClock;
+    private int escapeCount;
+    private final long[] escapeCells = new long[EscapePlanner.MAX_PATH];
+    private final boolean[] escapeJumps = new boolean[EscapePlanner.MAX_PATH];
 
     private boolean enabled;
     private boolean overlay = true;
@@ -87,6 +105,7 @@ public final class MovementAssist implements IModule, IConfigurable {
             status = "no player";
             showLanding = false;
             reachCount = 0;
+            escapeCount = 0;
             return;
         }
         String skipped = skip(p);
@@ -94,6 +113,7 @@ public final class MovementAssist implements IModule, IConfigurable {
             status = skipped;
             showLanding = false;
             reachCount = 0;
+            escapeCount = 0;
             return;
         }
         Input in = event.getInput();
@@ -153,6 +173,10 @@ public final class MovementAssist implements IModule, IConfigurable {
         landX = brain.landX();
         landY = brain.landY();
         landZ = brain.landZ();
+        if (overlay && escapeOverlay && ++escapeClock >= ESCAPE_EVERY_TICKS) {
+            escapeClock = 0;
+            planEscape(mc, p);
+        }
         if (overlay && reachOverlay && now.onGround && ++reachClock >= REACH_EVERY_TICKS) {
             reachClock = 0;
             reachCount = reach.compute(now, voxels);
@@ -162,7 +186,57 @@ public final class MovementAssist implements IModule, IConfigurable {
             }
         } else if (!now.onGround) {
             reachCount = 0;
+            escapeCount = 0;
         }
+    }
+
+    /**
+     * Threat scan + escape plan (every {@link #ESCAPE_EVERY_TICKS}). Hostile mobs within {@link #MOB_RANGE} (they
+     * cannot follow a parkour jump) and, if enabled, other players within {@link #PLAYER_RANGE} (they can). The AABB
+     * is the one small allocation, twice a second; the entity list is reused.
+     */
+    private void planEscape(Minecraft mc, LocalPlayer p) {
+        escape.clearThreats();
+        threatBuffer.clear();
+        mc.level.getEntities(LIVING, p.getBoundingBox().inflate(escapePlayers ? PLAYER_RANGE : MOB_RANGE),
+                MovementAssist::threatCandidate, threatBuffer, EscapePlanner.MAX_THREATS * 2);
+        for (int i = 0; i < threatBuffer.size(); i++) {
+            net.minecraft.world.entity.LivingEntity e = threatBuffer.get(i);
+            if (e == p) {
+                continue;
+            }
+            boolean player = e instanceof net.minecraft.world.entity.player.Player;
+            if (player ? !escapePlayers : e.distanceToSqr(p) > MOB_RANGE * MOB_RANGE) {
+                continue;
+            }
+            escape.addThreat(e.getX(), e.getY(), e.getZ(), player ? PLAYER_SPEED : MOB_SPEED, player);
+        }
+        threatBuffer.clear();
+        if (escape.threatCount() == 0) {
+            escapeCount = 0;
+            return;
+        }
+        if (!p.onGround()) {
+            return; // keep the last path while airborne (no standable start cell)
+        }
+        escapeCount = 0;
+        if (escape.plan(p.getX(), p.getY(), p.getZ(), voxels)) {
+            escapeCount = escape.pathLength();
+            for (int i = 0; i < escapeCount; i++) {
+                escapeCells[i] = escape.pathCell(i);
+                escapeJumps[i] = escape.pathJump(i);
+            }
+        }
+    }
+
+    private static boolean threatCandidate(net.minecraft.world.entity.LivingEntity e) {
+        if (!e.isAlive() || e.isSpectator()) {
+            return false;
+        }
+        if (e instanceof net.minecraft.world.entity.player.Player pl) {
+            return !pl.isCreative();
+        }
+        return e instanceof net.minecraft.world.entity.monster.Enemy;
     }
 
     /** Why the assist is idle this tick, or null when it runs. Constant strings: nothing allocated. */
@@ -189,7 +263,7 @@ public final class MovementAssist implements IModule, IConfigurable {
 
     public void onRenderLevel(RenderLevelStageEvent event) {
         if (!enabled || !overlay || event.getStage() != RenderLevelStageEvent.Stage.AFTER_PARTICLES
-                || (!showLanding && reachCount == 0) || Services.modState().isCleanScreen()) {
+                || (!showLanding && reachCount == 0 && escapeCount == 0) || Services.modState().isCleanScreen()) {
             return;
         }
         PoseStack pose = event.getPoseStack();
@@ -220,7 +294,62 @@ public final class MovementAssist implements IModule, IConfigurable {
             LevelRenderer.renderLineBox(pose, lines, px - 0.3, y + 0.01, pz - 0.3, px + 0.3, y + 1.8, pz + 0.3,
                     r, g, 0.15f, 0.6f);
         }
+        renderEscape(pose, lines, cam);
         buffers.endBatch(RenderType.lines());
+    }
+
+    /** Escape path: orange steps along the ground, magenta for sprint jumps, a taller marker at the end. */
+    private void renderEscape(PoseStack pose, VertexConsumer lines, Vec3 cam) {
+        if (escapeCount < 2) {
+            return;
+        }
+        PoseStack.Pose last = pose.last();
+        for (int i = 1; i < escapeCount; i++) {
+            long a = escapeCells[i - 1];
+            long b = escapeCells[i];
+            float ax = (float) (Packed.x(a) + 0.5 - cam.x);
+            float ay = (float) (Packed.y(a) + 0.1 - cam.y);
+            float az = (float) (Packed.z(a) + 0.5 - cam.z);
+            float bx = (float) (Packed.x(b) + 0.5 - cam.x);
+            float by = (float) (Packed.y(b) + 0.1 - cam.y);
+            float bz = (float) (Packed.z(b) + 0.5 - cam.z);
+            boolean jump = escapeJumps[i];
+            float r = jump ? 0.95f : 1.0f;
+            float g = jump ? 0.25f : 0.55f;
+            float bl = jump ? 0.95f : 0.1f;
+            if (jump) {
+                // two straight pieces through a raised midpoint read as a hop
+                float mx = (ax + bx) * 0.5f;
+                float my = Math.max(ay, by) + 1.1f;
+                float mz = (az + bz) * 0.5f;
+                segment(lines, last, ax, ay, az, mx, my, mz, r, g, bl);
+                segment(lines, last, mx, my, mz, bx, by, bz, r, g, bl);
+            } else {
+                segment(lines, last, ax, ay, az, bx, by, bz, r, g, bl);
+            }
+        }
+        long end = escapeCells[escapeCount - 1];
+        double ex = Packed.x(end) - cam.x;
+        double ey = Packed.y(end) - cam.y;
+        double ez = Packed.z(end) - cam.z;
+        LevelRenderer.renderLineBox(pose, lines, ex + 0.2, ey + 0.01, ez + 0.2, ex + 0.8, ey + 1.0, ez + 0.8,
+                1.0f, 0.55f, 0.1f, 1.0f);
+    }
+
+    private static void segment(VertexConsumer c, PoseStack.Pose p, float x0, float y0, float z0, float x1, float y1,
+                                float z1, float r, float g, float b) {
+        float nx = x1 - x0;
+        float ny = y1 - y0;
+        float nz = z1 - z0;
+        float len = (float) Math.sqrt(nx * nx + ny * ny + nz * nz);
+        if (len < 1.0e-4f) {
+            return;
+        }
+        nx /= len;
+        ny /= len;
+        nz /= len;
+        c.addVertex(p, x0, y0, z0).setColor(r, g, b, 1.0f).setNormal(p, nx, ny, nz);
+        c.addVertex(p, x1, y1, z1).setColor(r, g, b, 1.0f).setNormal(p, nx, ny, nz);
     }
 
     // ---- IModule / IConfigurable -------------------------------------------------------------------------------------
@@ -246,6 +375,7 @@ public final class MovementAssist implements IModule, IConfigurable {
         if (!enabled) {
             showLanding = false;
             reachCount = 0;
+            escapeCount = 0;
         }
     }
 
@@ -258,6 +388,7 @@ public final class MovementAssist implements IModule, IConfigurable {
     public void onWorldUnload() {
         showLanding = false;
         reachCount = 0;
+        escapeCount = 0;
     }
 
     @Override
@@ -272,6 +403,11 @@ public final class MovementAssist implements IModule, IConfigurable {
         overlay = p.getBool(ID, K_OVERLAY, true);
         reachOverlay = p.getBool(ID, K_REACH, true);
         assistAutomation = p.getBool(ID, K_AUTOMATION, false);
+        escapeOverlay = p.getBool(ID, K_ESCAPE, true);
+        escapePlayers = p.getBool(ID, K_ESCAPE_PLAYERS, true);
+        if (!escapeOverlay) {
+            escapeCount = 0;
+        }
     }
 
     @Override
@@ -294,6 +430,11 @@ public final class MovementAssist implements IModule, IConfigurable {
                         "Show where you will land: green safe, yellow fall damage, red nothing survivable."),
                 SettingSpec.bool(K_REACH, "Jump reach", true, "Overlay",
                         "Outline the blocks a sprint jump from here can land on (brighter: higher than you)."),
+                SettingSpec.bool(K_ESCAPE, "Escape path", true, "Overlay",
+                        "When hostile mobs (or players) are near, draw the route that leaves the most room between you"
+                                + " and them, using sprint jumps mobs cannot follow (magenta = jump)."),
+                SettingSpec.bool(K_ESCAPE_PLAYERS, "Players count as threats", true, "Overlay",
+                        "Plan escapes from other players too (they can follow jumps, so only distance helps)."),
                 SettingSpec.bool(K_AUTOMATION, "Assist automation too", false, "",
                         "Also assist while an automated job (goal, travel, combat) drives your movement.")
                         .asAdvanced());
@@ -325,6 +466,19 @@ public final class MovementAssist implements IModule, IConfigurable {
 
     public boolean showingLanding() {
         return showLanding;
+    }
+
+    /** Steps of the current escape path (0 = none shown). */
+    public int escapeLength() {
+        return escapeCount;
+    }
+
+    public long escapeCell(int i) {
+        return escapeCells[i];
+    }
+
+    public boolean escapeJump(int i) {
+        return escapeJumps[i];
     }
 
     public int reachCount() {
