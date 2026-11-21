@@ -1,0 +1,13 @@
+{
+  "key.utilitysuite.quick_pearl": "Quick Pearl",
+  "module.utilitysuite.dot_commands": "Dot-Commands",
+  "module.utilitysuite.dot_commands.description": "Chat lines starting with . are handled locally and never sent: .t <module>, .goal <text>, .stop, .list, .help",
+  "module.utilitysuite.offhand_manager": "Offhand Manager",
+  "module.utilitysuite.offhand_manager.description": "Keeps a totem at low health or while gliding, a shield against ranged threats, else your preferred offhand item",
+  "module.utilitysuite.auto_fish": "Auto-Fish",
+  "module.utilitysuite.auto_fish.description": "Reels in on a bite and recasts with human delays; stops before the rod breaks or the inventory fills",
+  "module.utilitysuite.auto_respawn": "Auto-Respawn",
+  "module.utilitysuite.auto_respawn.description": "Respawns after a short delay and prints the death coordinates (never on hardcore)",
+  "module.utilitysuite.auto_reconnect": "Auto-Reconnect",
+  "module.utilitysuite.auto_reconnect.description": "Reconnects after an unexpected disconnect with a countdown and backoff, then resumes the running job"
+}

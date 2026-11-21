@@ -1,12 +1,19 @@
 package com.utilitysuite.tools;
 
 import com.utilitysuite.core.api.Services;
+import com.utilitysuite.tools.commands.DotCommands;
 import com.utilitysuite.tools.inventory.ContainerButtons;
 import com.utilitysuite.tools.inventory.ShulkerPreview;
 import com.utilitysuite.tools.inventory.SmartInventory;
 import com.utilitysuite.tools.packetlab.LatencySimulator;
 import com.utilitysuite.tools.packetlab.PacketLab;
+import com.utilitysuite.tools.player.AutoFish;
+import com.utilitysuite.tools.player.AutoReconnect;
+import com.utilitysuite.tools.player.AutoRespawn;
+import com.utilitysuite.tools.player.OffhandManager;
+import com.utilitysuite.tools.player.QuickPearl;
 import com.utilitysuite.tools.rules.LocalRules;
+import net.neoforged.bus.api.EventPriority;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.neoforge.common.NeoForge;
 
@@ -22,6 +29,12 @@ public final class ToolsBootstrap {
     private static LatencySimulator latency;
     private static LocalRules rules;
     private static ContainerButtons containerButtons;
+    private static DotCommands dotCommands;
+    private static OffhandManager offhand;
+    private static AutoFish autoFish;
+    private static AutoRespawn autoRespawn;
+    private static AutoReconnect autoReconnect;
+    private static QuickPearl quickPearl;
 
     private ToolsBootstrap() {
     }
@@ -51,6 +64,57 @@ public final class ToolsBootstrap {
         bus.addListener(shulker::onGather);
         bus.addListener(packetLab::onLogin);
         bus.addListener(packetLab::onChunkLoad);
+
+        initPlayerTools(modBus, bus);
+    }
+
+    /** Player and misc tools: dot-commands, offhand manager, auto-fish, auto-respawn, auto-reconnect, quick pearl. */
+    private static void initPlayerTools(IEventBus modBus, IEventBus bus) {
+        dotCommands = new DotCommands();
+        offhand = new OffhandManager();
+        autoFish = new AutoFish();
+        autoRespawn = new AutoRespawn();
+        autoReconnect = new AutoReconnect();
+        quickPearl = new QuickPearl();
+
+        Services.modules().register(dotCommands);
+        Services.modules().register(offhand);
+        Services.modules().register(autoFish);
+        Services.modules().register(autoRespawn);
+        Services.modules().register(autoReconnect);
+
+        modBus.addListener(quickPearl::onRegisterKeys);
+
+        bus.addListener(EventPriority.HIGHEST, dotCommands::onClientChat);
+        bus.addListener(offhand::onClientTick);
+        bus.addListener(autoFish::onPlaySound);
+        bus.addListener(autoRespawn::onScreenOpening);
+        bus.addListener(autoReconnect::onLoggingIn);
+        bus.addListener(autoReconnect::onLoggingOut);
+        bus.addListener(autoReconnect::onScreenInit);
+        bus.addListener(autoReconnect::onScreenRender);
+        bus.addListener(autoReconnect::onClientTick);
+        bus.addListener(quickPearl::onClientTick);
+    }
+
+    public static DotCommands dotCommands() {
+        return dotCommands;
+    }
+
+    public static OffhandManager offhand() {
+        return offhand;
+    }
+
+    public static AutoFish autoFish() {
+        return autoFish;
+    }
+
+    public static AutoReconnect autoReconnect() {
+        return autoReconnect;
+    }
+
+    public static QuickPearl quickPearl() {
+        return quickPearl;
     }
 
     public static SmartInventory inventory() {
