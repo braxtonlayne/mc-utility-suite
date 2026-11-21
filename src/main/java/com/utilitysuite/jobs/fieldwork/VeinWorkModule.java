@@ -52,6 +52,7 @@ public final class VeinWorkModule extends FieldModule {
     private boolean scanning;
     private boolean running;
     private long current = Long.MIN_VALUE;
+    private int waitTicks;
     private ClientLevel level;
 
     public VeinWorkModule() {
@@ -100,6 +101,7 @@ public final class VeinWorkModule extends FieldModule {
             if (collector.step(lookup, SCAN_BUDGET)) {
                 scanning = false;
                 running = !collector.isEmpty();
+                waitTicks = 0;
                 if (!running) {
                     collector.clear();
                 }
@@ -141,8 +143,12 @@ public final class VeinWorkModule extends FieldModule {
             return;
         }
         if (!hands.ensureLease()) {
+            if (++waitTicks > 100) {
+                stopWork(); // the user kept the hands busy: give up the run
+            }
             return; // the manual-override pause after the user's own break; starts when it lapses
         }
+        waitTicks = 0;
         if (hands.coolingDown()) {
             return;
         }

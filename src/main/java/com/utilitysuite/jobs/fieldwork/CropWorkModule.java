@@ -166,7 +166,7 @@ public final class CropWorkModule extends FieldModule {
     }
 
     private void tickWork(Minecraft mc, LocalPlayer player, ClientLevel level) {
-        if (hands.consumePreempted()) {
+        if (hands.consumePreempted() || player.getDeltaMovement().horizontalDistanceSqr() > 1e-3) {
             endTarget(false);
             return;
         }

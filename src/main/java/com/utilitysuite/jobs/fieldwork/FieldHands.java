@@ -51,6 +51,7 @@ final class FieldHands implements LeaseListener {
 
     // current action
     private long actionCell = Long.MIN_VALUE;
+    private BlockPos actionPos;
     private boolean aimSet;
     private int ticks;
     private int cooldown;
@@ -103,6 +104,7 @@ final class FieldHands implements LeaseListener {
 
     void resetAction() {
         actionCell = Long.MIN_VALUE;
+        actionPos = null;
         aimSet = false;
         ticks = 0;
     }
@@ -124,7 +126,9 @@ final class FieldHands implements LeaseListener {
     public void onPreempted(ControlLease l, LeaseEndReason reason, String byModuleId) {
         if (l == lease) {
             lease = null;
-            preempted = true;
+            // The user's own input or Stop-All ends the run. A higher module taking the hands for a moment (the
+            // survival autopilot's auto-tool swap on our attack, combat) only pauses it: the lease is re-requested.
+            preempted = reason == LeaseEndReason.MANUAL_OVERRIDE || reason == LeaseEndReason.STOP_ALL;
             resetAction();
         }
     }
@@ -209,9 +213,10 @@ final class FieldHands implements LeaseListener {
             Direction face = Direction.getNearest(player.getX() - (x + 0.5), player.getEyeY() - (y + 0.5),
                     player.getZ() - (z + 0.5));
             if (ticks == 1) {
-                mc.gameMode.startDestroyBlock(cursor.immutable(), face);
-            } else {
-                mc.gameMode.continueDestroyBlock(cursor.immutable(), face);
+                actionPos = cursor.immutable(); // the game keeps a reference: one position per action, not per tick
+                mc.gameMode.startDestroyBlock(actionPos, face);
+            } else if (actionPos != null) {
+                mc.gameMode.continueDestroyBlock(actionPos, face);
             }
             player.swing(InteractionHand.MAIN_HAND);
             return RUNNING;
