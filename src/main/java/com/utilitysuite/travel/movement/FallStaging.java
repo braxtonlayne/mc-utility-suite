@@ -133,10 +133,6 @@ final class FallStaging {
         if (stagedSlot >= 0) {
             return;
         }
-        ControlLease l = slot.ensure(request);
-        if (l == null) {
-            return;
-        }
         Inventory inv = p.getInventory();
         int hot = -1;
         int main = -1;
@@ -154,7 +150,14 @@ final class FallStaging {
                 break;
             }
         }
-        if (hot < 0 && main >= 0) {
+        if (hot < 0 && main < 0) {
+            return; // nothing to stage: no lease taken
+        }
+        ControlLease l = slot.ensure(request);
+        if (l == null) {
+            return;
+        }
+        if (hot < 0) {
             int empty = -1;
             for (int i = 0; i < 9; i++) {
                 if (inv.getItem(i).isEmpty()) {
