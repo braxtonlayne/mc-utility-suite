@@ -6,6 +6,7 @@ import com.utilitysuite.core.api.ISuiteEventBus;
 import com.utilitysuite.core.api.Services;
 import com.utilitysuite.core.input.KeybindManager;
 import com.utilitysuite.world.blast.BlastOverlayModule;
+import com.utilitysuite.world.camera.FreelookModule;
 import com.utilitysuite.world.camera.ScoutCameraModule;
 import com.utilitysuite.world.lighting.LightOverlayModule;
 import com.utilitysuite.world.spawn.SpawnGeometryModule;
@@ -76,6 +77,7 @@ public final class WorldBootstrap {
         LightOverlayModule lightOverlay = new LightOverlayModule();
         BlastOverlayModule blastOverlay = new BlastOverlayModule();
         SpawnGeometryModule spawnGeometry = new SpawnGeometryModule(oreSim::profile);
+        FreelookModule freelook = new FreelookModule();
         modBus.addListener(RegisterGuiLayersEvent.class, e -> e.registerBelow(VanillaGuiLayers.CHAT,
                 ResourceLocation.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID, "minimap"), minimap.hud()));
         Services.registerWaypoints(waypoints.store());
@@ -83,7 +85,7 @@ public final class WorldBootstrap {
 
         IModuleRegistry registry = Services.modules();
         for (WorldModule m : new WorldModule[] {knowledge, overlays, oreSim, radar, camera, waypoints, minimap,
-                lightOverlay, blastOverlay, spawnGeometry}) {
+                lightOverlay, blastOverlay, spawnGeometry, freelook}) {
             registry.register(m);
             runtime.add(m);
         }
@@ -100,6 +102,9 @@ public final class WorldBootstrap {
             e.register(addWaypointKey);
             e.register(takeMeBackKey);
             camera.setZoomKey(zoomKey);
+            KeyMapping freelookKey = key("freelook", GLFW.GLFW_KEY_LEFT_ALT);
+            e.register(freelookKey);
+            freelook.setKey(freelookKey);
             waypoints.setKeys(addWaypointKey, takeMeBackKey);
         });
 
@@ -108,7 +113,7 @@ public final class WorldBootstrap {
             runtime.onBlockChanged(pos, o, n);
             lightOverlay.onBlockChanged(pos, o, n);
         });
-        WorldHooks.setTurnRedirect(camera::turn);
+        WorldHooks.setTurnRedirect((yRot, xRot) -> camera.turn(yRot, xRot) || freelook.turn(yRot, xRot));
 
         IEventBus bus = NeoForge.EVENT_BUS;
         bus.addListener(runtime::onTick);
@@ -127,6 +132,7 @@ public final class WorldBootstrap {
         bus.addListener((InputEvent.MouseScrollingEvent e) -> camera.onScroll(e));
         bus.addListener((RenderHandEvent e) -> camera.onRenderHand(e));
         bus.addListener((ViewportEvent.ComputeFov e) -> camera.onComputeFov(e));
+        bus.addListener((ViewportEvent.ComputeCameraAngles e) -> freelook.onCameraAngles(e));
         bus.addListener((ViewportEvent.RenderFog e) -> camera.onFog(e));
         bus.addListener((CalculatePlayerTurnEvent e) -> camera.onTurnSensitivity(e));
         bus.addListener((RenderBlockScreenEffectEvent e) -> camera.onScreenEffect(e));
