@@ -65,6 +65,8 @@ import java.util.function.Supplier;
 public final class JobExecutor implements LeaseListener {
 
     public static final String MODULE_ID = "goal_engine";
+    /** A stuck or failed Return/Deposit this close to the start (horizontally) counts as back. */
+    static final int RETURN_NEAR_XZ = 8;
 
     /** Collaborators. Suppliers may return null for optional services. */
     public record Deps(IActionArbiter arbiter, Supplier<ISuiteEventBus> events, Supplier<IInventoryView> inventory,
@@ -852,6 +854,20 @@ public final class JobExecutor implements LeaseListener {
         if (st == MiningDriver.Status.FAILED || stuck) {
             String why = st == MiningDriver.Status.FAILED ? "Pathing failed: " + d.failureReason()
                     : "No progress toward " + PackedPos.format(target) + " for " + settings.stuckTicks / 20 + " s";
+            if (step.kind() == StepKind.RETURN
+                    && (horizontalDistSq(deps.actions().playerPos(), target) <= RETURN_NEAR_XZ * RETURN_NEAR_XZ
+                    || j.replans.getOrDefault(step, 0) >= settings.maxReplans)) {
+                // coming back is a courtesy, the goal is already met: never pause a finished job over it (the start
+                // may be somewhere the way back cannot reach, such as a tree top)
+                d.cancel();
+                setReason(j, why + "; stopped " + (int) Math.sqrt(horizontalDistSq(deps.actions().playerPos(), target))
+                        + " blocks from the start");
+                if (settings.depositAfterGather && startDeposit(j)) {
+                    return;
+                }
+                completeStep(j);
+                return;
+            }
             if (!replan(j, step, why)) {
                 return;
             }
@@ -860,6 +876,12 @@ public final class JobExecutor implements LeaseListener {
             j.bestDistSq = Long.MAX_VALUE;
             d.gotoCoord(target, 3);
         }
+    }
+
+    private static long horizontalDistSq(long a, long b) {
+        long dx = PackedPos.x(a) - PackedPos.x(b);
+        long dz = PackedPos.z(a) - PackedPos.z(b);
+        return dx * dx + dz * dz;
     }
 
     private boolean startDeposit(Job j) {

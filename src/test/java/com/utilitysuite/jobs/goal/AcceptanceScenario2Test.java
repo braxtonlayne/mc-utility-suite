@@ -372,4 +372,39 @@ class AcceptanceScenario2Test {
         assertEquals("Waiting for schematic toolkit", s.currentStep());
         assertTrue(exec.activeJob().isEmpty());
     }
+
+    /** Mines 1 diamond starting at {@code start}, then sits on the Return/Deposit step at {@code end}. */
+    long gatherAndReachReturn(long start, long end) {
+        inv.add("minecraft:iron_pickaxe", 1);
+        actions.playerPos = start;
+        long id = exec.submit(new GoalRequest.Gather(DIAMOND, 1, CostProfile.FASTEST, DataSourceMode.OBSERVED_ONLY));
+        tick(3);
+        inv.add(DIAMOND, 1);
+        actions.playerPos = end;
+        tick(2);
+        assertEquals(StepKind.RETURN, exec.steps(id).get(exec.stepIndex(id)).kind());
+        return id;
+    }
+
+    @Test
+    void anUnreachableStartNearbyStillFinishesTheJob() {
+        // started on a tree top: the way back fails, but the player is right below it
+        long id = gatherAndReachReturn(PackedPos.pack(0, 68, 0), PackedPos.pack(3, 64, 1));
+        driver.status = MiningDriver.Status.FAILED;
+        tick(2);
+        JobSnapshot s = lastPosted(id);
+        assertEquals(JobStatus.COMPLETED, s.status(), s.reason());
+        assertFalse(arbiter.isHeldBy(ControlChannel.MOVEMENT, JobExecutor.MODULE_ID));
+    }
+
+    @Test
+    void aReturnThatNeverGetsThereFinishesInsteadOfPausing() {
+        long id = gatherAndReachReturn(PackedPos.pack(0, 64, 0), PackedPos.pack(40, 64, 0));
+        JobExecutor.Settings defaults = new JobExecutor.Settings();
+        // stuck far away: retries first, then gives up on the courtesy trip, never pauses a met goal
+        tick((defaults.stuckTicks + 2) * (defaults.maxReplans + 1) + 10);
+        JobSnapshot s = lastPosted(id);
+        assertEquals(JobStatus.COMPLETED, s.status(), s.reason());
+        assertEquals(defaults.maxReplans, s.replanCount(), "the normal retries happened first");
+    }
 }
