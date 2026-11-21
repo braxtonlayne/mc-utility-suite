@@ -64,6 +64,8 @@ final class FallClutch {
     private final BlockPos.MutableBlockPos column = new BlockPos.MutableBlockPos();
     /** The lease came from the autopilot's chain: end it with noteDone, not close. */
     private boolean chained;
+    /** The autopilot drives this run (it gets noteDone at the end). */
+    private boolean scheduledRun;
     private boolean fallReported;
     private boolean voidReported;
     private int voidClock;
@@ -421,10 +423,11 @@ final class FallClutch {
             }
         }
         IAutopilot ap = Services.autopilotOrNull();
-        if (ap != null && phase != Phase.IDLE) {
+        if (ap != null && phase != Phase.IDLE && (scheduledRun || chained)) {
             ap.noteDone(IAutopilot.Reflex.FALL_CLUTCH); // also ends a chained lease
         }
         chained = false;
+        scheduledRun = false;
         lease = null;
         phase = Phase.IDLE;
         aim.reset();
@@ -442,6 +445,7 @@ final class FallClutch {
      * else a lease of our own at EMERGENCY.
      */
     private boolean takeLease(IAutopilot ap, boolean scheduled, ControlChannel first, ControlChannel... rest) {
+        scheduledRun = scheduled;
         if (scheduled) {
             ControlLease c = ap.chainLease(IAutopilot.Reflex.FALL_CLUTCH, MODULE_ID);
             boolean covers = c != null && c.isActive() && c.covers(first);
