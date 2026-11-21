@@ -129,7 +129,7 @@ public final class QuickPearl implements LeaseListener {
                 if (--wait > 0) {
                     return;
                 }
-                if (inv.selected == plan.useSlot && inv.items.get(plan.useSlot).is(Items.ENDER_PEARL)) {
+                if (plan.useSlot == inv.selected &&inv.items.get(plan.useSlot).is(Items.ENDER_PEARL)) {
                     Services.input().scheduleKeyTap(lease, SimKey.USE, 1, 2);
                 }
                 step = Step.THROWN;
