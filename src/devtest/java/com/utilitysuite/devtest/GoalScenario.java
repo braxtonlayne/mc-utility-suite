@@ -126,9 +126,15 @@ final class GoalScenario {
         long[] lookNs = new long[1];
         int[] snapNotes = new int[1];
         int[] turnAt = new int[1];
+        int[] lookEntity = {Integer.MIN_VALUE};
         s.step("gather job runs", t -> {
             String d = describe(jobId[0]);
             var lp = H.p();
+            // a death/respawn swaps in a new player entity with a reset camera: not a turn, restart the baseline
+            if (lp.getId() != lookEntity[0] || lp.isDeadOrDying()) {
+                lookEntity[0] = lp.getId();
+                look[0] = Float.NaN;
+            }
             if (!Float.isNaN(look[0])) {
                 float turn = (float) Math.hypot(net.minecraft.util.Mth.wrapDegrees(lp.getYRot() - look[0]),
                         lp.getXRot() - look[1]);

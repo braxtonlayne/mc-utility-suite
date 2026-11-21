@@ -111,3 +111,9 @@ left in place and can be removed once the playtest is done.
   never sent; Offhand Manager moves a totem to the offhand at 8 HP; Auto-Respawn presses respawn by itself (the
   harness's own respawn is off via `Scenario.deathExpected`); 14 new modules on at once for 2 s with a creeper in view
   (light overlay, slime chunks, spawn spheres and Tab-GUI visible in `shots/modules-smoke.png`).
+- Tools playtest PASS. Goal playtest (16:43) FAILED on world luck: "Dev was blown up by Creeper" while strip-mining
+  at y 40 (the creeper was in the world before `doMobSpawning false`; the autopilot and Combat Assistant are off in that
+  scenario, so nothing was allowed to react). The 685 deg/s "fast turn" it also reported was the respawn resetting the
+  camera, not a turn; the turn sampler now restarts its baseline when the player entity changes. Follow-up worth
+  doing: let goal jobs ask the autopilot's THREAT_ESCAPE/DANGER model to pause the strip mine and back off a hissing
+  creeper, the way a player would.
