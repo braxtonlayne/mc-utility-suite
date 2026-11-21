@@ -14,6 +14,7 @@
     "travel.LiquidBlockSolidSurfaceMixin",
     "travel.LivingEntityFluidSurfaceMixin",
     "travel.PlayerSafeWalkMixin",
+    "ui.KeyboardHandlerTabGuiMixin",
     "world.BlockFaceHidingMixin",
     "world.ClientLevelBlockUpdateMixin",
     "world.ClientLevelDataTimeMixin",
