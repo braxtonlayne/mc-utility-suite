@@ -51,8 +51,8 @@ public final class TravelTab {
         });
         IWaypointService wps = Services.waypointsOrNull();
         if (wps != null) {
-            QuickActions.actionRow(p, "Walk back along your trail", "Take Me Back: follows the recorded breadcrumbs",
-                    "Go back", PillButton.Style.SECONDARY, () -> WorldTab.takeMeBack(p, wps));
+            QuickActions.actionRow(p, WorldTab.GO_BACK_TITLE, WorldTab.GO_BACK_DESC,
+                    WorldTab.GO_BACK_LABEL, PillButton.Style.SECONDARY, () -> WorldTab.takeMeBack(p, wps));
         }
     }
 

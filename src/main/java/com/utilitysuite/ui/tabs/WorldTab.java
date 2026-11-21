@@ -41,6 +41,12 @@ public final class WorldTab {
 
     private static final String K_WP_NAME = "world.wpName";
     private static final int MAX_WAYPOINTS = 30;
+    /** Shared wording for the walk-back-along-the-trail control (Travel and World tabs). */
+    static final String GO_BACK_TITLE = "Walk back along your trail";
+    static final String GO_BACK_DESC = "Follows the recorded breadcrumbs";
+    static final String GO_BACK_LABEL = "Go back";
+    static final int GO_BACK_PILL_WIDTH = 68;
+
     /** Lease owner for waypoint Go / Take Me Back runs (the waypoints module id). */
     static final String NAV_OWNER = "waypoints";
     private static final int WP_ROW = 30;
@@ -71,9 +77,9 @@ public final class WorldTab {
     /** Direct controls for the World features that also have (unbound by default) keys. */
     private static void quickActions(Panel p) {
         p.card("Quick actions", "freecam, overlays, minimap, waypoints");
-        Services.modules().find(ScoutCameraModule.class).ifPresent(cam -> QuickActions.stateRow(p, "Freecam",
+        Services.modules().find(ScoutCameraModule.class).ifPresent(cam -> QuickActions.switchRow(p, "Freecam",
                 "Detaches the camera so you can look around; your player stays put. Also on the Scout Camera key.",
-                cam.isFreecamActive(), "Active", "Off", "Start", "Stop", cam::toggleFreecam));
+                cam.isFreecamActive(), cam::toggleFreecam));
         Services.modules().find(WorldOverlaysModule.class).ifPresent(o -> QuickActions.moduleSwitch(p, o,
                 "Show world overlays", "Ore / block outlines and markers (same as the World Overlays card switch)."));
         Services.modules().find(MinimapModule.class).ifPresent(mm -> {
@@ -233,7 +239,7 @@ public final class WorldTab {
         List<Waypoint> all = wps.all();
         p.card("Waypoints", all.isEmpty() ? "none yet" : all.size() + " saved", 100,
                 com.utilitysuite.ui.kit.CardNode.Tone.NORMAL);
-        p.headerNode(new PillButton(p.font(), "Take Me Back", 92, PillButton.Style.SECONDARY,
+        p.headerNode(new PillButton(p.font(), GO_BACK_LABEL, GO_BACK_PILL_WIDTH, PillButton.Style.SECONDARY,
                 b -> takeMeBack(p, wps)).tooltip("Walk back along the recorded breadcrumb trail"), 0);
         int w = p.width();
         p.textField(K_WP_NAME, "New waypoint name", 0, w - 92);
