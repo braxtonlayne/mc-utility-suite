@@ -7,6 +7,7 @@ import com.utilitysuite.core.api.ControlPriority;
 import com.utilitysuite.core.api.CostProfile;
 import com.utilitysuite.core.api.DataSourceMode;
 import com.utilitysuite.core.api.GoalRequest;
+import com.utilitysuite.core.api.HazardKind;
 import com.utilitysuite.core.api.IActionArbiter;
 import com.utilitysuite.core.api.IInventoryView;
 import com.utilitysuite.core.api.IStorageIndex;
@@ -17,6 +18,7 @@ import com.utilitysuite.core.api.JobStatus;
 import com.utilitysuite.core.api.LeaseEndReason;
 import com.utilitysuite.core.api.LeaseListener;
 import com.utilitysuite.core.api.LeaseRequest;
+import com.utilitysuite.core.api.Services;
 import com.utilitysuite.core.api.StorageEntry;
 import com.utilitysuite.core.api.SuiteEvent;
 import com.utilitysuite.core.api.WorldObservation;
@@ -162,6 +164,8 @@ public final class JobExecutor implements LeaseListener {
     private Job active;
     private ControlLease lease;
     private long nextLeaseAttempt;
+    /** Holds a resume after an EMERGENCY preemption (creeper back-off) until the explosion hazard has cleared. */
+    private final ResumeHoldGate resumeHold = new ResumeHoldGate();
     private long nextJobId = 1;
     private BuildHandler buildHandler;
 
@@ -256,6 +260,7 @@ public final class JobExecutor implements LeaseListener {
             return;
         }
         j.holdPaused = false;
+        resumeHold.disarm(); // the user's own resume wins over the hazard hold
         PlanStep cur = j.current();
         if (cur != null && j.replans.getOrDefault(cur, 0) >= settings.maxReplans) {
             j.replans.put(cur, 0);
@@ -308,6 +313,7 @@ public final class JobExecutor implements LeaseListener {
             restartPhaseIfAction(active);
             setStatus(active, JobStatus.PAUSED, why);
         }
+        resumeHold.disarm();
         releaseLease();
     }
 
@@ -340,6 +346,12 @@ public final class JobExecutor implements LeaseListener {
                 return;
             }
             if (!j.resumeRequested) {
+                return;
+            }
+            if (resumeHold.pending()
+                    && resumeHold.decide(now(), Services.danger().has(HazardKind.EXPLOSION))
+                    == ResumeHoldGate.Decision.HOLD) {
+                setReason(j, "Waiting for hazard to clear");
                 return;
             }
             if (needsLease(j.current()) && !ensureLease(channelsFor(j.current()))) {
@@ -1365,6 +1377,7 @@ public final class JobExecutor implements LeaseListener {
             return;
         }
         restartPhaseIfAction(j);
+        resumeHold.onPreempted(now(), reason == LeaseEndReason.PREEMPTED && preemptedByEmergency());
         if (reason == LeaseEndReason.STOP_ALL) {
             j.holdPaused = true;
             setStatus(j, JobStatus.PAUSED, "Stopped by Stop-All; resume from the job card");
@@ -1377,6 +1390,18 @@ public final class JobExecutor implements LeaseListener {
             String by = LeaseEndReason.MANUAL_OVERRIDE == reason ? "manual input" : byModuleId;
             setStatus(j, JobStatus.PAUSED, "Paused: preempted by " + by + "; will resume from step " + (j.index + 1));
         }
+    }
+
+    /**
+     * True when the owner that just took the job's lease is an EMERGENCY reflex (the creeper back-off). The new holder
+     * may not be installed yet when the callback runs, so a live explosion hazard also counts.
+     */
+    private boolean preemptedByEmergency() {
+        Optional<ControlLease> h = deps.arbiter().holder(ControlChannel.MOVEMENT);
+        if (h.isPresent() && h.get().priority() == ControlPriority.EMERGENCY) {
+            return true;
+        }
+        return Services.danger().has(HazardKind.EXPLOSION);
     }
 
     @Override
