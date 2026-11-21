@@ -57,4 +57,32 @@ class AutopilotAllocationTest {
         // a constant few KB is JIT/probe noise (same at 50k and 200k); one 16-byte object per pass would be 3.2 MB
         assertTrue(bytes < 16_384, "hot paths allocated " + bytes + " bytes over 200k iterations");
     }
+
+    @Test
+    void offStateTickDoesNotAllocate() {
+        Assumptions.assumeTrue(AllocationProbe.supported());
+        DangerModelTest.ManualClock clock = new DangerModelTest.ManualClock();
+        BlackBoxTest.FakeVitals fake = new BlackBoxTest.FakeVitals();
+        fake.v.present = true;
+        fake.v.health = 5f; // low: LOW_HEALTH is reported every tick, so a row is recorded every tick
+        fake.v.maxHealth = 20f;
+        fake.v.air = 40; // drowning too
+        fake.v.maxAir = 300;
+        fake.v.fireTicks = 30;
+        Autopilot a = new Autopilot(clock, fake);
+        a.onProfileLoaded(new ProfileConfig("t", new JsonObject()));
+        a.tickWhileOff(); // first tick subscribes (no bus here)
+        float[] sink = new float[1];
+
+        long bytes = AllocationProbe.measure(200_000, () -> {
+            clock.t++;
+            fake.v.health = (clock.t & 1) == 0 ? 5f : 4.5f; // health changes every tick: a row every tick
+            a.tickWhileOff();
+            if (a.mayAct(Reflex.SHIELD, 3, 4f)) {
+                sink[0]++;
+            }
+        });
+        assertTrue(bytes < 16_384, "off-state tick allocated " + bytes + " bytes over 200k iterations");
+        assertTrue(sink[0] == 0f, "an off autopilot never grants mayAct");
+    }
 }
