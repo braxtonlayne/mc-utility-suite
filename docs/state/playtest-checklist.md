@@ -5,6 +5,31 @@ been marked done; the run-note check results are cited where they exist. Sources
 
 Date: 2026-11-21. Works through the next session in order, most dangerous first inside each section.
 
+## 0. Parkour control model (hands-on, 2026-11-22)
+
+Not run yet. Source: docs/design/parkour-control-model-2026-11-22.md (sections 3, 5, 10). Set Movement Assist
+`control_mode` in the menu for each pass. Landing hold on, Release hold on = Fresh input.
+
+- [ ] Fence walk-off, the reported failure. Sprint-jump across a 2-block gap onto a single oak fence post, hold W through
+      the flight and keep holding it after touchdown. Expect to stay on the post. Release W, press it again: you walk
+      off at once. Do it once in each mode: Corrections, Co-pilot (default), Takeover.
+- [ ] Stone (cobblestone) wall post, 3-block gap, same hold-W test, each of the three modes.
+- [ ] Glass pane, 1-block gap, same test, each of the three modes.
+- [ ] Corner jump onto a fence: the landing sits behind the corner of a block beside the gap, so the straight line clips
+      it. Hold W, one strafe tap, keep W held through the landing. Expect to land on the post and stay on it. Repeat
+      onto a wall top. Each mode.
+- [ ] Override gestures during a committed jump, one at a time: sneak, back, a fresh press of a movement key, a big
+      mouse turn. Each must hand control back at once; nothing the assist wrote may remain after the gesture
+      (design 4.1).
+- [ ] Hand-back is visible: the authority bar under the crosshair drains smoothly over the release ticks (about 6 in
+      Co-pilot, 8 in Takeover, 2 after a hard override) and the target bracket opens with it.
+- [ ] Legit level LEGIT / BALANCED / RELAXED: LEGIT adds no camera help (keys only), BALANCED and RELAXED allow the
+      co-steer; the walk-off protection (stale-key latch) works on all three.
+- [ ] Clean-Screen hides every parkour element (authority bar, bracket, landing marker, status line, "Hold: release W
+      to move" text).
+- [ ] Devtest: run the 8b-parkour scenario (`-PplaytestOnly=Parkour`) and read the control-model lanes and the replica
+      parity notes in the report (integration/parkour-devtest.notes.md lists the lanes).
+
 ## 1. Startup
 
 - [ ] Run `./gradlew runClient` with the mixin audit on. Expect all 20 mixins applied with no failures, including
