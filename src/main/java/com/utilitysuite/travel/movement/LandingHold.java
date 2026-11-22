@@ -122,6 +122,16 @@ public final class LandingHold {
         sneak = false;
     }
 
+    /**
+     * End the hold and free every latched key now (the brain found that carrying on with the held keys is safe).
+     * Takes effect from the axes read after this call; the sneak guard lifts this tick.
+     */
+    public void release() {
+        active = false;
+        latched = 0;
+        sneak = false;
+    }
+
     /** Sneak this tick (the guard). */
     public boolean sneak() {
         return sneak;

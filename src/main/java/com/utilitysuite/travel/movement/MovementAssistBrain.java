@@ -167,7 +167,7 @@ public final class MovementAssistBrain {
         trackJump(now);
         int keys = LandingHold.keys(userForward, userStrafe, userJump);
         // landing hold first (every mode): the latch decides which of the user's keys count this tick
-        updateHold(now, yaw, sprinting, userForward, userStrafe, keys, w);
+        updateHold(now, yaw, sprinting, userForward, userStrafe, keys, health, w);
         int rawForward = userForward;
         int rawStrafe = userStrafe;
         if (hold.latched() != 0) {
@@ -216,7 +216,7 @@ public final class MovementAssistBrain {
             decideGround(now, yaw, sprinting, userForward, userStrafe, jumpIn, health, w);
             lastPlanLands = planOnGround;
             lastPlanForward = KEEP;
-            releaseEdgeGuard(now, yaw, sprinting, rawForward, rawStrafe, w);
+            releaseEdgeGuard(now, yaw, sprinting, rawForward, rawStrafe, keys, w);
         } else if (mode != JumpCommit.Mode.NUDGE && commit.driving()) {
             decideAirCommitted(now, yaw, sprinting, userForward, userStrafe, health, w);
         } else {
@@ -244,8 +244,86 @@ public final class MovementAssistBrain {
 
     // ---- landing hold -------------------------------------------------------------------------------------------------
 
-    private void updateHold(MovementPhysics now, float yaw, boolean sprinting, int f, int s, int keys,
+    private void updateHold(MovementPhysics now, float yaw, boolean sprinting, int f, int s, int keys, float health,
                             MovementPhysics.Voxels w) {
+        holdHealth = health;
+        updateHoldState(now, yaw, sprinting, f, s, keys, w);
+        // Owner, 2026-11-22: the hold is for risky landings only and must never leave a held key dead until it is
+        // pressed again. A still-held key works again when carrying on with it is safe: at once when the user shows
+        // they are going on (looking past this block), otherwise once the hold has run its settle time.
+        if (hold.latched() != 0 && now.onGround && (!hold.active() || (holdStable && continuing(now, keys)))
+                && (keys & hold.latched()) != 0 && carryOnIsSafe(now, yaw, sprinting, f, s, health, w)) {
+            hold.release();
+        }
+    }
+
+    private float holdHealth = 20f;
+
+    /**
+     * The user clearly means to go on past the block they are landing on (owner, 2026-11-22: chain easy jumps, but
+     * never force a series of jumps on someone who meant one): jump is held, or the intent target (where they are
+     * looking) is a block beyond this landing. W alone is not enough.
+     */
+    private boolean continuing(MovementPhysics at, int keys) {
+        if ((keys & LandingHold.JUMP) != 0) {
+            return true;
+        }
+        if (!intentActive()) {
+            return false;
+        }
+        double dx = itx + 0.5 - at.x;
+        double dz = itz + 0.5 - at.z;
+        return dx * dx + dz * dz > CONTINUE_MIN_DIST * CONTINUE_MIN_DIST;
+    }
+
+    /** The intent target must be at least this far (blocks, horizontal) from the landing to count as going on. */
+    static final double CONTINUE_MIN_DIST = 1.2;
+
+    /** A narrow landing where the user means to go on and their keys lead safely into the next jump: no hold. */
+    private boolean flowsOn(MovementPhysics at, float yaw, boolean sprinting, int f, int s, int keys,
+                            MovementPhysics.Voxels w) {
+        return continuing(at, keys) && carryOnIsSafe(at, yaw, sprinting, f, s, holdHealth, w);
+    }
+
+    /** Ticks of walking on that must stay supported for a held key to count as safe again. */
+    static final int CARRY_ON_TICKS = 10;
+
+    /**
+     * Walking on with the user's raw keys stays on the ground for {@link #CARRY_ON_TICKS}, or reaches an edge where
+     * the edge jump would fire (so the assist takes the next jump). Walking off a lone top into a drop is not safe.
+     */
+    private boolean carryOnIsSafe(MovementPhysics now, float yaw, boolean sprinting, int f, int s, float health,
+                                  MovementPhysics.Voxels w) {
+        if (f == 0 && s == 0) {
+            return false;
+        }
+        int edge = search.ticksToEdge(now, f, s, yaw, sprinting, CARRY_ON_TICKS, w);
+        if (edge < 0) {
+            return true;
+        }
+        if (!edgeJump || f <= 0 || s != 0) {
+            return false;
+        }
+        carry.copyFrom(now);
+        for (int t = 0; t < edge; t++) {
+            carry.tick(f, s, yaw, sprinting, false, w);
+            commitSimTicks++;
+        }
+        // the edge jump must continue the course (a landing no lower than this top, no damage), not drop off it
+        double topY = carry.y;
+        return search.shouldEdgeJump(carry, yaw, sprinting, health, w)
+                && search.landY() >= topY - CARRY_ON_MAX_DROP && search.landDamage() <= 0f;
+    }
+
+    /** How much lower than the current top a carry-on edge jump may land (a step down still counts as the course). */
+    static final double CARRY_ON_MAX_DROP = 0.6;
+
+    private boolean holdStable;
+    /** Scratch body for the carry-on check (separate from {@link #cont}, which the hold's air check uses). */
+    private final MovementPhysics carry = new MovementPhysics();
+
+    private void updateHoldState(MovementPhysics now, float yaw, boolean sprinting, int f, int s, int keys,
+                                 MovementPhysics.Voxels w) {
         hold.enabled = landingHold;
         boolean narrowAhead = false;
         boolean narrowHere = false;
@@ -258,11 +336,13 @@ public final class MovementAssistBrain {
                 cont.tick(f, s, yaw, sprinting, false, w);
                 commitSimTicks++;
                 if (cont.onGround) {
-                    narrowAhead = narrowLanding(cont, f, s, yaw, sprinting, w);
+                    narrowAhead = narrowLanding(cont, f, s, yaw, sprinting, w)
+                            && !flowsOn(cont, yaw, sprinting, f, s, keys, w);
                 }
             } else {
                 if (touchedDown) {
-                    narrowHere = narrowLanding(now, f, s, yaw, sprinting, w);
+                    narrowHere = narrowLanding(now, f, s, yaw, sprinting, w)
+                            && !flowsOn(now, yaw, sprinting, f, s, keys, w);
                 }
                 if (landRegion.count() > 0 && (hold.active() || narrowHere)) {
                     boolean freshHeld = (keys & LandingHold.MOVE_MASK & ~hold.latched()) != 0;
@@ -273,6 +353,13 @@ public final class MovementAssistBrain {
                 }
             }
         }
+        // a body that has come to rest counts as settled even when the sneak guard leaves it hanging over the edge of
+        // a 1-block top (otherwise the hold ran its full 60-tick cap there)
+        if (!stable && now.onGround && hold.active()
+                && now.vx * now.vx + now.vz * now.vz < STABLE_SPEED * STABLE_SPEED) {
+            stable = true;
+        }
+        holdStable = stable;
         hold.update(now.onGround, keys, false, narrowAhead, narrowHere, stable);
     }
 
@@ -296,9 +383,11 @@ public final class MovementAssistBrain {
      * user's raw keys would step off within the shrinking edge-guard horizon of {@code 2 + 4a} ticks.
      */
     private void releaseEdgeGuard(MovementPhysics now, float yaw, boolean sprinting, int rawF, int rawS,
-                                  MovementPhysics.Voxels w) {
+                                  int keys, MovementPhysics.Voxels w) {
         int h = commit.edgeGuardHorizon();
-        if (h <= 0 || (rawF == 0 && rawS == 0) || jump) {
+        if (h <= 0 || (rawF == 0 && rawS == 0) || jump
+                || flowsOn(now, yaw, sprinting, rawF, rawS, keys, w)) {
+            // (owner 2026-11-22) the user is going on and the next jump is clear: the stale key is theirs
             return;
         }
         int stale = commit.staleMask();

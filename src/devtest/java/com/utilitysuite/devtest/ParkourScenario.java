@@ -1,5 +1,6 @@
 package com.utilitysuite.devtest;
 
+import org.lwjgl.glfw.GLFW;
 import com.utilitysuite.core.api.ControlChannel;
 import com.utilitysuite.core.api.ControlLease;
 import com.utilitysuite.core.api.ControlPriority;
@@ -420,6 +421,7 @@ final class ParkourScenario {
         final MovementPhysics sim = new MovementPhysics();
         final LevelShapes shapes = new LevelShapes();
         ControlLease lease;
+        ControlLease[] leaseRef;
         int tick;
         int jumpTick = -1;
         int landedTick = -1;
@@ -437,6 +439,13 @@ final class ParkourScenario {
         int overrideTicksChecked;
         int overrideMismatches;
         String overrideFirst = "";
+        // diagnostics
+        final StringBuilder statuses = new StringBuilder();
+        String lastStatus = "";
+        int corrBefore = -1;
+        double jumpZ = Double.NaN;
+        double maxZ = -1e9;
+        double maxY = -1e9;
     }
 
     private static void controlModelLanes(Scenario s, ParkourCourse course) {
@@ -471,7 +480,8 @@ final class ParkourScenario {
                 landingLane(s, lz, idx++, kind, mode, Override.NONE, leaseRef);
             }
         }
-        landingLane(s, lz, idx++, FENCE, Mode.CO_PILOT, Override.SCRIPTED, leaseRef);
+        // (the scripted-sneak override lane was dropped: with the lanes on physical keys, a MOVEMENT lease is
+        // rightly refused while the "user" holds W, and the physical-sneak lane is the real case)
         landingLane(s, lz, idx, FENCE, Mode.CO_PILOT, Override.PHYSICAL, leaseRef);
         s.run("control lanes: parity report", () -> {
             StringBuilder above = new StringBuilder();
@@ -487,7 +497,9 @@ final class ParkourScenario {
                     : "replica parity ABOVE TARGET (information only, switch to UNMODELLED until fixed): " + above);
         });
         s.always("control lanes: restore", () -> {
-            H.physicalKey(org.lwjgl.glfw.GLFW.GLFW_KEY_LEFT_SHIFT, false);
+            for (int key : LANE_KEYS) {
+                H.physicalKey(key, false);
+            }
             if (leaseRef[0] != null && leaseRef[0].isActive()) {
                 Services.input().releaseFor(leaseRef[0]);
                 leaseRef[0].close();
@@ -514,10 +526,11 @@ final class ParkourScenario {
         int dx = idx * LANE_SPACING + 2;
         String label = kind.name + " " + mode + (ovr == Override.NONE ? "" : " override-" + ovr);
         LaneRun r = new LaneRun();
+        r.leaseRef = leaseRef;
         int postX = kind.corner ? dx + 1 : dx;
         int postZ = kind.corner ? 14 : 11 + kind.gap;
-        double postCx = Arena.cx + OX + postX + 0.5;
-        double postCz = Arena.cz + OZ + lz + postZ + 0.5;
+        // absolute post centre, filled when the lane starts: Arena.cx/cz are only known after Arena.ensure has run
+        double[] post = new double[2];
         double topY = Arena.FLOOR + kind.top;
         s.cmd(() -> laneFill(lz, dx - 3, -1, -1, dx + 4, 6, 24, "air"));
         s.cmd(() -> laneFill(lz, dx - 1, 0, 0, dx + 1, 0, 10, "minecraft:smooth_stone"));
@@ -529,35 +542,33 @@ final class ParkourScenario {
                 + (Arena.cz + OZ + lz + 0.5) + " 0 10");
         s.waitTicks(15);
         s.run(label + ": start", () -> {
+            post[0] = Arena.cx + OX + postX + 0.5;
+            post[1] = Arena.cz + OZ + lz + postZ + 0.5;
             H.setting(MovementAssist.ID, "control_mode", mode.name());
-            r.lease = Services.arbiter().request(LeaseRequest.of("parkour_lane", ControlPriority.TRAVEL, null,
-                    ControlChannel.MOVEMENT, ControlChannel.CAMERA)).orElseThrow();
-            leaseRef[0] = r.lease;
-            Services.input().setKeyHeld(r.lease, SimKey.FORWARD, true);
-            Services.input().setKeyHeld(r.lease, SimKey.SPRINT, true);
-            Services.input().setRotationTarget(r.lease, new RotationTarget(0f, 10f, RotationMode.VISIBLE, 1f));
+            // Physical keys, like the owner playing. An automation lease on MOVEMENT makes the assist stand down
+            // ("automation drives movement"), so leased keys would test nothing. The tp above sets the view.
+            H.physicalKey(GLFW.GLFW_KEY_W, true);
+            H.physicalKey(GLFW.GLFW_KEY_LEFT_CONTROL, true);
         });
-        s.waitUpTo(label + ": flight and landing", 300, () -> laneTick(s, r, lz, kind, topY, postCx, postCz, ovr));
+        s.waitUpTo(label + ": flight and landing", 300, () -> laneTick(s, r, lz, kind, topY, post[0], post[1], ovr));
         // fresh press: release forward for 2 ticks, press it again, the body must leave the top within 10 ticks
         s.step(label + ": fresh press", t -> {
             if (!r.standing || r.fell) {
                 return true;
             }
             if (t == 0) {
-                Services.input().setKeyHeld(r.lease, SimKey.FORWARD, false);
+                H.physicalKey(GLFW.GLFW_KEY_W, false);
             } else if (t == 2) {
-                Services.input().setKeyHeld(r.lease, SimKey.FORWARD, true);
+                H.physicalKey(GLFW.GLFW_KEY_W, true);
             }
-            if (t >= 3 && !r.leftTop && !onTop(H.p(), topY, postCx, postCz, kind.limit)) {
+            if (t >= 3 && !r.leftTop && !onTop(H.p(), topY, post[0], post[1], kind.limit)) {
                 r.leftTop = true;
                 r.leftAt = t - 2;
             }
             return r.leftTop || t >= 12;
         });
         s.run(label + ": result", () -> {
-            Services.input().releaseFor(r.lease);
-            r.lease.close();
-            H.physicalKey(org.lwjgl.glfw.GLFW.GLFW_KEY_LEFT_SHIFT, false);
+            releaseLaneKeys(r, leaseRef);
             double[] stat = PARITY.computeIfAbsent(kind.landingClass, k -> new double[2]);
             stat[0] = Math.max(stat[0], r.maxFlight);
             stat[1] = Math.max(stat[1], r.maxAfter);
@@ -602,10 +613,28 @@ final class ParkourScenario {
             }
         }
         double z = p.getZ() - Arena.cz - OZ - lz;
+        {
+            var ma = TravelBootstrap.movement();
+            if (r.corrBefore < 0) {
+                r.corrBefore = ma.corrections();
+            }
+            String st = ma.status();
+            if (r.jumpTick >= 0 && !st.equals(r.lastStatus) && r.statuses.length() < 400) {
+                r.statuses.append(r.tick - r.jumpTick).append(':').append(st).append(' ');
+                r.lastStatus = st;
+            }
+            if (r.jumpTick >= 0) {
+                r.maxZ = Math.max(r.maxZ, z);
+                r.maxY = Math.max(r.maxY, p.getY() - Arena.FLOOR);
+            }
+        }
         if (p.getY() < Arena.FLOOR - 2) {
             r.fell = true;
             r.standNote = Harness.fmt("fell off, y %.2f at flight tick %d", p.getY() - Arena.FLOOR,
                     r.tick - Math.max(r.jumpTick, 0));
+            r.standNote += Harness.fmt(" [jump at z %.2f (tick %d), max z %.2f, max y %.2f, post z %.1f, corrections %d, status %s]",
+                    r.jumpZ, r.jumpTick, r.maxZ, r.maxY, postCz - Arena.cz - OZ - lz,
+                    TravelBootstrap.movement().corrections() - r.corrBefore, r.statuses);
             return true;
         }
         // override phase: from the tick after sneak went down, effective input must equal the raw keys
@@ -628,27 +657,36 @@ final class ParkourScenario {
         }
         // scripted input
         if (r.jumpTick < 0 && p.onGround() && z >= 10.85) {
-            Services.input().setKeyHeld(r.lease, SimKey.JUMP, true);
+            H.physicalKey(GLFW.GLFW_KEY_SPACE, true);
             r.jumpTick = r.tick;
+            r.jumpZ = z;
         } else if (r.jumpTick >= 0 && r.tick == r.jumpTick + 1) {
-            Services.input().setKeyHeld(r.lease, SimKey.JUMP, false);
+            H.physicalKey(GLFW.GLFW_KEY_SPACE, false);
         }
         if (r.jumpTick >= 0) {
             int k = r.tick - r.jumpTick;
-            if (kind.corner) {
-                Services.input().setKeyHeld(r.lease, SimKey.LEFT, k >= TAP_START && k < TAP_START + TAP_LEN);
+            if (kind.corner && k == TAP_START) {
+                H.physicalKey(GLFW.GLFW_KEY_A, true);
+            } else if (kind.corner && k == TAP_START + TAP_LEN) {
+                H.physicalKey(GLFW.GLFW_KEY_A, false);
             }
             if (ovr != Override.NONE && k == 4 && r.overrideTick < 0) {
                 r.overrideTick = r.tick;
                 if (ovr == Override.SCRIPTED) {
+                    // automation sneaking mid-jump: a MOVEMENT lease taken only at that moment
+                    r.lease = Services.arbiter().request(LeaseRequest.of("parkour_lane", ControlPriority.TRAVEL,
+                            null, ControlChannel.MOVEMENT)).orElseThrow();
+                    r.leaseRef[0] = r.lease;
                     Services.input().setKeyHeld(r.lease, SimKey.SNEAK, true);
                 } else {
-                    H.physicalKey(org.lwjgl.glfw.GLFW.GLFW_KEY_LEFT_SHIFT, true);
+                    H.physicalKey(GLFW.GLFW_KEY_LEFT_SHIFT, true);
                 }
             }
             if (ovr != Override.NONE && r.overrideTicksChecked >= 6) {
-                Services.input().setKeyHeld(r.lease, SimKey.SNEAK, false);
-                H.physicalKey(org.lwjgl.glfw.GLFW.GLFW_KEY_LEFT_SHIFT, false);
+                if (r.lease != null) {
+                    Services.input().setKeyHeld(r.lease, SimKey.SNEAK, false);
+                }
+                H.physicalKey(GLFW.GLFW_KEY_LEFT_SHIFT, false);
             }
         }
         if (r.landedTick < 0 && r.jumpTick >= 0 && r.tick > r.jumpTick + 2 && p.onGround() && z > 11.0) {
@@ -662,6 +700,21 @@ final class ParkourScenario {
             return true;
         }
         return false;
+    }
+
+    private static final int[] LANE_KEYS = {GLFW.GLFW_KEY_W, GLFW.GLFW_KEY_LEFT_CONTROL, GLFW.GLFW_KEY_SPACE,
+            GLFW.GLFW_KEY_A, GLFW.GLFW_KEY_LEFT_SHIFT};
+
+    private static void releaseLaneKeys(LaneRun r, ControlLease[] leaseRef) {
+        for (int key : LANE_KEYS) {
+            H.physicalKey(key, false);
+        }
+        if (r.lease != null) {
+            Services.input().releaseFor(r.lease);
+            r.lease.close();
+            r.lease = null;
+            leaseRef[0] = null;
+        }
     }
 
     private static boolean onTop(net.minecraft.world.entity.player.Player p, double topY, double cx, double cz,

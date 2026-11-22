@@ -212,6 +212,110 @@ class MovementAssistBrainTest {
         }
     }
 
+    /**
+     * Owner, 2026-11-22: the hold must not leave W dead until it is pressed again. Landing on a single block that
+     * continues as a 1-wide path, the still-held W walks on once the body is steady; a lone pillar still holds (the
+     * test above).
+     */
+    @Test
+    void heldForwardWalksOnWhenTheSingleBlockContinues() {
+        for (JumpCommit.Mode mode : JumpCommit.Mode.values()) {
+            Grid g = pillarAfterGap();
+            g.fill(0, 19, 6, 0, 19, 60); // the landing block continues as a 1-wide strip
+            MovementAssistBrain b = new MovementAssistBrain();
+            b.mode = mode;
+            b.landingHold = true;
+            MovementPhysics p = runAtPillar(b, g, 90, null);
+            assertTrue(p.onGround && Math.abs(p.y - 20.0) < 1e-6 && p.z > 9.0,
+                    mode + ": W held from the flight walks on along the strip: (" + p.x + ", " + p.y + ", " + p.z
+                            + ")");
+        }
+    }
+
+    /** A single block followed by a 2-gap to more course at the same height: the held W runs on and the edge jump takes it. */
+    @Test
+    void heldForwardCarriesIntoTheNextJumpOfTheCourse() {
+        Grid g = pillarAfterGap();
+        g.fill(-1, 19, 8, 1, 19, 30); // next platform after a 2-block gap from the pillar
+        MovementAssistBrain b = new MovementAssistBrain();
+        b.mode = JumpCommit.Mode.GUIDE;
+        b.landingHold = true;
+        MovementPhysics p = runAtPillar(b, g, 120, null);
+        assertTrue(p.onGround && Math.abs(p.y - 20.0) < 1e-6 && p.z > 8.0,
+                "held W carried on into the next jump: (" + p.x + ", " + p.y + ", " + p.z + ")");
+    }
+
+    /** Owner, 2026-11-22: a chain of single blocks over 1-block gaps is handled with W held, no stop on each block. */
+    @Test
+    void chainsSingleBlocksOverOneGapsWithoutStopping() {
+        for (JumpCommit.Mode mode : JumpCommit.Mode.values()) {
+            Grid g = singleBlockChain();
+            MovementAssistBrain b = new MovementAssistBrain();
+            b.mode = mode;
+            b.landingHold = true;
+            MovementPhysics p = new MovementPhysics().set(0.5, 20, -6, 0, -0.0784, 0, true);
+            int arrived = -1;
+            int stalled = 0;
+            for (int t = 0; t < 160 && arrived < 0; t++) {
+                // the user looks at the next block of the chain (two blocks ahead of the one under them)
+                int next = (int) Math.floor(p.z) + 2;
+                b.setIntentTarget(0, 19, Math.max(5, Math.min(15, next | 1)), 0.9);
+                b.decide(p, 0f, true, 1, 0, false, 20f, g);
+                int f = b.forward() == MovementAssistBrain.KEEP ? 1 : b.forward();
+                int s = b.strafe() == MovementAssistBrain.KEEP ? 0 : b.strafe();
+                p.tick(f, s, 0f, f > 0, b.jump(), b.sneak(), g);
+                if (p.onGround && Math.abs(p.vz) < 0.05 && p.z > 4) {
+                    stalled++;
+                }
+                if (p.y < 19) {
+                    break;
+                }
+                if (p.onGround && p.z > 15.5) {
+                    arrived = t;
+                }
+            }
+            assertTrue(arrived > 0, mode + ": crossed the chain looking ahead with W held: (" + p.x + ", " + p.y
+                    + ", " + p.z + ")");
+            assertTrue(stalled <= 2, mode + ": no stop on the blocks of the chain, stalled ticks " + stalled);
+        }
+    }
+
+    /** Single blocks at z 5, 7, 9, 11, 13 (1-block gaps after the first 3-gap), then a wide platform from z 15. */
+    private static Grid singleBlockChain() {
+        Grid g = pillarAfterGap();
+        for (int z = 7; z <= 13; z += 2) {
+            g.fill(0, 19, z, 0, 19, z);
+        }
+        g.fill(-3, 19, 15, 3, 19, 40);
+        return g;
+    }
+
+    /** Owner, 2026-11-22: never force a series of jumps on someone who meant one. W let go on landing: they stay. */
+    @Test
+    void lettingGoOfForwardOnLandingNeverChains() {
+        for (JumpCommit.Mode mode : JumpCommit.Mode.values()) {
+            Grid g = singleBlockChain();
+            MovementAssistBrain b = new MovementAssistBrain();
+            b.mode = mode;
+            b.landingHold = true;
+            MovementPhysics p = new MovementPhysics().set(0.5, 20, -6, 0, -0.0784, 0, true);
+            boolean airborne = false;
+            boolean landed = false;
+            for (int t = 0; t < 140; t++) {
+                int uf = landed ? 0 : 1;
+                b.setIntentTarget(0, 19, 5, 0.9);
+                b.decide(p, 0f, true, uf, 0, false, 20f, g);
+                int f = b.forward() == MovementAssistBrain.KEEP ? uf : b.forward();
+                int s = b.strafe() == MovementAssistBrain.KEEP ? 0 : b.strafe();
+                p.tick(f, s, 0f, f > 0, b.jump(), b.sneak(), g);
+                airborne |= !p.onGround;
+                landed |= airborne && p.onGround;
+            }
+            assertTrue(p.onGround && Math.abs(p.y - 20.0) < 1e-6 && p.z > 4.2 && p.z < 6.8,
+                    mode + ": stayed on the first block: (" + p.x + ", " + p.y + ", " + p.z + ")");
+        }
+    }
+
     @Test
     void guideNeverReplacesAFreshKey() {
         Grid g = pillarAfterGap();
