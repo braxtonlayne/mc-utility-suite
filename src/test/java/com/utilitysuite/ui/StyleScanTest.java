@@ -52,15 +52,11 @@ class StyleScanTest {
         allow("ui/holo/VisualSettings.java", COLOUR, "the accent preset swatches the appearance settings offer");
         allow("ui/InfoStripText.java", COLOUR, "health/hunger traffic-light colours of the info strip (backlog: tokens)");
         allow("world/minimap/MinimapPalette.java", COLOUR, "map tile colours: the allow-listed minimap palette");
-        allow("world/minimap/MinimapHud.java", COLOUR, "map tile colours and the unknown-tile colour (the rest is backlog)");
         // Backlog: files outside this task that still draw directly.
         allow("ui/SuiteMenuScreen.java", DRAW, "the menu window itself draws with g.fill on top of the kit (backlog)");
         allow("ui/AutopilotBar.java", DRAW, "legacy GuiGraphics bar (backlog: port to a HudElement)");
         allow("ui/UiPreview.java", COLOUR, "WIP-REMOVE");
         allow("ui/UiPreview.java", DRAW, "WIP-REMOVE");
-        allow("world/minimap/MinimapHud.java", DRAW, "WIP-REMOVE");
-        allow("world/minimap/MinimapLayoutScreen.java", COLOUR, "WIP-REMOVE");
-        allow("world/minimap/MinimapLayoutScreen.java", DRAW, "WIP-REMOVE");
         allow("ui/TabGui.java", DRAW, "tab GUI rows use g.fill (backlog: port to the canvas)");
     }
 

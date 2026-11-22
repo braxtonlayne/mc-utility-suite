@@ -10,6 +10,11 @@ import com.mojang.blaze3d.vertex.VertexFormat;
 import com.utilitysuite.UtilitySuiteMod;
 import com.utilitysuite.core.api.IModState;
 import com.utilitysuite.core.api.Services;
+import com.utilitysuite.core.api.visual.FrameLevel;
+import com.utilitysuite.core.api.visual.HoloToken;
+import com.utilitysuite.ui.holo.HoloFrames;
+import com.utilitysuite.ui.holo.HoloTheme;
+import com.utilitysuite.ui.kit.UiRenderUtils;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
@@ -131,36 +136,27 @@ public final class MinimapHud implements LayeredDraw.Layer {
         s = Mth.sin(rad);
         blocksPerPx = MinimapModule.VIEW_TEXELS * zoom / half;
 
-        int bezel;
-        int body;
-        int rim;
-        int text;
-        int accent;
+        // Style = which tokens the frame, the letters and the north mark use (every style is a STEM bracket frame).
+        HoloToken frameTok;
+        HoloToken textTok;
+        HoloToken northTok;
         switch (style) {
             case MILITARY -> {
-                bezel = 0xFF1E2418;
-                body = 0xFF0E120C;
-                rim = 0xFF5C6B46;
-                text = 0xFFB8C89A;
-                accent = 0xFFE0B040;
+                frameTok = HoloToken.LINE_STRONG;
+                textTok = HoloToken.TEXT_SECONDARY;
+                northTok = HoloToken.WARN;
             }
             case CLEAN -> {
-                bezel = 0xC0101418;
-                body = 0xC0080A0C;
-                rim = 0x60FFFFFF;
-                text = 0xFFE0E6EE;
-                accent = 0xFF60D0FF;
+                frameTok = HoloToken.LINE;
+                textTok = HoloToken.TEXT_SECONDARY;
+                northTok = HoloToken.ACCENT;
             }
             default -> {
-                bezel = 0xFF3A3A3A;
-                body = 0xFF000000;
-                rim = 0xFF8A8A8A;
-                text = 0xFFFFFFFF;
-                accent = 0xFFFF5555;
+                frameTok = HoloToken.LINE_STRONG;
+                textTok = HoloToken.TEXT;
+                northTok = HoloToken.ACCENT;
             }
         }
-        bezel = MinimapPalette.withAlpha(bezel, op);
-        rim = MinimapPalette.withAlpha(rim, op);
 
         g.flush();
         RenderSystem.enableBlend();
@@ -169,17 +165,19 @@ public final class MinimapHud implements LayeredDraw.Layer {
         RenderSystem.disableCull();
         Matrix4f m = g.pose().last().pose();
 
-        // Bezel ring / frame.
+        // Frame: glass plate with hairline edge and corner brackets (square), or a hairline range ring with corner
+        // brackets around it (round).
         int b = MinimapLayout.BEZEL;
+        int arm = HoloTheme.bracketArm(size + 2 * b, size + 2 * b);
         if (round) {
-            annulus(m, cx, cy, half, half + b, bezel);
-            annulus(m, cx, cy, half + b - 1, half + b, rim);
-            annulus(m, cx, cy, half - 1, half, rim);
+            annulus(m, cx, cy, half + 1, half + 2, HoloTheme.argb(HoloToken.VOID, 0.6f * op));
+            annulus(m, cx, cy, half, half + 1, HoloTheme.argb(HoloToken.LINE, op));
         } else {
-            g.fill(x - b, y - b, x + size + b, y + size + b, bezel);
-            g.renderOutline(x - b, y - b, size + 2 * b, size + 2 * b, rim);
-            g.flush();
+            HoloFrames.frame(g, x - b, y - b, size + 2 * b, size + 2 * b, FrameLevel.QUIET, false, HoloToken.GLASS_HUD,
+                    HoloToken.LINE, op);
         }
+        HoloFrames.brackets(g, x - b, y - b, size + 2 * b, size + 2 * b, arm, HoloTheme.argb(frameTok, op));
+        g.flush();
 
         // Terrain: a fan whose UVs are the rotated world positions in texel space (texture wraps).
         float pxTex = (float) (Mth.lerp(pt, self.xOld, self.getX()) / zoom);
@@ -211,12 +209,17 @@ public final class MinimapHud implements LayeredDraw.Layer {
         if (style == MinimapPalette.Style.CLEAN) {
             // Dark glass tint over the terrain.
             if (round) {
-                disc(m, cx, cy, half, MinimapPalette.withAlpha(body & 0x00FFFFFF | 0x50000000, op));
+                disc(m, cx, cy, half, HoloTheme.argb(HoloToken.VOID, 0.31f * op));
             } else {
-                g.fill(x, y, x + size, y + size, MinimapPalette.withAlpha(0x50000000, op));
+                HoloFrames.plate(g, x, y, size, size, HoloToken.VOID, 0.31f * op);
                 g.flush();
             }
         }
+
+        // Hairline range ring at half range, and the cardinal ticks on the edge (rotating with the map).
+        float rangeR = half * 0.5f;
+        annulus(m, cx, cy, rangeR - 0.5f, rangeR + 0.5f, HoloTheme.argb(HoloToken.LINE_FAINT, op));
+        cardinalTicks(m, cx, cy, half, round, HoloTheme.argb(HoloToken.LINE, op), HoloTheme.argb(northTok, op));
 
         // Entity dots.
         double selfX = Mth.lerp(pt, self.xOld, self.getX());
@@ -234,12 +237,12 @@ public final class MinimapHud implements LayeredDraw.Layer {
             if (round ? sx * sx + sy * sy > limit * limit : Math.abs(sx) > limit || Math.abs(sy) > limit) {
                 continue;
             }
-            int color = module.dotKind[i] == MinimapModule.DOT_HOSTILE ? 0xFFFF3030
-                    : module.dotKind[i] == MinimapModule.DOT_PLAYER ? 0xFFFFB020 : 0xFF40E060;
+            HoloToken dot = module.dotKind[i] == MinimapModule.DOT_HOSTILE ? HoloToken.DANGER
+                    : module.dotKind[i] == MinimapModule.DOT_PLAYER ? HoloToken.WARN : HoloToken.ALLY;
             int ix = Math.round(cx + sx);
             int iy = Math.round(cy + sy);
-            g.fill(ix - 2, iy - 2, ix + 2, iy + 2, MinimapPalette.withAlpha(0xFF000000, op * 0.7f));
-            g.fill(ix - 1, iy - 1, ix + 1, iy + 1, MinimapPalette.withAlpha(color, op));
+            HoloFrames.plate(g, ix - 2, iy - 2, 4, 4, HoloToken.VOID, op * 0.7f);
+            HoloFrames.plate(g, ix - 1, iy - 1, 2, 2, dot, op);
         }
         g.flush();
 
@@ -251,13 +254,13 @@ public final class MinimapHud implements LayeredDraw.Layer {
         float fy = screenY(fwx, fwz) * blocksPerPx;
         float rx = -fy;
         float ry = fx;
-        int arrow = style == MinimapPalette.Style.MILITARY ? 0xFFB0FFF0 : 0xFFFFFFFF;
-        arrow(m, cx, cy, fx, fy, rx, ry, 1.4f, MinimapPalette.withAlpha(0xC0000000, op));
-        arrow(m, cx, cy, fx, fy, rx, ry, 1f, MinimapPalette.withAlpha(arrow, op));
+        // the player as an accent chevron over a dark outline
+        arrow(m, cx, cy, fx, fy, rx, ry, 1.4f, HoloTheme.argb(HoloToken.VOID, 0.75f * op));
+        arrow(m, cx, cy, fx, fy, rx, ry, 1f, HoloTheme.argb(HoloToken.ACCENT, op));
 
         // Compass letters on the bezel.
         Font font = mc.font;
-        float ringR = round ? half + b / 2f : half + b / 2f;
+        float ringR = half + b / 2f;
         for (int i = 0; i < 4; i++) {
             float lx = screenX(LETTER_DX[i], LETTER_DZ[i]) * blocksPerPx;
             float ly = screenY(LETTER_DX[i], LETTER_DZ[i]) * blocksPerPx;
@@ -270,7 +273,7 @@ public final class MinimapHud implements LayeredDraw.Layer {
             String letter = LETTERS[i];
             int tx = Math.round(cx + lx * ringR) - font.width(letter) / 2;
             int ty = Math.round(cy + ly * ringR) - 4;
-            g.drawString(font, letter, tx, ty, MinimapPalette.withAlpha(i == 0 ? accent : text, op), true);
+            UiRenderUtils.text(g, font, letter, tx, ty, HoloTheme.argb(i == 0 ? northTok : textTok, op));
         }
 
         // Coordinate plate.
@@ -288,12 +291,52 @@ public final class MinimapHud implements LayeredDraw.Layer {
         int tw = font.width(coords);
         int px = Math.round(cx) - tw / 2 - 4;
         int py = y + size + b + 2;
-        g.fill(px, py, px + tw + 8, py + 11, bezel);
-        g.renderOutline(px, py, tw + 8, 11, rim);
-        g.drawString(font, coords, px + 4, py + 2, MinimapPalette.withAlpha(text, op), false);
+        HoloFrames.frame(g, px, py, tw + 8, 11, FrameLevel.QUIET, false, HoloToken.GLASS_HUD, HoloToken.LINE, op);
+        UiRenderUtils.text(g, font, coords, px + 4, py + 2, HoloTheme.argb(HoloToken.TEXT_SECONDARY, op));
         g.flush();
         RenderSystem.enableCull();
         RenderSystem.enableDepthTest();
+    }
+
+    /** Tick length of the north mark and of the other three cardinal ticks, in px. */
+    private static final float TICK_NORTH = 5f;
+    private static final float TICK_OTHER = 3f;
+    private static final float TICK_WIDTH = 1f;
+
+    /**
+     * The four cardinal ticks on the edge of the map, pointing inwards, in one triangle batch: north in
+     * {@code northArgb}, the others in {@code argb}. On a square map they sit on the frame edge.
+     */
+    private void cardinalTicks(Matrix4f m, float cx, float cy, float half, boolean round, int argb, int northArgb) {
+        RenderSystem.setShader(GameRenderer::getPositionColorShader);
+        BufferBuilder buf = Tesselator.getInstance().begin(VertexFormat.Mode.TRIANGLES,
+                DefaultVertexFormat.POSITION_COLOR);
+        for (int i = 0; i < 4; i++) {
+            float dx = screenX(LETTER_DX[i], LETTER_DZ[i]) * blocksPerPx;
+            float dy = screenY(LETTER_DX[i], LETTER_DZ[i]) * blocksPerPx;
+            if (!round) {
+                float k = Math.max(Math.abs(dx), Math.abs(dy));
+                dx /= k;
+                dy /= k;
+            }
+            float outer = half; // the edge of the terrain
+            float len = i == 0 ? TICK_NORTH : TICK_OTHER;
+            float px = -dy * TICK_WIDTH * 0.5f;
+            float py = dx * TICK_WIDTH * 0.5f;
+            // the tick runs from the edge point inwards along the radial direction (unit for a round map)
+            float ex = cx + dx * outer;
+            float ey = cy + dy * outer;
+            float ix = ex - dx * len;
+            float iy = ey - dy * len;
+            int col = i == 0 ? northArgb : argb;
+            buf.addVertex(m, ex - px, ey - py, 0).setColor(col);
+            buf.addVertex(m, ex + px, ey + py, 0).setColor(col);
+            buf.addVertex(m, ix + px, iy + py, 0).setColor(col);
+            buf.addVertex(m, ex - px, ey - py, 0).setColor(col);
+            buf.addVertex(m, ix + px, iy + py, 0).setColor(col);
+            buf.addVertex(m, ix - px, iy - py, 0).setColor(col);
+        }
+        BufferUploader.drawWithShader(buf.buildOrThrow());
     }
 
     /** World offset (blocks) to screen offset (px). Inverse of the orthonormal map rotation. */
