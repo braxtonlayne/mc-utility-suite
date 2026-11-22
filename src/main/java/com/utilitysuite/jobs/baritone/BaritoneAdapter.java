@@ -5,6 +5,8 @@ import com.utilitysuite.core.api.ControlPriority;
 import com.utilitysuite.core.api.LeasedNavigation;
 import com.utilitysuite.core.api.NavigationRun;
 import com.utilitysuite.core.api.INavigator;
+import com.utilitysuite.core.api.IRoutePlanner;
+import com.utilitysuite.core.api.IRoutePlanner.PlanState;
 import com.utilitysuite.core.api.ISuiteEventBus;
 import com.utilitysuite.core.api.SuiteEvent;
 import com.utilitysuite.core.api.IInputSmoother;
@@ -220,6 +222,7 @@ public final class BaritoneAdapter implements MiningDriver {
         }
         endCurrentRun();
         backend.cancel();
+        backend.cancelPlan(); // a job replaces any plan-only request
         if (startingRun) {
             // A leased navigator run preempted the goal engine: keep its paused command so resume() can re-issue it.
             if (paused && mode != Mode.NONE && mode != Mode.INTERACT) {
@@ -327,6 +330,9 @@ public final class BaritoneAdapter implements MiningDriver {
      */
     public void cancelAll() {
         cancel();
+        if (backend != null) {
+            backend.cancelPlan();
+        }
     }
 
     private void endCurrentRun() {
@@ -429,6 +435,91 @@ public final class BaritoneAdapter implements MiningDriver {
     /** The same adapter as the shared {@link INavigator} (registered with {@code Services.registerNavigator}). */
     public INavigator navigator() {
         return navigatorView;
+    }
+
+    // ---- IRoutePlanner view (plan-only: Baritone computes, the suite drives) ----------------------------------------
+
+    /**
+     * True when the backend exists and nothing executes a path: no adapter command (running or paused), no mining,
+     * building or custom-goal process, and no executing path except the momentary one a plan's own calculation may
+     * leave for a tick before the plan drops it.
+     */
+    private boolean planAvailable() {
+        PathBackend b = backend();
+        if (b == null || mode != Mode.NONE) {
+            return false;
+        }
+        if (b.isMining() || b.isGoalActive() || b.isBuilding()) {
+            return false;
+        }
+        return !b.isPathing() || b.planState() == PlanState.CALCULATING;
+    }
+
+    private final IRoutePlanner routePlannerView = new IRoutePlanner() {
+        @Override
+        public boolean isAvailable() {
+            return planAvailable();
+        }
+
+        @Override
+        public boolean planTo(int x, int y, int z, int range) {
+            if (!planAvailable()) {
+                return false;
+            }
+            backend.planTo(x, y, z, Math.max(0, range));
+            return true;
+        }
+
+        @Override
+        public boolean planAway(int x, int y, int z, int distance) {
+            if (!planAvailable()) {
+                return false;
+            }
+            backend.planAway(x, y, z, Math.max(1, distance));
+            return true;
+        }
+
+        @Override
+        public PlanState state() {
+            PathBackend b = backend();
+            return b == null ? PlanState.NONE : b.planState();
+        }
+
+        @Override
+        public int planSerial() {
+            PathBackend b = backend();
+            return b == null ? 0 : b.planSerial();
+        }
+
+        @Override
+        public int copyPath(long[] out) {
+            PathBackend b = backend();
+            if (b == null || out == null || out.length == 0 || b.planState() != PlanState.READY) {
+                return 0;
+            }
+            return b.copyPlannedPath(out);
+        }
+
+        @Override
+        public void cancelPlan() {
+            BaritoneAdapter.this.cancelPlan();
+        }
+    };
+
+    /** The plan-only route planner (registered with {@code Services.registerRoutePlanner} when Baritone is loaded). */
+    public IRoutePlanner routePlanner() {
+        return routePlannerView;
+    }
+
+    /**
+     * Drops the plan request and route only; a path executing for a job is never touched. Also called by Stop-All and
+     * by the jobs bootstrap on dimension change and world unload.
+     */
+    public void cancelPlan() {
+        PathBackend b = backend;
+        if (checked && b != null) {
+            b.cancelPlan();
+        }
     }
 
     // ---- tick -------------------------------------------------------------------------------------------------------
