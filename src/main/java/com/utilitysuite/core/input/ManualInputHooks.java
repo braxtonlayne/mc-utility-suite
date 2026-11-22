@@ -2,6 +2,7 @@ package com.utilitysuite.core.input;
 
 import com.utilitysuite.core.api.IActionArbiter;
 import com.utilitysuite.core.api.ManualInput;
+import com.utilitysuite.core.api.SimKey;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.Options;
@@ -30,6 +31,8 @@ public final class ManualInputHooks {
     private double mouseAccum;
     private boolean mouseReported;
     private ManualLookAssist look;
+    private ManualFactsTracker facts;
+    private YawCoSteer coSteer;
     /** Seconds since the previous mouse frame, recorded at the HEAD of {@code turnPlayer}. */
     private double frameSeconds;
 
@@ -71,12 +74,39 @@ public final class ManualInputHooks {
 
     /** ClientTickEvent.Pre: starts a new mouse accumulation window (and the turn gain's tick: read-outs, ttl). */
     public void beginTick() {
+        beginTick(false);
+    }
+
+    /**
+     * ClientTickEvent.Pre: as {@link #beginTick()}, and advances the manual-facts tick counter; while a screen is open
+     * every key counts as released (the game does not see them either).
+     */
+    public void beginTick(boolean screenOpen) {
         mouseAccum = 0.0;
         mouseReported = false;
         ManualLookAssist a = look;
         if (a != null) {
             a.beginTick();
         }
+        ManualFactsTracker f = facts;
+        if (f != null) {
+            f.beginTick();
+            if (screenOpen) {
+                f.releaseAll();
+            }
+        }
+    }
+
+    // ---- shared control (SharedInputOverlay) ------------------------------------------------------------------------
+
+    /** Facts about the user's own keys and mouse, fed from the hardware events below. */
+    public void setManualFacts(ManualFactsTracker facts) {
+        this.facts = facts;
+    }
+
+    /** The yaw co-steer the mouse hook adds per frame (null: none). */
+    public void setYawCoSteer(YawCoSteer steer) {
+        this.coSteer = steer;
     }
 
     // ---- turn gain (MouseHandlerTurnGainMixin) ----------------------------------------------------------------------
@@ -96,22 +126,38 @@ public final class ManualInputHooks {
 
     /**
      * The yaw argument of {@code LocalPlayer.turn} inside {@code turnPlayer}, in turn units (1 unit = 0.15 deg).
-     * Returns it unchanged (the same double) unless a live turn-gain request scales it. Pitch never comes here.
-     * Runs every rendered frame the mouse is grabbed: allocation free, early-out when nothing is live.
+     * Returns it unchanged (the same double) unless a live turn-gain request scales it or a live co-steer adds to it.
+     * Pitch never comes here. Runs every rendered frame the mouse is grabbed and the window is focused, a still mouse
+     * included (vanilla then calls {@code turn(0, 0)}): allocation free, early-out when nothing is live.
+     * <p>
+     * Order: the hand's raw yaw is recorded for {@link ManualFactsTracker} (before any gain), then the turn gain scales
+     * the hand's motion, then the co-steer ADDS its own step on top (computed from the gained motion, so a hand that
+     * already turns toward the ideal leaves it less to add). The co-steer's part is never scaled by the gain.
      */
     public static double onTurnYaw(double yawArg) {
         ManualInputHooks h = instance;
-        if (h == null || yawArg == 0.0) {
+        if (h == null) {
             return yawArg;
         }
-        ManualLookAssist a = h.look;
-        return a == null ? yawArg : h.turnYaw(a, yawArg);
+        YawCoSteer cs = h.coSteer;
+        boolean steerLive = cs != null && cs.isLive();
+        if (yawArg == 0.0 && !steerLive) {
+            return yawArg;
+        }
+        return h.turnYaw(h.look, cs, steerLive, yawArg);
     }
 
-    private double turnYaw(ManualLookAssist a, double yawArg) {
+    private double turnYaw(ManualLookAssist a, YawCoSteer cs, boolean steerLive, double yawArg) {
         double raw = yawArg * ManualLookAssist.DEG_PER_TURN_UNIT;
-        if (!a.hasLiveRequest()) {
-            a.onFrameYaw(0f, raw, frameSeconds, true); // read-outs only
+        ManualFactsTracker f = facts;
+        if (f != null && raw != 0.0) {
+            f.addHandYaw(raw);
+        }
+        boolean gainLive = a != null && a.hasLiveRequest();
+        if (!gainLive && !steerLive) {
+            if (a != null) {
+                a.onFrameYaw(0f, raw, frameSeconds, true); // read-outs only
+            }
             return yawArg;
         }
         Minecraft mc = Minecraft.getInstance();
@@ -120,7 +166,14 @@ public final class ManualInputHooks {
             return yawArg;
         }
         boolean blocked = mc.screen != null || p.isSpectator() || p.isPassenger();
-        double out = a.onFrameYaw(p.getYRot(), raw, frameSeconds, blocked);
+        float yaw = p.getYRot();
+        double out = raw;
+        if (a != null && raw != 0.0) {
+            out = a.onFrameYaw(yaw, raw, frameSeconds, blocked);
+        }
+        if (steerLive) {
+            out += cs.onFrame(yaw, raw, out, frameSeconds, blocked || smoother.isAutomatedLookRunning());
+        }
         return out == raw ? yawArg : out / ManualLookAssist.DEG_PER_TURN_UNIT;
     }
 
@@ -129,16 +182,28 @@ public final class ManualInputHooks {
     }
 
     public void onKey(InputEvent.Key event) {
-        if (event.getAction() != GLFW.GLFW_PRESS) {
+        int action = event.getAction();
+        if (action == GLFW.GLFW_REPEAT) {
             return;
         }
         Minecraft mc = Minecraft.getInstance();
-        if (!inGame(mc)) {
+        ManualFactsTracker f = facts;
+        if (action == GLFW.GLFW_RELEASE) {
+            // releases always count, screen or not, so no key stays "held" in the facts
+            if (f != null && mc.options != null) {
+                releaseKeys(f, mc.options, event.getKey(), event.getScanCode());
+            }
+            return;
+        }
+        if (action != GLFW.GLFW_PRESS || !inGame(mc)) {
             return;
         }
         int key = event.getKey();
         int scan = event.getScanCode();
         Options o = mc.options;
+        if (f != null) {
+            pressKeys(f, o, key, scan);
+        }
         if (o.keyUp.matches(key, scan) || o.keyDown.matches(key, scan) || o.keyLeft.matches(key, scan)
                 || o.keyRight.matches(key, scan) || o.keyJump.matches(key, scan) || o.keyShift.matches(key, scan)
                 || o.keySprint.matches(key, scan)) {
@@ -151,15 +216,23 @@ public final class ManualInputHooks {
     }
 
     public void onMouseButton(InputEvent.MouseButton.Pre event) {
-        if (event.getAction() != GLFW.GLFW_PRESS) {
+        int action = event.getAction();
+        Minecraft mc = Minecraft.getInstance();
+        ManualFactsTracker f = facts;
+        if (action == GLFW.GLFW_RELEASE) {
+            if (f != null && mc.options != null) {
+                releaseButtons(f, mc.options, event.getButton());
+            }
             return;
         }
-        Minecraft mc = Minecraft.getInstance();
-        if (!inGame(mc)) {
+        if (action != GLFW.GLFW_PRESS || !inGame(mc)) {
             return;
         }
         int b = event.getButton();
         Options o = mc.options;
+        if (f != null) {
+            pressButtons(f, o, b);
+        }
         if (o.keyAttack.matchesMouse(b) || o.keyUse.matchesMouse(b)) {
             arbiter.onManualInput(ManualInput.ATTACK_OR_USE);
         } else if (o.keyUp.matchesMouse(b) || o.keyDown.matchesMouse(b) || o.keyLeft.matchesMouse(b)
@@ -181,6 +254,56 @@ public final class ManualInputHooks {
         if (inGame(mc) && event.getScrollDeltaY() != 0.0 && !mc.player.isSpectator()) {
             arbiter.onManualInput(ManualInput.HOTBAR_SELECT);
         }
+    }
+
+    // ---- manual facts: hardware key -> SimKey (a key may be bound to several mappings: each one counts) --------------
+
+    private static void pressKeys(ManualFactsTracker f, Options o, int key, int scan) {
+        if (o.keyUp.matches(key, scan)) f.onPress(SimKey.FORWARD);
+        if (o.keyDown.matches(key, scan)) f.onPress(SimKey.BACK);
+        if (o.keyLeft.matches(key, scan)) f.onPress(SimKey.LEFT);
+        if (o.keyRight.matches(key, scan)) f.onPress(SimKey.RIGHT);
+        if (o.keyJump.matches(key, scan)) f.onPress(SimKey.JUMP);
+        if (o.keyShift.matches(key, scan)) f.onPress(SimKey.SNEAK);
+        if (o.keySprint.matches(key, scan)) f.onPress(SimKey.SPRINT);
+        if (o.keyAttack.matches(key, scan)) f.onPress(SimKey.ATTACK);
+        if (o.keyUse.matches(key, scan)) f.onPress(SimKey.USE);
+    }
+
+    private static void releaseKeys(ManualFactsTracker f, Options o, int key, int scan) {
+        if (o.keyUp.matches(key, scan)) f.onRelease(SimKey.FORWARD);
+        if (o.keyDown.matches(key, scan)) f.onRelease(SimKey.BACK);
+        if (o.keyLeft.matches(key, scan)) f.onRelease(SimKey.LEFT);
+        if (o.keyRight.matches(key, scan)) f.onRelease(SimKey.RIGHT);
+        if (o.keyJump.matches(key, scan)) f.onRelease(SimKey.JUMP);
+        if (o.keyShift.matches(key, scan)) f.onRelease(SimKey.SNEAK);
+        if (o.keySprint.matches(key, scan)) f.onRelease(SimKey.SPRINT);
+        if (o.keyAttack.matches(key, scan)) f.onRelease(SimKey.ATTACK);
+        if (o.keyUse.matches(key, scan)) f.onRelease(SimKey.USE);
+    }
+
+    private static void pressButtons(ManualFactsTracker f, Options o, int b) {
+        if (o.keyUp.matchesMouse(b)) f.onPress(SimKey.FORWARD);
+        if (o.keyDown.matchesMouse(b)) f.onPress(SimKey.BACK);
+        if (o.keyLeft.matchesMouse(b)) f.onPress(SimKey.LEFT);
+        if (o.keyRight.matchesMouse(b)) f.onPress(SimKey.RIGHT);
+        if (o.keyJump.matchesMouse(b)) f.onPress(SimKey.JUMP);
+        if (o.keyShift.matchesMouse(b)) f.onPress(SimKey.SNEAK);
+        if (o.keySprint.matchesMouse(b)) f.onPress(SimKey.SPRINT);
+        if (o.keyAttack.matchesMouse(b)) f.onPress(SimKey.ATTACK);
+        if (o.keyUse.matchesMouse(b)) f.onPress(SimKey.USE);
+    }
+
+    private static void releaseButtons(ManualFactsTracker f, Options o, int b) {
+        if (o.keyUp.matchesMouse(b)) f.onRelease(SimKey.FORWARD);
+        if (o.keyDown.matchesMouse(b)) f.onRelease(SimKey.BACK);
+        if (o.keyLeft.matchesMouse(b)) f.onRelease(SimKey.LEFT);
+        if (o.keyRight.matchesMouse(b)) f.onRelease(SimKey.RIGHT);
+        if (o.keyJump.matchesMouse(b)) f.onRelease(SimKey.JUMP);
+        if (o.keyShift.matchesMouse(b)) f.onRelease(SimKey.SNEAK);
+        if (o.keySprint.matchesMouse(b)) f.onRelease(SimKey.SPRINT);
+        if (o.keyAttack.matchesMouse(b)) f.onRelease(SimKey.ATTACK);
+        if (o.keyUse.matchesMouse(b)) f.onRelease(SimKey.USE);
     }
 
     private static boolean matchesAny(KeyMapping[] mappings, int key, int scan) {

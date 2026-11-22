@@ -42,6 +42,12 @@ import java.util.function.LongSupplier;
  *       which non-emergency requests for it are refused.</li>
  *   <li><b>Stop-All:</b> revokes everything, releases all simulated input, notifies every module and refuses all
  *       requests until {@link #resumeAutomation()}.</li>
+ *   <li><b>Shared grant</b> (one at a time, {@link #beginShared}): MOVEMENT counts as held by the grant's module at its
+ *       priority for every other request (refused at or below it, preempting it at a strictly higher priority, an
+ *       EMERGENCY request always wins). The user's own MOVEMENT keys do NOT end it (they still end ordinary leases and
+ *       start the override pause for others). Stop-All, world unload and a lease that wins MOVEMENT end it through
+ *       {@link SharedHolder#onSharedEnded}. Used by {@code core.input.SharedInputOverlay}; not part of
+ *       {@link IActionArbiter}.</li>
  * </ul>
  * The steady-state {@link #tick()} path allocates nothing.
  */
@@ -56,6 +62,7 @@ public final class ActionArbiter implements IActionArbiter {
 
     private static final Logger LOG = LoggerFactory.getLogger("utilitysuite/arbiter");
     private static final ControlChannel[] CHANNELS = ControlChannel.all();
+    private static final int MOVEMENT = ControlChannel.MOVEMENT.ordinal();
 
     private final Lease[] holders = new Lease[CHANNELS.length];
     private final int[] pauseTicks = new int[CHANNELS.length];
@@ -68,6 +75,11 @@ public final class ActionArbiter implements IActionArbiter {
     private IModuleRegistry modules;
     private ISuiteEventBus events;
     private LongSupplier clock = System::currentTimeMillis;
+
+    /** The live shared grant (null: none), its module and priority. */
+    private SharedHolder shared;
+    private String sharedModule;
+    private ControlPriority sharedPriority;
 
     private int manualOverridePauseTicks = 20;
     private long nextLeaseId = 1;
@@ -117,6 +129,15 @@ public final class ActionArbiter implements IActionArbiter {
             if (h != null && !h.moduleId().equals(moduleId) && !priority.outranks(h.priority())) {
                 return Optional.empty();
             }
+            if (i == MOVEMENT && shared != null && !sharedModule.equals(moduleId)
+                    && !emergency && !priority.outranks(sharedPriority)) {
+                return Optional.empty();
+            }
+        }
+        if ((mask & (1 << MOVEMENT)) != 0 && shared != null) {
+            // a lease that wins MOVEMENT ends the shared grant (the module's own lease replaces its grant)
+            endSharedInvoluntary(sharedModule.equals(moduleId) ? LeaseEndReason.RELEASED : LeaseEndReason.PREEMPTED,
+                    moduleId);
         }
 
         // Granted. Replace the module's own lease, wherever it is.
@@ -189,10 +210,93 @@ public final class ActionArbiter implements IActionArbiter {
         return holders[channel.ordinal()];
     }
 
+    /** Also true for MOVEMENT while {@code moduleId} holds the shared grant. */
     @Override
     public boolean isHeldBy(ControlChannel channel, String moduleId) {
         Lease h = holders[channel.ordinal()];
-        return h != null && h.moduleId().equals(moduleId);
+        if (h != null) {
+            return h.moduleId().equals(moduleId);
+        }
+        return channel.ordinal() == MOVEMENT && shared != null && sharedModule.equals(moduleId);
+    }
+
+    // ---- shared grant -----------------------------------------------------------------------------------------------
+
+    /** Owner of the shared grant; told once when the grant ends for any reason other than its own {@link #endShared}. */
+    public interface SharedHolder {
+        void onSharedEnded(LeaseEndReason reason, String by);
+    }
+
+    /**
+     * Starts the shared grant on MOVEMENT for {@code holder}. False when automation is stopped, another holder's grant
+     * is live, or a lease at or above {@code priority} holds MOVEMENT (the module's own included). A lower lease on
+     * MOVEMENT is preempted as by a request (the module's own lower lease is released). The same holder may begin
+     * again (its grant is restarted). Not refused by the manual-override pause: the grant exists to share control with
+     * the user. Allocation free.
+     */
+    public boolean beginShared(String moduleId, ControlPriority priority, SharedHolder holder) {
+        if (stopped || moduleId == null || priority == null || holder == null) {
+            return false;
+        }
+        if (shared != null && shared != holder) {
+            return false;
+        }
+        Lease h = holders[MOVEMENT];
+        if (h != null && !priority.outranks(h.priority())) {
+            return false;
+        }
+        shared = holder;
+        sharedModule = moduleId;
+        sharedPriority = priority;
+        if (h != null) {
+            if (h.moduleId().equals(moduleId)) {
+                endLease(h, LeaseEndReason.RELEASED, moduleId);
+            } else {
+                deactivate(h, LeaseEndReason.PREEMPTED, moduleId);
+                suspend(h);
+                notifyPreempted(h, LeaseEndReason.PREEMPTED, moduleId);
+            }
+        }
+        return true;
+    }
+
+    /** The holder ends its own grant (no callback). Idempotent; a stale holder is ignored. */
+    public void endShared(SharedHolder holder) {
+        if (holder != null && shared == holder) {
+            clearShared();
+            if (!suspended.isEmpty()) {
+                checkResumable();
+            }
+        }
+    }
+
+    /** Module id of the live shared grant, or null. */
+    public String sharedModuleId() {
+        return shared == null ? null : sharedModule;
+    }
+
+    /** Priority of the live shared grant, or null. */
+    public ControlPriority sharedPriority() {
+        return shared == null ? null : sharedPriority;
+    }
+
+    private void endSharedInvoluntary(LeaseEndReason reason, String by) {
+        SharedHolder h = shared;
+        if (h == null) {
+            return;
+        }
+        clearShared();
+        try {
+            h.onSharedEnded(reason, by);
+        } catch (RuntimeException e) {
+            LOG.error("Shared grant holder failed in onSharedEnded", e);
+        }
+    }
+
+    private void clearShared() {
+        shared = null;
+        sharedModule = null;
+        sharedPriority = null;
     }
 
     // ---- manual override --------------------------------------------------------------------------------------------
@@ -234,6 +338,7 @@ public final class ActionArbiter implements IActionArbiter {
     public void stopAll(String reason) {
         stopped = true;
         suspended.clear();
+        endSharedInvoluntary(LeaseEndReason.STOP_ALL, BY_STOP_ALL);
         for (int i = 0; i < CHANNELS.length; i++) {
             Lease h = holders[i];
             if (h != null) {
@@ -275,6 +380,7 @@ public final class ActionArbiter implements IActionArbiter {
      */
     public void resetForWorldUnload() {
         suspended.clear();
+        endSharedInvoluntary(LeaseEndReason.RELEASED, BY_STOP_ALL);
         for (int i = 0; i < CHANNELS.length; i++) {
             Lease h = holders[i];
             if (h != null) {
@@ -377,7 +483,8 @@ public final class ActionArbiter implements IActionArbiter {
 
     private boolean channelsFree(Lease lease) {
         for (int i = 0; i < CHANNELS.length; i++) {
-            if ((lease.mask & (1 << i)) != 0 && (holders[i] != null || pauseTicks[i] > 0)) {
+            if ((lease.mask & (1 << i)) != 0 && (holders[i] != null || pauseTicks[i] > 0
+                    || (i == MOVEMENT && shared != null))) {
                 return false;
             }
         }
