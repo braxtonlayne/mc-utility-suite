@@ -44,6 +44,19 @@ public final class LegitPresets {
     public static final int KEY_CHANGES_BALANCED = 6;
     public static final int KEY_HOLD_BALANCED = 2;
     public static final int REACTION_BALANCED = 0;
+    /**
+     * Yaw co-steer of a committed jump (design 2026-11-22, 3.1; owner decision D1: from BALANCED up): degrees per second
+     * and degrees per jump, for Co-pilot (GUIDE) and Takeover (CARRY). LEGIT is 0 everywhere: the camera never moves by
+     * itself there. The core caps every rate at 450 deg/s whatever is stored.
+     */
+    public static final String CO_STEER_RATE = "co_steer_deg_per_sec";
+    public static final String CO_STEER_MAX = "co_steer_max_deg";
+    public static final String CO_STEER_CARRY_RATE = "co_steer_carry_deg_per_sec";
+    public static final String CO_STEER_CARRY_MAX = "co_steer_carry_max_deg";
+    public static final double CO_STEER_RATE_BALANCED = 150.0;
+    public static final double CO_STEER_MAX_BALANCED = 25.0;
+    public static final double CO_STEER_CARRY_RATE_BALANCED = 240.0;
+    public static final double CO_STEER_CARRY_MAX_BALANCED = 90.0;
 
     public static final List<Knob> KNOBS = List.of(
             core("camera_speed_deg_per_sec", 160.0, 240.0, 450.0),
@@ -68,6 +81,11 @@ public final class LegitPresets {
             knob("movement_assist", "assist_key_changes", 3, KEY_CHANGES_BALANCED, 0),
             knob("movement_assist", "assist_key_hold_ticks", 3, KEY_HOLD_BALANCED, 1),
             knob("movement_assist", "assist_reaction_ticks", 3, REACTION_BALANCED, 0),
+            // yaw co-steer during a committed jump (D1): never on LEGIT, bounded on BALANCED, the hard cap on RELAXED
+            knob("movement_assist", CO_STEER_RATE, 0.0, CO_STEER_RATE_BALANCED, 450.0),
+            knob("movement_assist", CO_STEER_MAX, 0.0, CO_STEER_MAX_BALANCED, 180.0),
+            knob("movement_assist", CO_STEER_CARRY_RATE, 0.0, CO_STEER_CARRY_RATE_BALANCED, 450.0),
+            knob("movement_assist", CO_STEER_CARRY_MAX, 0.0, CO_STEER_CARRY_MAX_BALANCED, 180.0),
             knob("combat_reflexes", "shield_turn", false, false, true),
             knob("combat_reflexes", "shield_front_cone", 70.0, 70.0, 90.0),
             knob("auto_torch", "relaxed", false, false, true),
@@ -168,6 +186,57 @@ public final class LegitPresets {
         Level level = currentIgnoring(profile, global, moduleId, key);
         Object v = knob.value(level == null ? Level.BALANCED : level);
         return v instanceof Boolean b && b;
+    }
+
+    /**
+     * A numeric knob's effective value: the stored number when the key is present; when it is absent, the knob's value
+     * for {@link #storedLevel} (so a profile left on LEGIT before the knob existed reads LEGIT's value), or the
+     * BALANCED value when the stored knobs are mixed.
+     */
+    public static double numKnob(ProfileConfig profile, ProfileConfig global, String moduleId, String key) {
+        Knob knob = find(moduleId, key);
+        ProfileConfig target = knob.global() ? global : profile;
+        Object stored = target == null ? null : stored(target, knob);
+        if (stored instanceof Number n) {
+            return n.doubleValue();
+        }
+        Level level = storedLevel(profile, global);
+        Object v = knob.value(level == null ? Level.BALANCED : level);
+        return v instanceof Number n ? n.doubleValue() : 0.0;
+    }
+
+    /**
+     * The level every STORED knob matches, absent keys ignored (unlike {@link #current}, which reads an absent key as
+     * BALANCED): a profile set to a level before newer knobs existed still reads that level. BALANCED is tried first
+     * (the default, and the answer when the stored knobs fit more than one level), then LEGIT, then RELAXED; null when
+     * the stored knobs are mixed. A profile with nothing stored reads BALANCED.
+     */
+    public static Level storedLevel(ProfileConfig profile, ProfileConfig global) {
+        Level[] order = {Level.BALANCED, Level.LEGIT, Level.RELAXED};
+        for (Level level : order) {
+            boolean all = true;
+            for (Knob k : KNOBS) {
+                ProfileConfig target = k.global() ? global : profile;
+                Object stored = target == null ? null : stored(target, k);
+                if (stored != null && !matches(stored, k.value(level))) {
+                    all = false;
+                    break;
+                }
+            }
+            if (all) {
+                return level;
+            }
+        }
+        return null;
+    }
+
+    private static Knob find(String moduleId, String key) {
+        for (Knob k : KNOBS) {
+            if (k.moduleId().equals(moduleId) && k.key().equals(key)) {
+                return k;
+            }
+        }
+        throw new IllegalArgumentException("no knob " + moduleId + "." + key);
     }
 
     /** The stored value as Boolean / Double / String, or null when the key is absent. */

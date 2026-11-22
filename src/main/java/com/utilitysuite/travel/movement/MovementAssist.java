@@ -5,6 +5,8 @@ import com.mojang.blaze3d.vertex.VertexConsumer;
 import com.utilitysuite.core.LegitPresets;
 import com.utilitysuite.core.api.ControlChannel;
 import com.utilitysuite.core.api.ControlPriority;
+import com.utilitysuite.core.api.IInputSmoother;
+import com.utilitysuite.core.api.SharedGrant;
 import com.utilitysuite.core.api.visual.AuthorityReason;
 import com.utilitysuite.core.api.visual.AuthorityState;
 import com.utilitysuite.core.api.visual.MarkKind;
@@ -18,6 +20,7 @@ import com.utilitysuite.core.api.Services;
 import com.utilitysuite.core.api.ProfileConfig;
 import com.utilitysuite.core.api.SettingSpec;
 import com.utilitysuite.travel.Packed;
+import com.utilitysuite.travel.TravelKeys;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.Input;
 import net.minecraft.client.player.LocalPlayer;
@@ -37,8 +40,13 @@ import java.util.List;
  * Movement augmentation for the user's own movement: edge jumps, mid-air trajectory correction, an optional sprint-hop
  * speed mode, and an overlay with the predicted landing and the blocks within sprint-jump reach. Decisions come from
  * the engine-free {@link MovementAssistBrain}; this class only feeds it the player's state and applies its answer to
- * the movement input in {@link MovementInputUpdateEvent} (after the game read the keys, before it moves the player),
- * so it adds to whatever the user presses and never replaces a key the user holds.
+ * the movement input through a {@link SharedGrant} ({@code Services.sharedControl()}): this listener runs at the
+ * default priority and only reads the user's input; the core applies the grant's writes at {@code EventPriority.LOW}
+ * of the same {@link MovementInputUpdateEvent}, so a decision lands on the tick it was made for. The grant is held
+ * while the assist has something to write or a commitment is live, and ended otherwise; a refused grant (a screen,
+ * Stop-All, an automation lease on MOVEMENT) means nothing is written that tick. Yaw co-steer (owner decision D1:
+ * Balanced and above, Co-pilot and Takeover, never Legit, never Corrections, never under automation) is asked of the
+ * same grant and turned off for the rest of a commitment when the hand opposes it.
  * <p>
  * Off while the user sneaks, swims, climbs, flies, glides or rides, after Stop-All, and (unless "Assist automation" is
  * on) while an automation lease drives MOVEMENT. Pure client-side input, like a player's own reflexes; no packets.
@@ -113,6 +121,9 @@ public final class MovementAssist implements IModule, IConfigurable {
     static final String K_BUDGET = "authorship_budget";
     static final String K_JUMP_BUFFER = "jump_buffer";
     static final String K_JUMP_BUFFER_TICKS = "jump_buffer_ticks";
+    static final String K_CO_STEER = "co_steer";
+    /** Ticks over which opposing hand yaw is summed for the co-steer override (design 4.1: 6 degrees within 5). */
+    static final int OPPOSE_WINDOW_TICKS = 5;
     /** Turn-gain requests lapse after this many ticks unless renewed. */
     static final int TURN_GAIN_TTL = 2;
     /** A position change larger than this in one tick is a teleport: the jump history is forgotten. */
@@ -125,6 +136,24 @@ public final class MovementAssist implements IModule, IConfigurable {
     static final int REACH_EVERY_TICKS = 5;
 
     private final MovementAssistBrain brain = new MovementAssistBrain();
+    /** The shared-control grant while the assist writes (null or inactive otherwise). */
+    private SharedGrant grant;
+    /** The last grant could withhold sprint (what the brain may plan with before the next grant). */
+    private boolean withholdCapable;
+    /** The grant was begun with {@code wantsYaw}. */
+    private boolean grantYaw;
+    private boolean coSteerOn = true;
+    private double coSteerRate = LegitPresets.CO_STEER_RATE_BALANCED;
+    private double coSteerMax = LegitPresets.CO_STEER_MAX_BALANCED;
+    private double coSteerCarryRate = LegitPresets.CO_STEER_CARRY_RATE_BALANCED;
+    private double coSteerCarryMax = LegitPresets.CO_STEER_CARRY_MAX_BALANCED;
+    /** The hand opposed the co-steer beyond the override threshold: the yaw is the user's until the commitment ends. */
+    private boolean coSteerOverridden;
+    /** {@code opposingYawDeg()} of the grant over the last ticks (ring), for the 5-tick override window. */
+    private final double[] opposingRing = new double[OPPOSE_WINDOW_TICKS];
+    private int opposingAt;
+    private boolean takeoverHeld;
+    private int coSteerTicks;
     private ControlMode controlMode = ControlMode.CO_PILOT;
     /** IWorldMarks slot for the locked target top: -2 = not claimed yet, -1 = the table was full. */
     private int markSlot = -2;
@@ -201,6 +230,7 @@ public final class MovementAssist implements IModule, IConfigurable {
         IAutopilot ap = enabled ? null : Services.autopilotOrNull();
         boolean auto = ap != null && ap.isOn();
         if (!enabled && !auto) {
+            endGrant();
             if (clutch.active() || clutch.staging.staged() || blocks.active()) {
                 clutch.releaseAll();
                 blocks.release();
@@ -213,6 +243,7 @@ public final class MovementAssist implements IModule, IConfigurable {
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer p = mc.player;
         if (event.getEntity() != p || p == null || mc.level == null) {
+            endGrant();
             status = "no player";
             showLanding = false;
             reachCount = 0;
@@ -244,6 +275,7 @@ public final class MovementAssist implements IModule, IConfigurable {
             clutch.releaseAll();
         }
         if (!useParkour && !useBlocks) {
+            endGrant();
             blocks.release();
             showLanding = false;
             reachCount = 0;
@@ -259,6 +291,7 @@ public final class MovementAssist implements IModule, IConfigurable {
             // Stop-All, a screen, a higher lease, not on foot: the commitment and the hold end at once
             brain.abortCommitment();
             endCommitView(ap);
+            endGrant();
             blocks.release();
             status = skipped;
             showLanding = false;
@@ -276,6 +309,7 @@ public final class MovementAssist implements IModule, IConfigurable {
             // sneak is the documented "let go" key: the commitment and the landing hold hand everything back now
             brain.noteUserSneak();
             endCommitView(ap);
+            endGrant();
             status = "sneaking";
             blocks.release();
             showLanding = false;
@@ -304,6 +338,23 @@ public final class MovementAssist implements IModule, IConfigurable {
         brain.shapeYawAllowed = !auto && turnGain && turnGainLevelOk;
         boolean canSprint = !sprinting && canStartSprint(p, in);
         brain.sprintFillAllowed = canSprint;
+        // hold-to-take-over (D3 unbound, D4): while held, this tick runs Takeover whatever "Control" says
+        takeoverHeld = TravelKeys.takeoverHeld();
+        JumpCommit.Mode mode = takeoverHeld ? JumpCommit.Mode.CARRY
+                : auto && controlMode.mode == JumpCommit.Mode.NUDGE ? JumpCommit.Mode.GUIDE : controlMode.mode;
+        if (!brain.commit().live()) {
+            coSteerOverridden = false; // a new commitment: the co-steer may be asked for again
+        }
+        boolean steerOk = coSteerOn && !auto && mc.screen == null && !foreignMovementLease()
+                && mode != JumpCommit.Mode.NUDGE && !coSteerOverridden;
+        double steerRate = Math.min(mode == JumpCommit.Mode.CARRY ? coSteerCarryRate : coSteerRate,
+                IInputSmoother.MAX_TURN_DEG_PER_SEC);
+        double steerMax = mode == JumpCommit.Mode.CARRY ? coSteerCarryMax : coSteerMax;
+        steerOk &= steerRate > 0.0 && steerMax > 0.0; // LEGIT: both 0
+        brain.coSteerAllowed = steerOk;
+        brain.coSteerMaxDegPerTick = steerOk ? (float) (steerRate / 20.0) : 0f;
+        brain.sprintWithholdAvailable = grant != null && grant.isActive() ? grant.canWithholdSprint()
+                : withholdCapable;
         if (auto) {
             // the autopilot's parkour reflex is edge jumps and air steering, whatever this module's own toggles say
             boolean e = brain.edgeJump;
@@ -314,8 +365,8 @@ public final class MovementAssist implements IModule, IConfigurable {
             brain.airSteer = useParkour;
             brain.sprintHop = false;
             brain.takeoffShaping = false;
-            // the autopilot's parkour reflex runs the selected mode, at least Co-pilot
-            brain.mode = controlMode.mode == JumpCommit.Mode.NUDGE ? JumpCommit.Mode.GUIDE : controlMode.mode;
+            // the autopilot's parkour reflex runs the selected mode, at least Co-pilot (Takeover while the key is held)
+            brain.mode = mode;
             brain.decide(now, p.getYRot(), sprinting, userF, userS, in.jumping, health, voxels);
             brain.edgeJump = e;
             brain.airSteer = s;
@@ -323,45 +374,26 @@ public final class MovementAssist implements IModule, IConfigurable {
             brain.takeoffShaping = ts;
             status = userF > 0 ? "autopilot" : "autopilot: no forward key";
         } else {
-            brain.mode = controlMode.mode;
+            brain.mode = mode;
             brain.decide(now, p.getYRot(), sprinting, userF, userS, in.jumping, health, voxels);
             status = userF > 0 ? "assisting" : "no forward key";
         }
         publishCommit(ap, auto);
 
-        if (brain.jump()) {
-            in.jumping = true;
-            jumpingThisTick = true;
-            if (userF > 0 && now.onGround) {
-                if (brain.sprintHop && !brain.search().shouldEdgeJump(now, p.getYRot(), sprinting, health, voxels)) {
-                    hops++;
-                } else {
-                    edgeJumps++;
-                }
-            }
-        }
-        if (brain.forward() != MovementAssistBrain.KEEP) {
-            in.forwardImpulse = brain.forward();
-            in.up = brain.forward() > 0;
-            in.down = brain.forward() < 0;
-        }
-        if (brain.strafe() != MovementAssistBrain.KEEP) {
-            in.leftImpulse = brain.strafe();
-            in.left = brain.strafe() > 0;
-            in.right = brain.strafe() < 0;
-        }
-        if (brain.sprint() && canSprint) {
-            // takeoff shaping's sprint timing: the same state change vanilla makes for a sprint key press later in
-            // this aiStep (the user's own sprint key was not down, or they would already be sprinting). Only ever on:
-            // vanilla's own rules end it (forward released, hunger, a wall).
-            p.setSprinting(true);
-        }
+        // this tick's writes, applied by the core at EventPriority.LOW of this same event (see the class doc)
+        boolean brainJump = brain.jump();
+        int jumpW = brainJump ? SharedGrant.ON : SharedGrant.KEEP;
         if (brain.withholdJump()) {
-            in.jumping = false; // opt-in jump buffer: the press fires on the last ground tick instead
+            jumpW = SharedGrant.OFF; // opt-in jump buffer: the press fires on the last ground tick instead
         }
-        if (brain.sneak()) {
-            in.shiftKeyDown = true; // the landing hold's sneak guard (the user is not sneaking: that returned above)
-        }
+        int fwdW = brain.forward() != MovementAssistBrain.KEEP ? brain.forward() : SharedGrant.KEEP;
+        int strW = brain.strafe() != MovementAssistBrain.KEEP ? brain.strafe() : SharedGrant.KEEP;
+        // takeoff shaping's sprint timing, a fill only (vanilla's own rules end it); a withhold wins in the core
+        boolean sprintW = brain.sprint() && canSprint;
+        boolean withholdW = brain.sprintOff();
+        // the landing hold's sneak guard (the user is not sneaking: that returned above)
+        boolean sneakW = brain.sneak();
+        boolean steerW = brain.wantsCoSteer();
         if (brain.tookOff()) {
             haveTakeoff = true;
             takeoffX = groundX;
@@ -379,21 +411,44 @@ public final class MovementAssist implements IModule, IConfigurable {
                 turnGainRequested = true;
             }
         }
+        boolean blockJump = false;
         if (useBlocks && brain.edgeNoLanding() && !blocks.active() && now.onGround
                 && ParkourBlocks.blockSlot(p.getInventory(), mc.level) >= 0) {
             // an edge nothing clears: jump anyway when the jump plus one block keeps the run going
             hop.copyFrom(now).tick(userF, userS, p.getYRot(), sprinting, true, voxels);
             if (!hop.onGround && blocks.planner.plan(hop, p.getYRot(), sprinting, userF, userS, health,
                     p.getYRot(), p.getXRot(), ParkourBlocks.PLAN_DEG_PER_TICK, 1, voxels)) {
-                in.jumping = true;
-                jumpingThisTick = true;
-                edgeJumps++;
-                brain.noteApplied(true);
+                blockJump = true;
+                jumpW = SharedGrant.ON;
             }
         }
         if (useBlocks && !clutch.active()) {
             blocks.tick(mc, p, now, sprinting, userF, userS, health, jumpAir, voxels);
+            if (blocks.active()) {
+                // mid placement the camera is turned away and the user's keys are rotated back onto the heading:
+                // the brain's axis writes (camera-relative keys) would point the wrong way, so they wait
+                fwdW = SharedGrant.KEEP;
+                strW = SharedGrant.KEEP;
+            }
             blocks.compensate(in, p.getYRot());
+        }
+        SharedGrant g = applyWrites(jumpW, fwdW, strW, sprintW, withholdW, sneakW, steerW, steerOk, steerRate,
+                steerMax);
+        if (g != null) {
+            if (jumpW == SharedGrant.ON) {
+                jumpingThisTick = true;
+            }
+            if (brainJump && userF > 0 && now.onGround) {
+                if (brain.sprintHop && !brain.search().shouldEdgeJump(now, p.getYRot(), sprinting, health, voxels)) {
+                    hops++;
+                } else {
+                    edgeJumps++;
+                }
+            }
+            if (blockJump) {
+                edgeJumps++;
+                brain.noteApplied(true);
+            }
         }
         if (brain.corrected() && !wasCorrecting) {
             corrections++;
@@ -492,6 +547,94 @@ public final class MovementAssist implements IModule, IConfigurable {
         return e instanceof net.minecraft.world.entity.monster.Enemy;
     }
 
+    /**
+     * Hands this tick's writes to the shared grant, taking it when there is something to write or a commitment is live
+     * and ending it otherwise. Returns the grant the writes went to, or null when nothing was written (no writes, or the
+     * core refused: a screen, Stop-All, a MOVEMENT lease of other automation). Allocation free.
+     */
+    private SharedGrant applyWrites(int jumpW, int fwdW, int strW, boolean sprintW, boolean withholdW, boolean sneakW,
+                                    boolean steerW, boolean steerOk, double steerRate, double steerMax) {
+        boolean writes = jumpW != SharedGrant.KEEP || fwdW != SharedGrant.KEEP || strW != SharedGrant.KEEP || sprintW
+                || withholdW || sneakW || steerW;
+        JumpCommit c = brain.commit();
+        if (!writes && !c.live()) {
+            endGrant();
+            return null;
+        }
+        SharedGrant g = grant;
+        boolean upgradeYaw = g != null && g.isActive() && steerW && steerOk && !grantYaw;
+        if (g == null || !g.isActive() || upgradeYaw) {
+            // begun without yaw (co-steer was not allowed yet): begin again with it; nothing was steered so far, so
+            // restarting the instance (allowance and opposing sum) loses nothing
+            if (foreignMovementLease()) {
+                return null; // never preempt a job's movement (Assist automation): the job's keys stand
+            }
+            g = Services.sharedControl().begin(ID, ControlPriority.TRAVEL, steerOk);
+            grant = g;
+            if (g == null) {
+                return null;
+            }
+            grantYaw = steerOk;
+            withholdCapable = g.canWithholdSprint();
+            java.util.Arrays.fill(opposingRing, 0.0);
+            opposingAt = 0;
+        }
+        if (fwdW != SharedGrant.KEEP || strW != SharedGrant.KEEP) {
+            g.axes(fwdW, strW);
+        }
+        if (jumpW != SharedGrant.KEEP) {
+            g.jump(jumpW);
+        }
+        if (sneakW) {
+            g.sneak(true);
+        }
+        if (withholdW) {
+            g.withholdSprint();
+        } else if (sprintW) {
+            g.startSprint();
+        }
+        if (steerW && steerOk) {
+            // the hand-back ramp scales the co-steer down with the commitment's authority
+            g.coSteer(brain.coSteerYaw(), steerRate, Math.min(steerMax, brain.coSteerTotalDeg()), c.authority());
+            coSteerTicks++;
+        }
+        noteOpposing(g);
+        return g;
+    }
+
+    /**
+     * Override detection for the co-steer (design 4.1): hand yaw opposing it by more than the classifier's threshold
+     * within {@link #OPPOSE_WINDOW_TICKS} ticks makes the yaw the user's for the rest of the commitment (keys go on).
+     */
+    private void noteOpposing(SharedGrant g) {
+        double total = g.opposingYawDeg();
+        int at = opposingAt;
+        double windowAgo = opposingRing[at];
+        opposingRing[at] = total;
+        opposingAt = at + 1 == OPPOSE_WINDOW_TICKS ? 0 : at + 1;
+        double inWindow = Math.max(0.0, total - windowAgo);
+        if (!coSteerOverridden && brain.commit().classifier.yaw(0.0, 0.0, 0.0, inWindow)
+                == OverrideClassifier.Kind.AXIS_OVERRIDE) {
+            coSteerOverridden = true;
+        }
+    }
+
+    /** Ends the shared grant (idempotent): nothing is written and MOVEMENT is free for other automation again. */
+    private void endGrant() {
+        SharedGrant g = grant;
+        if (g != null) {
+            g.end();
+            grant = null;
+        }
+    }
+
+    /** A MOVEMENT lease of other automation (a latched toggle-sprint is the user's own choice, not automation). */
+    private static boolean foreignMovementLease() {
+        var arbiter = Services.arbiter();
+        return arbiter.holder(ControlChannel.MOVEMENT).isPresent()
+                && !arbiter.isHeldBy(ControlChannel.MOVEMENT, com.utilitysuite.travel.mobility.MoveToggles.ID);
+    }
+
     /** Why the assist is idle this tick, or null when it runs. Constant strings: nothing allocated. */
     private String skip(LocalPlayer p) {
         if (p.isPassenger() || p.getAbilities().flying || p.isFallFlying() || p.isInWater() || p.isInLava()
@@ -502,9 +645,7 @@ public final class MovementAssist implements IModule, IConfigurable {
         if (arbiter.isAutomationStopped()) {
             return "automation stopped";
         }
-        // a latched toggle-sprint is the user's own choice, not automation driving the movement
-        if (!assistAutomation && arbiter.holder(ControlChannel.MOVEMENT).isPresent()
-                && !arbiter.isHeldBy(ControlChannel.MOVEMENT, com.utilitysuite.travel.mobility.MoveToggles.ID)) {
+        if (!assistAutomation && foreignMovementLease()) {
             return "automation drives movement";
         }
         return null;
@@ -763,6 +904,7 @@ public final class MovementAssist implements IModule, IConfigurable {
         this.enabled = enabled;
         if (!enabled) {
             releaseTurnGain();
+            endGrant();
             brain.abortCommitment();
             endCommitView(null);
             clutch.release();
@@ -781,6 +923,7 @@ public final class MovementAssist implements IModule, IConfigurable {
     @Override
     public void onWorldUnload() {
         releaseTurnGain();
+        endGrant();
         forgetJumps();
         endCommitView(Services.autopilotOrNull());
         havePrevPos = false;
@@ -847,6 +990,26 @@ public final class MovementAssist implements IModule, IConfigurable {
         brain.commit().classifier.relaxed = LegitPresets.current(p, global) == LegitPresets.Level.RELAXED;
     }
 
+    /** Co-steer switch and the per-level rate and allowance knobs (LegitPresets; LEGIT = 0 = never). */
+    private void readCoSteer(ProfileConfig p) {
+        ProfileConfig global = null;
+        try {
+            global = Services.modState().global();
+        } catch (RuntimeException e) {
+            // early load: the world profile alone decides
+        }
+        coSteerOn = p.getBool(ID, K_CO_STEER, true);
+        coSteerRate = Math.max(0.0, LegitPresets.numKnob(p, global, ID, LegitPresets.CO_STEER_RATE));
+        coSteerMax = Math.max(0.0, LegitPresets.numKnob(p, global, ID, LegitPresets.CO_STEER_MAX));
+        coSteerCarryRate = Math.max(0.0, LegitPresets.numKnob(p, global, ID, LegitPresets.CO_STEER_CARRY_RATE));
+        coSteerCarryMax = Math.max(0.0, LegitPresets.numKnob(p, global, ID, LegitPresets.CO_STEER_CARRY_MAX));
+        if (LegitPresets.current(p, global) == LegitPresets.Level.LEGIT
+                || LegitPresets.storedLevel(p, global) == LegitPresets.Level.LEGIT) {
+            coSteerRate = 0.0; // never on Legit, whatever a stray knob says
+            coSteerCarryRate = 0.0;
+        }
+    }
+
     private void read(ProfileConfig p) {
         brain.edgeJump = p.getBool(ID, K_EDGE, true);
         brain.airSteer = p.getBool(ID, K_STEER, true);
@@ -892,6 +1055,7 @@ public final class MovementAssist implements IModule, IConfigurable {
             brain.hold().reset();
         }
         readKeyChangeLimits(p);
+        readCoSteer(p);
         brain.tickPhase = p.getBool(ID, K_TICK_PHASE, true);
         brain.takeoffShaping = p.getBool(ID, K_TAKEOFF_SHAPING, true);
         brain.budget().setCap(Math.max(0, Math.min(20, p.getInt(ID, K_BUDGET, AuthorshipBudget.DEFAULT_CAP))));
@@ -934,6 +1098,11 @@ public final class MovementAssist implements IModule, IConfigurable {
                         "While you turn your mouse toward the best takeoff direction for that block, it turns a little"
                                 + " faster; turning away, a little slower. It only scales your own mouse: with a still"
                                 + " mouse nothing moves. Off on the Legit level."),
+                SettingSpec.bool(K_CO_STEER, "Co-steer", true, "",
+                        "During a committed jump on Balanced and above, the camera eases toward the jump line (smoothed,"
+                                + " a few degrees per jump, never faster than the camera cap). Your mouse always comes"
+                                + " through; turning against it hands the view back for that jump. Never on Legit or in"
+                                + " Corrections."),
                 SettingSpec.decimal(K_TURN_GAIN_STRENGTH, "Turn gain strength", 0.25, 0.0, 0.5, "",
                         "How much turn gain scales your mouse (0.25 = up to 25% faster toward, 25% slower away)."),
                 SettingSpec.bool(K_LANDING_HOLD, "Landing hold", true, "",
@@ -1076,6 +1245,21 @@ public final class MovementAssist implements IModule, IConfigurable {
 
     public int corrections() {
         return corrections;
+    }
+
+    /** Ticks the co-steer was asked for (playtest read-out). */
+    public int coSteerTicks() {
+        return coSteerTicks;
+    }
+
+    /** The hold-to-take-over key was held on the last movement tick. */
+    public boolean takeoverHeld() {
+        return takeoverHeld;
+    }
+
+    /** The live shared grant, or null (diagnostics). */
+    public SharedGrant sharedGrant() {
+        return grant != null && grant.isActive() ? grant : null;
     }
 
     public boolean showingLanding() {

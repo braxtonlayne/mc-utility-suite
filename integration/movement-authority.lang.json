@@ -1,0 +1,5 @@
+{
+  "key.utilitysuite.parkour_takeover": "Parkour: hold to take over",
+  "setting.utilitysuite.movement_assist.co_steer": "Co-steer",
+  "setting.utilitysuite.movement_assist.co_steer.tooltip": "During a committed jump on Balanced and above, the camera eases toward the jump line (smoothed, a few degrees per jump, never faster than the camera cap). Your mouse always comes through; turning against it hands the view back for that jump. Never on Legit or in Corrections."
+}
