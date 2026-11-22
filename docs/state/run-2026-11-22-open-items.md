@@ -231,8 +231,14 @@ Run in this order. Stop at the first failure in section 0.
 
 ## Parkour lanes: intent arming, corner cut, lane set (afternoon of 2026-11-22)
 
-Branch `worktree-agent-a08c37a68e7a79de2`, from `1f37b19`. Unit tests green. In-game numbers are at the end of this
-section.
+Branch `worktree-agent-a08c37a68e7a79de2`, from `1f37b19`, not merged. `./gradlew test`: 1820 tests in 238
+classes, 0 failures, 1 skipped (the search table, printed on request). Eleven client runs of the Parkour playtest
+(one cut short) and one on `1f37b19` for comparison; the in-game numbers are near the end of this section.
+
+Short version: Co-pilot and Takeover now land the fence, wall and pane lanes and two rebuilt corner lanes. The two
+corner lanes as first built are not landed and stay in the run as open lanes. Corrections lanes check the design's
+guarantee instead of a landing. Two things need the owner's or the orchestrator's yes: the open lanes (the
+first-built corner lanes report a note, not a check) and the changed Corrections check.
 
 ### What was wrong (found in the replica, `ParkourLaneReplicaTest`, real estimator in front of the brain)
 
@@ -315,9 +321,10 @@ section.
   the next platform. The freeze in the brain covers the takeoff tick without it.
 - Tried and reverted: swapping in a better script found later on the ground while one is already being followed.
   It broke the corner-fence lane in the replica (several timings); the first valid script is followed.
-- Devtest: the open lanes reuse the first four lane slots. Appended to the row they sat about 200 blocks from the
-  arena and the body did not move after the teleport ("no takeoff recorded" in client runs 1 to 7, so the open-lane
-  notes of those runs say nothing for the lanes it hit). A lane that times out now reports where the body was.
+- Devtest: the open lanes reuse the first four lane slots. Appended to the row (about 200 blocks from the arena)
+  one or two of them recorded no takeoff at all in client runs 1 to 7; why was not traced, and those notes say
+  nothing. In the first slots they run. A lane that times out now reports where the body was, an open lane prints
+  what the assist wrote on the run-up, and every lane flags a start view that is not the one its teleport set.
 
 ### Which lanes can be landed (replica search, `LANE_SEARCH=1 ./gradlew test --tests '*ParkourLaneReplicaTest*' -i`)
 
@@ -376,9 +383,9 @@ which is how Co-pilot lands the pane: its own jump three ticks before the edge).
 
 Run in this worktree's own `run/` directory with `options.txt` and `config/utilitysuite/` copied from the main
 checkout (a fresh run directory stops at the accessibility onboarding screen, and its default camera speed is 240
-deg/s, not the 450 the main checkout has). Before = the report of 14:11 on `main`. After = commit `928aaa0`, client
-run 7 of this session. "dist" is the body's distance from the post centre 40 ticks after the landing, against the
-support limit.
+deg/s, not the 450 the main checkout has). Before = the report of 14:11 on `main`. After = client runs 7 to 11 of
+this session (commits `928aaa0`, `9185e2c`, `c61f733`), which gave the same result on every landing lane. "dist" is the body's
+distance from the post centre 40 ticks after the landing, against the support limit (run 7).
 
 | Lane | Corrections | Co-pilot | Takeover |
 |---|---|---|---|
@@ -387,18 +394,30 @@ support limit.
 | pane-1gap | before FAIL. After PASS; no landing made | before FAIL (never armed). After PASS (0.327 / 0.363), the assist took the jump two ticks before the press would have | before FAIL (locked, then gave up). After PASS (0.055 / 0.363), air brake |
 | corner-fence | before FAIL (deep lane). After PASS on the rebuilt lane; no landing made | before FAIL (deep lane, never armed). After PASS on `corner-fence-2gap` (0.423 / 0.425), script `corner-cut`, press held back 2 ticks | before FAIL. After PASS (0.076 / 0.425), script `corner-cut` |
 | corner-wall | before FAIL (deep lane). After PASS on the rebuilt lane; no landing made | before FAIL. After PASS on `corner-wall-3gap` (0.170 / 0.550), script `corner-cut`, press held back 1 tick | before FAIL. After PASS (0.170 / 0.550) |
-| first-built deep corners (open lanes) | not run | not landed | not landed |
+| first-built deep corners (open lanes) | not run | not landed (fence: jump at the edge, given up at flight tick 4; wall: void, see below) | not landed (both: given up at flight tick 4) |
 
 - The fresh-press check (release W, press again, leave within 10 ticks) passes on every lane that landed.
 - The override lane (sneak mid-flight, the assist writes nothing after it) passes.
-- The benchmark course: 19 of 19 in 726 ticks (726 on `1f37b19`, run here for comparison).
+- The benchmark course: 19 of 19 in 722 to 726 ticks in six runs since the hold fix (726 on `1f37b19`, run here
+  for comparison).
 - Co-pilot on `corner-fence-2gap` is the weak one. The script lands 0.27 off the post centre with a stop margin of
-  -0.10, and the landing hold's sneak guard stops the body on the rim (0.423 and 0.425 of 0.425 in runs 7 and 8).
-  It failed in client runs 3 to 6, where the follower and view-total problems above were found, and has passed in
-  both runs since the last fix, with the same script each time. Two runs are not much; a script with a positive
-  stop margin would be better (Co-pilot may not hold back, so it cannot brake the way Takeover does).
+  -0.10, and the landing hold's sneak guard stops the body on the rim (0.423 to 0.425 of 0.425). It failed in
+  client runs 3 to 6, where the follower and view-total problems above were found, and has passed in all five
+  runs since the last fix, with the same script each time. A script with a positive stop margin would be better
+  (Co-pilot may not hold back, so it cannot brake the way Takeover does).
+- One open lane per run started with the view 9 to 16 degrees round: `corner-wall-3gap-deep` Co-pilot in run 9,
+  `corner-fence-3gap-deep` Takeover in run 10, `corner-wall-3gap-deep` Takeover in run 11 (the run-up trace shows
+  the yaw from lane tick 1 and no key written by the assist). It is a lane after a deep lane, whose co-steer left
+  the view there; the teleport's yaw did not replace it. The body ran off the side of the platform, so that note is void. Run 8 shows the same
+  sideways drift on both wall lanes. The other open lanes start at yaw 0 and jump at the edge. Every lane now flags
+  such a start; in runs 10 and 11 the flag also fired on Corrections lanes (0.6 to 1.6 degrees), where nothing
+  depends on it. A guess, not checked: real mouse jitter in the client window, which the turn gain lets through
+  toward the target and damps the other way.
 - Scenario failures that are not from this work (identical on `1f37b19` in this environment): `parkour blocks: a gap
   one block too long` in both variants, `player stays alive`, `HAY clutch`.
+- `COBWEB clutch` failed once, in run 10 ("replan found nothing", approach angle 32.8 against the usual 0.2), and
+  passed in the eight runs before it, on `1f37b19`, and in run 11 on the same commit. It runs right after the death in
+  the HAY clutch step. Not looked into.
 
 ### Still open after this run
 
@@ -422,8 +441,15 @@ support limit.
   fail. All four fail the same way on `1f37b19` (the lane was widened to 5 air in that commit; blocks placed 0,
   plans 2). Not touched here.
 - In the replica of the benchmark (`ParkourBenchmarkIntentTest`) the landing hold starts on most landings of the
-  runner (W held, camera not yet on the next pad) and lets go a few ticks later. In the client the course takes 724
-  ticks against 726 on `1f37b19`, so the pace did not change. Whether a hold should start on a wide pad at all is a
+  runner (W held, camera not yet on the next pad) and lets go a few ticks later. In the client the course takes 722
+  to 726 ticks against 726 on `1f37b19`, so the pace did not change. Whether a hold should start on a wide pad at all is a
   question for the hold's "narrow landing" test, not changed here.
+- A view left turned by the co-steer survived a `/tp` with an explicit yaw (see the results above). Not traced. If
+  the core's follower finishes its turn after a teleport, that is a bug outside the lanes too.
+- `JumpCommit` treats a view more than 25 degrees off the takeoff heading as a hard override by the user. The
+  view it reads includes the co-steer's own turn, so a Takeover script that turns more than 25 degrees after its
+  takeoff may abort itself in the air. Read in the code, not seen in a run: the Takeover script on
+  `corner-fence-2gap` ends 34.2 degrees from the lane's heading and lands, but part of that turn is before the
+  takeoff.
 - Hands-on: the corner cut turns the camera up to 25 degrees in Co-pilot (90 in Takeover) through the co-steer. The
   owner has not felt it yet.
