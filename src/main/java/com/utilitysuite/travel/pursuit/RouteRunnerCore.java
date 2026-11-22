@@ -81,6 +81,11 @@ public final class RouteRunnerCore {
         return state != IRouteRunner.State.PLANNING && state != IRouteRunner.State.RUNNING;
     }
 
+    /** True while a RUNNING run holds a route (for read-only overlays). */
+    public boolean followingRoute() {
+        return state == IRouteRunner.State.RUNNING && steer.hasRoute();
+    }
+
     public boolean isAvailable() {
         return body.available();
     }

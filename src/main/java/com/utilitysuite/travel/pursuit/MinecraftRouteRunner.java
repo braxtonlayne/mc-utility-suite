@@ -25,9 +25,10 @@ public final class MinecraftRouteRunner implements IRouteRunner {
 
     private final Body body = new Body();
     private final RouteRunnerCore core;
+    private final RouteFollower follower;
 
     public MinecraftRouteRunner() {
-        RouteFollower follower = new RouteFollower();
+        follower = new RouteFollower();
         EscapePlanner escape = new EscapePlanner();
         Steering steering = new FollowerSteering(follower, body);
         LocalFlee localFlee = (x, y, z, out) -> {
@@ -43,6 +44,25 @@ public final class MinecraftRouteRunner implements IRouteRunner {
             return n;
         };
         core = new RouteRunnerCore(body, steering, localFlee);
+    }
+
+    /** True while the run walks a route (read-only, for overlays). */
+    public boolean isFollowingRoute() {
+        return core.followingRoute();
+    }
+
+    /** Copies the current route's packed cells into the caller's array (call once per tick); returns the count. */
+    public int copyRoute(long[] out) {
+        int n = Math.min(follower.length(), out.length);
+        for (int i = 0; i < n; i++) {
+            out[i] = follower.cell(i);
+        }
+        return n;
+    }
+
+    /** Index of the route cell the body has reached. */
+    public int routeIndex() {
+        return follower.progressIndex();
     }
 
     /** Client tick listener (register once). */
