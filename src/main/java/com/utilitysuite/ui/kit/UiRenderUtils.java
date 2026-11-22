@@ -153,9 +153,28 @@ public final class UiRenderUtils {
         g.disableScissor();
     }
 
-    /** Text without shadow (the dashboard never uses the vanilla drop shadow). */
+    // One reused styled run for menu text (client thread only); the suite UI face when it is active, else vanilla.
+    private static final com.utilitysuite.ui.holo.SuiteFonts.Client.Run RUN =
+            new com.utilitysuite.ui.holo.SuiteFonts.Client.Run();
+
+    private static net.minecraft.network.chat.Style uiStyle() {
+        return com.utilitysuite.ui.holo.SuiteFonts.Client.style(com.utilitysuite.core.api.visual.TextRole.UI);
+    }
+
+    /** Text without shadow (the dashboard never uses the vanilla drop shadow), in the suite UI face when active. */
     public static void text(GuiGraphics g, Font font, String s, int x, int y, int color) {
-        g.drawString(font, s, x, y, color, false);
+        net.minecraft.network.chat.Style st = uiStyle();
+        if (st == null) {
+            g.drawString(font, s, x, y, color, false);
+        } else {
+            g.drawString(font, RUN.set(s, st), x, y, color, false);
+        }
+    }
+
+    /** Width of {@code s} as {@link #text} draws it. Menu layout must measure with this, not {@code font.width}. */
+    public static int width(Font font, String s) {
+        net.minecraft.network.chat.Style st = uiStyle();
+        return st == null ? font.width(s) : font.width(RUN.set(s, st));
     }
 
     /** An item icon scaled to {@code size} px (16 = vanilla). */
@@ -183,7 +202,7 @@ public final class UiRenderUtils {
      */
     public static String firstThatFits(Font font, int maxWidth, String... options) {
         for (String o : options) {
-            if (font.width(o) <= maxWidth) {
+            if (width(font, o) <= maxWidth) {
                 return o;
             }
         }
@@ -194,14 +213,17 @@ public final class UiRenderUtils {
         if (s == null || s.isEmpty()) {
             return "";
         }
-        if (font.width(s) <= maxWidth) {
+        if (width(font, s) <= maxWidth) {
             return s;
         }
-        int dots = font.width("…");
+        int dots = width(font, "…");
         if (maxWidth <= dots) {
             return "";
         }
-        return font.plainSubstrByWidth(s, maxWidth - dots).stripTrailing() + "…";
+        net.minecraft.network.chat.Style st = uiStyle();
+        String head = st == null ? font.plainSubstrByWidth(s, maxWidth - dots)
+                : font.substrByWidth(net.minecraft.network.chat.FormattedText.of(s, st), maxWidth - dots).getString();
+        return head.stripTrailing() + "…";
     }
 
     /** Ease-out cubic, {@code t} in 0..1. */

@@ -35,7 +35,7 @@ public final class PillButton extends UiNode {
     public PillButton setLabel(Font font, String text) {
         label = text == null ? "" : text;
         shown = UiRenderUtils.ellipsize(font, label, Math.max(0, w - 10));
-        shownWidth = font.width(shown);
+        shownWidth = UiRenderUtils.width(font, shown);
         return this;
     }
 

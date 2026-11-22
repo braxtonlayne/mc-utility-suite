@@ -48,13 +48,13 @@ public final class ModernSlider extends UiNode {
     public ModernSlider(Font font, Model model, int w) {
         super(w, H);
         this.model = model;
-        this.readoutW = Math.min(w / 3, Math.max(40, font.width(model.widestText()) + 8)); // aligned tracks
+        this.readoutW = Math.min(w / 3, Math.max(40, UiRenderUtils.width(font, model.widestText()) + 8)); // aligned tracks
         updateText(font);
     }
 
     private void updateText(Font font) {
         readout = model.text();
-        readoutWidth = font.width(readout);
+        readoutWidth = UiRenderUtils.width(font, readout);
     }
 
     private int trackX(int sx) {

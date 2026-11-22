@@ -24,7 +24,7 @@ public final class CollapsibleSection extends UiNode {
     public CollapsibleSection(Font font, String title, int count, boolean open, int w, Runnable onToggle) {
         super(w, H);
         this.title = UiRenderUtils.ellipsize(font, title, w - 60);
-        this.titleW = font.width(this.title);
+        this.titleW = UiRenderUtils.width(font, this.title);
         this.count = count > 0 ? Integer.toString(count) : "";
         this.open = open;
         this.onToggle = onToggle;
@@ -57,7 +57,7 @@ public final class CollapsibleSection extends UiNode {
         UiRenderUtils.chevron(g, open ? sx + 7 : sx + 8, sy + (h - 5) / 2, open ? 1 : 0, open ? accent : c);
         UiRenderUtils.text(g, font, title, sx + 18, sy + (h - 8) / 2, c);
         if (!count.isEmpty()) {
-            int cw = font.width(count) + 8;
+            int cw = UiRenderUtils.width(font, count) + 8;
             int cx = sx + 18 + titleW + 6;
             HoloFrames.edge(g, cx, sy + (h - 11) / 2, cw, 11, HoloTheme.argb(HoloToken.LINE_FAINT));
             UiRenderUtils.text(g, font, count, cx + 4, sy + (h - 11) / 2 + 2, UiTheme.TEXT_DIM);

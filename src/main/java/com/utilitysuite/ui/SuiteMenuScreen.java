@@ -741,7 +741,7 @@ public final class SuiteMenuScreen extends Screen {
             if (autopilotPage && CoreBootstrap.autopilot() != null) {
                 // back control; the bar above already is the on/off switch, so the card has none of its own
                 panel.button("< Back", "Close the autopilot page and return to " + tab.name().charAt(0)
-                        + tab.name().substring(1).toLowerCase(Locale.ROOT), 0, font.width("< Back") + 20,
+                        + tab.name().substring(1).toLowerCase(Locale.ROOT), 0, com.utilitysuite.ui.kit.UiRenderUtils.width(font, "< Back") + 20,
                         b -> toggleAutopilotPage());
                 panel.nextRow();
                 SettingsRenderer.module(panel, CoreBootstrap.autopilot(), false);
@@ -1567,11 +1567,23 @@ public final class SuiteMenuScreen extends Screen {
         }
     }
 
+    private static final com.utilitysuite.ui.holo.SuiteFonts.Client.Run SMALL_RUN =
+            new com.utilitysuite.ui.holo.SuiteFonts.Client.Run();
+
+    private static net.minecraft.network.chat.Style microStyle() {
+        return com.utilitysuite.ui.holo.SuiteFonts.Client.style(com.utilitysuite.core.api.visual.TextRole.MICRO);
+    }
+
     /**
-     * Small caps text at 0.75 scale (chips, captions, version). Kept: replacing the pose scaling needs the suite font
-     * (design 4.2), which has not landed yet.
+     * Small caps text (chips, captions, version). In the suite MICRO face it is drawn natively at its own size: a TTF
+     * pose-scaled to 0.75 loses its thin strokes. The vanilla fallback keeps the 0.75 pose scaling.
      */
     static void smallText(GuiGraphics g, Font font, String s, int x, int y, int color) {
+        net.minecraft.network.chat.Style st = microStyle();
+        if (st != null) {
+            g.drawString(font, SMALL_RUN.set(s, st), x, y, color, false);
+            return;
+        }
         g.pose().pushPose();
         g.pose().translate(x, y, 0);
         g.pose().scale(0.75f, 0.75f, 1f);
@@ -1580,7 +1592,8 @@ public final class SuiteMenuScreen extends Screen {
     }
 
     static int smallWidth(Font font, String s) {
-        return (int) Math.ceil(font.width(s) * 0.75f);
+        net.minecraft.network.chat.Style st = microStyle();
+        return st != null ? font.width(SMALL_RUN.set(s, st)) : (int) Math.ceil(font.width(s) * 0.75f);
     }
 
     /** Square brackets around a readout, drawn as hairlines (no fill). */
@@ -1730,7 +1743,7 @@ public final class SuiteMenuScreen extends Screen {
             return;
         }
         if (statusW < 0) {
-            statusW = font.width(status);
+            statusW = com.utilitysuite.ui.kit.UiRenderUtils.width(font, status);
         }
         int tw = Math.min(statusW, viewW - 60);
         int w = tw + 20;
@@ -1803,7 +1816,7 @@ public final class SuiteMenuScreen extends Screen {
             tipLines = font.split(Component.literal(t), 200);
             tipW = 0;
             for (FormattedCharSequence l : tipLines) {
-                tipW = Math.max(tipW, font.width(l));
+                tipW = Math.max(tipW, font.width(l)); // tooltips: vanilla-wrapped sequences, vanilla face
             }
         }
         float a = HoloTheme.motion == Motion.OFF ? 1f : Math.min(1f, since / TOOLTIP_FADE_MS);

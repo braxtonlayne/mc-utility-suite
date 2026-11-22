@@ -40,14 +40,14 @@ public final class CycleSelector<E> extends UiNode {
         int total = 0;
         for (int i = 0; i < n; i++) {
             labels[i] = label.apply(this.values.get(i));
-            labelWidths[i] = font.width(labels[i]);
+            labelWidths[i] = UiRenderUtils.width(font, labels[i]);
             total += labelWidths[i] + SEG_PAD;
         }
         segmented = n >= 2 && n <= 4 && total <= w;
         for (int i = 0; i < n; i++) {
             int room = segmented ? w / n - 4 : w - 28;
             shown[i] = UiRenderUtils.ellipsize(font, labels[i], room);
-            labelWidths[i] = font.width(shown[i]);
+            labelWidths[i] = UiRenderUtils.width(font, shown[i]);
         }
         index = Math.max(0, this.values.indexOf(current));
     }

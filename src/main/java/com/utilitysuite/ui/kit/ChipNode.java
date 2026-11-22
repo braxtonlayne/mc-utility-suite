@@ -23,7 +23,7 @@ public final class ChipNode extends UiNode {
     }
 
     private ChipNode(Font font, String text, int color, boolean keycap) {
-        super(font.width(text) + (keycap ? 12 : 22), H);
+        super(UiRenderUtils.width(font, text) + (keycap ? 12 : 22), H);
         this.text = text;
         this.color = color;
         this.keycap = keycap;

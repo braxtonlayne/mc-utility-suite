@@ -60,17 +60,17 @@ final class AutopilotBar extends UiNode {
         this.expanded = expanded;
         this.onExpand = onExpand;
         this.settingsLabel = expanded ? "Settings ▴" : "Settings ▾";
-        this.labelW = font.width(LABEL);
-        this.onW = font.width("ON");
-        this.offW = font.width("OFF");
-        this.settingsW = font.width(settingsLabel);
+        this.labelW = com.utilitysuite.ui.kit.UiRenderUtils.width(font, LABEL);
+        this.onW = com.utilitysuite.ui.kit.UiRenderUtils.width(font, "ON");
+        this.offW = com.utilitysuite.ui.kit.UiRenderUtils.width(font, "OFF");
+        this.settingsW = com.utilitysuite.ui.kit.UiRenderUtils.width(font, settingsLabel);
         tooltip("Autopilot: lets the reflexes you allow act for you (a lethal fall is clutched, a run gets parkour"
                 + " timing), even when their own module is off. Lit chips are reflexes it may use. Your keys and mouse"
                 + " always win. Click to turn it on or off.");
         for (int i = 0; i < chipW.length; i++) {
-            chipW[i] = font.width(ReflexChips.CHIP_LABEL[ReflexChips.ORDER[i].ordinal()]) + 8;
+            chipW[i] = com.utilitysuite.ui.kit.UiRenderUtils.width(font, ReflexChips.CHIP_LABEL[ReflexChips.ORDER[i].ordinal()]) + 8;
         }
-        chipX = 10 + font.width(LABEL) + 8 + font.width("OFF") + 10 + 10; // fixed column after the badge
+        chipX = 10 + com.utilitysuite.ui.kit.UiRenderUtils.width(font, LABEL) + 8 + com.utilitysuite.ui.kit.UiRenderUtils.width(font, "OFF") + 10 + 10; // fixed column after the badge
         refresh(font);
     }
 
@@ -80,7 +80,7 @@ final class AutopilotBar extends UiNode {
         on = ap != null && ap.isEnabled(); // the toggle, not the hand-over key
         KeyMapping key = KeybindManager.mapping(KeybindManager.KeyId.TOGGLE_AUTOPILOT);
         keyHint = key == null || key.isUnbound() ? "" : "[" + key.getTranslatedKeyMessage().getString() + "]";
-        keyHintW = keyHint.isEmpty() ? 0 : font.width(keyHint);
+        keyHintW = keyHint.isEmpty() ? 0 : com.utilitysuite.ui.kit.UiRenderUtils.width(font, keyHint);
         int room = w - chipX - SETTINGS_W - 8 - (keyHint.isEmpty() ? 0 : keyHintW + 10);
         IAutopilot svc = Services.autopilotOrNull();
         if (svc == null) {

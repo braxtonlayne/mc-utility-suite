@@ -270,7 +270,7 @@ public final class Panel {
         body();
         y += 6;
         add(new LabelNode(font, text, UiTheme.ACCENT, width()), originX, y + 2);
-        int tw = font.width(text) + 8;
+        int tw = com.utilitysuite.ui.kit.UiRenderUtils.width(font, text) + 8;
         if (tw < width() - 10) {
             add(new BoxNode(width() - tw, 1, 0, HoloTheme.argb(HoloToken.LINE_FAINT), 0, UiRenderUtils.ALL), originX + tw, y + 6);
         }

@@ -115,7 +115,7 @@ public final class GoalHeroCard extends UiNode {
             icon = ItemIcons.forId(id, fallbackIcon(j.goalLabel()));
         }
         chip = chipText(j.status());
-        chipW = font.width(chip) + 22;
+        chipW = UiRenderUtils.width(font, chip) + 22;
         chipColor = statusColor(j.status());
         int titleRoom = w - TEXT_X - PAD - chipW - 8;
         title = UiRenderUtils.ellipsize(font, HudStatusLine.prettyLabel(j.goalLabel() == null ? "" : j.goalLabel()),
@@ -131,7 +131,7 @@ public final class GoalHeroCard extends UiNode {
             count = "No count target";
             percent = "";
         }
-        percentW = font.width(percent);
+        percentW = UiRenderUtils.width(font, percent);
         int lineW = w - PAD - (PAD + CAPTION_W);
         now = UiRenderUtils.ellipsize(font, orDash(j.currentStep()), lineW);
         why = UiRenderUtils.ellipsize(font, orDash(j.reason()), lineW);
