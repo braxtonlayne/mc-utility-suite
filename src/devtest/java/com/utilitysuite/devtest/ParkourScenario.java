@@ -413,12 +413,23 @@ final class ParkourScenario {
     private static final double PARITY_TARGET = 0.001;
     private static final int LANE_SPACING = 8;
 
-    /** Max replica position error per landing class: [0] over the flight, [1] after touchdown. */
+    /**
+     * Max replica position error per landing class: [0] ground run (free-running replica from the first lane tick),
+     * [1] flight (replica re-seeded at takeoff), [2] after touchdown (the flight replica continued), [3] one-step
+     * (replica stepped one tick from the real state of the previous tick: physics rules alone, no drift).
+     */
     private static final java.util.Map<String, double[]> PARITY = new java.util.TreeMap<>();
+    /** One-step error above this is a rule mismatch worth naming (with that tick's inputs). */
+    private static final double ONE_STEP_FLAG = 1e-4;
 
     /** Mutable state of one lane run (test scaffolding, allocation is fine). */
     private static final class LaneRun {
+        /** Drift replica: seeded from the real state at the first lane tick, re-seeded at takeoff. */
         final MovementPhysics sim = new MovementPhysics();
+        /** The real body after the previous tick (position, velocity, flags) as a replica state. */
+        final MovementPhysics prev = new MovementPhysics();
+        /** Scratch: {@link #prev} stepped one tick with this tick's inputs. */
+        final MovementPhysics step = new MovementPhysics();
         final LevelShapes shapes = new LevelShapes();
         ControlLease lease;
         ControlLease[] leaseRef;
@@ -427,8 +438,29 @@ final class ParkourScenario {
         int landedTick = -1;
         boolean fell;
         boolean simReady;
+        /** 0 ground run, 1 flight, 2 after touchdown (parity phases, from the real onGround flag). */
+        int parityPhase;
+        /** Vanilla noJumpDelay rebuilt from the real inputs (the field is private in LivingEntity). */
+        int jumpDelay;
+        double maxGround;
         double maxFlight;
         double maxAfter;
+        double maxStep;
+        String firstStep = "";
+        // takeoff record
+        int takeoffTick = -1;
+        double takeoffZ = Double.NaN;
+        double takeoffX = Double.NaN;
+        double takeoffSpeed = Double.NaN;
+        boolean takeoffSprint;
+        boolean takeoffJump;
+        // commitment phase per flight tick, run-length coded
+        final StringBuilder commitPhases = new StringBuilder();
+        String lastCommit = "";
+        int commitFrom = -1;
+        int touchdownTick = -1;
+        double touchdownX = Double.NaN;
+        double touchdownZ = Double.NaN;
         boolean standing;
         String standNote = "never landed";
         // fresh-press phase
@@ -487,9 +519,10 @@ final class ParkourScenario {
             StringBuilder above = new StringBuilder();
             for (var e : PARITY.entrySet()) {
                 double[] v = e.getValue();
-                s.note(Harness.fmt("replica parity, landing class %s: max position error %.5f in flight, %.5f after"
-                        + " touchdown (target %.3f)", e.getKey(), v[0], v[1], PARITY_TARGET));
-                if (v[0] > PARITY_TARGET || v[1] > PARITY_TARGET) {
+                s.note(Harness.fmt("replica parity, landing class %s: max position error ground run %.6f, flight"
+                                + " %.6f (re-seeded at takeoff), after touchdown %.6f, one-step %.2e (target %.3f;"
+                                + " one-step expected ~1e-6)", e.getKey(), v[0], v[1], v[2], v[3], PARITY_TARGET));
+                if (v[1] > PARITY_TARGET || v[2] > PARITY_TARGET) {
                     above.append(above.length() == 0 ? "" : ", ").append(e.getKey());
                 }
             }
@@ -569,10 +602,12 @@ final class ParkourScenario {
         });
         s.run(label + ": result", () -> {
             releaseLaneKeys(r, leaseRef);
-            double[] stat = PARITY.computeIfAbsent(kind.landingClass, k -> new double[2]);
-            stat[0] = Math.max(stat[0], r.maxFlight);
-            stat[1] = Math.max(stat[1], r.maxAfter);
-            String parity = Harness.fmt("replica error flight %.5f, after touchdown %.5f", r.maxFlight, r.maxAfter);
+            double[] stat = PARITY.computeIfAbsent(kind.landingClass, k -> new double[4]);
+            stat[0] = Math.max(stat[0], r.maxGround);
+            stat[1] = Math.max(stat[1], r.maxFlight);
+            stat[2] = Math.max(stat[2], r.maxAfter);
+            stat[3] = Math.max(stat[3], r.maxStep);
+            String parity = flightNote(r) + "; " + parityNote(r);
             if (ovr == Override.NONE) {
                 s.check(label + ": still on the " + kind.landingClass + " top " + HOLD_TICKS
                                 + " ticks after landing, forward held throughout",
@@ -596,23 +631,8 @@ final class ParkourScenario {
         var p = H.p();
         var in = p.input;
         r.tick++;
-        // replica fed the inputs the body actually used this tick
-        r.shapes.begin(p.level());
-        if (!r.simReady) {
-            r.sim.set(p.getX(), p.getY(), p.getZ(), 0, 0, 0, p.onGround());
-            r.simReady = true;
-        } else {
-            int fwd = (in.up ? 1 : 0) - (in.down ? 1 : 0);
-            int str = (in.left ? 1 : 0) - (in.right ? 1 : 0);
-            r.sim.tick(fwd, str, p.getYRot(), p.isSprinting(), in.jumping, in.shiftKeyDown, r.shapes);
-            double err = Math.sqrt(sq(r.sim.x - p.getX()) + sq(r.sim.y - p.getY()) + sq(r.sim.z - p.getZ()));
-            if (r.landedTick < 0) {
-                r.maxFlight = Math.max(r.maxFlight, err);
-            } else {
-                r.maxAfter = Math.max(r.maxAfter, err);
-            }
-        }
         double z = p.getZ() - Arena.cz - OZ - lz;
+        parityTick(r, p, z, postCx);
         {
             var ma = TravelBootstrap.movement();
             if (r.corrBefore < 0) {
@@ -715,6 +735,173 @@ final class ParkourScenario {
             r.lease = null;
             leaseRef[0] = null;
         }
+    }
+
+    /**
+     * Replica parity for one lane tick. Lane steps run on {@code ClientTickEvent.Post} at LOWEST priority (Harness),
+     * right after the player tick, so every value read here is the one the tick used or ended with:
+     * <ul>
+     *   <li>{@code input.forwardImpulse/leftImpulse/jumping/shiftKeyDown}: set by {@code input.tick} and the
+     *       MovementInputUpdateEvent at the start of {@code LocalPlayer.aiStep}, read by {@code serverAiStep};
+     *       nothing later in the tick writes them. Impulses, not the key flags, because the impulse is what moved
+     *       the body;</li>
+     *   <li>{@code isSprinting()}: start and stop are decided in {@code LocalPlayer.aiStep} before
+     *       {@code super.aiStep()} (jump, travel); nothing after it in the tick changes the flag;</li>
+     *   <li>{@code yRotO}: {@code LivingEntity.tick} sets it to the yaw after {@code aiStep}, i.e. the yaw travel and
+     *       the jump boost used. {@code getYRot()} is not used: a later Post handler or a frame may have turned the
+     *       camera already ({@code setYRot} leaves yRotO alone).</li>
+     * </ul>
+     * Three replicas: the drift replica (seeded once with the REAL velocity, re-seeded at takeoff), and the one-step
+     * replica (the real state of the previous tick stepped once), which isolates rule errors from drift.
+     */
+    private static void parityTick(LaneRun r, net.minecraft.client.player.LocalPlayer p, double laneZ,
+                                   double postCx) {
+        var in = p.input;
+        r.shapes.begin(p.level());
+        int fwd = impulse(in.forwardImpulse);
+        int str = impulse(in.leftImpulse);
+        float yaw = p.yRotO;
+        boolean sprint = p.isSprinting();
+        boolean jump = in.jumping;
+        boolean sneak = in.shiftKeyDown;
+        if (!r.simReady) {
+            capture(r.sim, p, 0);
+            capture(r.prev, p, 0);
+            r.simReady = true;
+            r.parityPhase = p.onGround() ? 0 : 1;
+            return;
+        }
+        // the one-step seed carries vanilla's noJumpDelay as it stood after the previous tick
+        r.prev.jumpDelay = r.jumpDelay;
+        boolean wasGround = r.prev.onGround;
+        // LivingEntity.aiStep: count down, jump on the ground with delay 0 (then 10), no jump input resets it
+        if (r.jumpDelay > 0) {
+            r.jumpDelay--;
+        }
+        if (jump) {
+            if (wasGround && r.jumpDelay == 0) {
+                r.jumpDelay = 10;
+            }
+        } else {
+            r.jumpDelay = 0;
+        }
+        r.step.copyFrom(r.prev);
+        r.step.tick(fwd, str, yaw, sprint, jump, sneak, r.shapes);
+        double stepErr = dist(r.step, p);
+        r.maxStep = Math.max(r.maxStep, stepErr);
+        if (stepErr > ONE_STEP_FLAG && r.firstStep.isEmpty()) {
+            var v = p.getDeltaMovement();
+            r.firstStep = Harness.fmt("first one-step error above %.0e at lane tick %d (jump key at %d): %.5f;"
+                            + " inputs forward %d (impulse %.3f) strafe %d (impulse %.3f) yaw %.3f (yRot now %.3f)"
+                            + " sprint %s jump %s sneak %s; before: onGround %s v (%.5f %.5f %.5f); real after:"
+                            + " onGround %s v (%.5f %.5f %.5f) pos (%.5f %.5f %.5f); replica after: onGround %s"
+                            + " v (%.5f %.5f %.5f) pos (%.5f %.5f %.5f)",
+                    ONE_STEP_FLAG, r.tick, r.jumpTick, stepErr, fwd, in.forwardImpulse, str, in.leftImpulse, yaw,
+                    p.getYRot(), sprint, jump, sneak, wasGround, r.prev.vx, r.prev.vy, r.prev.vz, p.onGround(),
+                    v.x, v.y, v.z, p.getX(), p.getY(), p.getZ(), r.step.onGround, r.step.vx, r.step.vy, r.step.vz,
+                    r.step.x, r.step.y, r.step.z);
+        }
+        r.sim.tick(fwd, str, yaw, sprint, jump, sneak, r.shapes);
+        double err = dist(r.sim, p);
+        if (r.parityPhase == 0) {
+            if (wasGround && !p.onGround()) {
+                // takeoff: the flight replica starts from the real state before this tick, stepped through it
+                r.sim.copyFrom(r.step);
+                err = stepErr;
+                r.parityPhase = 1;
+                r.takeoffTick = r.tick;
+                r.takeoffZ = laneZ - (p.getZ() - r.prev.z);
+                r.takeoffX = r.prev.x - postCx;
+                r.takeoffSpeed = Math.sqrt(sq(p.getX() - r.prev.x) + sq(p.getZ() - r.prev.z));
+                r.takeoffSprint = sprint;
+                r.takeoffJump = jump;
+            } else {
+                r.maxGround = Math.max(r.maxGround, err);
+            }
+        }
+        if (r.parityPhase == 1) {
+            r.maxFlight = Math.max(r.maxFlight, err);
+            commitPhase(r, r.tick - r.takeoffTick + 1);
+            if (p.onGround()) {
+                r.parityPhase = 2;
+                r.touchdownTick = r.tick;
+                r.touchdownX = p.getX() - postCx;
+                r.touchdownZ = laneZ;
+            }
+        } else if (r.parityPhase == 2) {
+            r.maxAfter = Math.max(r.maxAfter, err);
+        }
+        capture(r.prev, p, r.jumpDelay);
+    }
+
+    /** Records the commitment phase of this flight tick (run-length coded: "1-2 TAKEOFF, 3-9 FLIGHT"). */
+    private static void commitPhase(LaneRun r, int flightTick) {
+        String ph = TravelBootstrap.movement().brain().commit().phase().name();
+        if (!ph.equals(r.lastCommit)) {
+            closeCommitRun(r, flightTick - 1);
+            r.lastCommit = ph;
+            r.commitFrom = flightTick;
+        }
+    }
+
+    private static void closeCommitRun(LaneRun r, int lastTick) {
+        if (r.commitFrom < 0) {
+            return;
+        }
+        if (r.commitPhases.length() > 0) {
+            r.commitPhases.append(", ");
+        }
+        r.commitPhases.append(r.commitFrom == lastTick ? Integer.toString(lastTick) : r.commitFrom + "-" + lastTick)
+                .append(' ').append(r.lastCommit);
+        r.commitFrom = -1;
+    }
+
+    /** The takeoff and flight record of a lane run, for its result note. */
+    private static String flightNote(LaneRun r) {
+        if (r.takeoffTick < 0) {
+            return "no takeoff recorded";
+        }
+        int last = (r.touchdownTick >= 0 ? r.touchdownTick : r.tick) - r.takeoffTick + 1;
+        StringBuilder phases = new StringBuilder(r.commitPhases);
+        if (r.commitFrom >= 0) {
+            phases.append(phases.length() > 0 ? ", " : "")
+                    .append(r.commitFrom == last ? Integer.toString(last) : r.commitFrom + "-" + last)
+                    .append(' ').append(r.lastCommit);
+        }
+        return Harness.fmt("takeoff at lane tick %d (jump key pressed after tick %d) from z %.3f, x %+.3f from the"
+                        + " post centre, %.4f block/tick, sprint %s, jump %s; %s; commitment phase per flight tick:"
+                        + " %s", r.takeoffTick, r.jumpTick, r.takeoffZ, r.takeoffX, r.takeoffSpeed, r.takeoffSprint,
+                r.takeoffJump, r.touchdownTick >= 0 ? Harness.fmt("touchdown at flight tick %d, z %.3f, x %+.3f from"
+                        + " the post centre", last, r.touchdownZ, r.touchdownX) : "no touchdown", phases);
+    }
+
+    /** The replica error summary of a lane run. */
+    private static String parityNote(LaneRun r) {
+        return Harness.fmt("replica error: ground run %.6f, flight %.6f, after touchdown %s, one-step max %.2e%s",
+                r.maxGround, r.maxFlight, r.touchdownTick >= 0 ? Harness.fmt("%.6f", r.maxAfter) : "not measured"
+                        + " (no touchdown)", r.maxStep, r.firstStep.isEmpty() ? "" : "; " + r.firstStep);
+    }
+
+    /** The real body as a replica state: position, velocity, flags. */
+    private static void capture(MovementPhysics m, net.minecraft.client.player.LocalPlayer p, int jumpDelay) {
+        var v = p.getDeltaMovement();
+        m.set(p.getX(), p.getY(), p.getZ(), v.x, v.y, v.z, p.onGround());
+        m.fallDistance = p.fallDistance;
+        m.sprinting = p.isSprinting();
+        m.horizontalCollision = p.horizontalCollision;
+        // LocalPlayer.aiStep stops the sprint on the next tick after a wall contact that is not minor
+        m.sprintBlocked = p.horizontalCollision && !p.minorHorizontalCollision;
+        m.crouching = p.getPose() == net.minecraft.world.entity.Pose.CROUCHING;
+        m.jumpDelay = jumpDelay;
+    }
+
+    private static double dist(MovementPhysics m, net.minecraft.client.player.LocalPlayer p) {
+        return Math.sqrt(sq(m.x - p.getX()) + sq(m.y - p.getY()) + sq(m.z - p.getZ()));
+    }
+
+    /** The key direction of an input impulse (sneaking scales it to 0.3; the replica applies that itself). */
+    private static int impulse(float f) {
+        return f > 1.0E-5F ? 1 : f < -1.0E-5F ? -1 : 0;
     }
 
     private static boolean onTop(net.minecraft.world.entity.player.Player p, double topY, double cx, double cz,

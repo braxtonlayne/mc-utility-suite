@@ -90,15 +90,18 @@ class MovementPhysicsRulesTest {
     void sneakScalesInputByPointThreeOneTickAfterTheKey() {
         ShapeGrid g = floor();
         MovementPhysics p = new MovementPhysics().set(0.5, 1, 0.5, 0, STEADY_VY, 0, true);
-        double a = 0.1 * (0.21600002 / (F * F * F));
-        double friction = F * 0.91;
+        // vanilla float arithmetic (LivingEntity.getFrictionInfluencedSpeed, LivingEntity.travel f3, aiStep 0.98F,
+        // KeyboardInput impulse * 0.3F); pins changed 2026-11-22 (replica parity): the double forms were ~1e-8 off
+        float fF = (float) F;
+        double a = 0.1f * (0.21600002f / (fF * fF * fF));
+        double friction = fF * 0.91f;
         p.tick(1, 0, 0f, false, false, true, g);
         // first sneak tick: the crouch state was read before the key, so full input
-        double v1 = 0.98 * a;
+        double v1 = (double) 0.98f * a;
         assertEquals(0.5 + v1, p.z, 1e-12);
         assertTrue(p.crouching);
         p.tick(1, 0, 0f, false, false, true, g);
-        double v2 = v1 * friction + 0.3 * 0.98 * a;
+        double v2 = v1 * friction + (double) (0.3f * 0.98f) * a;
         assertEquals(0.5 + v1 + v2, p.z, 1e-12);
         for (int t = 0; t < 60; t++) {
             p.tick(1, 0, 0f, false, false, true, g);
@@ -203,8 +206,12 @@ class MovementPhysicsRulesTest {
         double vxBefore = p.vx;
         p.tick(1, 0, 90f, true, false, g);
         assertTrue(p.sprinting, "back on the next tick");
-        double a = 0.1 * 1.3 * (0.21600002 / (F * F * F));
-        assertEquals(vxBefore - 0.98 * a, p.x - xBefore, 1e-12, "sprint acceleration again");
+        // Player.getSpeed with the sprint modifier ((float) of 0.1F * (1 + 0.3F)), float acceleration; pin changed
+        // 2026-11-22 (replica parity)
+        float fF = (float) F;
+        float sprintSpeed = (float) ((double) 0.1f * (1.0 + (double) 0.3f));
+        double a = sprintSpeed * (0.21600002f / (fF * fF * fF));
+        assertEquals(vxBefore - (double) 0.98f * a, p.x - xBefore, 1e-12, "sprint acceleration again");
     }
 
     @Test
@@ -253,7 +260,7 @@ class MovementPhysicsRulesTest {
         double d1 = p.z - d0;
         p.tick(0, 0, 0f, false, false, g);
         double d2 = p.z - d0 - d1;
-        assertEquals(0.98f * 0.91, d2 / d1, 1e-9, "ice friction per tick");
+        assertEquals((double) (0.98f * 0.91f), d2 / d1, 1e-9, "ice friction per tick (float f2 * 0.91F)");
         // back on stone the next ground tick uses 0.6 again
         MovementPhysics q = new MovementPhysics().set(0.5, 1, 0.5, 0, STEADY_VY, 0, true);
         q.slipperiness = 0.98;

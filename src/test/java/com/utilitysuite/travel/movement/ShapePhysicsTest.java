@@ -72,7 +72,7 @@ class ShapePhysicsTest {
         MovementPhysics p = new MovementPhysics().set(0.5, 1.0, 0.5, 0, STEADY_VY, 0, true);
         p.tick(0, 0, 0f, false, true, g);
         assertEquals(1.0125, p.y, 1e-12, "head 1.8 above the feet stops at 2.8125");
-        assertEquals(-0.0784, p.vy, 1e-12, "vertical speed zeroed by the hit, then gravity");
+        assertEquals(-0.08 * (double) 0.98f, p.vy, 1e-12, "vertical speed zeroed by the hit, then gravity (0.98F)");
         double max = p.y;
         for (int t = 0; t < 10; t++) {
             p.tick(0, 0, 0f, false, false, g);
