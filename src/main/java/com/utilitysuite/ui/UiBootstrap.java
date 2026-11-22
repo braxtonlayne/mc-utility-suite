@@ -3,6 +3,7 @@ package com.utilitysuite.ui;
 import com.utilitysuite.UtilitySuiteMod;
 import com.utilitysuite.core.api.Services;
 import com.utilitysuite.core.input.KeybindManager;
+import com.utilitysuite.ui.holo.VisualSettings;
 import com.utilitysuite.ui.tabs.ToolsTab;
 import com.utilitysuite.ui.tabs.TravelTab;
 import com.utilitysuite.ui.tabs.WorldTab;
@@ -13,9 +14,10 @@ import net.neoforged.bus.api.IEventBus;
 import net.neoforged.neoforge.client.event.RegisterGuiLayersEvent;
 
 /**
- * Wires the Shell: Right Shift opens the five-tab {@link SuiteMenuScreen}; the {@link SuiteHud} module (status pill +
- * badges) is registered as one GUI layer above everything; custom module panels for travel and tools are registered
- * in {@link ModulePanels}. Called last from {@code UtilitySuiteMod}.
+ * Wires the Shell: Right Shift opens the five-tab {@link SuiteMenuScreen}; the {@link SuiteHud} module (the HUD host:
+ * status line, badges, info strip, module list and every registered HudElement) is one GUI layer above everything
+ * and backs {@code Services.visuals()}; the Appearance settings live in {@link VisualSettings}; custom module panels
+ * for travel and tools are registered in {@link ModulePanels}. Called last from {@code UtilitySuiteMod}.
  */
 public final class UiBootstrap {
 
@@ -27,6 +29,8 @@ public final class UiBootstrap {
 
     public static void init(IEventBus modBus) {
         hud = new SuiteHud();
+        Services.registerVisuals(hud.visuals()); // other modules register HUD elements with its host
+        Services.modules().register(new VisualSettings()); // writes HoloTheme on profile load and change
         Services.modules().register(hud);
         hud.subscribe();
         tabGui = new TabGui(); // off by default; reads arrow keys only while enabled
@@ -42,12 +46,8 @@ public final class UiBootstrap {
     }
 
     private static void onRegisterLayers(RegisterGuiLayersEvent event) {
+        // the one HUD host layer: status line, badges, info strip, module list and every registered HudElement
         event.registerAboveAll(ResourceLocation.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID, "status_line"), hud);
-        // drawn after the status line so it can sit below the pill when both share a corner
-        event.registerAboveAll(ResourceLocation.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID, "info_strip"),
-                hud.infoStrip());
-        event.registerAboveAll(ResourceLocation.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID, "module_list"),
-                hud.moduleList());
         event.registerAboveAll(ResourceLocation.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID, "tab_gui"), tabGui);
     }
 
