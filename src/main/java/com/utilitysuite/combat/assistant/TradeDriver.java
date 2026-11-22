@@ -179,6 +179,70 @@ public final class TradeDriver {
         t.horizon = Math.max(6, Math.min(8, horizon));
         t.takenWeight = takenWeight;
         t.allowJump = allowJump;
+
+        // shield state from the shield duel stage: used only when written on this fight tick (never stale)
+        ShieldFeed f = SHIELD_FEED;
+        boolean fresh = f.stamp == now;
+        t.sBlocking = (fresh && f.selfBlocking) || selfBlocking;
+        t.oShieldUp = (fresh && f.oppShieldUp) || oppShieldUp;
+    }
+
+    // ---- shield state -------------------------------------------------------------------------------------------
+
+    /**
+     * Shield state for the solver, written by the shield duel stage each fight tick before the movement runs (the
+     * stage cannot reach the assistant's driver, so it writes here; client thread only, one fight at a time). Read by
+     * {@link #fill} only when its stamp equals that tick's fight clock, so a stage that stops writing leaves no stale
+     * state behind.
+     */
+    public static final class ShieldFeed {
+        private long stamp = Long.MIN_VALUE;
+        private boolean selfBlocking;
+        private boolean oppShieldUp;
+
+        ShieldFeed() {
+        }
+
+        /** This fight tick: our shield is up (effective), the opponent's shield is up and facing us. */
+        public void set(long fightTick, boolean selfBlocking, boolean oppShieldUp) {
+            this.stamp = fightTick;
+            this.selfBlocking = selfBlocking;
+            this.oppShieldUp = oppShieldUp;
+        }
+
+        public void clear() {
+            stamp = Long.MIN_VALUE;
+            selfBlocking = false;
+            oppShieldUp = false;
+        }
+
+        public boolean selfBlocking(long fightTick) {
+            return stamp == fightTick && selfBlocking;
+        }
+
+        public boolean oppShieldUp(long fightTick) {
+            return stamp == fightTick && oppShieldUp;
+        }
+    }
+
+    private static final ShieldFeed SHIELD_FEED = new ShieldFeed();
+
+    /** The shared shield feed (see {@link ShieldFeed}). */
+    public static ShieldFeed shieldFeed() {
+        return SHIELD_FEED;
+    }
+
+    private boolean selfBlocking;
+    private boolean oppShieldUp;
+
+    /** Instance override (tests, a future direct wiring): our shield is up over the horizon. Default false. */
+    public void setSelfBlocking(boolean blocking) {
+        this.selfBlocking = blocking;
+    }
+
+    /** Instance override: the opponent's shield is up and facing us over the horizon. Default false. */
+    public void setOppShieldUp(boolean up) {
+        this.oppShieldUp = up;
     }
 
     /**

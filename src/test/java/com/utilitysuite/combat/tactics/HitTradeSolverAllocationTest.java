@@ -45,4 +45,25 @@ class HitTradeSolverAllocationTest {
         assertTrue(usPerSolve < 500.0, "solve took " + usPerSolve + " us");
         assertTrue(sink[0] != 12345.678);
     }
+
+    @Test
+    void solveWithShieldsAllocatesNothing() {
+        Assumptions.assumeTrue(AllocationProbe.supported());
+        HitTradeSolver solver = new HitTradeSolver(() -> new PhysicsBodySim(HitTradeSolverTest.FLAT));
+        TradeInput in = HitTradeSolverTest.chargingOpponent();
+        int[] i = {0};
+        double[] sink = {0};
+        long bytes = AllocationProbe.measure(50_000, () -> {
+            int k = i[0]++;
+            in.oz = 0.5 + 2.5 + (k & 15) * 0.1;
+            in.sReadyIn = k % 13;
+            in.oReadyIn = (k >> 2) % 13;
+            in.sBlocking = (k & 32) != 0;
+            in.oShieldUp = (k & 64) != 0;
+            solver.solve(in);
+            sink[0] += solver.score();
+        });
+        assertTrue(bytes < BUDGET, "solve with shields allocated " + bytes + " bytes over 50k calls");
+        assertTrue(sink[0] != 12345.678);
+    }
 }

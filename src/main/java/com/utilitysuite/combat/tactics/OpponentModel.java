@@ -32,6 +32,8 @@ public final class OpponentModel {
     /** Tick of the last arm swing seen per slot (Long.MIN_VALUE = none) and the cooldown period it started. */
     private final long[] swingTick = new long[MAX_OPPONENTS];
     private final double[] swingPeriod = new double[MAX_OPPONENTS];
+    /** Fight-clock tick until which the opponent's shield is disabled by our axe hit (Long.MIN_VALUE = not known). */
+    private final long[] shieldDisabledUntil = new long[MAX_OPPONENTS];
 
     /** Attack speed clamp (attacks per second) and the period used when nothing is known (sword, 1.6/s). */
     public static final double MIN_ATTACK_SPEED = 0.25;
@@ -52,6 +54,7 @@ public final class OpponentModel {
             wasGround[i] = true;
             swingTick[i] = Long.MIN_VALUE;
             swingPeriod[i] = DEFAULT_COOLDOWN_TICKS;
+            shieldDisabledUntil[i] = Long.MIN_VALUE;
         }
         for (int i = 0; i < hitTick.length; i++) {
             hitTick[i] = Long.MIN_VALUE;
@@ -91,6 +94,7 @@ public final class OpponentModel {
         wasGround[oldest] = true;
         swingTick[oldest] = Long.MIN_VALUE;
         swingPeriod[oldest] = DEFAULT_COOLDOWN_TICKS;
+        shieldDisabledUntil[oldest] = Long.MIN_VALUE;
         for (int k = 0; k < HIT_RING; k++) {
             hitTick[oldest * HIT_RING + k] = Long.MIN_VALUE;
             hitDamage[oldest * HIT_RING + k] = 0f;
@@ -248,5 +252,42 @@ public final class OpponentModel {
     public double cooldownTicks(int id) {
         int s = slotOf(id);
         return s < 0 || swingTick[s] == Long.MIN_VALUE ? DEFAULT_COOLDOWN_TICKS : swingPeriod[s];
+    }
+
+    // ---- shield disable window -----------------------------------------------------------------------------------
+
+    /** Ticks an axe hit on a raised shield disables it (vanilla 1.21.1 {@code Player.disableShield}: cooldown 100). */
+    public static final int SHIELD_DISABLE_TICKS = 100;
+
+    /**
+     * Our axe hit landed on the opponent's raised shield (or its disable was observed): the shield cannot be raised
+     * again before fight-clock tick {@code untilTick}. A later value replaces an earlier one; an earlier one is ignored.
+     */
+    public void noteShieldDisabled(int id, long untilTick) {
+        int s = slotFor(id, untilTick - SHIELD_DISABLE_TICKS);
+        if (untilTick > shieldDisabledUntil[s]) {
+            shieldDisabledUntil[s] = untilTick;
+        }
+    }
+
+    /** Fight-clock tick until which the opponent's shield is disabled; Long.MIN_VALUE when none was recorded. */
+    public long shieldDisabledUntil(int id) {
+        int s = slotOf(id);
+        return s < 0 ? Long.MIN_VALUE : shieldDisabledUntil[s];
+    }
+
+    /** True while a recorded shield disable of the opponent is still running at {@code now}. */
+    public boolean shieldDisabled(int id, long now) {
+        int s = slotOf(id);
+        return s >= 0 && shieldDisabledUntil[s] != Long.MIN_VALUE && now < shieldDisabledUntil[s];
+    }
+
+    /** Ticks left of the opponent's shield disable at {@code now} (0 = none running). */
+    public int shieldDisabledFor(int id, long now) {
+        int s = slotOf(id);
+        if (s < 0 || shieldDisabledUntil[s] == Long.MIN_VALUE || now >= shieldDisabledUntil[s]) {
+            return 0;
+        }
+        return (int) Math.min(Integer.MAX_VALUE, shieldDisabledUntil[s] - now);
     }
 }

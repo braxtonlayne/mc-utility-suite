@@ -44,6 +44,8 @@ public final class HitTradeSolver {
     static final double KNOCKBACK = 0.4;
     static final double SPRINT_KNOCKBACK = 0.5;
     static final double SPRINT_HIT_SLOWDOWN = 0.6;
+    /** Knockback strength of a hit blocked by a shield ({@code LivingEntity.blockedByShield}). */
+    static final double SHIELD_KNOCKBACK = 0.5;
     /** Each later tick's hit counts this much less than the tick before (rollout uncertainty grows). */
     static final double HIT_DISCOUNT = 0.95;
     /** Credit of our hit when both would hit on the same tick. */
@@ -209,7 +211,11 @@ public final class HitTradeSolver {
             boolean oCan = oCharge <= 0.0 && sHurt == 0
                     && reachSq(opp.x(), opp.y(), opp.z(), self.x(), self.y(), self.z()) <= oReachSq;
 
-            if (sCan) {
+            if (sCan && in.oShieldUp) {
+                // their raised shield eats the hit: no credit, our cooldown is spent, the shield's knockback applies
+                shieldBlock(opp, self);
+                sCharge = sPeriod;
+            } else if (sCan) {
                 landed += (oCan ? SIMULTANEOUS_CREDIT : 1.0) * weight;
                 hit(opp, self, sYaw, sSprint);
                 if (sSprint) {
@@ -220,7 +226,11 @@ public final class HitTradeSolver {
                 // a simultaneous opponent swing stays charged and is re-checked next tick, after our knockback
                 oCan = false;
             }
-            if (oCan) {
+            if (oCan && in.sBlocking) {
+                // our raised shield eats their hit (always frontal here: both face each other)
+                shieldBlock(self, opp);
+                oCharge = oPeriod;
+            } else if (oCan) {
                 taken += weight;
                 hit(self, opp, oYaw, oSprint);
                 if (oSprint) {
@@ -275,6 +285,15 @@ public final class HitTradeSolver {
             victim.knockback(SPRINT_KNOCKBACK, Math.sin(yaw), -Math.cos(yaw));
             attacker.scaleHorizontal(SPRINT_HIT_SLOWDOWN);
         }
+    }
+
+    /**
+     * A melee hit blocked by {@code holder}'s raised shield: no damage, no hurt immunity, no attacker knockback; the
+     * shield's own knockback as vanilla 1.21.1 applies it ({@code LivingEntity.blockUsingShield} ->
+     * {@code attacker.blockedByShield(holder)} -> {@code holder.knockback(0.5, holder.x - attacker.x, ...)}).
+     */
+    private static void shieldBlock(BodySim holder, BodySim attacker) {
+        holder.knockback(SHIELD_KNOCKBACK, holder.x() - attacker.x(), holder.z() - attacker.z());
     }
 
     /** Minecraft yaw (0 = +Z, 90 = -X) looking along (dx, dz). */

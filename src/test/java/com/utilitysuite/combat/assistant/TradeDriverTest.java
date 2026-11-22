@@ -261,4 +261,43 @@ public class TradeDriverTest {
     private boolean decide() {
         return driver.decide(s, opponents, ID, 1, true, true, 7, 1.2, true);
     }
+
+    // ---- shield state ---------------------------------------------------------------------------------------------
+
+    @Test
+    void shieldFeedReachesTheSolverInputOnlyOnItsTick() {
+        TradeDriver.ShieldFeed f = TradeDriver.shieldFeed();
+        try {
+            f.clear();
+            fill(true, true);
+            assertFalse(driver.input().sBlocking);
+            assertFalse(driver.input().oShieldUp);
+
+            f.set(101, true, true); // fill() runs at fight tick 101
+            fill(true, true);
+            assertTrue(driver.input().sBlocking);
+            assertTrue(driver.input().oShieldUp);
+
+            f.set(100, true, true); // written on an earlier tick: stale
+            fill(true, true);
+            assertFalse(driver.input().sBlocking, "a stage that stopped writing leaves nothing behind");
+            assertFalse(driver.input().oShieldUp);
+        } finally {
+            f.clear();
+        }
+    }
+
+    @Test
+    void instanceSettersOverrideTheFeed() {
+        TradeDriver.shieldFeed().clear();
+        driver.setSelfBlocking(true);
+        fill(true, true);
+        assertTrue(driver.input().sBlocking);
+        assertFalse(driver.input().oShieldUp);
+        driver.setSelfBlocking(false);
+        driver.setOppShieldUp(true);
+        fill(true, true);
+        assertFalse(driver.input().sBlocking);
+        assertTrue(driver.input().oShieldUp);
+    }
 }
