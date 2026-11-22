@@ -52,6 +52,10 @@ public final class TravelBootstrap {
         Services.registerBodySims(bodySims);
         NeoForge.EVENT_BUS.addListener(net.neoforged.neoforge.client.event.ClientTickEvent.Pre.class,
                 event -> bodySims.beginTick());
+        com.utilitysuite.travel.pursuit.MinecraftRouteRunner routeRunner =
+                new com.utilitysuite.travel.pursuit.MinecraftRouteRunner();
+        Services.registerRouteRunner(routeRunner);
+        NeoForge.EVENT_BUS.addListener(ClientTickEvent.Post.class, routeRunner::onTick);
         onAutopilotKey = autopilot::toggle;
         onBridgeKey = bridge::toggle;
         onBridgeMarkKey = bridge::mark;
