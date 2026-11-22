@@ -13,6 +13,15 @@ public final class SwingGate {
     public static final float READY = 0.95f;
     public static final float PRE_JUMP = 0.6f;
 
+    /**
+     * Withhold a swing while the target's client hurt time is above this. Vanilla gives 10 ticks of damage immunity
+     * (equal-or-weaker hits are ignored) after a hit, and the client's hurtTime counts 10 down to 0. A swing sent now
+     * is processed by the server about one to two ticks later (input to packet, network, server tick), so a swing
+     * chosen at hurtTime 2 arrives as the immunity ends. The hold lasts at most hurtTime - HURT_HOLD ticks (8 at
+     * most), never longer than the immunity left, and a hurt time of 0 behaves exactly as before.
+     */
+    public static final int HURT_HOLD = 2;
+
     private SwingGate() {
     }
 
@@ -30,16 +39,17 @@ public final class SwingGate {
             return Action.NONE;
         }
         boolean ready = ready(s.attackStrength);
+        boolean hurtHold = s.targetHurtTime > HURT_HOLD;
         if (!critSync) {
-            return ready ? Action.SWING : Action.NONE;
+            return ready && !hurtHold ? Action.SWING : Action.NONE;
         }
-        if (ready && s.fallingForCrit()) {
+        if (ready && !hurtHold && s.fallingForCrit()) {
             return Action.SWING;
         }
         if (s.onGround && !jumpedThisCycle && s.attackStrength >= PRE_JUMP && !s.inWater && !s.climbing) {
             return Action.JUMP;
         }
-        if (ready && critWaitTicks >= maxCritWait) {
+        if (ready && !hurtHold && critWaitTicks >= maxCritWait) {
             return Action.SWING;
         }
         return Action.NONE;
