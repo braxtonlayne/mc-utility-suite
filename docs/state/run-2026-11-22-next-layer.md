@@ -194,3 +194,12 @@ blocks; tuning on Legit, then one level up. Keystrokes overlay on.
       combo keeper, feints, the solver, knock vector and the positional tactics (watch for stutter steps).
 - [ ] Flee or retreat-heal triggers during a pearl chase: the retreat wins.
 - [ ] Spark profile of an engaged tick with everything on.
+
+## In-game regression check (2026-11-22, after the merge)
+
+`./gradlew runPlaytest -PplaytestOnly=Menu,Parkour,Combat,Modules` on `0ed6769`:
+
+- Mixin audit: finished with no Mixin apply failures and no exceptions in the log.
+- 1-world, 2-menu-hud, 8b-parkour, 9-combat, 11-modules: all PASS.
+- Not covered by the harness: how the new layer *feels* (combo keeping, anticipatory aim, strafe-with, pearl
+  intercept, The Read / Ghost Line visuals, takeoff shaping). Use the checklist above in a hands-on session.
