@@ -3,6 +3,10 @@ package com.utilitysuite.ui.kit;
 import com.utilitysuite.core.api.JobSnapshot;
 import com.utilitysuite.core.api.JobStatus;
 import com.utilitysuite.ui.HudStatusLine;
+import com.utilitysuite.core.api.visual.FrameLevel;
+import com.utilitysuite.core.api.visual.HoloToken;
+import com.utilitysuite.ui.holo.HoloFrames;
+import com.utilitysuite.ui.holo.HoloTheme;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.world.item.ItemStack;
@@ -182,13 +186,17 @@ public final class GoalHeroCard extends UiNode {
     @Override
     public void render(GuiGraphics g, Font font, int sx, int sy, int mouseX, int mouseY) {
         boolean hover = inside(mouseX, mouseY, sx, sy, w, h);
-        UiRenderUtils.panel(g, sx, sy, w, h, UiTheme.RADIUS, hover ? UiTheme.CARD_HOVER : UiTheme.CARD,
-                idle ? (hover ? 0xFF2F3442 : UiTheme.BORDER) : (hover ? 0xFF2E5A75 : 0xFF274A60));
+        float hv = hoverAmount(hover);
+        HoloFrames.frame(g, sx, sy, w, h, idle ? FrameLevel.FRAMED : FrameLevel.HERO, !idle, 1f);
+        if (hv > 0.01f) {
+            g.fill(sx + 1, sy + 1, sx + w - 1, sy + h - 1, HoloTheme.fade(HoloTheme.argb(HoloToken.ACCENT), 0.06f * hv));
+        }
         // icon tile
         int tile = 32;
         int tx = sx + PAD;
         int ty = sy + (idle ? (h - tile) / 2 : PAD);
-        UiRenderUtils.panel(g, tx, ty, tile, tile, UiTheme.RADIUS, UiTheme.FIELD, idle ? UiTheme.BORDER : 0xFF274A60);
+        g.fill(tx, ty, tx + tile, ty + tile, HoloTheme.argb(HoloToken.FIELD));
+        HoloFrames.edge(g, tx, ty, tile, tile, HoloTheme.argb(idle ? HoloToken.LINE_FAINT : HoloToken.LINE));
         UiRenderUtils.item(g, icon, tx + 4, ty + 4, 24);
         int x = sx + TEXT_X;
         if (idle) {
@@ -199,8 +207,9 @@ public final class GoalHeroCard extends UiNode {
         UiRenderUtils.text(g, font, title, x, ty + 4, UiTheme.TEXT);
         // status chip
         int cx = sx + w - PAD - chipW;
-        UiRenderUtils.roundedRect(g, cx, ty + 1, chipW, 14, 7, UiTheme.fade(chipColor, 0.16f));
-        UiRenderUtils.dot(g, cx + 5, ty + 5, 6, chipColor);
+        g.fill(cx, ty + 1, cx + chipW, ty + 15, HoloTheme.fade(chipColor, 0.08f));
+        HoloFrames.edge(g, cx, ty + 1, chipW, 14, HoloTheme.fade(chipColor, 0.45f));
+        g.fill(cx + 5, ty + 6, cx + 9, ty + 10, chipColor);
         UiRenderUtils.text(g, font, chip, cx + 15, ty + 4, chipColor);
         // count + percent
         UiRenderUtils.text(g, font, count, x, ty + 19, hasTarget ? UiTheme.TEXT_SECONDARY : UiTheme.TEXT_MUTED);
@@ -210,12 +219,8 @@ public final class GoalHeroCard extends UiNode {
         // progress bar
         int by = sy + 52;
         int bw = w - 2 * PAD;
-        UiRenderUtils.roundedRect(g, sx + PAD, by, bw, 4, 2, 0xFF262B35);
-        int fw = Math.round(progress * bw);
-        if (fw > 0) {
-            UiRenderUtils.roundedRect(g, sx + PAD, by, fw, 4, 2,
-                    lastStatus == JobStatus.PAUSED ? UiTheme.WARNING : UiTheme.ACCENT);
-        }
+        HoloFrames.progress(g, sx + PAD, by + 1, bw, HoloTheme.BAR, progress,
+                lastStatus == JobStatus.PAUSED ? HoloToken.WARN : HoloToken.ACCENT, 1f);
         // now / why / next
         int ly = sy + 66;
         line(g, font, sx, ly, "Now", now, UiTheme.TEXT_SECONDARY);

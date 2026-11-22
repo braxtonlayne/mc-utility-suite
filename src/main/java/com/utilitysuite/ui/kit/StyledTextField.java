@@ -1,5 +1,9 @@
 package com.utilitysuite.ui.kit;
 
+import com.utilitysuite.core.api.visual.HoloToken;
+import com.utilitysuite.ui.holo.AnimStore;
+import com.utilitysuite.ui.holo.HoloFrames;
+import com.utilitysuite.ui.holo.HoloTheme;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.EditBox;
@@ -24,6 +28,9 @@ public final class StyledTextField extends UiNode {
     public StyledTextField(Font font, String stateKey, String hint, int w, int h) {
         super(w, h);
         this.stateKey = stateKey;
+        if (stateKey != null) {
+            animId(WidgetKeys.named("field." + stateKey)); // stable across rebuilds
+        }
         box = new EditBox(font, 0, 0, Math.max(10, w - 12), 10, Component.literal(hint));
         box.setBordered(false);
         box.setTextShadow(false);
@@ -71,10 +78,20 @@ public final class StyledTextField extends UiNode {
         position(sx, sy);
         boolean hover = inside(mouseX, mouseY, sx, sy, w, h);
         boolean f = box.isFocused();
-        int border = f ? UiTheme.ACCENT_BORDER : hover ? UiTheme.FIELD_BORDER_HOVER : UiTheme.BORDER;
-        UiRenderUtils.panel(g, sx, sy, w, h, UiTheme.RADIUS_SMALL, UiTheme.FIELD, border);
+        float hv = hoverAmount(hover);
+        float fv = AnimStore.SHARED.settle(WidgetKeys.channel(key(), CH_VALUE), f ? 1f : 0f, AnimStore.TAU_FAST, 0f);
+        g.fill(sx, sy, sx + w, sy + h, HoloTheme.argb(HoloToken.FIELD));
+        HoloFrames.edge(g, sx, sy, w, h, HoloTheme.mix(HoloTheme.argb(HoloToken.LINE_FAINT),
+                HoloTheme.argb(HoloToken.LINE), hv));
+        // the bottom edge carries the focus: LINE, going LINE_STRONG while focused
+        int bottom = HoloTheme.mix(HoloTheme.argb(HoloToken.LINE), HoloTheme.argb(HoloToken.LINE_STRONG), fv);
+        g.fill(sx, sy + h - 1, sx + w, sy + h, bottom);
+        if (fv > 0.01f) {
+            g.fill(sx, sy + h - 2, sx + w, sy + h - 1, HoloTheme.fade(bottom, 0.45f * fv));
+        }
         if (prompt) {
-            UiRenderUtils.chevron(g, sx + 8, sy + (h - 5) / 2, 0, f ? UiTheme.ACCENT : UiTheme.TEXT_MUTED);
+            UiRenderUtils.chevron(g, sx + 8, sy + (h - 5) / 2, 0, f ? HoloTheme.argb(HoloToken.ACCENT)
+                    : HoloTheme.argb(HoloToken.TEXT_MUTED));
         }
         UiRenderUtils.scissor(g, sx + 1, sy + 1, Math.min(sx + w - 1, box.getX() + box.getWidth() + 1), sy + h - 1); // long hints never spill out of the frame
         box.render(g, mouseX, mouseY, 0f);

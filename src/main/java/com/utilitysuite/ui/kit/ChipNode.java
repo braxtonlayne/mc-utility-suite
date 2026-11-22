@@ -1,11 +1,14 @@
 package com.utilitysuite.ui.kit;
 
+import com.utilitysuite.core.api.visual.HoloToken;
+import com.utilitysuite.ui.holo.HoloFrames;
+import com.utilitysuite.ui.holo.HoloTheme;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
 
 /**
- * Small status chip: a tinted pill with a colored dot and label ("Armed", "Running"), or a key cap (bordered, no dot)
- * for hotkey names.
+ * Small status chip: text in a hairline frame with a small square marker ("Armed", "Running"; lit = the given colour,
+ * normally the accent), or a key cap (hairline frame, no marker) for hotkey names. Layout size is unchanged.
  */
 public final class ChipNode extends UiNode {
 
@@ -33,13 +36,15 @@ public final class ChipNode extends UiNode {
     @Override
     public void render(GuiGraphics g, Font font, int sx, int sy, int mouseX, int mouseY) {
         if (keycap) {
-            UiRenderUtils.panel(g, sx, sy, w, h, 3, UiTheme.FIELD, UiTheme.CONTROL_BORDER);
-            UiRenderUtils.hLine(g, sx + 2, sx + w - 2, sy + h - 2, 0xFF1A1D24);
+            g.fill(sx, sy, sx + w, sy + h, HoloTheme.argb(HoloToken.FIELD));
+            HoloFrames.edge(g, sx, sy, w, h, HoloTheme.argb(HoloToken.LINE));
             UiRenderUtils.text(g, font, text, sx + 6, sy + 3, color);
             return;
         }
-        UiRenderUtils.roundedRect(g, sx, sy, w, h, h / 2, UiTheme.fade(color, 0.16f));
-        UiRenderUtils.dot(g, sx + 5, sy + 4, 6, color);
+        // lit chips carry their colour on text, frame and marker; the frame is the faint version of it
+        g.fill(sx, sy, sx + w, sy + h, HoloTheme.fade(color, 0.08f));
+        HoloFrames.edge(g, sx, sy, w, h, HoloTheme.fade(color, 0.45f));
+        g.fill(sx + 5, sy + 5, sx + 9, sy + 9, color);
         UiRenderUtils.text(g, font, text, sx + 15, sy + 3, color);
     }
 }

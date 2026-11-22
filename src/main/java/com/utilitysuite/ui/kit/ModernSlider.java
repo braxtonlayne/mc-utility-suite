@@ -1,10 +1,13 @@
 package com.utilitysuite.ui.kit;
 
+import com.utilitysuite.core.api.visual.HoloToken;
+import com.utilitysuite.ui.holo.HoloFrames;
+import com.utilitysuite.ui.holo.HoloTheme;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
 
 /**
- * 3 px rounded track with a cyan fill, a 10 px thumb and a right-aligned value readout. Click or drag anywhere on the
+ * 2 px hairline rail with an accent fill, a 2x10 thumb bar, a tick at the default and a right-aligned value readout. Click or drag anywhere on the
  * track; arrow keys step while focused. Value math lives in the {@link Model} (snapping, clamping, formatting), so the
  * widget only maps pixels to a 0..1 position.
  */
@@ -29,6 +32,11 @@ public final class ModernSlider extends UiNode {
 
         /** The widest readout this slider can show (reserves the label column). */
         String widestText();
+
+        /** Position 0..1 of the default value, for the tick mark; negative when there is none. */
+        default double defaultPosition() {
+            return -1.0;
+        }
     }
 
     private final Model model;
@@ -74,21 +82,35 @@ public final class ModernSlider extends UiNode {
             updateText(font); // only after a change
         }
         boolean hover = dragging || inside(mouseX, mouseY, sx, sy, w - readoutW, h);
+        float hv = hoverAmount(hover);
         int tx = trackX(sx);
         int tw = trackW();
         int cy = sy + h / 2;
         double p = model.position();
         int fillW = (int) Math.round(p * tw);
-        UiRenderUtils.roundedRect(g, tx, cy - 1, tw, 3, 1, hover ? 0xFF353B48 : 0xFF2A2F3A);
-        UiRenderUtils.roundedRect(g, tx, cy - 1, fillW, 3, 1, hover ? UiTheme.ACCENT_HOVER : UiTheme.ACCENT);
-        int thumbX = tx + fillW - THUMB / 2;
-        if (focused || dragging) {
-            UiRenderUtils.dot(g, thumbX - 2, cy - THUMB / 2 - 2, THUMB + 4, 0x4038BDF8);
+        int accent = HoloTheme.argb(HoloToken.ACCENT);
+        // 2 px rail and fill
+        g.fill(tx, cy - 1, tx + tw, cy + 1, HoloTheme.mix(HoloTheme.argb(HoloToken.LINE_FAINT),
+                HoloTheme.argb(HoloToken.LINE), hv));
+        if (fillW > 0) {
+            g.fill(tx, cy - 1, tx + fillW, cy + 1, accent);
         }
-        UiRenderUtils.dot(g, thumbX, cy - THUMB / 2, THUMB, hover ? 0xFFFFFFFF : UiTheme.KNOB);
-        UiRenderUtils.dot(g, thumbX + 3, cy - 2, 4, UiTheme.ACCENT);
+        // a tick at the default value
+        double dp = model.defaultPosition();
+        if (dp >= 0.0 && dp <= 1.0) {
+            int dx = tx + (int) Math.round(dp * tw);
+            g.fill(dx, cy + 2, dx + 1, cy + 5, HoloTheme.argb(HoloToken.TEXT_MUTED));
+        }
+        // 2x10 thumb bar
+        int thumbX = tx + fillW - 1;
+        int thumb = HoloTheme.mix(accent, HoloTheme.argb(HoloToken.TEXT), hv);
+        g.fill(thumbX, cy - THUMB / 2, thumbX + 2, cy + THUMB / 2, thumb);
+        if (focused || dragging) {
+            HoloFrames.brackets(g, thumbX - 3, cy - THUMB / 2 - 1, 8, THUMB + 2, 2,
+                    HoloTheme.argb(HoloToken.LINE_STRONG));
+        }
         UiRenderUtils.text(g, font, readout, sx + w - readoutWidth, cy - 4, hover || focused
-                ? UiTheme.TEXT : UiTheme.TEXT_SECONDARY);
+                ? HoloTheme.argb(HoloToken.TEXT) : HoloTheme.argb(HoloToken.TEXT_SECONDARY));
     }
 
     private void apply(double mouseX, int sx) {

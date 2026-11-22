@@ -8,8 +8,12 @@ import com.utilitysuite.core.api.ModuleCategory;
 import com.utilitysuite.core.api.ProfileConfig;
 import com.utilitysuite.core.api.Services;
 import com.utilitysuite.core.api.SettingSpec;
+import com.utilitysuite.core.api.visual.FrameLevel;
+import com.utilitysuite.core.api.visual.HoloToken;
+import com.utilitysuite.ui.holo.AnimStore;
+import com.utilitysuite.ui.holo.HoloFrames;
+import com.utilitysuite.ui.holo.HoloTheme;
 import com.utilitysuite.ui.kit.UiRenderUtils;
-import com.utilitysuite.ui.kit.UiTheme;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
@@ -37,6 +41,8 @@ public final class TabGui implements IModule, IConfigurable, LayeredDraw.Layer {
     private static final int ROW_H = 12;
     private static final int CAT_W = 64;
     private static final String K_ENTER = "enter_toggles";
+    private static final long K_UNFOLD = AnimStore.key("tabgui.unfold", 0);
+    private static final float UNFOLD_S = 0.12f;
 
     private final TabGuiNav nav = new TabGuiNav();
     private final IModule[] modules = new IModule[MAX];
@@ -244,34 +250,59 @@ public final class TabGui implements IModule, IConfigurable, LayeredDraw.Layer {
         Font font = mc.font;
         int x = 4;
         int y = 4;
+        boolean inModules = nav.inModules();
+        // the module column unfolds over 120 ms; the state also winds back while it is closed
+        float unfold = AnimStore.easeOut(AnimStore.SHARED.progress(K_UNFOLD, inModules && moduleCount > 0,
+                UNFOLD_S));
+        int accent = HoloTheme.argb(HoloToken.ACCENT);
+        int lineStrong = HoloTheme.argb(HoloToken.LINE_STRONG);
+        int textOn = HoloTheme.argb(HoloToken.TEXT);
+        int textOff = HoloTheme.argb(HoloToken.TEXT_MUTED);
         String[] cats = TabGuiNav.CATEGORY_NAMES;
-        g.fill(x, y, x + CAT_W, y + cats.length * ROW_H, UiTheme.fade(UiTheme.WINDOW, 0.75f));
+        int catH = cats.length * ROW_H;
+        HoloFrames.frame(g, x - 1, y - 1, CAT_W + 2, catH + 2, FrameLevel.FRAMED, false, HoloToken.GLASS_HUD,
+                HoloToken.LINE, 1f);
         for (int i = 0; i < cats.length; i++) {
             boolean sel = i == nav.category();
             int ry = y + i * ROW_H;
             if (sel) {
-                g.fill(x, ry, x + CAT_W, ry + ROW_H, nav.inModules() ? UiTheme.CONTROL : UiTheme.ACCENT);
+                bracketedRow(g, x, ry, CAT_W, inModules ? HoloTheme.argb(HoloToken.LINE) : lineStrong,
+                        inModules ? HoloTheme.argb(HoloToken.LINE_FAINT) : HoloTheme.argb(HoloToken.ACCENT_GLOW),
+                        inModules ? HoloTheme.argb(HoloToken.LINE) : accent);
             }
-            UiRenderUtils.text(g, font, cats[i], x + 4, ry + 2, sel && !nav.inModules() ? UiTheme.ON_ACCENT
-                    : UiTheme.TEXT);
+            UiRenderUtils.text(g, font, cats[i], x + 6, ry + 2, sel ? (inModules ? textOn : accent) : textOff);
         }
-        if (!nav.inModules() || moduleCount == 0) {
+        if (!inModules || moduleCount == 0 || unfold <= 0f) {
             return;
         }
-        int mx = x + CAT_W + 2;
+        int mx = x + CAT_W + 3;
         int my = y + nav.category() * ROW_H;
-        g.fill(mx, my, mx + modulesW, my + moduleCount * ROW_H, UiTheme.fade(UiTheme.WINDOW, 0.75f));
+        int fullH = moduleCount * ROW_H;
+        int curH = Math.max(ROW_H, (int) (fullH * unfold));
+        HoloFrames.frame(g, mx - 1, my - 1, modulesW + 2, curH + 2, FrameLevel.FRAMED, false, HoloToken.GLASS_HUD,
+                HoloToken.LINE, 1f);
         for (int i = 0; i < moduleCount; i++) {
-            IModule m = modules[i];
             int ry = my + i * ROW_H;
-            boolean sel = i == nav.module();
-            if (sel) {
-                g.fill(mx, ry, mx + modulesW, ry + ROW_H, UiTheme.ACCENT);
+            if (ry + ROW_H > my + curH) {
+                break; // not unfolded this far yet
             }
+            IModule m = modules[i];
+            boolean sel = i == nav.module();
             boolean on = m != null && m.isEnabled();
-            g.fill(mx + 3, ry + 3, mx + 5, ry + ROW_H - 3, on ? UiTheme.RUNNING : UiTheme.TRACK_OFF);
-            UiRenderUtils.text(g, font, names[i], mx + 8, ry + 2, sel ? UiTheme.ON_ACCENT
-                    : on ? UiTheme.TEXT : UiTheme.TEXT_DIM);
+            if (sel) {
+                bracketedRow(g, mx, ry, modulesW, lineStrong, HoloTheme.argb(HoloToken.ACCENT_GLOW), accent);
+            }
+            // ON: a small accent bar at the right end of the row; OFF: a dim one
+            g.fill(mx + modulesW - 6, ry + 3, mx + modulesW - 4, ry + ROW_H - 3,
+                    on ? accent : HoloTheme.argb(HoloToken.TEXT_FAINT));
+            UiRenderUtils.text(g, font, names[i], mx + 6, ry + 2, sel || on ? textOn : textOff);
         }
+    }
+
+    /** The selected row: faint fill, corner brackets and a 2 px side bar. */
+    private static void bracketedRow(GuiGraphics g, int x, int y, int w, int bracket, int fill, int bar) {
+        g.fill(x, y, x + w, y + ROW_H, fill);
+        HoloFrames.brackets(g, x, y, w, ROW_H, 3, bracket);
+        g.fill(x, y + 1, x + HoloTheme.BAR, y + ROW_H - 1, bar);
     }
 }

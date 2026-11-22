@@ -1,11 +1,14 @@
 package com.utilitysuite.ui.kit;
 
+import com.utilitysuite.core.api.visual.HoloToken;
+import com.utilitysuite.ui.holo.HoloFrames;
+import com.utilitysuite.ui.holo.HoloTheme;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
 
 import java.util.function.Consumer;
 
-/** Flat button: primary (accent), secondary, ghost, danger (solid / soft) and success, optionally fully rounded. */
+/** Rectangular framed button: primary (accent outline), secondary, ghost, danger (solid / soft) and success. */
 public final class PillButton extends UiNode {
 
     public enum Style { PRIMARY, SECONDARY, GHOST, OUTLINE, DANGER, DANGER_SOFT, SUCCESS }
@@ -74,63 +77,81 @@ public final class PillButton extends UiNode {
     @Override
     public void render(GuiGraphics g, Font font, int sx, int sy, int mouseX, int mouseY) {
         boolean hover = enabled && inside(mouseX, mouseY, sx, sy, w, h);
-        int r = pill ? h / 2 : UiTheme.RADIUS_SMALL;
-        int bg;
-        int border = 0;
+        float hv = hoverAmount(hover);
+        float press = pressAmount();
+        int fill = 0;
+        int edge = 0;
         int fg;
+        int accent = HoloTheme.argb(HoloToken.ACCENT);
+        int text = HoloTheme.argb(HoloToken.TEXT);
+        int line = HoloTheme.argb(HoloToken.LINE);
+        int lineStrong = HoloTheme.argb(HoloToken.LINE_STRONG);
+        int raised = HoloTheme.argb(HoloToken.GLASS_RAISED);
         switch (style) {
             case PRIMARY -> {
-                bg = hover ? UiTheme.ACCENT_HOVER : UiTheme.ACCENT;
-                fg = UiTheme.ON_ACCENT;
+                fill = HoloTheme.mix(HoloTheme.argb(HoloToken.ACCENT_GLOW), HoloTheme.fade(accent, 0.30f), hv);
+                edge = HoloTheme.mix(accent, text, hv * 0.25f);
+                fg = HoloTheme.mix(accent, text, hv * 0.35f);
             }
             case OUTLINE -> {
-                bg = hover ? UiTheme.CONTROL : 0;
-                border = UiTheme.ACCENT_BORDER;
-                fg = hover ? UiTheme.TEXT : UiTheme.ACCENT;
+                fill = HoloTheme.fade(raised, hv);
+                edge = HoloTheme.mix(line, lineStrong, hv);
+                fg = HoloTheme.mix(accent, text, hv * 0.35f);
             }
             case GHOST -> {
-                bg = hover ? UiTheme.CONTROL : 0;
-                fg = hover ? UiTheme.TEXT : UiTheme.TEXT_SECONDARY;
+                fill = HoloTheme.fade(raised, hv);
+                fg = HoloTheme.mix(HoloTheme.argb(HoloToken.TEXT_SECONDARY), text, hv);
             }
             case DANGER -> {
-                bg = hover ? 0xFFF26B6B : UiTheme.DANGER;
-                fg = 0xFFFFFFFF;
+                int danger = HoloTheme.argb(HoloToken.DANGER);
+                fill = HoloTheme.mix(danger, text, hv * 0.22f);
+                edge = HoloTheme.mix(danger, text, 0.35f);
+                fg = text;
             }
             case DANGER_SOFT -> {
-                bg = hover ? 0x40EF4444 : UiTheme.DANGER_TINT;
-                border = UiTheme.DANGER_BORDER;
+                int danger = HoloTheme.argb(HoloToken.DANGER);
+                fill = HoloTheme.mix(HoloTheme.fade(danger, 0.12f), HoloTheme.fade(danger, 0.28f), hv);
+                edge = HoloTheme.mix(HoloTheme.fade(danger, 0.65f), danger, hv);
                 fg = UiTheme.DANGER_TEXT;
             }
             case SUCCESS -> {
-                bg = hover ? 0xFF34D399 : UiTheme.RUNNING;
-                fg = 0xFF04140D;
+                int sync = HoloTheme.argb(HoloToken.SYNC);
+                fill = HoloTheme.mix(HoloTheme.fade(sync, 0.12f), HoloTheme.fade(sync, 0.28f), hv);
+                edge = HoloTheme.mix(HoloTheme.fade(sync, 0.65f), sync, hv);
+                fg = HoloTheme.mix(sync, text, hv * 0.3f);
             }
             default -> {
                 if (selected) {
-                    bg = hover ? 0x3838BDF8 : UiTheme.ACCENT_TINT;
-                    border = UiTheme.ACCENT_BORDER;
-                    fg = UiTheme.ACCENT;
+                    fill = HoloTheme.mix(HoloTheme.argb(HoloToken.ACCENT_GLOW), HoloTheme.fade(accent, 0.30f), hv);
+                    edge = HoloTheme.mix(lineStrong, text, hv * 0.2f);
+                    fg = accent;
                 } else {
-                    bg = hover ? UiTheme.CONTROL_HOVER : UiTheme.CONTROL;
-                    border = hover ? UiTheme.FIELD_BORDER_HOVER : UiTheme.CONTROL_BORDER;
-                    fg = hover ? UiTheme.TEXT : UiTheme.TEXT_SECONDARY;
+                    fill = HoloTheme.mix(raised, HoloTheme.mix(raised, accent, 0.10f), hv);
+                    edge = HoloTheme.mix(HoloTheme.argb(HoloToken.LINE_FAINT), line, hv);
+                    fg = HoloTheme.mix(HoloTheme.argb(HoloToken.TEXT_SECONDARY), text, hv);
                 }
             }
         }
+        if (press > 0.01f) {
+            fill = HoloTheme.mix(fill, HoloTheme.fade(text, 0.30f), press);
+            edge = HoloTheme.mix(edge, text, press);
+        }
         if (!enabled) {
-            bg = UiTheme.fade(bg, 0.5f);
-            border = UiTheme.fade(border, 0.5f);
-            fg = UiTheme.TEXT_MUTED;
+            fill = HoloTheme.fade(fill, 0.5f);
+            edge = HoloTheme.fade(edge, 0.5f);
+            fg = HoloTheme.argb(HoloToken.TEXT_MUTED);
         }
         if (textColorOverride != 0 && enabled) {
             fg = textColorOverride;
         }
-        UiRenderUtils.roundedRect(g, sx, sy, w, h, r, bg);
-        if (border != 0) {
-            UiRenderUtils.roundedOutline(g, sx, sy, w, h, r, border);
+        if ((fill >>> 24) != 0) {
+            g.fill(sx, sy, sx + w, sy + h, fill);
+        }
+        if ((edge >>> 24) != 0) {
+            HoloFrames.edge(g, sx, sy, w, h, edge);
         }
         if (focused) {
-            UiRenderUtils.roundedOutline(g, sx - 1, sy - 1, w + 2, h + 2, r + 1, UiTheme.ACCENT_BORDER);
+            HoloFrames.brackets(g, sx - 1, sy - 1, w + 2, h + 2, 3, lineStrong);
         }
         UiRenderUtils.text(g, font, shown, sx + (w - shownWidth) / 2, sy + (h - 8) / 2, fg);
     }
@@ -140,6 +161,7 @@ public final class PillButton extends UiNode {
         if (!enabled || button != 0) {
             return false;
         }
+        flashPress();
         onPress.accept(this);
         return true;
     }

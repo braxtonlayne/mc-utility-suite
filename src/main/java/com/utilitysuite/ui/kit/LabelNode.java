@@ -66,7 +66,7 @@ public final class LabelNode extends UiNode {
         }
         int x = sx;
         if (bulletColor != 0) {
-            UiRenderUtils.dot(g, sx, sy + 1, 6, bulletColor);
+            g.fill(sx, sy + 2, sx + 4, sy + 6, bulletColor); // square marker, colour carries the meaning
             x += 10;
         }
         UiRenderUtils.text(g, font, shown, x, sy, color);
