@@ -85,3 +85,23 @@ Also open from the agents:
 - **HAY lane:** an unhurt water landing now counts and is named in the detail. Failing runs had steered off the 5x5
   platform to sea water about 87 blocks down; this run used hay.
 - **Parkour and Combat playtests: PASS.** The Combat failure was the knock-on of the gap-lane death, as suspected.
+
+## Hand-over key landed (merge f149dbf, 17:37)
+- Hold one key: the autopilot takes the whole body (parkour Takeover, combat on the crosshair target or your last
+  attacker, every reflex armed). Release hands back the same tick, and Stop-All revokes it. It is unbound by
+  default: Controls > Key Binds > Utility Suite, "Hand over", or menu Tools > Hotkeys. The double-tap latch is off
+  by default (Autopilot bar settings). Run note: docs/state/run-2026-11-22-handover-key.md.
+- Verified: `./gradlew test` green (1851 tests). Menu and Combat playtests PASS. Not yet played by hand.
+
+## First item after work: held-back press walks off the edge (corner-fence-2gap, Co-pilot)
+- In the 17:37 run this lane failed. The scripted press at tick 39 was held back by
+  `MovementAssistBrain.pressHeldBack` (technique-first: "the jump waits for the last supported tick"). The body then
+  walked off at z 11.51 with no jump: jump false, max y 1.00, commitment IDLE all flight.
+- It had passed 5 runs in a row before, so it depends on the tick phase. Owner-visible risk: in play, a press the
+  assist holds back can turn into a walk-off.
+- **Fix direction:**
+  - Never let a held press outlive the support: release it on any tick where the next simulated tick would leave
+    the ground under the real collision box.
+  - Add a lane-replica test for all four tick phases of this run-up.
+- Every other landing lane passed: Co-pilot and Takeover for fence, wall, pane and corner wall; Takeover corner
+  fence. The Corrections lanes pass their "no walk-off" promise.
