@@ -45,7 +45,8 @@ final class MobilityContext {
         if (mc.player == null || Services.modState().isCleanScreen()) {
             return;
         }
-        mc.player.displayClientMessage(Component.literal(module + ": " + text), true);
+        Services.visuals().notices().post(com.utilitysuite.core.api.visual.NoticeKind.INFO, module + ": " + text,
+                null);
     }
 
     static void sayKey(String key) {

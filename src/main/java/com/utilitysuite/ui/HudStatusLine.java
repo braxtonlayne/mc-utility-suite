@@ -77,7 +77,7 @@ public final class HudStatusLine {
 
     /**
      * Updates from the autopilot's acting reflex. {@code constantLine} must be a constant per reflex (e.g.
-     * {@code "Autopilot: fall clutch"}), so an unchanged update compares one reference and allocates nothing.
+     * {@code "STEM - FALL CLUTCH"}, see {@code AutopilotHud.stemLine}), so an unchanged update compares one reference and allocates nothing.
      */
     public boolean updateAutopilot(String constantLine) {
         if (constantLine == null) {

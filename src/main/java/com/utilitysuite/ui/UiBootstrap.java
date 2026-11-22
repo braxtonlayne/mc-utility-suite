@@ -3,6 +3,9 @@ package com.utilitysuite.ui;
 import com.utilitysuite.UtilitySuiteMod;
 import com.utilitysuite.core.api.Services;
 import com.utilitysuite.core.input.KeybindManager;
+import com.utilitysuite.ui.holo.NoticeBoard;
+import com.utilitysuite.ui.holo.NoticeLayer;
+import com.utilitysuite.ui.holo.Visuals;
 import com.utilitysuite.ui.holo.VisualSettings;
 import com.utilitysuite.ui.tabs.ToolsTab;
 import com.utilitysuite.ui.tabs.TravelTab;
@@ -30,6 +33,12 @@ public final class UiBootstrap {
     public static void init(IEventBus modBus) {
         hud = new SuiteHud();
         Services.registerVisuals(hud.visuals()); // other modules register HUD elements with its host
+        // toasts: the board backs Services.visuals().notices(); its layer is one more HUD element (self-placed)
+        NoticeBoard board = new NoticeBoard(System::currentTimeMillis, () -> Services.modState().isCleanScreen());
+        Visuals.useNotices(board);
+        NoticeLayer notices = new NoticeLayer(board);
+        hud.host().register(notices);
+        hud.host().setInstant(notices, true); // the layer runs its own enter and leave motion
         Services.modules().register(new VisualSettings()); // writes HoloTheme on profile load and change
         Services.modules().register(hud);
         hud.subscribe();

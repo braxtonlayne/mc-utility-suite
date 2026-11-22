@@ -98,7 +98,8 @@ public final class ContainerButtons {
         String result = m.depositToOpenContainer(all);
         Minecraft mc = Minecraft.getInstance();
         if (mc.player != null && !com.utilitysuite.core.api.Services.modState().isCleanScreen()) {
-            mc.player.displayClientMessage(Component.literal(result), true);
+            com.utilitysuite.core.api.Services.visuals().notices().post(
+                    com.utilitysuite.core.api.visual.NoticeKind.INFO, result, null);
         }
     }
 }

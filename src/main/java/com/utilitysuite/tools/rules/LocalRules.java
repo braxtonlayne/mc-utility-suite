@@ -241,7 +241,7 @@ public final class LocalRules implements IModule, IConfigurable, RuleContext {
         lastMessage = text;
         Minecraft mc = Minecraft.getInstance();
         if (mc.player != null && !Services.modState().isCleanScreen()) {
-            mc.player.displayClientMessage(Component.literal(text), true);
+            Services.visuals().notices().post(com.utilitysuite.core.api.visual.NoticeKind.INFO, text, null);
         }
     }
 

@@ -215,8 +215,8 @@ public final class AutoReconnect implements IModule, IConfigurable {
     private static void say(String text, boolean error) {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player != null) {
-            mc.player.displayClientMessage(Component.literal("[Suite] ").withStyle(ChatFormatting.DARK_AQUA)
-                    .append(Component.literal(text).withStyle(error ? ChatFormatting.RED : ChatFormatting.GRAY)), false);
+            Services.visuals().notices().post(error ? com.utilitysuite.core.api.visual.NoticeKind.ERROR
+                    : com.utilitysuite.core.api.visual.NoticeKind.DONE, text, null);
         }
     }
 
