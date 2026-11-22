@@ -199,3 +199,17 @@ down, one with a wide landing area, one beside a damaging drop. Run each part wi
       module off.
 - [ ] Slabs, fences and ladders as landings; neo and diagonal jumps: note what the estimator picks.
 - [ ] Spark: `MovementAssist` tick cost and allocation during a 60 s parkour run.
+
+## In-game check after the merge (05:15-05:35)
+
+- Mixin audit clean with 21 mixins (`MouseHandlerTurnGainMixin` applies). Menu, Parkour and Combat playtests PASS on
+  the merged build, so the hit-trade solver, cooldown read and parkour assist do not break the existing lanes
+  (water clutch, parkour gap block, engage/disengage, gap ambush, shield, creeper back-off).
+- Found in play: the Combat Assistant fought with whatever was in hand (it hit a cow with leather picked up from old
+  drops while a diamond sword sat in slot 2). New pro-player default `combat_assistant.auto_weapon` ("Draw the best
+  weapon", on): when a fight starts it switches to the hotbar item with the most damage per second
+  (`CombatWorld.bestMeleeSlot`, attack damage x attack speed, once per engagement). 2 new behaviour tests.
+- Devtest hygiene: Combat clears old item drops first; Modules clears status effects first (Combat's Resistance V
+  blocked its damage step).
+- 1096 unit tests, 0 failures. The feel items in the checklist above (spacing dance, turn gain, route runs) still need
+  a hands-on session; the scenarios cover regressions, not feel.

@@ -52,6 +52,13 @@ public final class FakeCombatWorld implements CombatWorld {
     public boolean lineOfSight = true;
     public boolean crosshairOnTarget = true;
     public int crosshairId = -1;
+    /** Hotbar slot bestMeleeSlot reports, or -1 for "nothing better than the fallback". */
+    public int bestMelee = -1;
+
+    @Override
+    public int bestMeleeSlot(int fallback) {
+        return bestMelee >= 0 ? bestMelee : fallback;
+    }
 
     public FakeCombatWorld() {
         E me = add(localId, "LocalPlayer", 0, 64, 0);

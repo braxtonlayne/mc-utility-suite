@@ -338,6 +338,48 @@ public final class MinecraftCombatWorld implements CombatWorld, LineOfSight.Soli
         return base + speedCacheValue;
     }
 
+    private double meleeDamageScan;
+    private double meleeSpeedScan;
+    private final BiConsumer<Holder<Attribute>, AttributeModifier> meleeVisitor = (attr, mod) -> {
+        if (mod.operation() != AttributeModifier.Operation.ADD_VALUE) {
+            return;
+        }
+        if (attr.value() == Attributes.ATTACK_DAMAGE.value()) {
+            meleeDamageScan += mod.amount();
+        } else if (attr.value() == Attributes.ATTACK_SPEED.value()) {
+            meleeSpeedScan += mod.amount();
+        }
+    };
+
+    @Override
+    public int bestMeleeSlot(int fallback) {
+        LocalPlayer p = Minecraft.getInstance().player;
+        if (p == null) {
+            return fallback;
+        }
+        Inventory inv = p.getInventory();
+        int best = fallback;
+        double bestScore = BARE_HAND_SPEED; // bare hand: 1 damage at speed 4
+        for (int i = 0; i < 9; i++) {
+            ItemStack s = inv.getItem(i);
+            if (s.isEmpty()) {
+                continue;
+            }
+            meleeDamageScan = 0.0;
+            meleeSpeedScan = 0.0;
+            s.getAttributeModifiers().forEach(EquipmentSlot.MAINHAND, meleeVisitor);
+            if (meleeDamageScan <= 0.0) {
+                continue;
+            }
+            double score = (1.0 + meleeDamageScan) * Math.max(0.1, BARE_HAND_SPEED + meleeSpeedScan);
+            if (score > bestScore + 1.0e-6) {
+                bestScore = score;
+                best = i;
+            }
+        }
+        return best;
+    }
+
     private static final int DROP_SCAN = 8;
     private static final double GAP_STEP = 0.5;
     private static final double GAP_MAX = 8.0;

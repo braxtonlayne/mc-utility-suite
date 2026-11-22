@@ -36,6 +36,15 @@ public interface CombatWorld {
     boolean sample(int targetId, CombatSnapshot out);
 
     /**
+     * Hotbar slot 0..8 of the strongest melee item (main-hand attack damage times attack speed, so a sword's damage
+     * per second beats a slower axe), or {@code fallback} when nothing in the hotbar beats the bare hand. Called once
+     * when a fight starts, not per tick.
+     */
+    default int bestMeleeSlot(int fallback) {
+        return fallback;
+    }
+
+    /**
      * Cheap offhand check for the totem keeper (no target needed, allocation free): when the local player exists, no
      * screen is open and the offhand holds no totem, the inventory index 0..35 of a totem; otherwise -1.
      */

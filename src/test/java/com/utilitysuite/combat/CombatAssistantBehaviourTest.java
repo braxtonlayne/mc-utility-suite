@@ -88,6 +88,24 @@ class CombatAssistantBehaviourTest {
     }
 
     @Test
+    void drawsTheBestHotbarWeaponWhenTheFightStarts() {
+        world.self.selectedSlot = 0;
+        world.bestMelee = 3;
+        engage();
+        tick(1);
+        assertEquals(3, backend.selectedSlot, "switched to the strongest weapon once engaged");
+    }
+
+    @Test
+    void keepsTheHeldSlotWhenNothingBeatsIt() {
+        world.self.selectedSlot = 4;
+        backend.selectedSlot = 4;
+        engage();
+        tick(1);
+        assertEquals(4, backend.selectedSlot);
+    }
+
+    @Test
     void eatsGoldenAppleThenReturnsToWeapon() {
         world.self.health = 6f;
         world.self.gappleSlot = 5;

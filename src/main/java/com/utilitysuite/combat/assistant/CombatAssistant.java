@@ -476,7 +476,11 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
             return;
         }
         if (weaponSlot < 0) {
-            weaponSlot = s.selectedSlot;
+            // a pro draws their best weapon when the fight starts (once per engagement, not per tick)
+            weaponSlot = settings.autoWeapon ? world.bestMeleeSlot(s.selectedSlot) : s.selectedSlot;
+            if (weaponSlot != s.selectedSlot) {
+                selectWeapon();
+            }
         }
         drive(s);
     }

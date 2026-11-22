@@ -28,6 +28,7 @@ final class ModulesScenario {
         Arena.ensure(s);
         s.cmd("kill @e[type=!minecraft:player]");
         s.cmd("clear @s");
+        s.cmd("effect clear @s"); // earlier scenarios leave Resistance on, which would block the damage step
         s.cmd(() -> Arena.tp(0.5, 0.5, 0f));
         dotCommands(s);
         offhand(s);

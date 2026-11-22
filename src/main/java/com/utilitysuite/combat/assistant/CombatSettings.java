@@ -46,6 +46,7 @@ public final class CombatSettings {
     public static final String FOOD_RANGE = "food_range";
     public static final String EDGE_KNOCK = "tactic_edge_knock";
     public static final String TACTIC_UTILITY = "tactic_utility";
+    public static final String AUTO_WEAPON = "auto_weapon";
     public static final String HIT_TRADE = "hit_trade";
     public static final String HIT_TRADE_HORIZON = "hit_trade_horizon";
     public static final String COOLDOWN_READ = "cooldown_read";
@@ -60,6 +61,7 @@ public final class CombatSettings {
     public double foodRange = 12.0;
     public boolean edgeKnock = true;
     public boolean tacticUtility = true;
+    public boolean autoWeapon = true;
     public boolean engageRequiresLos = true;
 
     public double disengageRadius = 16.0;
@@ -98,6 +100,7 @@ public final class CombatSettings {
         foodObjective = p.getBool(id, FOOD_OBJECTIVE, true);
         edgeKnock = p.getBool(id, EDGE_KNOCK, true);
         tacticUtility = p.getBool(id, TACTIC_UTILITY, true);
+        autoWeapon = p.getBool(id, AUTO_WEAPON, true);
         wholeInventory = p.getBool(id, WHOLE_INVENTORY, true);
         swapBack = p.getBool(id, SWAP_BACK, true);
         keepTotem = p.getBool(id, KEEP_TOTEM, true);
@@ -180,6 +183,8 @@ public final class CombatSettings {
                                 + " a planned route like a person would (looking where you run) instead of walking"
                                 + " straight at it or backing away. Falls back to the old moves when no route is"
                                 + " available."),
+                SettingSpec.bool(AUTO_WEAPON, "Draw the best weapon", true, "Tactics",
+                        "When a fight starts, switch to the hotbar weapon with the most damage per second."),
                 SettingSpec.bool(TACTIC_UTILITY, "Read the fight", true, "Tactics",
                         "Weigh both sides' damage, health and healing: keep distance from a crit-hopper in an even"
                                 + " trade, and back off when losing badly with nothing to heal."),

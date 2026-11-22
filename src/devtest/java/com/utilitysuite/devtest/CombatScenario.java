@@ -47,6 +47,7 @@ final class CombatScenario {
         float[] hp = new float[1];
         boolean[] coachDrew = new boolean[1];
         Arena.ensure(s);
+        s.cmd("kill @e[type=minecraft:item]"); // drops left by earlier runs would land in the selected slot
         s.cmd("clear @s");
         s.cmd("give @s minecraft:diamond_sword");
         s.cmd("effect give @s minecraft:resistance 120 4 true");
