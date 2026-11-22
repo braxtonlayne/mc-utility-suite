@@ -1,9 +1,12 @@
 package com.utilitysuite.ui;
 
+import com.utilitysuite.core.api.visual.FrameLevel;
+import com.utilitysuite.core.api.visual.HoloToken;
 import com.utilitysuite.tools.packetlab.PacketLab;
 import com.utilitysuite.tools.packetlab.RateRing;
 import com.utilitysuite.tools.packetlab.TimelineEvents;
-import com.utilitysuite.ui.kit.ChipNode;
+import com.utilitysuite.ui.holo.HoloFrames;
+import com.utilitysuite.ui.holo.HoloTheme;
 import com.utilitysuite.ui.kit.MenuScale;
 import com.utilitysuite.ui.kit.PillButton;
 import com.utilitysuite.ui.kit.UiNode;
@@ -21,11 +24,13 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * PacketLab's unified timeline and desync view, in the menu's dark-glass style: per-second inbound/outbound packet
- * bars, chunk loads, position corrections (seconds inside a repeated-correction burst are highlighted red), lease
- * grants/ends and job changes on one time axis, plus the newest labeled events and the busiest packet types.
+ * PacketLab's unified timeline and desync view, in the window chrome of the suite menu (one hero bracket frame on
+ * glass, hairline-separated bars): per-second inbound/outbound packet bars, chunk loads, position corrections
+ * (seconds inside a repeated-correction burst are tinted with the danger hue), lease grants/ends and job changes on
+ * one time axis, plus the newest labeled events on a vertical hairline spine (a glyph node per kind, coloured by
+ * token, timestamps in fixed digit cells) and the busiest packet types.
  * Statistics are recomputed twice a second in {@link #tick()}; rendering only reads primitive counters and cached
- * strings.
+ * strings. All colours are theme tokens.
  */
 public final class TimelineScreen extends Screen {
 
@@ -33,15 +38,19 @@ public final class TimelineScreen extends Screen {
     private static final int SAMPLE = 4096;
     private static final int TOP_TYPES = 6;
     private static final int EVENT_LINES = 12;
-    private static final int C_IN = UiTheme.ACCENT;
-    private static final int C_OUT = UiTheme.RUNNING;
-    private static final int C_CHUNK = UiTheme.WARNING;
-    private static final int C_CORR = UiTheme.DANGER;
-    private static final int C_LEASE = 0xFFA78BFA;
-    private static final int C_JOB = UiTheme.TEXT;
+    private static final HoloToken T_IN = HoloToken.ACCENT;
+    private static final HoloToken T_OUT = HoloToken.ALLY;
+    private static final HoloToken T_CHUNK = HoloToken.WARN;
+    private static final HoloToken T_CORR = HoloToken.DANGER;
+    private static final HoloToken T_LEASE = HoloToken.SYNC;
+    private static final HoloToken T_JOB = HoloToken.TEXT;
     private static final String[] LEGEND = {"packets in", "packets out", "chunk loads", "position corrections",
             "leases", "job changes"};
-    private static final int[] LEGEND_COLORS = {C_IN, C_OUT, C_CHUNK, C_CORR, C_LEASE, C_JOB};
+    private static final HoloToken[] LEGEND_TOKENS = {T_IN, T_OUT, T_CHUNK, T_CORR, T_LEASE, T_JOB};
+    /** Width of the timestamp column: "-120.0s" in 6 px digit cells. */
+    private static final int TIME_W = 7 * 6;
+    private static final String LIVE = "LIVE";
+    private static final String FROZEN = "FROZEN";
 
     private final Screen parent;
     private final PacketLab lab;
@@ -51,10 +60,11 @@ public final class TimelineScreen extends Screen {
     private final byte[] sDir = new byte[SAMPLE];
     private final Int2IntOpenHashMap typeCounts = new Int2IntOpenHashMap();
     private final List<String> statLines = new ArrayList<>();
-    private final List<String> eventLines = new ArrayList<>();
-    private final List<Integer> eventColors = new ArrayList<>();
+    private final List<String> eventTimes = new ArrayList<>();
+    private final List<String> eventLabels = new ArrayList<>();
+    private final List<TimelineEvents.Kind> eventKinds = new ArrayList<>();
+    private final List<HoloToken> eventTokens = new ArrayList<>();
     private final List<UiNode> chrome = new ArrayList<>();
-    private ChipNode modeChip;
     private String maxLabel = "1";
     private boolean frozen;
     private long frozenSecond;
@@ -63,6 +73,10 @@ public final class TimelineScreen extends Screen {
     private int wy;
     private int ww;
     private int wh;
+    private String modeText = LIVE;
+    private HoloToken modeToken = HoloToken.ALLY;
+    private int modeW;
+    private int titleW;
 
     public TimelineScreen(Screen parent, PacketLab lab) {
         super(Component.literal("Packet Lab timeline"));
@@ -106,9 +120,15 @@ public final class TimelineScreen extends Screen {
         chrome.add(back);
         chrome.add(freeze);
         chrome.add(clear);
-        modeChip = new ChipNode(font, frozen ? "Frozen" : "Live", frozen ? UiTheme.WARNING : UiTheme.RUNNING);
+        modeText = frozen ? FROZEN : LIVE;
+        modeToken = frozen ? HoloToken.WARN : HoloToken.ALLY;
+        modeW = font.width(modeText) + 12;
+        titleW = font.width(TITLE);
         recompute();
     }
+
+    private static final String TITLE = "PACKET LAB TIMELINE";
+    private static final String RANGE = "LAST " + SECONDS + " S";
 
     // ---- effective scale (same as the suite menu; engine-free helpers) ----------------------------------------------
 
@@ -148,8 +168,10 @@ public final class TimelineScreen extends Screen {
 
     private void recompute() {
         statLines.clear();
-        eventLines.clear();
-        eventColors.clear();
+        eventTimes.clear();
+        eventLabels.clear();
+        eventKinds.clear();
+        eventTokens.clear();
         long end = endSecond();
         RateRing pr = lab.packetRates();
         RateRing er = lab.eventRates();
@@ -206,21 +228,33 @@ public final class TimelineScreen extends Screen {
 
         TimelineEvents ev = lab.events();
         long nowMs = System.currentTimeMillis();
-        for (int i = ev.size() - 1; i >= 0 && eventLines.size() < EVENT_LINES; i--) {
+        int labelW = ww - 24 - SPINE_X - TIME_W - 18;
+        for (int i = ev.size() - 1; i >= 0 && eventLabels.size() < EVENT_LINES; i--) {
             long t = ev.millis(i);
-            eventLines.add(UiRenderUtils.ellipsize(font, String.format(Locale.ROOT, "-%5.1fs  %s",
-                    (nowMs - t) / 1000.0, ev.label(i)), ww - 48));
-            eventColors.add(colorOf(ev.kind(i), ev.label(i)));
+            eventTimes.add(timeText((nowMs - t) / 1000.0));
+            eventLabels.add(UiRenderUtils.ellipsize(font, ev.label(i), labelW));
+            eventKinds.add(ev.kind(i));
+            eventTokens.add(tokenOf(ev.kind(i), ev.label(i)));
         }
     }
 
-    private static int colorOf(TimelineEvents.Kind k, String label) {
+    /** "-  3.2s": the age right-aligned in a fixed digit grid (the mono role; vanilla digits are tabular). */
+    static String timeText(double ageSeconds) {
+        String s = String.format(Locale.ROOT, "-%.1fs", ageSeconds);
+        StringBuilder pad = new StringBuilder();
+        for (int i = s.length(); i < 7; i++) {
+            pad.append(' ');
+        }
+        return pad.append(s).toString();
+    }
+
+    static HoloToken tokenOf(TimelineEvents.Kind k, String label) {
         return switch (k) {
-            case CORRECTION -> label.endsWith("[REPEATED]") ? C_CORR : UiTheme.DANGER_TEXT;
-            case LEASE_GRANTED, LEASE_ENDED -> C_LEASE;
-            case JOB_CHANGED -> C_JOB;
-            case STOP_ALL -> C_CORR;
-            default -> UiTheme.TEXT_DIM;
+            case CORRECTION, STOP_ALL -> T_CORR;
+            case LEASE_GRANTED, LEASE_ENDED -> T_LEASE;
+            case JOB_CHANGED -> T_JOB;
+            case CHUNK_BURST -> T_CHUNK;
+            default -> HoloToken.TEXT_MUTED;
         };
     }
 
@@ -245,7 +279,7 @@ public final class TimelineScreen extends Screen {
 
     @Override
     public void renderBackground(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
-        g.fill(0, 0, width, height, UiTheme.BACKDROP);
+        HoloFrames.plate(g, 0, 0, width, height, HoloToken.VOID, 0.55f);
     }
 
     @Override
@@ -267,20 +301,25 @@ public final class TimelineScreen extends Screen {
         }
     }
 
+    /** Horizontal offset of the spine from the card's left edge. */
+    private static final int SPINE_X = 20;
+
     private void renderScaled(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
         renderBackground(g, mouseX, mouseY, partialTick);
-        UiRenderUtils.shadow(g, wx, wy, ww, wh, UiTheme.RADIUS, 6);
-        UiRenderUtils.roundedRect(g, wx, wy, ww, wh, UiTheme.RADIUS, UiTheme.WINDOW);
-        UiRenderUtils.hLine(g, wx + 1, wx + ww - 1, wy + UiTheme.TOP_BAR_H, UiTheme.BORDER);
-        UiRenderUtils.roundedOutline(g, wx, wy, ww, wh, UiTheme.RADIUS, 0xFF2A2F3B);
+        // the menu's window chrome: dark base, hero bracket frame on glass, scanlines, hairline under the title bar
+        HoloFrames.frame(g, wx, wy, ww, wh, FrameLevel.QUIET, true, HoloToken.VOID, HoloToken.LINE, 0.62f);
+        HoloFrames.frame(g, wx, wy, ww, wh, FrameLevel.HERO, true, 1f);
+        HoloFrames.scanlines(g, wx, wy, ww, wh, 1f);
+        int faint = HoloTheme.argb(HoloToken.LINE_FAINT);
+        HoloFrames.hLine(g, wx + 1, wx + ww - 1, wy + UiTheme.TOP_BAR_H, faint);
 
         int ty = wy + (UiTheme.TOP_BAR_H - 8) / 2;
-        UiRenderUtils.dot(g, wx + 14, ty + 1, 6, UiTheme.ACCENT);
-        String title = "Packet Lab timeline";
-        UiRenderUtils.text(g, font, title, wx + 24, ty, UiTheme.TEXT);
-        int cx = wx + 24 + font.width(title) + 8;
-        modeChip.render(g, font, cx, wy + (UiTheme.TOP_BAR_H - ChipNode.H) / 2, mouseX, mouseY);
-        UiRenderUtils.text(g, font, "last " + SECONDS + " s", cx + modeChip.w + 8, ty, UiTheme.TEXT_MUTED);
+        HoloFrames.sideBar(g, wx + 12, ty - 1, 10, HoloToken.ACCENT, 1f);
+        UiRenderUtils.text(g, font, TITLE, wx + 20, ty, HoloTheme.argb(HoloToken.TEXT));
+        int rx = wx + 20 + titleW + 8;
+        readoutBrackets(g, rx, ty - 3, modeW, 14, HoloTheme.argb(HoloToken.LINE));
+        UiRenderUtils.text(g, font, modeText, rx + 6, ty, HoloTheme.argb(modeToken));
+        UiRenderUtils.text(g, font, RANGE, rx + modeW + 8, ty, HoloTheme.argb(HoloToken.TEXT_MUTED));
         for (int i = 0; i < chrome.size(); i++) {
             UiNode n = chrome.get(i);
             n.render(g, font, n.x, n.y, mouseX, mouseY);
@@ -293,11 +332,11 @@ public final class TimelineScreen extends Screen {
 
         // stats card
         int statsH = statLines.size() * 12 + 16;
-        UiRenderUtils.panel(g, left, y, cw, statsH, UiTheme.RADIUS, UiTheme.CARD, UiTheme.BORDER);
+        card(g, left, y, cw, statsH);
         for (int i = 0; i < statLines.size(); i++) {
             String s = statLines.get(i);
-            UiRenderUtils.text(g, font, s, left + 12, y + 9 + i * 12, s.contains("REPEATED") ? C_CORR
-                    : i == 0 ? UiTheme.TEXT_SECONDARY : UiTheme.TEXT_DIM);
+            HoloToken t = s.contains("REPEATED") ? T_CORR : i == 0 ? HoloToken.TEXT_SECONDARY : HoloToken.TEXT_MUTED;
+            UiRenderUtils.text(g, font, s, left + 12, y + 9 + i * 12, HoloTheme.argb(t));
         }
         y += statsH + 8;
 
@@ -305,7 +344,7 @@ public final class TimelineScreen extends Screen {
         int graphH = Math.max(40, Math.min(110, wh / 4));
         int laneH = 7;
         int cardH = 12 + graphH + 4 + 4 * (laneH + 1) + 8 + 10 + 10;
-        UiRenderUtils.panel(g, left, y, cw, cardH, UiTheme.RADIUS, UiTheme.CARD, UiTheme.BORDER);
+        card(g, left, y, cw, cardH);
         int gl = left + 12;
         int gr = left + cw - 12;
         int gt = y + 12;
@@ -313,19 +352,77 @@ public final class TimelineScreen extends Screen {
         legend(g, gl, gt + graphH + 4 + 4 * (laneH + 1) + 8);
         y += cardH + 8;
 
-        // events card
+        // events card: a vertical hairline spine with a glyph node per event
         int evH = wy + wh - pad - y;
         if (evH > 30) {
-            UiRenderUtils.panel(g, left, y, cw, evH, UiTheme.RADIUS, UiTheme.CARD, UiTheme.BORDER);
-            UiRenderUtils.text(g, font, "Recent events", left + 12, y + 9, UiTheme.TEXT);
+            card(g, left, y, cw, evH);
+            smallCaption(g, "RECENT EVENTS", left + 12, y + 9);
             int ey = y + 25;
-            if (eventLines.isEmpty()) {
-                UiRenderUtils.text(g, font, "No events recorded yet.", left + 12, ey, UiTheme.TEXT_MUTED);
+            int spine = left + SPINE_X;
+            if (eventLabels.isEmpty()) {
+                UiRenderUtils.text(g, font, "No events recorded yet.", left + 12, ey,
+                        HoloTheme.argb(HoloToken.TEXT_MUTED));
+            } else {
+                int bottom = Math.min(y + evH - 8, ey + eventLabels.size() * 11);
+                HoloFrames.vLine(g, spine, ey - 2, bottom, HoloTheme.argb(HoloToken.LINE));
             }
-            for (int i = 0; i < eventLines.size() && ey < y + evH - 10; i++) {
-                UiRenderUtils.text(g, font, eventLines.get(i), left + 12, ey, eventColors.get(i));
+            for (int i = 0; i < eventLabels.size() && ey < y + evH - 10; i++) {
+                HoloToken t = eventTokens.get(i);
+                node(g, spine, ey + 4, eventKinds.get(i), t);
+                UiRenderUtils.text(g, font, eventTimes.get(i), spine + 10, ey, HoloTheme.argb(HoloToken.TEXT_MUTED));
+                UiRenderUtils.text(g, font, eventLabels.get(i), spine + 10 + TIME_W + 8, ey,
+                        HoloTheme.argb(t == HoloToken.TEXT_MUTED ? HoloToken.TEXT_SECONDARY : t));
                 ey += 11;
             }
+        }
+    }
+
+    /** A quiet glass card: translucent raised glass with a faint hairline edge and no brackets. */
+    private static void card(GuiGraphics g, int x, int y, int w, int h) {
+        HoloFrames.frame(g, x, y, w, h, FrameLevel.QUIET, false, HoloToken.GLASS_RAISED, HoloToken.LINE, 0.5f);
+    }
+
+    private void smallCaption(GuiGraphics g, String s, int x, int y) {
+        UiRenderUtils.text(g, font, s, x, y, HoloTheme.argb(HoloToken.ACCENT, 0.85f));
+        HoloFrames.hLine(g, x + font.width(s) + 6, x + 200, y + 4, HoloTheme.argb(HoloToken.LINE_FAINT));
+    }
+
+    /** Square brackets around a readout, as hairlines (no fill). */
+    private static void readoutBrackets(GuiGraphics g, int x, int y, int w, int h, int argb) {
+        HoloFrames.vLine(g, x, y, y + h, argb);
+        HoloFrames.hLine(g, x + 1, x + 3, y, argb);
+        HoloFrames.hLine(g, x + 1, x + 3, y + h - 1, argb);
+        HoloFrames.vLine(g, x + w - 1, y, y + h, argb);
+        HoloFrames.hLine(g, x + w - 3, x + w - 1, y, argb);
+        HoloFrames.hLine(g, x + w - 3, x + w - 1, y + h - 1, argb);
+    }
+
+    /** The glyph node of an event, centred on (cx, cy), 5 px: a diamond for leases, a cross for corrections ... */
+    private static void node(GuiGraphics g, int cx, int cy, TimelineEvents.Kind kind, HoloToken token) {
+        switch (kind) {
+            case LEASE_GRANTED, LEASE_ENDED -> {
+                float a = kind == TimelineEvents.Kind.LEASE_ENDED ? 0.6f : 1f;
+                HoloFrames.plate(g, cx, cy - 2, 1, 1, token, a);
+                HoloFrames.plate(g, cx - 1, cy - 1, 3, 1, token, a);
+                HoloFrames.plate(g, cx - 2, cy, 5, 1, token, a);
+                HoloFrames.plate(g, cx - 1, cy + 1, 3, 1, token, a);
+                HoloFrames.plate(g, cx, cy + 2, 1, 1, token, a);
+            }
+            case CORRECTION -> {
+                for (int i = 0; i < 5; i++) {
+                    HoloFrames.plate(g, cx - 2 + i, cy - 2 + i, 1, 1, token, 1f);
+                    HoloFrames.plate(g, cx + 2 - i, cy - 2 + i, 1, 1, token, 1f);
+                }
+            }
+            case STOP_ALL -> HoloFrames.plate(g, cx - 2, cy - 2, 5, 5, token, 1f);
+            case JOB_CHANGED -> HoloFrames.plate(g, cx - 1, cy - 1, 3, 3, token, 1f);
+            case CHUNK_BURST -> {
+                HoloFrames.plate(g, cx - 2, cy - 2, 5, 1, token, 1f);
+                HoloFrames.plate(g, cx - 2, cy + 2, 5, 1, token, 1f);
+                HoloFrames.plate(g, cx - 2, cy - 1, 1, 3, token, 1f);
+                HoloFrames.plate(g, cx + 2, cy - 1, 1, 3, token, 1f);
+            }
+            default -> HoloFrames.plate(g, cx - 1, cy - 1, 3, 3, token, 0.6f);
         }
     }
 
@@ -340,9 +437,10 @@ public final class TimelineScreen extends Screen {
             long s = end - SECONDS + 1 + i;
             max = Math.max(max, Math.max(pr.get(s, PacketLab.RATE_IN_COUNT), pr.get(s, PacketLab.RATE_OUT_COUNT)));
         }
-        UiRenderUtils.roundedRect(g, left - 4, top - 4, w + 8, h + 8, UiTheme.RADIUS_SMALL, UiTheme.FIELD);
+        HoloFrames.plate(g, left - 4, top - 4, w + 8, h + 8, HoloToken.FIELD, 1f);
+        int grid = HoloTheme.argb(HoloToken.LINE_FAINT, 0.6f);
         for (int q = 1; q < 4; q++) {
-            UiRenderUtils.hLine(g, left, right, top + h * q / 4, 0xFF1A1E26);
+            HoloFrames.hLine(g, left, right, top + h * q / 4, grid);
         }
         for (int i = 0; i < SECONDS; i++) {
             long s = end - SECONDS + 1 + i;
@@ -351,35 +449,34 @@ public final class TimelineScreen extends Screen {
             int xm = (x0 + x1) / 2;
             boolean burst = er.sum(s, 5, PacketLab.EV_CORRECTIONS) >= 3;
             if (burst) {
-                g.fill(x0, top, x1 + 1, top + h, 0x40EF4444);
+                HoloFrames.plate(g, x0, top, x1 + 1 - x0, h, T_CORR, 0.25f);
             }
             int in = pr.get(s, PacketLab.RATE_IN_COUNT);
             int out = pr.get(s, PacketLab.RATE_OUT_COUNT);
             int hin = in * (h - 2) / max;
             int hout = out * (h - 2) / max;
-            g.fill(x0, top + h - hin, xm, top + h, C_IN);
-            g.fill(xm, top + h - hout, x1, top + h, C_OUT);
-            lane(g, x0, x1, lanesTop, laneH, er.get(s, PacketLab.EV_CHUNKS), C_CHUNK);
-            lane(g, x0, x1, lanesTop + (laneH + 1), laneH, er.get(s, PacketLab.EV_CORRECTIONS), C_CORR);
+            HoloFrames.plate(g, x0, top + h - hin, xm - x0, hin, T_IN, 1f);
+            HoloFrames.plate(g, xm, top + h - hout, x1 - xm, hout, T_OUT, 1f);
+            lane(g, x0, x1, lanesTop, laneH, er.get(s, PacketLab.EV_CHUNKS), T_CHUNK);
+            lane(g, x0, x1, lanesTop + (laneH + 1), laneH, er.get(s, PacketLab.EV_CORRECTIONS), T_CORR);
             lane(g, x0, x1, lanesTop + 2 * (laneH + 1), laneH,
-                    er.get(s, PacketLab.EV_LEASE_GRANTS) + er.get(s, PacketLab.EV_LEASE_ENDS), C_LEASE);
-            lane(g, x0, x1, lanesTop + 3 * (laneH + 1), laneH, er.get(s, PacketLab.EV_JOBS), C_JOB);
+                    er.get(s, PacketLab.EV_LEASE_GRANTS) + er.get(s, PacketLab.EV_LEASE_ENDS), T_LEASE);
+            lane(g, x0, x1, lanesTop + 3 * (laneH + 1), laneH, er.get(s, PacketLab.EV_JOBS), T_JOB);
         }
-        UiRenderUtils.text(g, font, maxLabel, left + 2, top + 2, UiTheme.TEXT_MUTED);
+        UiRenderUtils.text(g, font, maxLabel, left + 2, top + 2, HoloTheme.argb(HoloToken.TEXT_MUTED));
     }
 
-    private static void lane(GuiGraphics g, int x0, int x1, int y, int h, int count, int color) {
-        g.fill(x0, y, x1, y + h, 0x14FFFFFF);
+    private static void lane(GuiGraphics g, int x0, int x1, int y, int h, int count, HoloToken token) {
+        HoloFrames.plate(g, x0, y, x1 - x0, h, HoloToken.LINE_FAINT, 0.35f);
         if (count > 0) {
-            int alpha = Math.min(255, 110 + count * 30);
-            g.fill(x0, y, x1, y + h, (alpha << 24) | (color & 0xFFFFFF));
+            HoloFrames.plate(g, x0, y, x1 - x0, h, token, Math.min(1f, (110 + count * 30) / 255f));
         }
     }
 
     private void legend(GuiGraphics g, int x, int y) {
         for (int i = 0; i < LEGEND.length; i++) {
-            UiRenderUtils.roundedRect(g, x, y + 1, 7, 7, 2, LEGEND_COLORS[i]);
-            UiRenderUtils.text(g, font, LEGEND[i], x + 11, y, UiTheme.TEXT_DIM);
+            HoloFrames.plate(g, x, y + 2, 5, 5, LEGEND_TOKENS[i], 1f);
+            UiRenderUtils.text(g, font, LEGEND[i], x + 11, y, HoloTheme.argb(HoloToken.TEXT_SECONDARY));
             x += 11 + font.width(LEGEND[i]) + 12;
         }
     }

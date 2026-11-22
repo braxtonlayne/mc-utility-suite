@@ -1,5 +1,7 @@
 package com.utilitysuite.ui;
 
+import com.utilitysuite.core.api.visual.HoloToken;
+import com.utilitysuite.tools.packetlab.TimelineEvents;
 import com.utilitysuite.ui.kit.MenuScale;
 import org.junit.jupiter.api.Test;
 
@@ -47,5 +49,21 @@ class TimelineScreenLayoutTest {
                 assertTrue(ww > 600, "wide enough at GUI scale " + gs);
             }
         }
+    }
+
+    @Test
+    void timestampsFillAFixedDigitGrid() {
+        assertEquals("  -3.2s", TimelineScreen.timeText(3.2));
+        assertEquals(" -12.3s", TimelineScreen.timeText(12.34));
+        assertEquals("-120.0s", TimelineScreen.timeText(120.0));
+        assertEquals(TimelineScreen.timeText(0.1).length(), TimelineScreen.timeText(99.9).length());
+    }
+
+    @Test
+    void everyEventKindHasAToken() {
+        for (TimelineEvents.Kind k : TimelineEvents.Kind.values()) {
+            assertTrue(TimelineScreen.tokenOf(k, "x") != null, k.name());
+        }
+        assertEquals(HoloToken.DANGER, TimelineScreen.tokenOf(TimelineEvents.Kind.CORRECTION, "x"));
     }
 }

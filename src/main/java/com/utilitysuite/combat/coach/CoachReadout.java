@@ -13,6 +13,8 @@ public final class CoachReadout {
     public boolean swingReady;
     /** Swing now would be a critical hit (ready and falling). */
     public boolean critReady;
+    /** Attack recharge 0..1, written by the HUD layer from the player each frame (the cooldown arc). */
+    public float charge01;
     public boolean shieldBreak;
     public boolean retreat;
     /** {@link ThreatSource#NONE}, PROJECTILE or BLAST. */

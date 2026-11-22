@@ -14,6 +14,8 @@ import com.utilitysuite.ui.kit.UiNode;
 
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
+import net.minecraft.locale.Language;
 
 /**
  * Generic settings UI: each module is a card whose header holds its name, a short muted description and the enable
@@ -144,14 +146,38 @@ public final class SettingsRenderer {
         int w = p.width();
         SettingWidgetMapper.Kind kind = SettingWidgetMapper.kindOf(spec);
         int ww = kind == SettingWidgetMapper.Kind.TOGGLE ? ToggleSwitch.W : Math.min(200, w * 46 / 100);
-        LabelNode label = p.rowLabel(spec.label(), 0, w - ww - 10, Panel.WHITE);
+        // resolved once per page build (rows are rebuilt, not drawn from this method every frame)
+        String text = resolve(access.moduleId(), spec.key(), spec.label(), LANG);
+        String tip = resolve(access.moduleId(), spec.key() + TOOLTIP_SUFFIX, spec.tooltip(), LANG);
+        LabelNode label = p.rowLabel(text, 0, w - ww - 10, Panel.WHITE);
         UiNode node = widget(p, spec, access, ww, w - ww);
         node.animId(SettingWidgetMapper.widgetKey(access.moduleId(), spec)); // survives Panel.rebuild()
-        if (!spec.tooltip().isEmpty()) {
-            label.tooltip(spec.tooltip());
-            node.tooltip(spec.tooltip());
+        if (!tip.isEmpty()) {
+            label.tooltip(tip);
+            node.tooltip(tip);
         }
         p.nextRow();
+    }
+
+    static final String TOOLTIP_SUFFIX = ".tooltip";
+    private static final String KEY_PREFIX = "setting.utilitysuite.";
+
+    /** The language table of the game: the translation of a key, or null when the key is missing. */
+    private static final Function<String, String> LANG =
+            key -> Language.getInstance().has(key) ? Language.getInstance().getOrDefault(key) : null;
+
+    /** The lang key of a setting label ({@code key}) or tooltip ({@code key + ".tooltip"}). */
+    static String langKey(String moduleId, String keyPart) {
+        return KEY_PREFIX + moduleId + "." + keyPart;
+    }
+
+    /**
+     * The text for {@code setting.utilitysuite.<moduleId>.<keyPart>} from {@code lookup} (null or blank = absent), or
+     * {@code fallback} (the label or tooltip of the spec) when the table has no entry.
+     */
+    static String resolve(String moduleId, String keyPart, String fallback, Function<String, String> lookup) {
+        String found = lookup.apply(langKey(moduleId, keyPart));
+        return found == null || found.isBlank() ? fallback : found;
     }
 
     static UiNode widget(Panel p, SettingSpec spec, SettingsAccess access, int w, int dx) {
