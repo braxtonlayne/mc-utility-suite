@@ -10,6 +10,7 @@ import com.utilitysuite.core.api.ProfileConfig;
 import com.utilitysuite.core.api.Services;
 import com.utilitysuite.core.api.SettingSpec;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.RenderType;
 import net.minecraft.util.Mth;
@@ -20,8 +21,11 @@ import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
 import java.util.List;
 
 /**
- * "The Read": a ring over the Combat Assistant's target that fills with the target's attack cooldown and tilts toward
- * its predicted strafe. Reads {@link ReadState}; draws in {@link RenderLevelStageEvent} with one batched line buffer;
+ * "The Read": the Combat Assistant's read of its target's attack cooldown and predicted strafe. By default it is
+ * published into the primary target mark (an arc under the reticle with a chevron on the strafe side, see
+ * {@link TargetHud#offerRead}); with the "Ring" setting it is drawn instead as a ring over the target that fills
+ * with the cooldown and tilts toward the strafe. Reads {@link ReadState}; the ring draws in
+ * {@link RenderLevelStageEvent} with one batched line buffer;
  * off by default; nothing is drawn when idle or in Clean-Screen. All geometry is in {@link ReadRingGeometry}.
  * <p>
  * The constructor, {@link #ID} and {@link #onRenderLevel} are fixed for the volley (the combat wiring registers the
@@ -33,6 +37,8 @@ public final class ReadRingModule implements IModule, IConfigurable {
     public static final String K_RADIUS = "radius";
     public static final String K_OPACITY = "opacity";
     public static final String K_TILT = "show_tilt";
+    /** Style: false (default) = charge arc and strafe chevron on the target reticle, true = the world-space ring. */
+    public static final String K_RING = "ring";
     /** Ring height above the top of the target's box. */
     static final float LIFT = 0.25f;
 
@@ -42,13 +48,14 @@ public final class ReadRingModule implements IModule, IConfigurable {
     private float radius = 0.6f;
     private float opacity = 0.8f;
     private boolean showTilt = true;
+    private boolean ring;
 
     public ReadRingModule(ReadState read) {
         this.read = read;
     }
 
     public void onRenderLevel(RenderLevelStageEvent event) {
-        if (!enabled || !read.active || event.getStage() != RenderLevelStageEvent.Stage.AFTER_PARTICLES) {
+        if (!enabled || !ring || !read.active || event.getStage() != RenderLevelStageEvent.Stage.AFTER_PARTICLES) {
             return;
         }
         Minecraft mc = Minecraft.getInstance();
@@ -135,8 +142,18 @@ public final class ReadRingModule implements IModule, IConfigurable {
         this.enabled = enabled;
     }
 
+    /**
+     * Reticle style (the default): hands the target's charge and predicted strafe side to the {@link TargetHud}
+     * primary mark, which the Shell draws as the arc and chevron under the reticle.
+     */
     @Override
     public void onTick() {
+        if (!enabled || ring || !read.active || read.targetId < 0) {
+            return;
+        }
+        LocalPlayer self = Minecraft.getInstance().player;
+        int side = showTilt && self != null ? ReadRingGeometry.screenSide(read.tiltX, read.tiltZ, self.getYRot()) : 0;
+        TargetHud.offerRead(read.targetId, read.charge, side);
     }
 
     @Override
@@ -144,6 +161,11 @@ public final class ReadRingModule implements IModule, IConfigurable {
         radius = (float) p.getDouble(ID, K_RADIUS, 0.6);
         opacity = (float) p.getDouble(ID, K_OPACITY, 0.8);
         showTilt = p.getBool(ID, K_TILT, true);
+        ring = p.getBool(ID, K_RING, false);
+    }
+
+    boolean ring() {
+        return ring;
     }
 
     @Override
@@ -158,7 +180,9 @@ public final class ReadRingModule implements IModule, IConfigurable {
                         "Radius of the ring over the target, in blocks."),
                 SettingSpec.decimal(K_OPACITY, "Opacity", 0.8, 0.1, 1.0, "", "How solid the ring is drawn."),
                 SettingSpec.bool(K_TILT, "Show predicted strafe", true, "",
-                        "Tilt the ring toward the side the target is predicted to strafe."));
+                        "Show the side the target is predicted to strafe (reticle chevron, or ring tilt)."),
+                SettingSpec.bool(K_RING, "Ring", false, "",
+                        "Draw the read as a ring over the target in the world instead of on the target reticle."));
     }
 
     @Override
