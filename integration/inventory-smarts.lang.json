@@ -1,0 +1,10 @@
+{
+  "setting.utilitysuite.survival.use_inventory_food": "Use food from the whole inventory",
+  "setting.utilitysuite.survival.use_inventory_food.tooltip": "Pull the best food from the pack into the hotbar when the hotbar has none",
+  "setting.utilitysuite.survival.eat_swap_back": "Swap back",
+  "setting.utilitysuite.survival.eat_swap_back.tooltip": "Put the hotbar item back after eating food pulled from the pack",
+  "setting.utilitysuite.inventory.refill_same_class": "Allow same class",
+  "setting.utilitysuite.inventory.refill_same_class.tooltip": "When a tool, weapon, totem or food runs out, refill the slot with the best remaining item of the same kind (unpinned slots)",
+  "setting.utilitysuite.inventory.refill_same_class_pinned": "Allow same class (pinned)",
+  "setting.utilitysuite.inventory.refill_same_class_pinned.tooltip": "Also let pinned slots take a different item of the same kind"
+}

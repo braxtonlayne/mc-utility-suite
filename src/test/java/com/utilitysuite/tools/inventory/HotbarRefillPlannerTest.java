@@ -141,6 +141,150 @@ class HotbarRefillPlannerTest {
         assertEquals(0, m.count[9]);
     }
 
+    // ---- class refill -----------------------------------------------------------------------------------------------
+
+    static final int PICK = 20;
+    static final int TOTEM = 21;
+    static final int STEAK = 22;
+    static final int PICK_KEY = 0x80000001;
+
+    private static HotbarRefillPlanner.ItemClasses classes() {
+        HotbarRefillPlanner.ItemClasses c = new HotbarRefillPlanner.ItemClasses();
+        c.clear();
+        return c;
+    }
+
+    private static void tool(InventoryModel m, HotbarRefillPlanner.ItemClasses c, int slot, int itemId, int key,
+                             int cls, int score) {
+        m.set(slot, itemId, key, 1, 1, 0);
+        c.set(slot, cls, score);
+    }
+
+    private static int planClasses(HotbarRefillPlanner p, InventoryModel m, HotbarRefillPlanner.ItemClasses c,
+                                   int pinned, boolean unpinnedOk, boolean pinnedOk, ClickPlan plan) {
+        plan.clear();
+        return p.plan(m, c, ALL, 25, pinned, unpinnedOk, pinnedOk, plan);
+    }
+
+    @Test
+    void brokenToolIsReplacedByTheBestRemainingToolOfItsClass() {
+        HotbarRefillPlanner planner = new HotbarRefillPlanner();
+        InventoryModel m = inv();
+        HotbarRefillPlanner.ItemClasses c = classes();
+        ClickPlan plan = new ClickPlan();
+        tool(m, c, 3, PICK, PICK_KEY, HotbarRefillPlanner.ItemClasses.PICKAXE, 500);
+        assertEquals(0, planClasses(planner, m, c, 0, true, false, plan));
+
+        m.set(3, 0, 0, 0, 0, 0); // the pickaxe broke
+        c.set(3, 0, 0);
+        tool(m, c, 12, PICK, PICK_KEY + 1, HotbarRefillPlanner.ItemClasses.PICKAXE, 200);
+        tool(m, c, 20, PICK, PICK_KEY + 2, HotbarRefillPlanner.ItemClasses.PICKAXE, 800);
+        tool(m, c, 25, PICK, PICK_KEY + 3, HotbarRefillPlanner.ItemClasses.PICKAXE, -1);
+        tool(m, c, 26, 99, 99, HotbarRefillPlanner.ItemClasses.SWORD, 900);
+        assertEquals(1, planClasses(planner, m, c, 0, true, false, plan));
+        assertEquals(1, plan.size());
+        assertEquals(20, plan.slot(0), "highest scoring pickaxe, not the nearly broken one or the sword");
+        assertEquals(3, plan.button(0));
+        assertEquals(Click.SWAP, plan.click(0));
+        assertEquals(PICK_KEY + 2, m.key[3]);
+        assertEquals(0, m.count[20]);
+    }
+
+    @Test
+    void usedTotemIsReplacedByTheNextTotem() {
+        HotbarRefillPlanner planner = new HotbarRefillPlanner();
+        InventoryModel m = inv();
+        HotbarRefillPlanner.ItemClasses c = classes();
+        ClickPlan plan = new ClickPlan();
+        tool(m, c, 8, TOTEM, TOTEM, HotbarRefillPlanner.ItemClasses.TOTEM, 0);
+        planClasses(planner, m, c, 0, true, false, plan);
+        m.set(8, 0, 0, 0, 0, 0);
+        c.set(8, 0, 0);
+        tool(m, c, 14, TOTEM, TOTEM, HotbarRefillPlanner.ItemClasses.TOTEM, 0);
+        assertEquals(1, planClasses(planner, m, c, 0, true, false, plan));
+        assertEquals(14, plan.slot(0));
+        assertEquals(8, plan.button(0));
+    }
+
+    @Test
+    void pinnedSlotKeepsExactlyItsOwnItem() {
+        HotbarRefillPlanner planner = new HotbarRefillPlanner();
+        InventoryModel m = inv();
+        HotbarRefillPlanner.ItemClasses c = classes();
+        ClickPlan plan = new ClickPlan();
+        tool(m, c, 0, PICK, PICK_KEY, HotbarRefillPlanner.ItemClasses.PICKAXE, 500);
+        planClasses(planner, m, c, 1, true, false, plan);
+        m.set(0, 0, 0, 0, 0, 0);
+        c.set(0, 0, 0);
+        tool(m, c, 12, PICK, PICK_KEY + 1, HotbarRefillPlanner.ItemClasses.PICKAXE, 800);
+        assertEquals(0, planClasses(planner, m, c, 1, true, false, plan), "pinned: no different item");
+        assertEquals(1, planClasses(planner, m, c, 1, true, true, plan), "pinned with the option on");
+    }
+
+    @Test
+    void identicalItemIsPreferredOverAClassMatch() {
+        HotbarRefillPlanner planner = new HotbarRefillPlanner();
+        InventoryModel m = inv();
+        HotbarRefillPlanner.ItemClasses c = classes();
+        ClickPlan plan = new ClickPlan();
+        tool(m, c, 1, PICK, PICK_KEY, HotbarRefillPlanner.ItemClasses.PICKAXE, 300);
+        planClasses(planner, m, c, 0, true, false, plan);
+        m.set(1, 0, 0, 0, 0, 0);
+        c.set(1, 0, 0);
+        tool(m, c, 15, PICK, PICK_KEY + 5, HotbarRefillPlanner.ItemClasses.PICKAXE, 900);
+        tool(m, c, 16, PICK, PICK_KEY, HotbarRefillPlanner.ItemClasses.PICKAXE, 100); // identical key, lower score
+        assertEquals(1, planClasses(planner, m, c, 0, true, false, plan));
+        assertEquals(16, plan.slot(0));
+    }
+
+    @Test
+    void slotTheUserClearedWithAScreenOpenIsNotRefilledByClass() {
+        HotbarRefillPlanner planner = new HotbarRefillPlanner();
+        InventoryModel m = inv();
+        HotbarRefillPlanner.ItemClasses c = classes();
+        ClickPlan plan = new ClickPlan();
+        tool(m, c, 4, PICK, PICK_KEY, HotbarRefillPlanner.ItemClasses.PICKAXE, 500);
+        planClasses(planner, m, c, 0, true, false, plan);
+        m.set(4, 0, 0, 0, 0, 0);
+        c.set(4, 0, 0);
+        tool(m, c, 13, PICK, PICK_KEY + 1, HotbarRefillPlanner.ItemClasses.PICKAXE, 800);
+        planner.observe(m, c); // inventory screen open
+        assertFalse(planner.remembers(4));
+        assertEquals(0, planClasses(planner, m, c, 0, true, false, plan));
+    }
+
+    @Test
+    void foodFallsBackToTheBestFoodWhenTheIdenticalStackIsGone() {
+        HotbarRefillPlanner planner = new HotbarRefillPlanner();
+        InventoryModel m = inv();
+        HotbarRefillPlanner.ItemClasses c = classes();
+        ClickPlan plan = new ClickPlan();
+        m.set(5, BREAD, BREAD, 3, 64, InventoryModel.FLAG_FOOD);
+        c.set(5, HotbarRefillPlanner.ItemClasses.FOOD, 80);
+        planClasses(planner, m, c, 0, true, false, plan);
+        m.set(5, 0, 0, 0, 0, 0);
+        c.set(5, 0, 0);
+        m.set(18, STEAK, STEAK, 12, 64, InventoryModel.FLAG_FOOD);
+        c.set(18, HotbarRefillPlanner.ItemClasses.FOOD, 160);
+        assertEquals(1, planClasses(planner, m, c, 0, true, false, plan));
+        assertEquals(18, plan.slot(0));
+        assertEquals(12, m.count[5]);
+    }
+
+    @Test
+    void classRefillOffMeansNothingChanges() {
+        HotbarRefillPlanner planner = new HotbarRefillPlanner();
+        InventoryModel m = inv();
+        HotbarRefillPlanner.ItemClasses c = classes();
+        ClickPlan plan = new ClickPlan();
+        tool(m, c, 0, PICK, PICK_KEY, HotbarRefillPlanner.ItemClasses.PICKAXE, 500);
+        planClasses(planner, m, c, 0, false, false, plan);
+        m.set(0, 0, 0, 0, 0, 0);
+        c.set(0, 0, 0);
+        tool(m, c, 12, PICK, PICK_KEY + 1, HotbarRefillPlanner.ItemClasses.PICKAXE, 800);
+        assertEquals(0, planClasses(planner, m, c, 0, false, false, plan));
+    }
+
     @Test
     void planningAllocatesNothing() {
         Assumptions.assumeTrue(AllocationProbe.supported());

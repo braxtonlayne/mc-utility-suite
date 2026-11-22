@@ -8,8 +8,17 @@ import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.inventory.Slot;
+import net.minecraft.world.food.FoodProperties;
 import net.minecraft.world.item.ArmorItem;
+import net.minecraft.world.item.AxeItem;
 import net.minecraft.world.item.BlockItem;
+import net.minecraft.world.item.BowItem;
+import net.minecraft.world.item.HoeItem;
+import net.minecraft.world.item.PickaxeItem;
+import net.minecraft.world.item.ShieldItem;
+import net.minecraft.world.item.ShovelItem;
+import net.minecraft.world.item.SwordItem;
+import net.minecraft.world.item.TieredItem;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
@@ -94,6 +103,73 @@ final class McInventory {
                 model.equippedScore[a] = isArmor ? rawScore(player.level(), st, (ArmorItem) st.getItem()) : 0;
             }
         }
+    }
+
+    /**
+     * Fills the item class and ranking score of the 36 inventory slots. Tools and weapons score by material tier, then
+     * enchantment count, then remaining durability (under 10% left is -1: never used as a replacement); food by
+     * nutrition and saturation (foods with side effects are not a class); blocks by stack size. No allocation.
+     */
+    void readClasses(Player player, HotbarRefillPlanner.ItemClasses out) {
+        Inventory inv = player.getInventory();
+        for (int s = 0; s < InventoryModel.SLOTS; s++) {
+            ItemStack st = inv.items.get(s);
+            if (st.isEmpty()) {
+                out.code[s] = HotbarRefillPlanner.ItemClasses.NONE;
+                out.score[s] = 0;
+                continue;
+            }
+            Item item = st.getItem();
+            int cls = HotbarRefillPlanner.ItemClasses.NONE;
+            int score = 0;
+            if (item instanceof PickaxeItem) {
+                cls = HotbarRefillPlanner.ItemClasses.PICKAXE;
+            } else if (item instanceof AxeItem) {
+                cls = HotbarRefillPlanner.ItemClasses.AXE;
+            } else if (item instanceof ShovelItem) {
+                cls = HotbarRefillPlanner.ItemClasses.SHOVEL;
+            } else if (item instanceof HoeItem) {
+                cls = HotbarRefillPlanner.ItemClasses.HOE;
+            } else if (item instanceof SwordItem) {
+                cls = HotbarRefillPlanner.ItemClasses.SWORD;
+            } else if (item instanceof BowItem) {
+                cls = HotbarRefillPlanner.ItemClasses.BOW;
+            } else if (item instanceof ShieldItem) {
+                cls = HotbarRefillPlanner.ItemClasses.SHIELD;
+            } else if (item == Items.TOTEM_OF_UNDYING) {
+                cls = HotbarRefillPlanner.ItemClasses.TOTEM;
+            } else {
+                FoodProperties fp = st.get(DataComponents.FOOD);
+                if (fp != null) {
+                    if (fp.effects().isEmpty()) {
+                        cls = HotbarRefillPlanner.ItemClasses.FOOD;
+                        score = fp.nutrition() * 10 + (int) (fp.saturation() * 10f);
+                    }
+                } else if (item instanceof BlockItem) {
+                    cls = HotbarRefillPlanner.ItemClasses.BLOCKS;
+                    score = st.getCount();
+                }
+            }
+            if (cls >= HotbarRefillPlanner.ItemClasses.PICKAXE && cls <= HotbarRefillPlanner.ItemClasses.SHIELD) {
+                score = gearScore(st, item);
+            }
+            out.code[s] = cls;
+            out.score[s] = score;
+        }
+    }
+
+    private static int gearScore(ItemStack st, Item item) {
+        int max = st.getMaxDamage();
+        int durability = 9;
+        if (st.isDamageableItem() && max > 0) {
+            int left = max - st.getDamageValue();
+            if (left * 10 < max) {
+                return -1; // nearly broken
+            }
+            durability = left * 9 / max;
+        }
+        int tier = item instanceof TieredItem t ? t.getTier().getUses() / 10 : 0;
+        return tier * 100 + st.getEnchantments().size() * 10 + durability;
     }
 
     private int candidateScore(Level level, ItemStack st, ArmorItem armor) {
