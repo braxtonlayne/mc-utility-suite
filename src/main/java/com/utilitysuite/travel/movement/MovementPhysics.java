@@ -27,7 +27,68 @@ public final class MovementPhysics {
         default boolean fullBlock(int x, int y, int z) {
             return solid(x, y, z);
         }
+
+        // ---- exact shapes (contract of the 2026-11-22 control model; cubes stay the fast path) ----------------------
+
+        /**
+         * False when every solid cell of this grid is a unit cube: collision then never asks for boxes. A grid that
+         * returns true must answer {@link #boxCount} and {@link #box} for every cell.
+         */
+        default boolean shaped() {
+            return false;
+        }
+
+        /** Number of collision boxes of the block in this cell (0 = nothing to collide with). */
+        default int boxCount(int x, int y, int z) {
+            return solid(x, y, z) ? 1 : 0;
+        }
+
+        /**
+         * Writes box {@code i} of the cell into {@code out[off .. off + 5]} as block-local minX, minY, minZ, maxX,
+         * maxY, maxZ. A box may rise above its cell (fences and walls: maxY 1.5), so collision also scans one cell
+         * below the body. Allocation free.
+         */
+        default void box(int x, int y, int z, int i, float[] out, int off) {
+            out[off] = 0f;
+            out[off + 1] = 0f;
+            out[off + 2] = 0f;
+            out[off + 3] = 1f;
+            out[off + 4] = 1f;
+            out[off + 5] = 1f;
+        }
+
+        /** What the block in this cell does to a body: one of the {@code SURFACE_*} constants. */
+        default byte surface(int x, int y, int z) {
+            return solid(x, y, z) ? SURFACE_NORMAL : SURFACE_NONE;
+        }
+
+        /** Slipperiness of the block in this cell when stood on (0.6 for most blocks, 0.98 ice). */
+        default float slipperiness(int x, int y, int z) {
+            return (float) DEFAULT_SLIPPERINESS;
+        }
     }
+
+    /** Air or a block with no effect on a body. */
+    public static final byte SURFACE_NONE = 0;
+    public static final byte SURFACE_NORMAL = 1;
+    public static final byte SURFACE_ICE = 2;
+    /** Bounces unless the body sneaks. */
+    public static final byte SURFACE_SLIME = 3;
+    public static final byte SURFACE_HONEY = 4;
+    public static final byte SURFACE_SOUL_SAND = 5;
+    /** Ladder, vine, scaffolding-free climbables. */
+    public static final byte SURFACE_CLIMBABLE = 6;
+    /** Still water at least one block deep: a damage-free landing. */
+    public static final byte SURFACE_WATER = 7;
+    /** Cactus, berry bush, magma, fire, lava: never a landing. */
+    public static final byte SURFACE_HARM = 8;
+    /** Cobweb, powder snow: the body gets stuck. */
+    public static final byte SURFACE_STUCK = 9;
+    /**
+     * A shape that depends on position or on the entity (offset blocks, scaffolding), or anything else the replica
+     * does not model. Fail-safe rule: a plan whose roll touches such a cell is never committed to.
+     */
+    public static final byte SURFACE_UNMODELLED = 10;
 
     public static final double HALF_WIDTH = 0.3;
     public static final double HEIGHT = 1.8;
@@ -80,6 +141,15 @@ public final class MovementPhysics {
         this.onGround = onGround;
         this.fallDistance = 0;
         return this;
+    }
+
+    /**
+     * Advances one tick with the sneak key state. Contract of the 2026-11-22 control model: while sneaking on the
+     * ground the input is scaled by 0.3 and the body backs off from edges like vanilla (not on the touchdown tick).
+     * Until the shape-physics work lands this ignores {@code sneak} and behaves like the six-argument tick.
+     */
+    public void tick(int forward, int strafe, float yawDeg, boolean sprint, boolean jump, boolean sneak, Voxels w) {
+        tick(forward, strafe, yawDeg, sprint, jump, w);
     }
 
     /**

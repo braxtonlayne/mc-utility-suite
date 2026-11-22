@@ -1,5 +1,6 @@
 package com.utilitysuite.core.api;
 
+import com.utilitysuite.core.api.visual.IVisuals;
 import java.util.Objects;
 
 /**
@@ -25,6 +26,8 @@ public final class Services {
     private static volatile IRoutePlanner routePlanner;
     private static volatile IRouteRunner routeRunner;
     private static volatile IManualLookAssist manualLook;
+    private static volatile ISharedControl sharedControl;
+    private static volatile IVisuals visuals;
 
     private Services() {
     }
@@ -67,6 +70,24 @@ public final class Services {
         return m != null ? m : IManualLookAssist.NONE;
     }
 
+    /** Control shared with the user. Never null: {@link ISharedControl#NONE} until the core registers one. */
+    public static ISharedControl sharedControl() {
+        ISharedControl s = sharedControl;
+        return s != null ? s : ISharedControl.NONE;
+    }
+
+    /**
+     * The Shell's drawing services. Never null: {@link IVisuals#NONE} (draws nothing, still hands out the shared
+     * mark and authority tables) until the Shell registers one.
+     */
+    public static IVisuals visuals() {
+        IVisuals v = visuals;
+        return v != null ? v : IVisuals.NONE;
+    }
+
+    /** Null until the Shell registered its drawing services. */
+    public static IVisuals visualsOrNull() { return visuals; }
+
     public static void registerArbiter(IActionArbiter s) { arbiter = s; }
     public static void registerInput(IInputSmoother s) { input = s; }
     public static void registerClicker(IContainerClicker s) { clicker = s; }
@@ -84,12 +105,15 @@ public final class Services {
     public static void registerRoutePlanner(IRoutePlanner s) { routePlanner = s; }
     public static void registerRouteRunner(IRouteRunner s) { routeRunner = s; }
     public static void registerManualLook(IManualLookAssist s) { manualLook = s; }
+    public static void registerSharedControl(ISharedControl s) { sharedControl = s; }
+    public static void registerVisuals(IVisuals s) { visuals = s; }
 
     /** Test hook: clears every registration. */
     public static void resetForTests() {
         arbiter = null; input = null; clicker = null; modState = null; modules = null; events = null; goals = null;
         navigator = null; worldKnowledge = null; storage = null; waypoints = null; autopilot = null; humanizer = null;
         bodySims = null; routePlanner = null; routeRunner = null; manualLook = null;
+        sharedControl = null; visuals = null;
     }
 
     private static <T> T require(T value, String name) {
