@@ -27,6 +27,10 @@ public final class HoloTheme {
     public static float hudOpacity = 1f;
     /** Scale of the in-game HUD, 0.75 to 1.5. The menu keeps its own scale. */
     public static float hudScale = 1f;
+    /** Draw text in the suite font when its files are present (appearance setting "font"); vanilla otherwise. */
+    public static boolean suiteFont = true;
+    /** Show the opt-in "autopilot armed" corner marker while the autopilot is on and idle (default off). */
+    public static boolean armedMarker;
 
     static {
         put(HoloToken.VOID, 0xFF05080B);
