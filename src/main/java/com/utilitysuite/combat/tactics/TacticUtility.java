@@ -58,6 +58,12 @@ public final class TacticUtility {
     /** Duel mode ("Never disengage"): FLEE is never chosen; its score goes to RETREAT_HEAL, which the caller runs as a
      * reset (make distance, heal, come back). */
     public boolean duelMode;
+    /**
+     * A reset can heal without items: hunger is high enough for natural regeneration (food level 18+). In duel mode a
+     * reset with neither this nor a healing item only hands the opponent time, so FLEE's score is dropped instead of
+     * becoming a reset and the fight goes on.
+     */
+    public boolean canRegenerate = true;
 
     private final double[] scores = new double[Tactic.values().length];
     private static final Tactic[] TACTICS = Tactic.values();
@@ -86,7 +92,9 @@ public final class TacticUtility {
         scores[Tactic.FLEE.ordinal()] = (1.0 - a) * (1.0 - hp) * (healingItems > 0 ? 0.8 : 2.0);
         if (duelMode) {
             int r = Tactic.RETREAT_HEAL.ordinal();
-            scores[r] = Math.max(scores[r], scores[Tactic.FLEE.ordinal()]);
+            if (healingItems > 0 || canRegenerate) {
+                scores[r] = Math.max(scores[r], scores[Tactic.FLEE.ordinal()]);
+            }
             scores[Tactic.FLEE.ordinal()] = 0.0;
         }
         double hg = 0.0;
@@ -110,7 +118,14 @@ public final class TacticUtility {
     public Tactic choose() {
         scoreAll();
         if (duelMode && current == Tactic.FLEE) {
-            current = Tactic.RETREAT_HEAL; // duel mode switched on mid-flight: the flight becomes a reset
+            // duel mode switched on mid-flight: the flight becomes a reset, or the fight if a reset cannot heal
+            current = healingItems > 0 || canRegenerate ? Tactic.RETREAT_HEAL : Tactic.FIGHT;
+        }
+        if (current == Tactic.RETREAT_HEAL && healingItems <= 0 && !(duelMode && canRegenerate)) {
+            // the reset can no longer heal (last item used, hunger fell below regeneration): it ends now, it does
+            // not wait to be outscored, since in a losing fight every score is near zero and the hysteresis would hold it
+            current = Tactic.FIGHT;
+            dwell = 0;
         }
         Tactic best = current;
         double bestScore = scores[current.ordinal()] + HYSTERESIS;

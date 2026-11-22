@@ -11,6 +11,8 @@ public final class CombatSnapshot {
     public double px, py, pz, eyeY;
     public float yaw, pitch;
     public float health, maxHealth, absorption;
+    /** Hunger points 0..20 (natural regeneration needs 18+). */
+    public int foodLevel = 20;
     public boolean onGround, inWater, climbing, usingItem, screenOpen;
     public float fallDistance;
     /** The local player's velocity (blocks per tick) and sprint state, for forward simulation. */

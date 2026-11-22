@@ -905,6 +905,9 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         lastTargetHealth = s.targetHealth;
     }
 
+    /** Food level from which vanilla natural regeneration heals. */
+    private static final int NATURAL_REGEN_FOOD = 18;
+
     private TacticUtility.Tactic chooseTactic(CombatSnapshot s) {
         TacticUtility u = utility;
         u.ownHealth = s.effectiveHealth();
@@ -919,6 +922,7 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         u.ceilingDeny = feel.ceilingDeny();
         u.gearRatio = gear.ratio(); // the gear read leads the observed DPS, which lags by seconds
         u.duelMode = settings.duelMode;
+        u.canRegenerate = s.foodLevel >= NATURAL_REGEN_FOOD;
         return u.choose();
     }
 

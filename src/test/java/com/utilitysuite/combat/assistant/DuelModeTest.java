@@ -61,6 +61,43 @@ class DuelModeTest {
     }
 
     @Test
+    void duelModeWithNoWayToHealFightsOnInsteadOfResetting() {
+        // arena finding 2026-11-22: out-geared, 4 HP, no food to regenerate and no healing items. A reset can never
+        // heal, so FIGHT never won again and the client kited for the rest of the round.
+        TacticUtility u = new TacticUtility();
+        u.duelMode = true;
+        u.canRegenerate = false;
+        u.healingItems = 0;
+        u.ownHealth = 4;
+        u.oppDps = 15;
+        u.ownDps = 1;
+        for (int t = 0; t < 60; t++) {
+            TacticUtility.Tactic c = u.choose();
+            assertNotEquals(TacticUtility.Tactic.FLEE, c);
+            assertNotEquals(TacticUtility.Tactic.RETREAT_HEAL, c, "a reset that cannot heal is not a reset");
+        }
+    }
+
+    @Test
+    void aResetEndsWhenHealingStopsBeingPossible() {
+        TacticUtility u = new TacticUtility();
+        u.duelMode = true;
+        u.ownHealth = 4;
+        u.oppDps = 15;
+        u.ownDps = 1;
+        for (int t = 0; t < 30; t++) {
+            u.choose();
+        }
+        assertEquals(TacticUtility.Tactic.RETREAT_HEAL, u.current(), "food to regenerate: a reset");
+        u.canRegenerate = false; // hunger dropped below 18 mid-reset
+        TacticUtility.Tactic c = null;
+        for (int t = 0; t < 30; t++) {
+            c = u.choose();
+        }
+        assertNotEquals(TacticUtility.Tactic.RETREAT_HEAL, c);
+    }
+
+    @Test
     void duelModeSwitchedOnMidFlightTurnsTheFlightIntoAReset() {
         TacticUtility u = new TacticUtility();
         u.ownHealth = 2;
