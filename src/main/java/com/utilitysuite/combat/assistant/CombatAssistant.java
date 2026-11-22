@@ -1,12 +1,15 @@
 package com.utilitysuite.combat.assistant;
 
 import com.utilitysuite.combat.allies.AllyRoster;
+import com.utilitysuite.combat.tactics.HitTradeSolver;
 import com.utilitysuite.combat.tactics.OpponentModel;
 import com.utilitysuite.combat.tactics.TacticUtility;
 import com.utilitysuite.core.api.ControlChannel;
 import com.utilitysuite.core.api.ControlLease;
 import com.utilitysuite.core.api.ControlPriority;
 import com.utilitysuite.core.api.IActionArbiter;
+import com.utilitysuite.core.api.IBodySimProvider;
+import com.utilitysuite.core.api.IRouteRunner;
 import com.utilitysuite.core.api.IConfigurable;
 import com.utilitysuite.core.api.IContainerClicker;
 import com.utilitysuite.core.api.IInputSmoother;
@@ -93,6 +96,35 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
     /** Damage this player dealt, per target (same ring structure, used for the own-DPS estimate). */
     private final OpponentModel dealt = new OpponentModel();
     private final TacticUtility utility = new TacticUtility();
+
+    // hit-trade solver (built lazily once a body-sim provider is registered; null in plain unit tests)
+    /** Distance beyond spacing max inside which the trade solver drives the keys instead of the band. */
+    static final double TRADE_RANGE_EXTRA = 2.5;
+    /** Value of a hit taken vs. one landed for the solver; larger while kiting (KITE widens). */
+    static final double BASE_TAKEN_WEIGHT = 1.2;
+    static final double KITE_TAKEN_WEIGHT = 1.8;
+    private TradeDriver trade;
+    private boolean tradeFixed;
+    private boolean targetIsPlayer;
+    private int tradeTicks;
+
+    // route runner hand-over (pursuit and flee)
+    /** Pursue along a route beyond spacing max + this; hand back to melee inside spacing max + the exit value. */
+    static final double PURSUIT_ENTER_EXTRA = 6.0;
+    static final double PURSUIT_EXIT_EXTRA = 5.0;
+    static final double FLEE_DISTANCE = 24.0;
+    /** Closing speed (blocks per tick) above which a retreat turns into a run. */
+    static final double CLOSING_SPEED = 0.05;
+    /** Ticks before the runner is tried again after it refused or failed. */
+    static final int ROUTE_RETRY_TICKS = 20;
+    /** Ticks without line of sight after which the target is pursued along a route (short flickers are ignored). */
+    static final int LOS_PURSUIT_TICKS = 10;
+    static final int ROUTE_NONE = 0;
+    static final int ROUTE_PURSUE = 1;
+    static final int ROUTE_FLEE = 2;
+    private int routeMode = ROUTE_NONE;
+    private int routeRetry;
+    private int routeRuns;
     private TacticUtility.Tactic broadTactic = TacticUtility.Tactic.FIGHT;
     private long tacticClock;
     private int lastTargetHealthId = -1;
@@ -320,7 +352,13 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
             return;
         }
         boolean fresh = state == CombatState.DORMANT;
+        leaveRoute(); // a target switch ends any pursuit or flight from the old one
+        routeRetry = 0;
         targetId = entityId;
+        targetIsPlayer = world.isPlayer(entityId);
+        if (trade != null) {
+            trade.resetAll();
+        }
         foodEngagement = false;
         collecting = false;
         losLostTicks = 0;
@@ -466,6 +504,9 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
     }
 
     private void drive(CombatSnapshot s) {
+        if (routeRetry > 0) {
+            routeRetry--;
+        }
         if (restoreWeaponNextTick) {
             restoreWeaponNextTick = false;
             selectWeapon();
@@ -488,6 +529,7 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
                     return;
                 }
             } else if (a == SustainPlanner.Action.EAT && !s.screenOpen) {
+                leaveRoute(); // eat while backing off, facing the opponent
                 startEating(s);
                 aimAtTarget(s);
                 retreatMove(s);
@@ -502,6 +544,9 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
                 retreating = true;
             }
             if (retreating) {
+                if (retreatRun(s, false)) {
+                    return; // the opponent keeps closing: turn and run along a route
+                }
                 aimAtTarget(s);
                 retreatMove(s);
                 return;
@@ -513,10 +558,22 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         // ---- 1b. broad tactic by utility (FLEE backs off; KITE widens the spacing band) ------------------------
         broadTactic = settings.tacticUtility ? chooseTactic(s) : TacticUtility.Tactic.FIGHT;
         if (broadTactic == TacticUtility.Tactic.FLEE) {
+            if (retreatRun(s, true)) {
+                return; // a person turns and runs
+            }
             aimAtTarget(s);
             retreatMove(s);
             return;
         }
+
+        // ---- 1c. pursuit along a route (far away or out of sight), melee code inside the range -------------------
+        double dist = s.horizontalDistance();
+        boolean chase = losLostTicks > LOS_PURSUIT_TICKS || dist > settings.spacingMax
+                + (routeMode == ROUTE_PURSUE ? PURSUIT_EXIT_EXTRA : PURSUIT_ENTER_EXTRA);
+        if (chase && runRoute(s, ROUTE_PURSUE)) {
+            return;
+        }
+        leaveRoute();
 
         // ---- 2. wind-charge launch (owns camera + hotbar while active) ------------------------------------------
         if (settings.windCharge || wind.active()) {
@@ -610,6 +667,9 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
     private void observeOpponent(CombatSnapshot s) {
         opponents.observe(targetId, tacticClock, s.tx, s.tz, s.tvx, s.tvz, s.px, s.pz, s.targetOnGround,
                 s.targetBlocking);
+        if (s.targetSwingStarted) {
+            opponents.noteSwing(targetId, tacticClock, s.targetAttackSpeed); // cooldown reading
+        }
         if (targetId == lastTargetHealthId && s.targetHealth < lastTargetHealth - 0.01f) {
             dealt.recordHit(targetId, tacticClock, lastTargetHealth - s.targetHealth);
         }
@@ -642,15 +702,48 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
 
     private void movement(CombatSnapshot s) {
         double d = s.horizontalDistance();
-        double kite = broadTactic == TacticUtility.Tactic.KITE ? KITE_EXTRA_SPACING : 0.0;
-        int fwd = spacing.update(d, settings.spacingMin + kite, settings.spacingMax + kite, s.hazardFront,
-                s.hazardBack);
+        boolean kiting = broadTactic == TacticUtility.Tactic.KITE;
+        int fwd;
         int side = StrafePlanner.NONE;
-        if (settings.strafe && d <= settings.spacingMax + 1.0) {
-            side = strafe.update(s.hazardLeft, s.hazardRight, input.nextGaussianTicks(30, 8, 15, 50),
-                    settings.tacticUtility ? opponents.strafeBias(targetId) : 0.0);
+        boolean sprint;
+        TradeDriver t = settings.hitTrade && d <= settings.spacingMax + TRADE_RANGE_EXTRA ? tradeDriver() : null;
+        // crit sync owns the hops while it waits for or rides one; no solver hops at the lip of a gap
+        boolean allowJump = lastTactic != TacticsPlanner.Tactic.HOLD_GAP
+                && !(settings.critSync && (critWait > 0 || jumpedThisCycle || !s.onGround));
+        if (t != null && t.decide(s, opponents, targetId, tacticClock, targetIsPlayer, settings.cooldownRead,
+                settings.hitTradeHorizon, kiting ? KITE_TAKEN_WEIGHT : BASE_TAKEN_WEIGHT, allowJump)) {
+            tradeTicks++;
+            spacing.reset(); // the band restarts from HOLD when the solver hands back
+            fwd = t.forward();
+            if (t.strafe() > 0) {
+                side = StrafePlanner.LEFT;
+            } else if (t.strafe() < 0) {
+                side = StrafePlanner.RIGHT;
+            }
+            // the hazard flags veto a step whatever the solver says
+            if ((fwd > 0 && s.hazardFront) || (fwd < 0 && s.hazardBack)) {
+                fwd = SpacingController.HOLD;
+            }
+            if ((side == StrafePlanner.LEFT && s.hazardLeft) || (side == StrafePlanner.RIGHT && s.hazardRight)) {
+                side = StrafePlanner.NONE;
+            }
+            sprint = fwd > 0 && t.sprint();
+            if (t.jump() && allowJump && s.onGround && sprintResetTicks == 0) {
+                input.scheduleKeyTap(lease, SimKey.JUMP, 1, 1);
+            }
+        } else {
+            if (t != null) {
+                t.reset();
+            }
+            double kite = kiting ? KITE_EXTRA_SPACING : 0.0;
+            fwd = spacing.update(d, settings.spacingMin + kite, settings.spacingMax + kite, s.hazardFront,
+                    s.hazardBack);
+            if (settings.strafe && d <= settings.spacingMax + 1.0) {
+                side = strafe.update(s.hazardLeft, s.hazardRight, input.nextGaussianTicks(30, 8, 15, 50),
+                        settings.tacticUtility ? opponents.strafeBias(targetId) : 0.0);
+            }
+            sprint = fwd == SpacingController.FORWARD && d > settings.spacingMax + 0.5;
         }
-        boolean sprint = fwd == SpacingController.FORWARD && d > settings.spacingMax + 0.5;
         if (sprintResetTicks > 0) {
             sprintResetTicks--;
             if (settings.sprintReset == CombatSettings.SprintReset.S_TAP && sprintResetFirst) {
@@ -662,6 +755,119 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
             sprint = false;
         }
         move(fwd, side, sprint);
+    }
+
+    /**
+     * The trade driver, built once a body-sim provider is registered (the solver's scratch bodies allocate, so only
+     * then and only once). Null while no provider exists: the band runs.
+     */
+    private TradeDriver tradeDriver() {
+        TradeDriver t = trade;
+        if (t == null && !tradeFixed) {
+            IBodySimProvider sims = Services.bodySimsOrNull();
+            if (sims != null) {
+                t = TradeDriver.of(new HitTradeSolver(sims));
+                trade = t;
+            }
+        }
+        return t;
+    }
+
+    /**
+     * Replaces the solve step (tests script the solver answers; HitTradeSolver is final). Null goes back to the
+     * production path. Client thread only.
+     */
+    public void useTradeDriver(TradeDriver driver) {
+        trade = driver;
+        tradeFixed = driver != null;
+    }
+
+    /** Ticks the trade solver drove the movement keys (diagnostics, tests). */
+    public int tradeTicks() {
+        return tradeTicks;
+    }
+
+    /** Route runs started for pursuit or flight (diagnostics, tests). */
+    public int routeRuns() {
+        return routeRuns;
+    }
+
+    /** True while the route runner drives the keys for this engagement. */
+    public boolean routeActive() {
+        return routeMode != ROUTE_NONE;
+    }
+
+    /**
+     * Retreat by running away along a route (turn and run, look where you move) when asked to flee, when the opponent
+     * keeps closing, or while a flight already runs. Leaves any other run otherwise.
+     *
+     * @return true when the runner moves us this tick (no aim, no keys of ours)
+     */
+    private boolean retreatRun(CombatSnapshot s, boolean flee) {
+        if ((flee || routeMode == ROUTE_FLEE || opponentClosing(s)) && runRoute(s, ROUTE_FLEE)) {
+            return true;
+        }
+        leaveRoute();
+        return false;
+    }
+
+    private static boolean opponentClosing(CombatSnapshot s) {
+        double bx = s.px - s.tx;
+        double bz = s.pz - s.tz;
+        double len = Math.sqrt(bx * bx + bz * bz);
+        return len > 1.0e-6 && (s.tvx * bx + s.tvz * bz) / len > CLOSING_SPEED;
+    }
+
+    /**
+     * Hands the keys and camera to the route runner (same lease) for pursuit or flight. Releases our keys and clears
+     * the key and aim caches on the hand-over. Falls back (false) when the setting is off, no runner is registered,
+     * the runner refused, failed or arrived; a refusal or failure waits {@value #ROUTE_RETRY_TICKS} ticks before the
+     * next try so the keys do not flip between the runner and the melee code.
+     */
+    private boolean runRoute(CombatSnapshot s, int mode) {
+        if (!settings.routePursuit || routeRetry > 0) {
+            return false;
+        }
+        IRouteRunner r = Services.routeRunnerOrNull();
+        if (r == null) {
+            return false;
+        }
+        if (routeMode != mode) {
+            if (routeMode != ROUTE_NONE) {
+                r.stop(lease);
+            } else {
+                move(SpacingController.HOLD, StrafePlanner.NONE, false);
+            }
+            clearKeyCache();
+            routeMode = mode;
+            routeRuns++;
+            lastNote = (mode == ROUTE_PURSUE ? "Chasing " : "Running from ") + world.describe(targetId)
+                    + " along a route"; // only on the hand-over, never per tick
+        }
+        boolean ok = mode == ROUTE_PURSUE
+                ? r.pursue(lease, s.tx, s.ty, s.tz, settings.spacingMax, true)
+                : r.flee(lease, s.tx, s.ty, s.tz, FLEE_DISTANCE, true);
+        IRouteRunner.State st = ok ? r.state() : IRouteRunner.State.FAILED;
+        if (!ok || st == IRouteRunner.State.FAILED || st == IRouteRunner.State.ARRIVED
+                || st == IRouteRunner.State.IDLE) {
+            leaveRoute();
+            routeRetry = ROUTE_RETRY_TICKS;
+            return false;
+        }
+        return true;
+    }
+
+    /** Takes the keys back from the route runner (stops it, clears our caches). No-op when no run is active. */
+    private void leaveRoute() {
+        if (routeMode == ROUTE_NONE) {
+            return;
+        }
+        routeMode = ROUTE_NONE;
+        IRouteRunner r = Services.routeRunnerOrNull();
+        if (r != null && lease != null) {
+            r.stop(lease);
+        }
+        clearKeyCache();
     }
 
     private void retreatMove(CombatSnapshot s) {
@@ -1025,6 +1231,10 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         retreating = false;
         restoreWeaponNextTick = false;
         sprintResetTicks = 0;
+        leaveRoute(); // stop any pursuit or flight before our own keys go up
+        if (trade != null) {
+            trade.reset();
+        }
         if (holdsLease()) {
             if (eating) {
                 key(SimKey.USE, false);
@@ -1074,6 +1284,13 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
     public void onPreempted(ControlLease l, LeaseEndReason reason, String byModuleId) {
         if (l != lease) {
             return;
+        }
+        if (routeMode != ROUTE_NONE) {
+            routeMode = ROUTE_NONE;
+            IRouteRunner r = Services.routeRunnerOrNull();
+            if (r != null) {
+                r.stop(l); // the lease ended: the runner stops with it (a no-op if it already did)
+            }
         }
         lease = null;
         clearKeyCache(); // the core released every key and the rotation of the ended lease
@@ -1150,6 +1367,7 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
     @Override
     public void onWorldUnload() {
         lease = null; // the core ended it already
+        routeMode = ROUTE_NONE;
         keeperLease = null;
         pulledInvSlot = -1;
         pulledHotbarSlot = -1;

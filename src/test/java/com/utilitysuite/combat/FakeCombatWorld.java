@@ -32,6 +32,11 @@ public final class FakeCombatWorld implements CombatWorld {
         public boolean onGround = true;
         /** A food animal (cow, pig...). */
         public boolean food;
+        /** Cooldown reading: an arm swing started this tick (cleared by the next sample), and its attack speed. */
+        public boolean swingStarted;
+        public double attackSpeed = 4.0;
+        public int hurtTime;
+        public float yaw;
 
         E(int id, String name) {
             this.id = id;
@@ -194,6 +199,15 @@ public final class FakeCombatWorld implements CombatWorld {
         out.lineOfSight = lineOfSight;
         out.crosshairOnTarget = crosshairOnTarget;
         out.targetOnGround = t.onGround;
+        out.pvx = s.pvx;
+        out.pvy = s.pvy;
+        out.pvz = s.pvz;
+        out.sprinting = s.sprinting;
+        out.targetYaw = t.yaw;
+        out.targetSwingStarted = t.swingStarted;
+        t.swingStarted = false; // one tick only
+        out.targetAttackSpeed = t.attackSpeed;
+        out.targetHurtTime = t.hurtTime;
         if (out.wantTerrain) {
             out.gapNear = s.gapNear;
             out.gapFar = s.gapFar;
@@ -230,6 +244,91 @@ public final class FakeCombatWorld implements CombatWorld {
     }
 
     public int scans;
+
+    /** A body-sim provider whose bodies stand still (enough to build the production hit-trade solver in tests). */
+    public static com.utilitysuite.core.api.IBodySimProvider stillBodies() {
+        return StillBody::new;
+    }
+
+    static final class StillBody implements com.utilitysuite.core.api.BodySim {
+        double x, y, z, vx, vy, vz;
+        boolean onGround;
+
+        @Override
+        public com.utilitysuite.core.api.BodySim set(double x, double y, double z, double vx, double vy, double vz,
+                                                     boolean onGround) {
+            this.x = x;
+            this.y = y;
+            this.z = z;
+            this.vx = vx;
+            this.vy = vy;
+            this.vz = vz;
+            this.onGround = onGround;
+            return this;
+        }
+
+        @Override
+        public com.utilitysuite.core.api.BodySim copyFrom(com.utilitysuite.core.api.BodySim o) {
+            return set(o.x(), o.y(), o.z(), o.vx(), o.vy(), o.vz(), o.onGround());
+        }
+
+        @Override
+        public void tick(int forward, int strafe, float yawDeg, boolean sprint, boolean jump) {
+        }
+
+        @Override
+        public void knockback(double strength, double towardSourceX, double towardSourceZ) {
+        }
+
+        @Override
+        public void scaleHorizontal(double factor) {
+        }
+
+        @Override
+        public double x() {
+            return x;
+        }
+
+        @Override
+        public double y() {
+            return y;
+        }
+
+        @Override
+        public double z() {
+            return z;
+        }
+
+        @Override
+        public double vx() {
+            return vx;
+        }
+
+        @Override
+        public double vy() {
+            return vy;
+        }
+
+        @Override
+        public double vz() {
+            return vz;
+        }
+
+        @Override
+        public boolean onGround() {
+            return onGround;
+        }
+
+        @Override
+        public double fallDistance() {
+            return 0;
+        }
+
+        @Override
+        public boolean horizontalCollision() {
+            return false;
+        }
+    }
 
     @Override
     public void scanTargets(double radius, boolean computeLos, TargetCandidates out) {

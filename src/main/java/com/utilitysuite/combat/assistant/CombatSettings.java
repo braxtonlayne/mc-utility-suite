@@ -46,6 +46,10 @@ public final class CombatSettings {
     public static final String FOOD_RANGE = "food_range";
     public static final String EDGE_KNOCK = "tactic_edge_knock";
     public static final String TACTIC_UTILITY = "tactic_utility";
+    public static final String HIT_TRADE = "hit_trade";
+    public static final String HIT_TRADE_HORIZON = "hit_trade_horizon";
+    public static final String COOLDOWN_READ = "cooldown_read";
+    public static final String ROUTE_PURSUIT = "route_pursuit";
 
     public TargetSelector.Mode engageMode = TargetSelector.Mode.REACTIVE;
     public TargetSelector.Targets targets = TargetSelector.Targets.HOSTILE;
@@ -80,6 +84,10 @@ public final class CombatSettings {
     public boolean swapBack = true;
     public boolean keepTotem = true;
     public boolean jumpReset = false;
+    public boolean hitTrade = true;
+    public int hitTradeHorizon = 7;
+    public boolean cooldownRead = true;
+    public boolean routePursuit = true;
 
     public void read(ProfileConfig p, String id) {
         engageMode = parseEnum(p.getString(id, ENGAGE_MODE, ""), TargetSelector.Mode.REACTIVE);
@@ -114,6 +122,10 @@ public final class CombatSettings {
         lowHealth = (float) p.getDouble(id, LOW_HEALTH, 8.0);
         totems = p.getBool(id, TOTEMS, true);
         gapples = p.getBool(id, GAPPLES, true);
+        hitTrade = p.getBool(id, HIT_TRADE, true);
+        hitTradeHorizon = Math.max(6, Math.min(8, p.getInt(id, HIT_TRADE_HORIZON, 7)));
+        cooldownRead = p.getBool(id, COOLDOWN_READ, true);
+        routePursuit = p.getBool(id, ROUTE_PURSUIT, true);
     }
 
     static <E extends Enum<E>> E parseEnum(String s, E def) {
@@ -163,6 +175,11 @@ public final class CombatSettings {
                 SettingSpec.bool(EDGE_KNOCK, "Edge knock", true, "Tactics",
                         "When the target stands near a drop or lava, circle to the far side and sprint-hit it toward"
                                 + " the edge."),
+                SettingSpec.bool(ROUTE_PURSUIT, "Run routes when chasing or fleeing", true, "Tactics",
+                        "Chase a target that got far away or out of sight, and run from a fight you are losing, along"
+                                + " a planned route like a person would (looking where you run) instead of walking"
+                                + " straight at it or backing away. Falls back to the old moves when no route is"
+                                + " available."),
                 SettingSpec.bool(TACTIC_UTILITY, "Read the fight", true, "Tactics",
                         "Weigh both sides' damage, health and healing: keep distance from a crit-hopper in an even"
                                 + " trade, and back off when losing badly with nothing to heal."),
@@ -180,12 +197,21 @@ public final class CombatSettings {
                         "How far ahead to lead, in ticks of target movement.").asAdvanced(),
                 SettingSpec.bool(CRIT_SYNC, "Critical-hit timing", true, "Cooldown",
                         "Hop and swing while falling for critical hits.").asAdvanced(),
+                SettingSpec.bool(COOLDOWN_READ, "Read their cooldown", true, "Cooldown",
+                        "Watch the opponent's swings to know when their next hit is charged. Off treats them as"
+                                + " always ready to hit.").asAdvanced(),
                 SettingSpec.decimal(SPACING_MIN, "Spacing min (blocks)", 2.7, 1.5, 4.0, "Spacing",
                         "Back off when closer than this.").asAdvanced(),
                 SettingSpec.decimal(SPACING_MAX, "Spacing max (blocks)", 3.1, 1.8, 4.5, "Spacing",
                         "Close in when farther than this.").asAdvanced(),
                 SettingSpec.bool(STRAFE, "Strafe", true, "Spacing",
                         "Move sideways around the target, away from cliffs and lava.").asAdvanced(),
+                SettingSpec.bool(HIT_TRADE, "Trade solver", true, "Spacing",
+                        "Look a few ticks ahead for both of you and pick the movement keys that land more hits than"
+                                + " you take: step in right after they swing, stay just out of reach while their hit is"
+                                + " charged. Off uses the fixed spacing band.").asAdvanced(),
+                SettingSpec.integer(HIT_TRADE_HORIZON, "Trade look-ahead (ticks)", 7, 6, 8, "Spacing",
+                        "How many ticks ahead the trade solver simulates.").asAdvanced(),
                 SettingSpec.choice(SPRINT_RESET, "Sprint reset", SprintReset.W_RELEASE, "Spacing",
                         "Brief forward release or back tap after a hit.").asAdvanced(),
                 SettingSpec.bool(SHIELD_BREAK, "Axe vs. shields", true, "Shield & weapons",
