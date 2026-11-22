@@ -163,6 +163,8 @@ public final class MovementAssistBrain {
         withholdJump = false;
         sprint = false;
         shaped = false;
+        sprintOff = false;
+        coSteer = false;
         commitSimTicks = 0;
         trackJump(now);
         int keys = LandingHold.keys(userForward, userStrafe, userJump);
@@ -869,6 +871,59 @@ public final class MovementAssistBrain {
      */
     public boolean sprint() {
         return sprint;
+    }
+
+    // ---- seams between the brain and the module (contracts of the 2026-11-22 control-model volley) -----------------
+
+    /**
+     * The module can drop the user's sprint for a tick (it holds a shared grant whose {@code withholdSprint} works).
+     * False in a bare brain: approach control then eases the forward key only, which also ends a sprint in vanilla.
+     */
+    public boolean sprintWithholdAvailable;
+    /**
+     * Yaw co-steer may be asked for (owner decision D1: BALANCED and above, Co-pilot and Takeover, never on LEGIT,
+     * never under automation). Set by the module every tick; false in a bare brain.
+     */
+    public boolean coSteerAllowed;
+    /** View change per tick a plan may ask of the co-steer at the current legit level (degrees). */
+    public float coSteerMaxDegPerTick = 6f;
+
+    private TechniqueSource techniques = TechniqueSource.NONE;
+    private boolean sprintOff;
+    private boolean coSteer;
+    private float coSteerYaw;
+    private float coSteerTotalDeg = 45f;
+
+    /** The technique planner (corner, neo, headhitter, 45-degree); {@link TechniqueSource#NONE} until one is set. */
+    public void setTechniques(TechniqueSource source) {
+        techniques = source != null ? source : TechniqueSource.NONE;
+    }
+
+    public TechniqueSource techniques() {
+        return techniques;
+    }
+
+    /**
+     * Withhold sprint this tick (approach and takeoff control: a slower run-up for a near, narrow landing). Only ever
+     * set while {@link #sprintWithholdAvailable}; the module passes it to {@code SharedGrant.withholdSprint()}.
+     */
+    public boolean sprintOff() {
+        return sprintOff;
+    }
+
+    /** The brain wants the view eased toward {@link #coSteerYaw()} this tick. Never set unless {@link #coSteerAllowed}. */
+    public boolean wantsCoSteer() {
+        return coSteer && coSteerAllowed;
+    }
+
+    /** Ideal view yaw (degrees) for the co-steer; valid while {@link #wantsCoSteer()}. */
+    public float coSteerYaw() {
+        return coSteerYaw;
+    }
+
+    /** Most degrees the co-steer may add over this commitment. */
+    public float coSteerTotalDeg() {
+        return coSteerTotalDeg;
     }
 
     /** Takeoff shaping filled keys this tick (strafe and/or sprint; the jump, if any, is the shape's). */

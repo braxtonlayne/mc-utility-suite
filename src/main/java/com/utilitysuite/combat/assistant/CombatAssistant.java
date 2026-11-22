@@ -170,6 +170,21 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
     private final float[] aim = new float[2];
     private final boolean[] keyDown = new boolean[SimKey.all().length];
 
+    // fight stages (FightStage): per-slot arrays, filled at start-up; one-tick requests cleared every drive
+    private static final FightStage[] NO_STAGES = new FightStage[0];
+    private final FightStage[][] stages = {NO_STAGES, NO_STAGES, NO_STAGES, NO_STAGES};
+    private FightStage[] allStages = NO_STAGES;
+    private List<SettingSpec> specsWithStages;
+    private final StageContext stageCtx = new StageContext();
+    private boolean stageVetoSwing;
+    private boolean stageVetoJump;
+    private HitPlanner.Policy stagePolicy;
+    private boolean stageSideForced;
+    private int stageSide;
+    private double stageSpacing;
+    private boolean stagePress;
+    private int stageTarget = -1;
+
     private boolean enabled;
     private CombatState state = CombatState.DORMANT;
     private int targetId = -1;
@@ -408,6 +423,10 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         lastPositional = TacticUtility.Tactic.FIGHT;
         lastFeintNoted = FeintPlanner.Move.NONE;
         feel.engage(entityId, targetIsPlayer); // a target switch ends the combo plan, feints and any pearl run
+        stageTarget = -1;
+        for (FightStage st : allStages) {
+            st.onEngage(stageCtx);
+        }
         hits.reset(); // the first hit on a new target is an opener
         gear.reset();
         targetHitPending = 0;
@@ -543,6 +562,13 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
             }
         }
         drive(s);
+        if (stageTarget >= 0) {
+            int next = stageTarget;
+            stageTarget = -1;
+            if (next != targetId && state == CombatState.ENGAGED && world.isLivingAlive(next)) {
+                engage(next, "threat");
+            }
+        }
     }
 
     private boolean holdsLease() {
@@ -571,12 +597,23 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         hitRelease = false; // the hit planner's key overrides are set again by step 5 when it runs this tick
         hitDropSprint = false;
         hitHoldSprint = false;
+        stageVetoSwing = false;
+        stageVetoJump = false;
+        stagePolicy = null;
+        stageSideForced = false;
+        stageSpacing = 0.0;
+        stagePress = false;
         if (routeRetry > 0) {
             routeRetry--;
         }
         if (restoreWeaponNextTick) {
             restoreWeaponNextTick = false;
             selectWeapon();
+        }
+
+        // ---- 0. stages ahead of the emergency sustain (healing windows) -----------------------------------------
+        if (!eating && runStages(FightStage.Slot.SUSTAIN, s)) {
+            return;
         }
 
         // ---- 1. emergency sustain ------------------------------------------------------------------------------
@@ -664,6 +701,11 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         }
         leaveRoute();
 
+        // ---- 1e. stages ahead of the aim (threat answers, combo escape) ------------------------------------------
+        if (runStages(FightStage.Slot.PRE_AIM, s)) {
+            return;
+        }
+
         // ---- 2. wind-charge launch (owns camera + hotbar while active) ------------------------------------------
         if (settings.windCharge || wind.active()) {
             AerialPlanner.Action w = wind.step(s, settings.windCharge && settings.maceSwap);
@@ -701,6 +743,11 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
             }
         }
 
+        // ---- 4b. stages ahead of the swing (shield duel, hit vetoes) ---------------------------------------------
+        if (runStages(FightStage.Slot.PRE_SWING, s)) {
+            return;
+        }
+
         // ---- 5. swing (cooldown + crit sync, optional mace) ----------------------------------------------------
         if (s.onGround && wasAirborne) {
             jumpedThisCycle = false;
@@ -720,7 +767,7 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         // hop and the sprint/forward keys all follow that one decision. No hop at the lip of a gap, under a low roof,
         // with a drop behind, or while the opponent's charged hit is in reach.
         HitPlanner hp = hits;
-        hp.policy = settings.hitChoice;
+        hp.policy = stagePolicy != null ? stagePolicy : settings.hitChoice;
         hp.critTiming = settings.critSync;
         hp.targetIsPlayer = targetIsPlayer;
         hp.comboLive = feel.comboDrives(settings);
@@ -730,14 +777,14 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         hp.gearRatio = gear.ratio();
         hp.sprintPending = keyDown[SimKey.FORWARD.ordinal()] && keyDown[SimKey.SPRINT.ordinal()] && !s.sprinting;
         hp.decide(s);
-        if (hp.jump()) {
+        if (hp.jump() && !stageVetoJump) {
             input.scheduleKeyTap(lease, SimKey.JUMP, 1, 2);
             jumpedThisCycle = true;
         }
         hitRelease = hp.releaseForward();
         hitDropSprint = hp.dropSprint();
         hitHoldSprint = hp.holdSprint();
-        if (hp.swing()) {
+        if (hp.swing() && !stageVetoSwing) {
             if (AerialPlanner.shouldSwapToMace(s, settings.maceSwap)) {
                 input.selectHotbarSlot(lease, s.maceSlot);
                 restoreWeaponNextTick = true;
@@ -748,6 +795,9 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         }
 
         // ---- 6. spacing, strafe, sprint reset -------------------------------------------------------------------
+        if (runStages(FightStage.Slot.MOVEMENT, s)) {
+            return;
+        }
         if (tac != TacticsPlanner.Tactic.NONE) {
             move(tactics.forward(), tactics.side(), tactics.sprint());
         } else if (!positionalMove(s)) {
@@ -880,11 +930,14 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         int side = StrafePlanner.NONE;
         boolean sprint;
         boolean planned = false; // the solver or the keeper chose the step (the read's "stepping in")
-        TradeDriver t = settings.hitTrade && d <= settings.spacingMax + TRADE_RANGE_EXTRA ? tradeDriver() : null;
+        // a stage that widens the band (a blast, a reach to stay out of) takes the step from the solver and the keeper
+        boolean widened = stageSpacing > 0.0;
+        TradeDriver t = !widened && settings.hitTrade && d <= settings.spacingMax + TRADE_RANGE_EXTRA
+                ? tradeDriver() : null;
         // crit sync owns the hops while it waits for or rides one; no solver hops at the lip of a gap or a low roof
         boolean allowJump = tradeAllowJump(s);
         int withDir = feel.withDir();
-        if (feel.comboDrives(settings)) {
+        if (!widened && feel.comboDrives(settings)) {
             // ---- combo keeper: steer for the next hit on the predicted knockback arc ----
             if (t != null) {
                 t.reset();
@@ -916,7 +969,7 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
             if (t != null) {
                 t.reset();
             }
-            double kite = kiting ? KITE_EXTRA_SPACING : 0.0;
+            double kite = (kiting ? KITE_EXTRA_SPACING : 0.0) + stageSpacing;
             fwd = spacing.update(d, settings.spacingMin + kite, settings.spacingMax + kite, s.hazardFront,
                     s.hazardBack);
             if (settings.strafe && d <= settings.spacingMax + 1.0) {
@@ -925,7 +978,11 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
             }
             sprint = fwd == SpacingController.FORWARD && d > settings.spacingMax + 0.5;
         }
-        if (!feel.comboDrives(settings) && allowFeint && !eating && routeMode == ROUTE_NONE) {
+        if (stageSideForced) {
+            side = stageSide;
+        }
+        if (!feel.comboDrives(settings) && allowFeint && !stagePress && !stageSideForced && !widened && !eating
+                && routeMode == ROUTE_NONE) {
             // ---- feints (players only, never mobs) on top of the solver or band ----
             FeintPlanner.Move m = feel.planFeint(s, settings, opponents, tacticClock, side, d);
             if (m != FeintPlanner.Move.NONE) {
@@ -1542,6 +1599,10 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         weaponSlot = -1;
         targetId = -1;
         state = CombatState.DORMANT;
+        stageTarget = -1;
+        for (FightStage st : allStages) {
+            st.reset();
+        }
     }
 
     // =================================================================================================================
@@ -1657,6 +1718,9 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
     @Override
     public void onProfileLoaded(ProfileConfig profile) {
         settings.read(profile, ID);
+        for (FightStage st : allStages) {
+            st.read(profile, ID);
+        }
     }
 
     @Override
@@ -1666,12 +1730,220 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
 
     @Override
     public List<SettingSpec> settings() {
-        return CombatSettings.specs();
+        if (allStages.length == 0) {
+            return CombatSettings.specs();
+        }
+        if (specsWithStages == null) {
+            java.util.ArrayList<SettingSpec> all = new java.util.ArrayList<>(CombatSettings.specs());
+            for (FightStage st : allStages) {
+                st.specs(all);
+            }
+            specsWithStages = List.copyOf(all);
+        }
+        return specsWithStages;
     }
 
     @Override
     public void onSettingChanged(String key) {
-        settings.read(Services.modState().profile(), ID);
+        ProfileConfig profile = Services.modState().profile();
+        settings.read(profile, ID);
+        for (FightStage st : allStages) {
+            st.read(profile, ID);
+        }
+    }
+
+    // =================================================================================================================
+    // Fight stages
+    // =================================================================================================================
+
+    /** Registers a stage (start-up, client thread). Stages of one slot run in registration order. */
+    public void addStage(FightStage stage) {
+        int i = stage.slot().ordinal();
+        FightStage[] old = stages[i];
+        FightStage[] grown = java.util.Arrays.copyOf(old, old.length + 1);
+        grown[old.length] = stage;
+        stages[i] = grown;
+        allStages = java.util.Arrays.copyOf(allStages, allStages.length + 1);
+        allStages[allStages.length - 1] = stage;
+        specsWithStages = null;
+    }
+
+    /** The context stages act through (tests drive a stage against the real assistant with it). */
+    public FightContext stageContext() {
+        return stageCtx;
+    }
+
+    private boolean runStages(FightStage.Slot slot, CombatSnapshot s) {
+        FightStage[] list = stages[slot.ordinal()];
+        for (int i = 0; i < list.length; i++) {
+            if (list[i].step(s, stageCtx)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private final class StageContext implements FightContext {
+        @Override
+        public CombatSettings settings() {
+            return settings;
+        }
+
+        @Override
+        public CombatWorld world() {
+            return world;
+        }
+
+        @Override
+        public OpponentModel opponents() {
+            return opponents;
+        }
+
+        @Override
+        public int targetId() {
+            return targetId;
+        }
+
+        @Override
+        public boolean targetIsPlayer() {
+            return targetIsPlayer;
+        }
+
+        @Override
+        public long clock() {
+            return tacticClock;
+        }
+
+        @Override
+        public boolean eating() {
+            return eating;
+        }
+
+        @Override
+        public int weaponSlot() {
+            return weaponSlot;
+        }
+
+        @Override
+        public float lastHitDamage() {
+            return lastHitDamage;
+        }
+
+        @Override
+        public void aimAtTarget(CombatSnapshot s) {
+            if (holdsLease()) {
+                CombatAssistant.this.aimAtTarget(s);
+            }
+        }
+
+        @Override
+        public void aimAt(float yaw, float pitch, float speed) {
+            if (holdsLease()) {
+                CombatAssistant.this.aimAt(yaw, pitch, speed);
+            }
+        }
+
+        @Override
+        public void move(int forward, int side, boolean sprint) {
+            if (holdsLease()) {
+                CombatAssistant.this.move(forward, side, sprint);
+            }
+        }
+
+        @Override
+        public void retreatMove(CombatSnapshot s) {
+            if (holdsLease()) {
+                CombatAssistant.this.retreatMove(s);
+            }
+        }
+
+        @Override
+        public boolean retreatRoute(CombatSnapshot s) {
+            return holdsLease() && retreatRun(s, true);
+        }
+
+        @Override
+        public void tapAttack() {
+            if (holdsLease()) {
+                CombatAssistant.this.tapAttack();
+            }
+        }
+
+        @Override
+        public void hold(SimKey key, boolean down) {
+            if (holdsLease()) {
+                key(key, down);
+            }
+        }
+
+        @Override
+        public void tap(SimKey key, int holdTicks, int delayTicks) {
+            if (holdsLease()) {
+                input.scheduleKeyTap(lease, key, holdTicks, delayTicks);
+            }
+        }
+
+        @Override
+        public void selectHotbar(int slot) {
+            if (holdsLease() && slot >= 0 && slot < 9) {
+                input.selectHotbarSlot(lease, slot);
+            }
+        }
+
+        @Override
+        public void selectWeapon() {
+            CombatAssistant.this.selectWeapon();
+        }
+
+        @Override
+        public void startEating(CombatSnapshot s, int hotbarSlot) {
+            if (!holdsLease() || eating || hotbarSlot < 0 || hotbarSlot >= 9 || s.screenOpen) {
+                return;
+            }
+            leaveRoute();
+            shield.reset();
+            wind.reset();
+            input.selectHotbarSlot(lease, hotbarSlot);
+            key(SimKey.USE, true);
+            eating = true;
+            eatTicks = 0;
+        }
+
+        @Override
+        public void vetoSwing() {
+            stageVetoSwing = true;
+        }
+
+        @Override
+        public void vetoJump() {
+            stageVetoJump = true;
+        }
+
+        @Override
+        public void hitPolicy(HitPlanner.Policy policy) {
+            stagePolicy = policy;
+        }
+
+        @Override
+        public void forceSide(int side) {
+            stageSideForced = true;
+            stageSide = side;
+        }
+
+        @Override
+        public void widenSpacing(double blocks) {
+            stageSpacing = Math.max(stageSpacing, blocks);
+        }
+
+        @Override
+        public void pressAdvantage() {
+            stagePress = true;
+        }
+
+        @Override
+        public void requestTarget(int entityId) {
+            stageTarget = entityId;
+        }
     }
 
     // =================================================================================================================

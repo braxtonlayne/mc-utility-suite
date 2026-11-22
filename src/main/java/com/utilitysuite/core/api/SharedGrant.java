@@ -31,6 +31,20 @@ public interface SharedGrant {
     void startSprint();
 
     /**
+     * No sprint on the next tick: a running sprint ends and the user's held sprint key does not start one, as if
+     * the key had been let go for that tick. For slowing a run-up; it wins over {@link #startSprint()} in the same
+     * tick. Lapses after one tick like every other write, so the user's sprint comes back by itself. The default
+     * does nothing (an implementation that cannot withhold sprint).
+     */
+    default void withholdSprint() {
+    }
+
+    /** True when {@link #withholdSprint()} has an effect in this implementation. */
+    default boolean canWithholdSprint() {
+        return false;
+    }
+
+    /**
      * Asks the core to ease the yaw toward {@code idealYawDeg} on top of the user's own mouse motion. Rate and
      * acceleration limited, never faster than {@link IInputSmoother#MAX_TURN_DEG_PER_SEC}, never more than
      * {@code maxTotalDeg} added over the life of this grant, never on the LEGIT level, never with a screen open.
