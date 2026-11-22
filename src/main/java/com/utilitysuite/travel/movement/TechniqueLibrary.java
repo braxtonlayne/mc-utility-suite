@@ -38,9 +38,8 @@ public final class TechniqueLibrary implements TechniqueSource {
     /** Body the kept script was rolled from (for a re-base when nothing was played). */
     private double bestFromX, bestFromY, bestFromZ;
 
-    private int cursorTemplate;
+    private int cursorStage;
     private int cursorIndex;
-    private boolean cursorYawPhase;
 
     // identity of the target and permissions the kept search belongs to
     private boolean keyed;
@@ -53,6 +52,28 @@ public final class TechniqueLibrary implements TechniqueSource {
 
     private int lastSimTicks;
     private int lastEdgeTick = -1;
+
+    /**
+     * Order in which a pass walks the families: the corner cut first (a small grid, and the shape a blocked straight
+     * line most often needs), then the older families in their old order.
+     */
+    private static final int[] STAGE_TEMPLATE = {TechniqueTemplates.CUT, TechniqueTemplates.CUT,
+            TechniqueTemplates.CORNER, TechniqueTemplates.HEADHITTER, TechniqueTemplates.NEO,
+            TechniqueTemplates.CORNER, TechniqueTemplates.HEADHITTER, TechniqueTemplates.NEO,
+            TechniqueTemplates.FORTY_FIVE};
+    /** Whether a stage walks the family's yaw variants (skipped when the view may not be turned). */
+    private static final boolean[] STAGE_YAW = {false, true, false, false, false, true, true, true, true};
+    /** The most a script may turn the view from where it starts (the level's co-steer total). */
+    private float maxTurn = TechniqueTemplates.DEFAULT_MAX_TURN;
+
+    @Override
+    public void setMaxTurn(float degrees) {
+        float v = degrees > 0f ? degrees : 0f;
+        if (v != maxTurn) {
+            maxTurn = v;
+            reset();
+        }
+    }
 
     @Override
     public boolean plan(MovementPhysics now, float yaw, boolean sprinting, int userForward, int userStrafe,
@@ -76,6 +97,7 @@ public final class TechniqueLibrary implements TechniqueSource {
             if (shift >= 0 && roller.roll(now, yaw, sprinting, userS, best, shift, target, yawAllowed,
                     maxYawDegPerTick, safeOnly, health, w, scratch)) {
                 best.jump -= shift;
+                best.earlyEnd = Math.max(0, best.earlyEnd - shift);
                 keepBest(now);
                 fresh = true;
             } else {
@@ -93,11 +115,11 @@ public final class TechniqueLibrary implements TechniqueSource {
             int maxDecodes = totalSize(yawAllowed);
             while (ticks + ROLL_COST <= MAX_SIM_TICKS_PER_CALL && decodes < maxDecodes) {
                 decodes++;
-                int t = cursorTemplate;
+                int t = STAGE_TEMPLATE[cursorStage];
                 int i = cursorIndex;
-                boolean yawPhase = cursorYawPhase;
+                boolean yawPhase = STAGE_YAW[cursorStage] && yawAllowed;
                 advanceCursor(yawAllowed);
-                if (!TechniqueTemplates.decode(t, i, yawPhase, edge, yaw, aim, cand)) {
+                if (!TechniqueTemplates.decode(t, i, yawPhase, edge, yaw, aim, maxTurn, cand)) {
                     continue;
                 }
                 boolean ok = roller.roll(now, yaw, sprinting, userS, cand, 0, target, yawAllowed,
@@ -192,30 +214,26 @@ public final class TechniqueLibrary implements TechniqueSource {
     /** Candidates of one full pass: the keys-only grid, then (with yaw) the yaw grid. */
     private static int totalSize(boolean yawAllowed) {
         int n = 0;
-        for (int t = 0; t < TechniqueTemplates.COUNT; t++) {
-            n += TechniqueTemplates.size(t, false);
-            if (yawAllowed) {
-                n += TechniqueTemplates.size(t, true);
+        for (int s = 0; s < STAGE_TEMPLATE.length; s++) {
+            if (yawAllowed || !STAGE_YAW[s]) {
+                n += TechniqueTemplates.size(STAGE_TEMPLATE[s], STAGE_YAW[s]);
             }
         }
         return n;
     }
 
     /**
-     * Next grid cell. A pass walks every family keys-only first (cheapest, and what LEGIT gets), then, with yaw
-     * allowed, every family again with its yaw variants; then it wraps.
+     * Next grid cell. A pass walks the stages in order: the corner cut (keys only, then with yaw), then every older
+     * family keys-only (cheapest, and what LEGIT gets), then, with yaw allowed, those families again with their yaw
+     * variants; then it wraps.
      */
     private void advanceCursor(boolean yawAllowed) {
         cursorIndex++;
         int guard = 0;
-        while (cursorIndex >= TechniqueTemplates.size(cursorTemplate, cursorYawPhase)
-                && guard++ <= 2 * TechniqueTemplates.COUNT + 1) {
+        while ((cursorIndex >= TechniqueTemplates.size(STAGE_TEMPLATE[cursorStage], STAGE_YAW[cursorStage])
+                || (STAGE_YAW[cursorStage] && !yawAllowed)) && guard++ <= STAGE_TEMPLATE.length) {
             cursorIndex = 0;
-            cursorTemplate++;
-            if (cursorTemplate >= TechniqueTemplates.COUNT) {
-                cursorTemplate = 0;
-                cursorYawPhase = yawAllowed && !cursorYawPhase;
-            }
+            cursorStage = (cursorStage + 1) % STAGE_TEMPLATE.length;
         }
     }
 
@@ -258,9 +276,8 @@ public final class TechniqueLibrary implements TechniqueSource {
         hasBest = false;
         bestScore = -Double.MAX_VALUE;
         bestScript.clear();
-        cursorTemplate = 0;
+        cursorStage = 0;
         cursorIndex = 0;
-        cursorYawPhase = false;
         keyed = false;
     }
 }

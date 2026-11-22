@@ -31,6 +31,12 @@ public final class FlightScript {
     public final boolean[] sprint = new boolean[MAX_TICKS];
     /** View yaw the plan was rolled with for that tick (degrees); the start yaw throughout unless {@link #usesYaw}. */
     public final float[] yaw = new float[MAX_TICKS];
+    /**
+     * The heading to ask the co-steer for on that tick (degrees; NaN = no request, the view holds). For scripts rolled
+     * with the follower model ({@link CoSteerModel}) this is the segment's goal and {@link #yaw} is where the view
+     * will be; for the older families it equals {@link #yaw}.
+     */
+    public final float[] goal = new float[MAX_TICKS];
     /** Predicted body position after that tick. */
     public final double[] x = new double[MAX_TICKS];
     public final double[] y = new double[MAX_TICKS];
@@ -72,6 +78,7 @@ public final class FlightScript {
         System.arraycopy(o.jump, 0, jump, 0, n);
         System.arraycopy(o.sprint, 0, sprint, 0, n);
         System.arraycopy(o.yaw, 0, yaw, 0, n);
+        System.arraycopy(o.goal, 0, goal, 0, n);
         System.arraycopy(o.x, 0, x, 0, n);
         System.arraycopy(o.y, 0, y, 0, n);
         System.arraycopy(o.z, 0, z, 0, n);

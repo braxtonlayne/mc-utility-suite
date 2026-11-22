@@ -59,6 +59,20 @@ public final class IntentEstimator {
     /** Horizontal range (top-centre distance from the player) and vertical window (support-block relative). */
     public static final double MAX_RANGE = 6.0;
     public static final double MIN_RANGE = 1.2;
+    /** A noted "jump" longer than this (blocks, horizontal) is a teleport or a respawn, not a jump. */
+    public static final double MAX_JUMP_NOTE = 8.0;
+    /**
+     * Confidence floor for the only candidate in the movement cone when the movement points at it: with one place to
+     * go, where the camera points says little (a player sprinting at a low post looks ahead, not down at it).
+     */
+    public static final double SOLE_CONFIDENCE = 0.6;
+    /** Movement alignment (the key term) the sole-candidate floor needs: within about 30 degrees of the top. */
+    public static final double SOLE_ALIGN = 0.8;
+    /**
+     * Score factor of a top whose straight roll was stopped by a wall, not by distance: it may still be reachable
+     * around the corner, which only the brain's technique search can tell. It stays a candidate at a discount.
+     */
+    public static final double BLOCKED_FACTOR = 0.9;
     public static final int MAX_UP = 1;
     public static final int MAX_DOWN = 4;
     /** A top higher than this above the feet cannot be jumped onto (jump apex 1.2522). */
@@ -209,6 +223,19 @@ public final class IntentEstimator {
     private static final byte UNKNOWN = 0;
     private static final byte YES = 1;
     private static final byte NO = 2;
+    /** The straight roll ran into a wall: not reachable on the line, maybe around it. */
+    private static final byte BLOCKED = 3;
+    private boolean rollBlocked;
+    private boolean tBlocked;
+
+    /**
+     * The target's straight roll was stopped by a wall that is not the target: it is kept as a candidate, but only a
+     * technique (a way around) can land it. Valid with {@link #hasTarget()}.
+     */
+    public boolean targetBlocked() {
+        return hasTarget && tBlocked;
+    }
+    private final double[] candKey = new double[MAX_CANDIDATES];
     private final long[] cacheCell = new long[CACHE];
     private final byte[] cacheFeasible = new byte[CACHE];
     private final byte[] cacheContinues = new byte[CACHE];
@@ -242,8 +269,9 @@ public final class IntentEstimator {
     public void noteJump(double takeoffX, double takeoffZ, double landX, double landY, double landZ) {
         double dx = landX - takeoffX;
         double dz = landZ - takeoffZ;
-        if (dx * dx + dz * dz < 1.0) {
-            return; // not a real jump
+        double d2 = dx * dx + dz * dz;
+        if (d2 < 1.0 || d2 > MAX_JUMP_NOTE * MAX_JUMP_NOTE) {
+            return; // not a real jump: a step, or a teleport / respawn between a takeoff and the next ground tick
         }
         jumpDx[jumpHead] = dx;
         jumpDz[jumpHead] = dz;
@@ -278,6 +306,7 @@ public final class IntentEstimator {
     public void reset() {
         hasTarget = false;
         confidence = 0.0;
+        lookConfidence = 0.0;
         prevValid = false;
         jumpCount = 0;
         jumpHead = 0;
@@ -310,6 +339,7 @@ public final class IntentEstimator {
                             boolean sprinting, MovementPhysics.Voxels w) {
         hasTarget = false;
         confidence = 0.0;
+        lookConfidence = 0.0;
         idealYaw = yaw;
         candCount = 0;
         lookups = 0;
@@ -491,8 +521,19 @@ public final class IntentEstimator {
         }
         double margin = Math.max(0.0, bs - rival);
         double conf = clamp01(Math.min(1.0, margin / MARGIN_FULL) * bs);
+        double plain = conf; // before the sole-candidate floor
+        if (rival <= 0.0 && candKey[chosen] >= SOLE_ALIGN && candCache[chosen] >= 0) {
+            // the only place to go, and the keys point at it: the look term must not hold the confidence down
+            byte fz = cacheFeasible[candCache[chosen]];
+            if (fz == YES) {
+                conf = Math.max(conf, SOLE_CONFIDENCE);
+            } else if (fz == BLOCKED) {
+                conf = Math.max(conf, SOLE_CONFIDENCE * BLOCKED_FACTOR);
+            }
+        }
         if (candSurface[chosen] == MovementPhysics.SURFACE_UNMODELLED) {
             conf = Math.min(conf, UNMODELLED_CONFIDENCE);
+            plain = Math.min(plain, UNMODELLED_CONFIDENCE);
         }
 
         tx = bx;
@@ -500,8 +541,10 @@ public final class IntentEstimator {
         tz = bz;
         tTop = candTop[chosen];
         tSurface = candSurface[chosen];
+        tBlocked = candCache[chosen] >= 0 && cacheFeasible[candCache[chosen]] == BLOCKED;
         prevValid = true;
         confidence = conf;
+        lookConfidence = plain;
         double cx = 0.5 * (candMinX[chosen] + candMaxX[chosen]);
         double cz = 0.5 * (candMinZ[chosen] + candMaxZ[chosen]);
         idealYaw = (float) Math.toDegrees(Math.atan2(-(cx - px), cz - pz));
@@ -837,6 +880,7 @@ public final class IntentEstimator {
         if (keys) {
             keyTerm = align(ex * mx + ez * mz, hd);
         }
+        candKey[i] = keys ? keyTerm : 0.0;
         double velTerm = 0.5;
         if (speed > 1.0e-6) {
             double a = align(ex * vux + ez * vuz, hd);
@@ -853,7 +897,11 @@ public final class IntentEstimator {
 
         double sum = W_LOOK * look + W_KEYS * keyTerm + W_VELOCITY * velTerm + W_LINE * lineTerm + W_REACH * reachTerm;
         double s = sum * (0.5 + 0.5 * reachTerm);
-        s *= coursePenalty(i);
+        double course = coursePenalty(i);
+        s *= course;
+        if (course < 1.0) {
+            candKey[i] = 0.0; // a platform already visited never gets the sole-candidate floor
+        }
         if (candSurface[i] == MovementPhysics.SURFACE_UNMODELLED) {
             s *= UNMODELLED_FACTOR;
         }
@@ -895,6 +943,8 @@ public final class IntentEstimator {
             if (c >= 0) {
                 if (cacheFeasible[c] == NO) {
                     s = -1.0;
+                } else if (cacheFeasible[c] == BLOCKED) {
+                    s *= BLOCKED_FACTOR;
                 } else if (cacheContinues[c] == NO) {
                     s *= DEAD_END_FACTOR;
                 }
@@ -951,6 +1001,7 @@ public final class IntentEstimator {
             if (c >= 0 && cacheFeasible[c] != UNKNOWN && fresh(c)) {
                 continue;
             }
+            boolean wasBlocked = c >= 0 && cacheFeasible[c] == BLOCKED;
             boolean ok = feasibilityRoll(now, i, w);
             rolls++;
             if (c < 0) {
@@ -962,7 +1013,9 @@ public final class IntentEstimator {
                     }
                 }
             }
-            cacheFeasible[c] = ok ? YES : NO;
+            // a top found behind a wall stays "needs a way around" for later stances: nearer the wall the straight roll
+            // may pass it and fall short instead, which says nothing new about the way around
+            cacheFeasible[c] = ok ? YES : (rollBlocked || wasBlocked ? BLOCKED : NO);
             cacheContinues[c] = UNKNOWN;
             stamp(c);
         }
@@ -976,6 +1029,7 @@ public final class IntentEstimator {
      */
     private boolean feasibilityRoll(MovementPhysics now, int i, MovementPhysics.Voxels w) {
         MovementPhysics s = roll.copyFrom(now);
+        rollBlocked = false;
         s.jumpDelay = 0; // a held jump key of the user's does not delay the planned takeoff
         double top = candTop[i];
         double tcx = 0.5 * (candMinX[i] + candMaxX[i]);
@@ -1025,10 +1079,38 @@ public final class IntentEstimator {
             simTicks++;
             used++;
             peak = Math.max(peak, s.y);
+            if (s.horizontalCollision && !rollBlocked && wallBeside(w, s, dx, dz, top)) {
+                rollBlocked = true; // stopped by something taller than the target, not by the target's own side
+            }
             if (s.onGround) {
                 return Math.abs(s.y - top) < 0.01 && peak - s.y <= MAX_SAFE_FALL
                         && s.x >= candMinX[i] - HALF && s.x <= candMaxX[i] + HALF
                         && s.z >= candMinZ[i] - HALF && s.z <= candMaxZ[i] + HALF;
+            }
+        }
+        return false;
+    }
+
+    /** A block next to the body must stand this far above the target's top to count as a wall in the way. */
+    private static final double WALL_OVER_TOP = 0.6;
+
+    /**
+     * The body just touched something. A wall in the way (BLOCKED) is a block beside the body, on the side the target
+     * lies, that rises more than {@link #WALL_OVER_TOP} above the target's top. A roll that fell short and ran into the
+     * side of the target's own platform touches nothing that tall: that top is out of reach, not blocked.
+     */
+    private boolean wallBeside(MovementPhysics.Voxels w, MovementPhysics s, double dx, double dz, double top) {
+        int cx = floor(s.x);
+        int cz = floor(s.z);
+        int nx = floor(s.x + (dx > 0.0 ? HALF + 0.05 : -HALF - 0.05));
+        int nz = floor(s.z + (dz > 0.0 ? HALF + 0.05 : -HALF - 0.05));
+        int y0 = floor(top + WALL_OVER_TOP);
+        int y1 = floor(top + BODY - TOP_EPS);
+        for (int y = y0; y <= y1; y++) {
+            lookups += 3;
+            if ((nx != cx && w.boxCount(nx, y, cz) > 0) || (nz != cz && w.boxCount(cx, y, nz) > 0)
+                    || (nx != cx && nz != cz && w.boxCount(nx, y, nz) > 0)) {
+                return true;
             }
         }
         return false;
@@ -1196,7 +1278,18 @@ public final class IntentEstimator {
         return tSurface;
     }
 
-    /** 0..1: how clearly the best candidate beats the runner-up. */
+    /**
+     * The confidence without the sole-candidate floor: what the look, the keys and the course line say by
+     * themselves. The landing hold's "the user is going on" reads this one: with the floor, W alone would count as
+     * going on wherever a single top lies ahead, and holding W must never chain a series of jumps.
+     */
+    public double lookConfidence() {
+        return lookConfidence;
+    }
+
+    private double lookConfidence;
+
+    /** 0..1: how clearly the best candidate beats the runner-up (with the sole-candidate floor). */
     public double confidence() {
         return confidence;
     }

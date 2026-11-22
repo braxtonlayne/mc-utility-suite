@@ -61,6 +61,10 @@ public interface TechniqueSource {
     /** Replica ticks the last call rolled (at most {@link #MAX_SIM_TICKS_PER_CALL}). */
     int lastSimTicks();
 
+    /** The most a script may turn the view from where it starts (degrees; the level's co-steer total). */
+    default void setMaxTurn(float degrees) {
+    }
+
     /** Forget the search (target changed, world change). */
     void reset();
 }

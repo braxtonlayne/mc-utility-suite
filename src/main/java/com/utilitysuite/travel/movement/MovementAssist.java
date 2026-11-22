@@ -339,6 +339,8 @@ public final class MovementAssist implements IModule, IConfigurable {
         brain.intentThreshold = intent.commitThreshold();
         if (brain.intentAssist && (userF != 0 || userS != 0 || !now.onGround)
                 && intent.estimate(now, yaw, p.getXRot(), userF, userS, sprinting, voxels) && intent.hasTarget()) {
+            brain.setIntentBlocked(intent.targetBlocked());
+            brain.setIntentLook(intent.lookConfidence());
             brain.setIntentTarget(intent.targetX(), intent.targetY(), intent.targetZ(), intent.confidence());
         } else {
             brain.clearIntentTarget();
@@ -362,6 +364,7 @@ public final class MovementAssist implements IModule, IConfigurable {
         steerOk &= steerRate > 0.0 && steerMax > 0.0; // LEGIT: both 0
         brain.coSteerAllowed = steerOk;
         brain.coSteerMaxDegPerTick = steerOk ? (float) (steerRate / 20.0) : 0f;
+        brain.coSteerMaxTotalDeg = steerOk ? (float) steerMax : 0f;
         brain.sprintWithholdAvailable = grant != null && grant.isActive() ? grant.canWithholdSprint()
                 : withholdCapable;
         if (auto) {

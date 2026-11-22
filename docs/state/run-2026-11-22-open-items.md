@@ -228,3 +228,108 @@ Run in this order. Stop at the first failure in section 0.
 41. `./gradlew runUiPreview`: captures are full size, not 1x1.
 42. After the fonts are approved and added: text renders in the suite faces, falls back with Force Unicode Font on
     and with Font = Vanilla. Tune size, oversample and shift at GUI scale 1 to 4.
+
+## Parkour lanes: intent arming, corner cut, lane set (afternoon of 2026-11-22)
+
+Branch `worktree-agent-a08c37a68e7a79de2`, from `1f37b19`. Unit tests green. In-game numbers are at the end of this
+section.
+
+### What was wrong (found in the replica, `ParkourLaneReplicaTest`, real estimator in front of the brain)
+
+1. **A teleport was noted as a jump.** After a fall and the `tp` to the next lane, `IntentEstimator.noteJump` stored a
+   13-block "jump". The line term then cost every later target 0.075 of its score. On the pane lane that put the
+   confidence at about 0.43 to 0.5 at the press: under Co-pilot's 0.5, over Takeover's 0.35. That is why Co-pilot
+   never armed and Takeover did. A checkpoint teleport on a real course does the same.
+2. **The look term held a lone target down.** The lane camera (pitch 10) looks past a low post, and so does a player
+   sprinting at it. With one top in the movement cone the confidence was the bare score, 0.51 at the press.
+3. **The target was dropped on the takeoff tick.** The estimator has a near limit of 1.2 blocks and a "can I walk
+   there" test; one tick into the flight the pane is 0.9 away and fails both. The brain applied that before it knew
+   the body had taken off, so the commitment started with no target and aborted two ticks later ("locked", "yours").
+4. **A top behind a column was marked infeasible.** The estimator's one straight roll ran into the column. The
+   corner posts never became targets.
+5. **No technique fit, and the search started too late.** The approach controller used the whole approach to find
+   out that no plain takeoff lands, an early edge jump fired on the blocked line, and the corner family (takeoff
+   angled away, then in) holds thousands of candidates at about 12 rolls per tick.
+6. **Lane script.** The script pressed jump on the first ground tick past the trigger. After an early assisted
+   takeoff that tick was the touchdown on the pane, so the "user" jumped off it.
+7. **Technique scripts that turn the view could not be flown in the client** (found by the first lane run: the
+   corner scripts landed in the replica and left their line in game). The roller moved the view at the full co-steer
+   rate, 7.5 degrees per tick, from the tick of the request. The core's follower (`YawCoSteer`) is smooth: its speed
+   is 8 x the error left, so a 7.5-degree step moves about 3 degrees in the first tick, and a request only reaches
+   the physics one tick later. A script drifts off its predicted line (limit 0.08 block) within three ticks and is
+   dropped. This applies to every yaw variant of the older families too; none of them had been run in a client.
+
+### What changed
+
+- `IntentEstimator`: jumps longer than 8 blocks are not noted. The only candidate in the cone gets a confidence floor
+  of 0.6 when the keys point at it within about 30 degrees, it is not a platform already visited, and its roll was
+  feasible (0.54 when blocked). `lookConfidence()` is the value without that floor. A roll stopped by a wall that is
+  not the target marks the top BLOCKED (score x 0.9, `targetBlocked()`), not infeasible.
+- `MovementAssistBrain`: while ARMED the estimator's pick is applied in `decide` after the takeoff is known, so the
+  armed target is the one frozen at TAKEOFF. A blocked target sends the approach ticks and the budget to the
+  technique search from the first ARMED tick, the assist's own jump waits for the last supported tick, and the
+  straight aim at the blocked target is not co-steered. Corrections ignores blocked targets (it has no technique
+  search). A script holds the user's press back at most 4 ticks; a press further ahead of the script's takeoff drops
+  the script. The planner is told the level's co-steer total (`coSteerMaxTotalDeg`, set by `MovementAssist`).
+- **Landing-hold rules: unchanged, and one guard added to keep them so.** "The user is going on" (`continuing`) reads
+  `lookConfidence()`, not the floored confidence: with the floor, W toward the only top ahead would have counted as
+  going on, and W alone must never chain a jump.
+- `TechniqueTemplates` / `TechniqueLibrary` / `TechniqueRoller`: new family `corner-cut`, walked first: optional
+  strafe away at the start of the script, a takeoff heading toward the target (the aim angle or half of it), forward
+  only for 0 to 6 air ticks, then forward + strafe in with a view goal of 25, 45 or 70 degrees (capped by the level),
+  optionally forward released near the end. 108 keys-only and up to 648 yaw candidates.
+- `CoSteerModel` (new): the planner's copy of the follower. Corner-cut scripts are rolled with it (request on tick
+  i, view over the frames after, physics on tick i + 1) and replayed by asking for the segment's goal, not a
+  per-tick yaw. `CoSteerModelTest` holds it to the real follower: identical at 60 fps, within 1.5 degrees at 40 to
+  160 fps. The lane replica uses the real `YawCoSteer` and passes at 40, 60, 100 and 160 fps.
+- Every view change still goes through the co-steer (rate and total capped in the core, 450 deg/s hard cap). No
+  fresh key is replaced (asserted per lane).
+- Tried and reverted: keeping the incumbent target inside the estimator's near limit while airborne. It keeps the
+  platform being landed on as the raw pick through the end of the flight, and `continuing` reads the raw pick to see
+  the next platform. The freeze in the brain covers the takeoff tick without it.
+
+### Which lanes can be landed (replica search, `LANE_SEARCH=1 ./gradlew test --tests '*ParkourLaneReplicaTest*' -i`)
+
+Hill climb over per-tick keys, view and takeoff tick, 150 restarts x 1500 steps. "rolls" is the work until the first
+touchdown, a rough measure of how narrow the solution is. Envelopes: Corrections = the user's press at the trigger,
+W never replaced, no view change, at most 6 filled strafe ticks; keys only = Legit; Co-pilot = 7.5 deg/tick up to 25,
+W withheld but never reversed; Takeover = 12 deg/tick up to 90, every key; free hand = 22.5 deg/tick, every key.
+The search turns the view at the full rate from the same tick. The real follower is slower, so every "lands" here is
+an upper bound on what the assist can fly, and every "none" stands.
+
+| Lane | Corrections | Keys only | Co-pilot | Takeover | Free hand |
+|---|---|---|---|---|---|
+| fence-2gap | touchdown, margin 0.04 at 0.24 b/t | lands (56 rolls) | lands (53) | lands (56) | lands (56) |
+| wall-3gap | none, miss 0.30 | lands (185) | lands (242) | lands (277) | lands (290) |
+| pane-1gap | none, miss 0.64 | lands (6) | lands (6) | lands (6) | lands (6) |
+| corner-fence-2gap (new) | touchdown (634) | lands (186) | lands (221) | lands (126) | lands (859) |
+| corner-wall-3gap (new) | none, miss 0.30 | lands (185) | lands (415) | lands (337) | lands (475) |
+| corner-fence-3gap, thin column | none | 11437 | 2889 | 15292 | 32286 |
+| corner-fence-3gap-deep (as first built) | none | none, miss 0.18 | 9480 | 57741 | 32596 |
+| corner-wall-3gap-deep (as first built) | none | 18358 | 4020 | 11620 | 5677 |
+
+Physics note: a full sprint jump from the edge with S held in the air lands 1.43 blocks out (pane-1gap in Takeover
+is an air brake, no slow run-up needed). 2.3 blocks is the figure for releasing W only.
+
+### Lane decisions
+
+- **The two corner lanes as first built are not impossible, and are not called that.** The hill climb finds
+  touchdowns in the Co-pilot and Takeover envelopes. They are frame-perfect: 4000 to 58000 rolls, margins under 0.2,
+  the body sliding along the column. A scan of 49392 (Co-pilot) and 235200 (Takeover) clean corner shapes, with no
+  wall touch, lands the fence post 0 times and the wall post 2 times (`deepCornersHaveNoCleanTechniqueAndTheRebuiltOnesDo`).
+  The post is half a block up, which leaves 10 air ticks for 2.78 blocks plus 0.4 to 0.6 sideways, all of it after
+  the column corner. Approaching from the far side of the platform is out of reach (3.45 blocks against 2.9).
+- **Rebuilt as the closest lanes with a clean technique:** the column is one block deep (z 11); the wall post stays
+  across 3 (64 clean shapes in Co-pilot, 158 in Takeover), the fence post moves to across 2 (2811 and 7361). The fence
+  post across 3 behind the thin column still has none.
+- **The first-built lanes stay in the run as OPEN lanes** (`corner-fence-3gap-deep`, `corner-wall-3gap-deep`, Co-pilot
+  and Takeover): their landing is a note, not a check; "no walk-off after a landing that was made" is still checked.
+  **Owner or orchestrator to confirm:** this turns two red checks into notes on the strength of the search above. If
+  frame-perfect corners are wanted from Takeover, that is a trajectory optimiser, not a template (open item).
+- **Corrections lanes check the design's guarantee, not a landing.** Design section 3: Corrections never commits,
+  never replaces a held key and does not move the user's press. With the press at the trigger and W held, no strafe
+  fill lands wall-3gap, pane-1gap or corner-wall-3gap (225150 rolls each, test
+  `correctionsCannotLandTheWallOrThePaneFromThisRunUp`). The check is now "no walk-off after a landing that was
+  made, forward held throughout", plus the fresh-press check when it did land. The unit matrix
+  (`ApproachControlTest`) already read it this way.
+- **Lane script:** the press comes once at z >= 10.85 whether or not the body is still on the ground.

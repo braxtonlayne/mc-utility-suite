@@ -393,17 +393,31 @@ final class ParkourScenario {
      * the post centre on either axis and still be supported (post half width + 0.3).
      */
     private record Kind(String name, String landingClass, String block, int gap, double top, double limit,
-                        boolean corner) {
+                        boolean corner, int columnTo, boolean open) {
     }
 
-    private static final Kind FENCE = new Kind("fence-2gap", "fence", "minecraft:oak_fence", 2, 1.5, 0.425, false);
-    private static final Kind WALL = new Kind("wall-3gap", "wall", "minecraft:cobblestone_wall", 3, 1.5, 0.55,
+    private static final Kind FENCE = new Kind("fence-2gap", "fence", "minecraft:oak_fence", 2, 1.5, 0.425, false, 0,
             false);
-    private static final Kind PANE = new Kind("pane-1gap", "pane", "minecraft:glass_pane", 1, 1.0, 0.3625, false);
-    private static final Kind CORNER_FENCE = new Kind("corner-fence", "corner-fence", "minecraft:oak_fence", 3, 1.5,
-            0.425, true);
-    private static final Kind CORNER_WALL = new Kind("corner-wall", "corner-wall", "minecraft:cobblestone_wall", 3,
-            1.5, 0.55, true);
+    private static final Kind WALL = new Kind("wall-3gap", "wall", "minecraft:cobblestone_wall", 3, 1.5, 0.55,
+            false, 0, false);
+    private static final Kind PANE = new Kind("pane-1gap", "pane", "minecraft:glass_pane", 1, 1.0, 0.3625, false, 0,
+            false);
+    /*
+     * Corner lanes (rebuilt 2026-11-22, see docs/state/run-2026-11-22-open-items.md "Parkour lanes"): the post is one
+     * block to the side (x + 1) behind a stone column at the platform edge. The column is ONE block deep (z 11); the
+     * fence post is across 2 air blocks, the wall post across 3. As first built both posts were across 3 behind a
+     * column two blocks deep: the replica search (ParkourLaneReplicaTest) finds touchdowns there only as frame-perfect
+     * wall slides and no clean technique in any control envelope. Those two stay in the run as OPEN lanes: their
+     * result is a note, not a check.
+     */
+    private static final Kind CORNER_FENCE = new Kind("corner-fence-2gap", "corner-fence", "minecraft:oak_fence", 2,
+            1.5, 0.425, true, 11, false);
+    private static final Kind CORNER_WALL = new Kind("corner-wall-3gap", "corner-wall",
+            "minecraft:cobblestone_wall", 3, 1.5, 0.55, true, 11, false);
+    private static final Kind CORNER_FENCE_DEEP = new Kind("corner-fence-3gap-deep", "corner-fence-deep",
+            "minecraft:oak_fence", 3, 1.5, 0.425, true, 12, true);
+    private static final Kind CORNER_WALL_DEEP = new Kind("corner-wall-3gap-deep", "corner-wall-deep",
+            "minecraft:cobblestone_wall", 3, 1.5, 0.55, true, 12, true);
 
     /** The corner lane's single strafe tap: LEFT held this many ticks after the jump key, for this many ticks. */
     private static final int TAP_START = 6;
@@ -462,6 +476,9 @@ final class ParkourScenario {
         double touchdownX = Double.NaN;
         double touchdownZ = Double.NaN;
         boolean standing;
+        /** The body stood on the post top (on ground, inside the support limit) on some tick. */
+        boolean touchedTop;
+        int touchedTopTick = -1;
         String standNote = "never landed";
         // fresh-press phase
         boolean leftTop;
@@ -486,8 +503,8 @@ final class ParkourScenario {
         boolean[] terrainWas = new boolean[1];
         boolean[] moduleWas = new boolean[1];
         ControlLease[] leaseRef = new ControlLease[1];
-        // lanes: 5 kinds x 3 modes, then two override lanes
-        int laneCount = 5 * Mode.values().length + 2;
+        // lanes: 5 kinds x 3 modes, the override lane, then the 2 open (deep corner) kinds in Co-pilot and Takeover
+        int laneCount = 5 * Mode.values().length + 2 + 4;
         s.cmd(() -> "forceload add " + (Arena.cx + OX - 6) + " " + (Arena.cz + OZ + lz - 6) + " "
                 + (Arena.cx + OX + LANE_SPACING * laneCount + 6) + " " + (Arena.cz + OZ + lz + 30));
         s.waitTicks(40);
@@ -514,7 +531,12 @@ final class ParkourScenario {
         }
         // (the scripted-sneak override lane was dropped: with the lanes on physical keys, a MOVEMENT lease is
         // rightly refused while the "user" holds W, and the physical-sneak lane is the real case)
-        landingLane(s, lz, idx, FENCE, Mode.CO_PILOT, Override.PHYSICAL, leaseRef);
+        landingLane(s, lz, idx++, FENCE, Mode.CO_PILOT, Override.PHYSICAL, leaseRef);
+        for (Mode mode : new Mode[] {Mode.CO_PILOT, Mode.TAKEOVER}) {
+            for (Kind kind : new Kind[] {CORNER_FENCE_DEEP, CORNER_WALL_DEEP}) {
+                landingLane(s, lz, idx++, kind, mode, Override.NONE, leaseRef);
+            }
+        }
         s.run("control lanes: parity report", () -> {
             StringBuilder above = new StringBuilder();
             for (var e : PARITY.entrySet()) {
@@ -551,8 +573,12 @@ final class ParkourScenario {
 
     /**
      * One lane: platform (z 0..10), gap, a single post. The script holds forward + sprint all the way, presses jump
-     * once at the edge, and (corner kinds) taps LEFT once. 40 ticks after touchdown the body must still be on the
-     * post top; then forward is released for 2 ticks and pressed again, and the body must leave within 10 ticks.
+     * once at the edge (the press comes at z >= 10.85 even when the assist already took the jump: a planned press
+     * still arrives), and (corner kinds) taps LEFT once. Co-pilot and Takeover: 40 ticks after touchdown the body must
+     * still be on the post top; then forward is released for 2 ticks and pressed again, and the body must leave
+     * within 10 ticks. Corrections (design section 3, NUDGE: per-tick corrections, never a commitment, a held key is
+     * never replaced) promises no landing from a full-sprint run-up with the user's own press; its check is the
+     * landing guarantee every mode shares: a landing that was made is never walked off.
      */
     private static void landingLane(Scenario s, int lz, int idx, Kind kind, Mode mode, Override ovr,
                                     ControlLease[] leaseRef) {
@@ -561,7 +587,7 @@ final class ParkourScenario {
         LaneRun r = new LaneRun();
         r.leaseRef = leaseRef;
         int postX = kind.corner ? dx + 1 : dx;
-        int postZ = kind.corner ? 14 : 11 + kind.gap;
+        int postZ = 11 + kind.gap;
         // absolute post centre, filled when the lane starts: Arena.cx/cz are only known after Arena.ensure has run
         double[] post = new double[2];
         double topY = Arena.FLOOR + kind.top;
@@ -569,7 +595,7 @@ final class ParkourScenario {
         s.cmd(() -> laneFill(lz, dx - 1, 0, 0, dx + 1, 0, 10, "minecraft:smooth_stone"));
         s.cmd(() -> laneFill(lz, postX, 0, postZ, postX, 0, postZ, kind.block));
         if (kind.corner) {
-            s.cmd(() -> laneFill(lz, dx + 1, 0, 11, dx + 1, 3, 12, "minecraft:stone"));
+            s.cmd(() -> laneFill(lz, dx + 1, 0, 11, dx + 1, 3, kind.columnTo, "minecraft:stone"));
         }
         s.cmd(() -> "tp @s " + (Arena.cx + OX + dx + 0.5) + " " + (Arena.FLOOR + 1) + " "
                 + (Arena.cz + OZ + lz + 0.5) + " 0 10");
@@ -608,7 +634,25 @@ final class ParkourScenario {
             stat[2] = Math.max(stat[2], r.maxAfter);
             stat[3] = Math.max(stat[3], r.maxStep);
             String parity = flightNote(r) + "; " + parityNote(r);
-            if (ovr == Override.NONE) {
+            boolean made = r.touchedTop;
+            if (ovr == Override.NONE && kind.open) {
+                // open lane (frame-perfect corner): reported, not checked; a landing that was made must still hold
+                s.note(label + " (open lane, no check): " + (r.standing && !r.fell ? "LANDED and stayed"
+                        : made ? "touched the top and left it" : "not landed") + "; " + r.standNote + "; " + parity);
+                s.check(label + ": no walk-off after a landing that was made (open lane)", !made
+                        || (r.standing && !r.fell), made ? r.standNote : "no touchdown on the top");
+            } else if (ovr == Override.NONE && mode == Mode.CORRECTIONS) {
+                s.check(label + ": no walk-off after a landing that was made, forward held throughout (Corrections"
+                                + " promises no landing here)",
+                        !made || (r.standing && !r.fell), (made ? "touched down on the top at lane tick "
+                                + r.touchedTopTick + "; " : "no touchdown on the top (a miss is allowed); ")
+                                + r.standNote + "; " + parity);
+                if (r.standing) {
+                    s.check(label + ": a fresh forward press leaves the top within 10 ticks", r.leftTop,
+                            r.leftTop ? "left after " + r.leftAt + " ticks"
+                                    : "still on top 10 ticks after the fresh press");
+                }
+            } else if (ovr == Override.NONE) {
                 s.check(label + ": still on the " + kind.landingClass + " top " + HOLD_TICKS
                                 + " ticks after landing, forward held throughout",
                         r.standing && !r.fell, r.standNote + "; " + parity);
@@ -676,7 +720,13 @@ final class ParkourScenario {
             }
         }
         // scripted input
-        if (r.jumpTick < 0 && p.onGround() && z >= 10.85) {
+        if (!r.touchedTop && p.onGround() && onTop(p, topY, postCx, postCz, kind.limit)) {
+            r.touchedTop = true;
+            r.touchedTopTick = r.tick;
+        }
+        // the planned press: at the trigger, once, also when the assist has already taken the jump (a press on the
+        // post after an early assisted takeoff would be a second jump the "user" never meant)
+        if (r.jumpTick < 0 && z >= 10.85) {
             H.physicalKey(GLFW.GLFW_KEY_SPACE, true);
             r.jumpTick = r.tick;
             r.jumpZ = z;
@@ -836,7 +886,9 @@ final class ParkourScenario {
 
     /** Records the commitment phase of this flight tick (run-length coded: "1-2 TAKEOFF, 3-9 FLIGHT"). */
     private static void commitPhase(LaneRun r, int flightTick) {
-        String ph = TravelBootstrap.movement().brain().commit().phase().name();
+        var brain = TravelBootstrap.movement().brain();
+        // the phase, plus the technique script being replayed (if any)
+        String ph = brain.commit().phase().name() + (brain.scriptActive() ? "+" + brain.activeScript().name : "");
         if (!ph.equals(r.lastCommit)) {
             closeCommitRun(r, flightTick - 1);
             r.lastCommit = ph;

@@ -232,7 +232,11 @@ public final class MovementAssistBrain {
         // approach and takeoff control: ARMED on the ground with a locked, safe target (GUIDE / CARRY only)
         boolean armed = mode != JumpCommit.Mode.NUDGE && now.onGround && commit.phase() == JumpCommit.Phase.ARMED
                 && targetOn && targetRegionValid && targetSafe && userForward > 0 && hold.latched() == 0;
-        if (armed && approachControl) {
+        userJumpNow = userJump;
+        // a target whose straight line is blocked (a corner): no plain takeoff plan can land it, so the technique
+        // search gets the approach ticks and the budget from the first ARMED tick
+        techniqueFirst = armed && lineBlocked && techniques != TechniqueSource.NONE;
+        if (armed && approachControl && !techniqueFirst) {
             int edge = approach.engaged() ? -1
                     : search.ticksToEdge(now, userForward, userStrafe, yaw, sprintKey, ApproachController.WINDOW_TICKS,
                     w);
@@ -247,6 +251,11 @@ public final class MovementAssistBrain {
         }
         updateScript(now, yaw, sprintKey, userForward, userStrafe, armed, health, w);
         if (scriptOn) {
+            if (!now.onGround || script.jump[Math.min(scriptIndex, script.length - 1)]) {
+                heldPress = 0; // the held-back press is the script's takeoff now
+            } else if (heldPress > 0) {
+                heldPress++;
+            }
             replayScript(now, sprinting, sprintKey, userForward, userStrafe, health, w);
         } else if (now.onGround) {
             decideGround(now, yaw, sprinting, userForward, userStrafe, jumpIn, health, w);
@@ -259,7 +268,9 @@ public final class MovementAssistBrain {
             decideAir(now, yaw, sprinting, userForward, userStrafe, health, w);
         }
         // co-steer while ARMED: the ideal takeoff yaw (the sprint-jump boost goes along the yaw of the takeoff tick)
-        if (coSteerAllowed && !coSteer && armed && hasIdealYaw) {
+        // (not while a script owns the view, and not at a blocked line: the straight aim at a target behind a wall
+        // only moves the run-up the technique search is rolling from)
+        if (coSteerAllowed && !coSteer && armed && hasIdealYaw && !scriptOn && !techniqueFirst) {
             coSteer = true;
             coSteerYaw = naturalYaw(idealYaw, now, yaw);
         }
@@ -310,7 +321,8 @@ public final class MovementAssistBrain {
             return true;
         }
         // where the user is looking now: the estimator's latest pick, not the target frozen for the commitment
-        if (!intentAssist || !rawSet || rawConfidence < intentThreshold) {
+        // (the confidence without the sole-candidate floor: W toward the only top ahead is not "going on")
+        if (!intentAssist || !rawSet || rawLookConfidence < intentThreshold) {
             return false;
         }
         double dx = rtx + 0.5 - at.x;
@@ -604,9 +616,17 @@ public final class MovementAssistBrain {
                     sprinting && !sprintOff, true, health, w));
             return;
         }
+        if (pressHeldBack(now, yaw, sprinting, userForward, userStrafe, w)) {
+            capture(search.evaluate(now, Math.max(userForward, 0), userStrafe, yaw, sprinting, true, health, w));
+            return;
+        }
         shapeTakeoff(now, yaw, sprinting, userForward, userStrafe, jumpIn, health, w);
         if (shaped) {
             jump = shaper.jumpNow(); // the shape takes off on its own last supported tick
+        } else if (techniqueFirst && search.ticksToEdge(now, userForward, userStrafe, yaw, sprinting, 1, w) != 0) {
+            // the technique search is still looking for a way around: the assist's own jump waits for the last
+            // supported tick instead of taking off early on a line that is known to be blocked
+            jump = false;
         } else if (edgeJump && !jumpIn && userForward > 0 && search.shouldEdgeJump(now, yaw, sprinting, health, w)
                 && (!safeOnly || search.landDamage() <= 0f)) {
             // a committed mode's takeoff is not budgeted (design 3: only the skill fade survives there)
@@ -627,6 +647,44 @@ public final class MovementAssistBrain {
         // predicted landing of a jump from here (the overlay's "if you jump now")
         double sc = search.evaluate(now, Math.max(userForward, 0), userStrafe, yaw, sprinting, true, health, w);
         capture(sc);
+    }
+
+    /** Ticks the user's press has been held back for the technique search (0 = none pending). */
+    private int heldPress;
+
+    /**
+     * The user's jump press while the search for a way around a blocked line is still running (no script yet): the
+     * press is held back while the body is still supported on the next tick, at most
+     * {@link ApproachController#MAX_WITHHOLD_TICKS}, so the search gets the last ground ticks and a script that takes
+     * off on the last possible tick can still be flown. Then the press goes as pressed.
+     *
+     * @return true when this tick's jump decision was made here
+     */
+    private boolean pressHeldBack(MovementPhysics now, float yaw, boolean sprinting, int f, int s,
+                                  MovementPhysics.Voxels w) {
+        if (!techniqueFirst) {
+            heldPress = 0;
+            return false;
+        }
+        if (heldPress == 0) {
+            if (!userJumpNow) {
+                return false;
+            }
+            heldPress = 1;
+        } else {
+            heldPress++;
+        }
+        carry.copyFrom(now);
+        carry.tick(f, s, yaw, sprinting, false, w);
+        commitSimTicks++;
+        if (heldPress <= ApproachController.MAX_WITHHOLD_TICKS && carry.onGround) {
+            withholdJump = userJumpNow;
+            corrected = true;
+            return true;
+        }
+        heldPress = 0;
+        jump = !userJumpNow; // the press goes now (the key itself when it is still down)
+        return true;
     }
 
     /**
@@ -750,16 +808,53 @@ public final class MovementAssistBrain {
         rty = y;
         rtz = z;
         rawConfidence = confidence;
-        if (!targetFrozen) {
+        rawLookConfidence = Double.isNaN(pendingLook) ? confidence : pendingLook;
+        pendingLook = Double.NaN;
+        if (!targetFrozen && !lockDeferred()) {
             lockFromRaw();
         }
     }
 
+    /**
+     * The estimator's straight roll toward the target ran into a wall (see {@link IntentEstimator#targetBlocked()}):
+     * the target needs a technique. Kept until the locked target changes.
+     */
+    public void setIntentBlocked(boolean blocked) {
+        rawBlocked = blocked;
+    }
+
+    /**
+     * The estimator's confidence without its sole-candidate floor ({@link IntentEstimator#lookConfidence()}), for the
+     * next {@link #setIntentTarget}. The landing hold's "the user is going on" reads this one, so that holding W
+     * toward the only top ahead never chains a jump (owner, 2026-11-22: W alone is not enough). Not set: the
+     * target's own confidence.
+     */
+    public void setIntentLook(double lookConfidence) {
+        pendingLook = lookConfidence;
+    }
+
+    private double pendingLook = Double.NaN;
+    private double rawLookConfidence;
+    private boolean rawBlocked;
+    private boolean lineBlocked;
+    private boolean techniqueFirst;
+    private boolean userJumpNow;
+
     public void clearIntentTarget() {
         rawSet = false;
-        if (!targetFrozen) {
+        if (!targetFrozen && !lockDeferred()) {
             lockFromRaw();
         }
+    }
+
+    /**
+     * While ARMED the estimator's pick of this tick is applied in {@link #decide} ({@code updateFreeze}), after the
+     * takeoff is known: on the takeoff tick the body is already in the air and close to the target, where the
+     * estimator may drop or change its pick, and the armed target is the one the jump was planned for (design 9.6:
+     * the target is frozen at TAKEOFF). On every other ARMED tick the result is the same as applying it here.
+     */
+    private boolean lockDeferred() {
+        return mode != JumpCommit.Mode.NUDGE && intentSet && commit.phase() == JumpCommit.Phase.ARMED;
     }
 
     // raw intent (the estimator's latest pick; where the user is looking) vs the locked target the plans use
@@ -790,9 +885,11 @@ public final class MovementAssistBrain {
         ity = rty;
         itz = rtz;
         intentConfidence = rawConfidence;
+        lineBlocked |= rawBlocked;
     }
 
     private void targetChanged() {
+        lineBlocked = false;
         approach.reset();
         techniques.reset();
         scriptOn = false;
@@ -842,7 +939,9 @@ public final class MovementAssistBrain {
 
     /** A target is set, confident enough, and "Follow my intent" is on. */
     public boolean intentActive() {
-        return intentAssist && intentSet && intentConfidence >= intentThreshold;
+        // Corrections has no technique search: a target that needs a way around is not a target there
+        return intentAssist && intentSet && intentConfidence >= intentThreshold
+                && !(lineBlocked && mode == JumpCommit.Mode.NUDGE);
     }
 
     /** The user's mouse yaw rate (deg/tick, + = yaw increasing), for the tick-phase check. */
@@ -1078,16 +1177,26 @@ public final class MovementAssistBrain {
             JumpCommit.Phase ph = commit.phase();
             boolean phaseOk = ph == JumpCommit.Phase.ARMED || ph == JumpCommit.Phase.TAKEOFF
                     || ph == JumpCommit.Phase.FLIGHT;
-            if (userForward <= 0 || !phaseOk || commit.overrideThisTick() || scriptIndex >= script.length
+            // the user's own jump press: held back while the script's takeoff is at most a few ticks later (like the
+            // approach controller's held-back press); a press further ahead of it is the user's jump, not the script's
+            int untilJump = script.takeoffIndex - scriptIndex;
+            int room = ApproachController.MAX_WITHHOLD_TICKS - heldPress;
+            boolean pressAhead = now.onGround && (userJumpNow || heldPress > 0) && scriptIndex < script.length
+                    && !script.jump[scriptIndex] && (untilJump < 0 || untilJump > room);
+            if (pressAhead || userForward <= 0 || !phaseOk || commit.overrideThisTick() || scriptIndex >= script.length
                     || (scriptIndex > 0 && !script.onLine(scriptIndex - 1, now.x, now.y, now.z))
                     || (script.usesYaw && !coSteerAllowed)) {
                 scriptOn = false;
             }
         }
-        if (scriptOn || !armed || !approach.exhausted()
+        // on the ground the search goes on while a script is already being followed: the library re-bases its best
+        // script onto the real body every call and swaps in a better one (wider landing, fewer departures)
+        boolean improve = false;
+        if ((scriptOn && !improve) || !armed || !(approach.exhausted() || techniqueFirst)
                 || commitSimTicks + TechniqueSource.MAX_SIM_TICKS_PER_CALL > MAX_COMMIT_SIM_TICKS) {
             return;
         }
+        techniques.setMaxTurn(coSteerAllowed ? coSteerMaxTotalDeg : 0f);
         boolean got = techniques.plan(now, yaw, sprintKey, userForward, userStrafe, planRegion, coSteerAllowed,
                 coSteerMaxDegPerTick, safeOnly, holdHealth, w);
         commitSimTicks += techniques.lastSimTicks();
@@ -1111,6 +1220,7 @@ public final class MovementAssistBrain {
             forward = sf == userForward ? KEEP : sf;
             strafe = ss == userStrafe ? KEEP : ss;
             jump = script.jump[i];
+            withholdJump = userJumpNow && !jump; // the takeoff is a few ticks later: the press waits for it
         } else {
             int f = commit.resolveAxis(0, userForward, sf == userForward ? KEEP : sf);
             int s = commit.resolveAxis(1, userStrafe, ss == userStrafe ? KEEP : ss);
@@ -1124,9 +1234,9 @@ public final class MovementAssistBrain {
         } else if (wantSprint && !sprinting && sprintFillAllowed) {
             sprint = true;
         }
-        if (script.usesYaw && coSteerAllowed) {
+        if (script.usesYaw && coSteerAllowed && script.goal[i] == script.goal[i]) {
             coSteer = true;
-            coSteerYaw = script.yaw[i];
+            coSteerYaw = script.goal[i]; // NaN: no request this tick, the view holds
         }
         corrected = true;
         lastPlanLands = true; // a verified script: the commitment holds while the body stays on its line
@@ -1177,6 +1287,12 @@ public final class MovementAssistBrain {
     private boolean coSteer;
     private float coSteerYaw;
     private float coSteerTotalDeg = 45f;
+    /**
+     * The most the module lets the co-steer turn the view over one commitment (the level's total: 25 degrees for
+     * Co-pilot on Balanced). A technique script that needs more would fall off its line when the turn stops, so the
+     * planner is told the cap. Set by the module every tick.
+     */
+    public float coSteerMaxTotalDeg = TechniqueTemplates.DEFAULT_MAX_TURN;
 
     /** The technique planner (corner, neo, headhitter, 45-degree); {@link TechniqueSource#NONE} until one is set. */
     public void setTechniques(TechniqueSource source) {
