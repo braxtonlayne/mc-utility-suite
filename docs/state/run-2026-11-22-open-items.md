@@ -301,11 +301,21 @@ section.
   160 fps. The lane replica uses the real `YawCoSteer` and passes at 40, 60, 100 and 160 fps.
 - A script must touch down at least 0.08 block inside the support region (the replay's own drift limit). Before,
   a touchdown anywhere on the region counted, the rim included.
+- A script may only ask for what is left of the level's co-steer total. The core counts every degree it adds from
+  the commitment's first request; the brain now counts the same way (`coSteerLeft`) and tells the planner. In the
+  client a corner-fence script in Co-pilot predicted a view 31.1 degrees from the lane's heading at the end,
+  against a total of 25, and left its line by 0.081 at flight tick 9 (the lane note now prints the replayed script
+  and its largest drift). What had turned the view before that script was planned was not traced.
 - Every view change still goes through the co-steer (rate and total capped in the core, 450 deg/s hard cap). No
   fresh key is replaced (asserted per lane).
 - Tried and reverted: keeping the incumbent target inside the estimator's near limit while airborne. It keeps the
   platform being landed on as the raw pick through the end of the flight, and `continuing` reads the raw pick to see
   the next platform. The freeze in the brain covers the takeoff tick without it.
+- Tried and reverted: swapping in a better script found later on the ground while one is already being followed.
+  It broke the corner-fence lane in the replica (several timings); the first valid script is followed.
+- Devtest: the open lanes reuse the first four lane slots. Appended to the row they sat about 200 blocks from the
+  arena and the body did not move after the teleport ("no takeoff recorded" in client runs 1 to 7, so the open-lane
+  notes of those runs say nothing for the lanes it hit). A lane that times out now reports where the body was.
 
 ### Which lanes can be landed (replica search, `LANE_SEARCH=1 ./gradlew test --tests '*ParkourLaneReplicaTest*' -i`)
 
@@ -314,7 +324,8 @@ touchdown, a rough measure of how narrow the solution is. Envelopes: Corrections
 W never replaced, no view change, at most 6 filled strafe ticks; keys only = Legit; Co-pilot = 7.5 deg/tick up to 25,
 W withheld but never reversed; Takeover = 12 deg/tick up to 90, every key; free hand = 22.5 deg/tick, every key.
 The search turns the view at the full rate from the same tick. The real follower is slower, so every "lands" here is
-an upper bound on what the assist can fly, and every "none" stands.
+an upper bound on what the assist can fly. "None" means not found in 225150 rolls; it is strong evidence, not a
+proof.
 
 | Lane | Corrections | Keys only | Co-pilot | Takeover | Free hand |
 |---|---|---|---|---|---|
@@ -327,14 +338,15 @@ an upper bound on what the assist can fly, and every "none" stands.
 | corner-fence-3gap-deep (as first built) | none | none, miss 0.18 | 9480 | 57741 | 32596 |
 | corner-wall-3gap-deep (as first built) | none | 18358 | 4020 | 11620 | 5677 |
 
-Physics note: a full sprint jump from the edge with S held in the air lands 1.43 blocks out (pane-1gap in Takeover
-is an air brake, no slow run-up needed). 2.3 blocks is the figure for releasing W only.
+Physics note: a full sprint jump from the edge with S held in the air lands 1.43 blocks out (z 11.11 to 12.54:
+pane-1gap in Takeover is an air brake, no slow run-up needed). With W only released it is 2.37 (z 10.26 to 12.63,
+which is how Co-pilot lands the pane: its own jump three ticks before the edge).
 
 ### Lane decisions
 
 - **The two corner lanes as first built are not impossible, and are not called that.** The hill climb finds
   touchdowns in the Co-pilot and Takeover envelopes. They are frame-perfect: 4000 to 58000 rolls, margins under 0.2,
-  the body sliding along the column. A scan of 49392 (Co-pilot) and 235200 (Takeover) clean corner shapes, with no
+  and in the solution that was printed the body slides along the column. A scan of 49392 (Co-pilot) and 235200 (Takeover) clean corner shapes, with no
   wall touch, lands the fence post 0 times and the wall post 2 times (`deepCornersHaveNoCleanTechniqueAndTheRebuiltOnesDo`).
   The post is half a block up, which leaves 10 air ticks for 2.78 blocks plus 0.4 to 0.6 sideways, all of it after
   the column corner. A straight diagonal from the far side of the platform is too long by hand arithmetic (about
@@ -351,11 +363,40 @@ is an air brake, no slow run-up needed). 2.3 blocks is the figure for releasing 
   frame-perfect corners are wanted from Takeover, that is a trajectory optimiser, not a template (open item).
 - **Corrections lanes check the design's guarantee, not a landing.** Design section 3: Corrections never commits,
   never replaces a held key and does not move the user's press. With the press at the trigger and W held, no strafe
-  fill lands wall-3gap, pane-1gap or corner-wall-3gap (225150 rolls each, test
-  `correctionsCannotLandTheWallOrThePaneFromThisRunUp`). The check is now "no walk-off after a landing that was
+  fill lands wall-3gap, pane-1gap or corner-wall-3gap (table above; `correctionsCannotLandTheWallOrThePaneFromThisRunUp`
+  pins the first two with a shorter search). The two fence lanes can be touched inside the Corrections rules, at
+  the rim or after hundreds of rolls; Corrections does not try, and the design does not ask it to. The check is now "no walk-off after a landing that was
   made, forward held throughout", plus the fresh-press check when it did land. The unit matrix
   (`ApproachControlTest`) already read it this way.
 - **Lane script:** the press comes once at z >= 10.85 whether or not the body is still on the ground.
+
+### In-game results (`./gradlew runPlaytest -PplaytestOnly=Parkour`)
+
+Run in this worktree's own `run/` directory with `options.txt` and `config/utilitysuite/` copied from the main
+checkout (a fresh run directory stops at the accessibility onboarding screen, and its default camera speed is 240
+deg/s, not the 450 the main checkout has). Before = the report of 14:11 on `main`. After = commit `928aaa0`, client
+run 7 of this session. "dist" is the body's distance from the post centre 40 ticks after the landing, against the
+support limit.
+
+| Lane | Corrections | Co-pilot | Takeover |
+|---|---|---|---|
+| fence-2gap | before FAIL (a landing was expected). After PASS on the Corrections check; no landing made | PASS, PASS (dist 0.281 / 0.425) | PASS, PASS (0.004 / 0.425) |
+| wall-3gap | before FAIL. After PASS; no landing made | PASS, PASS (0.353 / 0.550) | PASS, PASS (0.048 / 0.550) |
+| pane-1gap | before FAIL. After PASS; no landing made | before FAIL (never armed). After PASS (0.327 / 0.363), the assist took the jump two ticks before the press would have | before FAIL (locked, then gave up). After PASS (0.055 / 0.363), air brake |
+| corner-fence | before FAIL (deep lane). After PASS on the rebuilt lane; no landing made | before FAIL (deep lane, never armed). After PASS on `corner-fence-2gap` (0.423 / 0.425), script `corner-cut`, press held back 2 ticks | before FAIL. After PASS (0.076 / 0.425), script `corner-cut` |
+| corner-wall | before FAIL (deep lane). After PASS on the rebuilt lane; no landing made | before FAIL. After PASS on `corner-wall-3gap` (0.170 / 0.550), script `corner-cut`, press held back 1 tick | before FAIL. After PASS (0.170 / 0.550) |
+| first-built deep corners (open lanes) | not run | not landed | not landed |
+
+- The fresh-press check (release W, press again, leave within 10 ticks) passes on every lane that landed.
+- The override lane (sneak mid-flight, the assist writes nothing after it) passes.
+- The benchmark course: 19 of 19 in 726 ticks (726 on `1f37b19`, run here for comparison).
+- Co-pilot on `corner-fence-2gap` is the weak one. The script lands 0.27 off the post centre with a stop margin of
+  -0.10, and the landing hold's sneak guard stops the body on the rim (0.423 and 0.425 of 0.425 in runs 7 and 8).
+  It failed in client runs 3 to 6, where the follower and view-total problems above were found, and has passed in
+  both runs since the last fix, with the same script each time. Two runs are not much; a script with a positive
+  stop margin would be better (Co-pilot may not hold back, so it cannot brake the way Takeover does).
+- Scenario failures that are not from this work (identical on `1f37b19` in this environment): `parkour blocks: a gap
+  one block too long` in both variants, `player stays alive`, `HAY clutch`.
 
 ### Still open after this run
 
@@ -373,11 +414,11 @@ is an air brake, no slow run-up needed). 2.3 blocks is the figure for releasing 
 - Corrections can touch the fence post across 2 inside its own rules (strafe fills on the run-up; margin 0.04 at
   0.24 block per tick) but does not try. The design does not promise it.
 - The estimator still rolls one straight policy per top (sprint, jump as soon as the coast reaches). From a full
-  sprint at z 9.0 and z 10.6 it calls the fence post across 2 infeasible (confidence 0); the lane arms earlier and
-  the approach has slowed the body by then.
-- `parkour blocks: a gap one block too long` fails in both variants, the player then dies and the HAY clutch fails.
-  All four fail the same way on `1f37b19` (the lane was widened to 5 air in that commit; blocks placed 0, plans 2).
-  Not touched here.
+  sprint at z 10.6 it calls the fence post across 2 infeasible (confidence 0, seen while writing a test). The lane
+  still arms and lands in Co-pilot and Takeover; at which stances it has the target was not traced.
+- `parkour blocks: a gap one block too long` fails in both variants, then `player stays alive` and `HAY clutch`
+  fail. All four fail the same way on `1f37b19` (the lane was widened to 5 air in that commit; blocks placed 0,
+  plans 2). Not touched here.
 - In the replica of the benchmark (`ParkourBenchmarkIntentTest`) the landing hold starts on most landings of the
   runner (W held, camera not yet on the next pad) and lets go a few ticks later. In the client the course takes 724
   ticks against 726 on `1f37b19`, so the pace did not change. Whether a hold should start on a wide pad at all is a

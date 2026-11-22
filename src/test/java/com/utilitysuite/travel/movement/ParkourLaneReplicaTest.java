@@ -525,10 +525,13 @@ class ParkourLaneReplicaTest {
     }
 
     /**
-     * A script planned after the view was already turned in the same commitment (here: three ticks of aiming at the
-     * post before the line is known to be blocked) may only ask for what is left of the level's co-steer total. The
-     * core stops at the total; a script that asked for all of it again left its line in the client (corner-fence in
-     * Co-pilot, 2026-11-22: view goal 31 degrees from the commitment's start against a total of 25).
+     * "Blocked" may reach the brain a few ticks after the target (the estimator's roll cache can lag its pick): the
+     * corners must still land, and the view must stay inside the level's co-steer total over the whole commitment.
+     * <p>
+     * A script may only ask for what is left of that total. In the client a corner-fence script in Co-pilot predicted
+     * a view 31 degrees from the commitment's start against a total of 25 and left its line (2026-11-22). This
+     * sequence does not reproduce that case (it passed before the fix too); the count itself is pinned by
+     * {@link #theBrainKnowsWhatIsLeftOfTheCoSteerTotal}.
      */
     @Test
     void aScriptPlannedAfterAnEarlyAimStaysInsideTheCoSteerTotal() {

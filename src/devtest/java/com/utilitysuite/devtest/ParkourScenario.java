@@ -493,6 +493,9 @@ final class ParkourScenario {
         String overrideFirst = "";
         // diagnostics
         final StringBuilder statuses = new StringBuilder();
+        /** What the assist wrote on the run-up, run-length coded (lane tick: z, x, written keys, view, script). */
+        final StringBuilder groundTrace = new StringBuilder();
+        String lastGround = "";
         String lastStatus = "";
         int corrBefore = -1;
         double jumpZ = Double.NaN;
@@ -506,8 +509,8 @@ final class ParkourScenario {
         boolean[] terrainWas = new boolean[1];
         boolean[] moduleWas = new boolean[1];
         ControlLease[] leaseRef = new ControlLease[1];
-        // lanes: 5 kinds x 3 modes, the override lane, then the 2 open (deep corner) kinds in Co-pilot and Takeover
-        int laneCount = 5 * Mode.values().length + 2 + 4;
+        // lanes: 5 kinds x 3 modes, then the override lane; the open (deep corner) lanes reuse the first slots
+        int laneCount = 5 * Mode.values().length + 2;
         s.cmd(() -> "forceload add " + (Arena.cx + OX - 6) + " " + (Arena.cz + OZ + lz - 6) + " "
                 + (Arena.cx + OX + LANE_SPACING * laneCount + 6) + " " + (Arena.cz + OZ + lz + 30));
         s.waitTicks(40);
@@ -535,9 +538,12 @@ final class ParkourScenario {
         // (the scripted-sneak override lane was dropped: with the lanes on physical keys, a MOVEMENT lease is
         // rightly refused while the "user" holds W, and the physical-sneak lane is the real case)
         landingLane(s, lz, idx++, FENCE, Mode.CO_PILOT, Override.PHYSICAL, leaseRef);
+        // the open lanes reuse the first four slots (each lane clears its slot before it builds): a longer row put the
+        // last lanes about 200 blocks from the arena, where the body did not move after the teleport
+        int slot = 0;
         for (Mode mode : new Mode[] {Mode.CO_PILOT, Mode.TAKEOVER}) {
             for (Kind kind : new Kind[] {CORNER_FENCE_DEEP, CORNER_WALL_DEEP}) {
-                landingLane(s, lz, idx++, kind, mode, Override.NONE, leaseRef);
+                landingLane(s, lz, slot++, kind, mode, Override.NONE, leaseRef);
             }
         }
         s.run("control lanes: parity report", () -> {
@@ -640,6 +646,7 @@ final class ParkourScenario {
             boolean made = r.touchedTop;
             if (ovr == Override.NONE && kind.open) {
                 // open lane (frame-perfect corner): reported, not checked; a landing that was made must still hold
+                s.note(label + " run-up, what the assist wrote:" + r.groundTrace);
                 s.note(label + " (open lane, no check): " + (r.standing && !r.fell ? "LANDED and stayed"
                         : made ? "touched the top and left it" : "not landed") + "; " + r.standNote + "; " + parity);
                 s.check(label + ": no walk-off after a landing that was made (open lane)", !made
@@ -694,6 +701,29 @@ final class ParkourScenario {
                 r.maxZ = Math.max(r.maxZ, z);
                 r.maxY = Math.max(r.maxY, p.getY() - Arena.FLOOR);
             }
+        }
+        if (r.jumpTick < 0 || r.takeoffTick < 0) {
+            // the run-up: every change in what the assist writes (keys, sneak, view, script) with where the body is
+            var brain = TravelBootstrap.movement().brain();
+            String sig = Harness.fmt("f%s s%s%s%s yaw%.0f %s%s",
+                    brain.forward() == com.utilitysuite.travel.movement.MovementAssistBrain.KEEP ? "-"
+                            : String.valueOf(brain.forward()),
+                    brain.strafe() == com.utilitysuite.travel.movement.MovementAssistBrain.KEEP ? "-"
+                            : String.valueOf(brain.strafe()),
+                    brain.sneak() ? " sneak" : "", brain.sprintOff() ? " nosprint" : "", p.getYRot(),
+                    brain.commit().phase().name(), brain.scriptActive() ? "+" + brain.activeScript().name + "@"
+                            + brain.scriptIndex() + "/" + brain.activeScript().takeoffIndex : "");
+            if (!sig.equals(r.lastGround) && r.groundTrace.length() < 1400) {
+                r.groundTrace.append(Harness.fmt(" [%d z%.2f x%+.2f %s]", r.tick, z, p.getX() - postCx, sig));
+                r.lastGround = sig;
+            }
+        }
+        if (r.landedTick < 0) {
+            // a lane that times out says where the body was and what held it (test scaffolding: allocation is fine)
+            r.standNote = Harness.fmt("never landed; last seen at lane tick %d: z %.2f, x %+.2f from the post centre,"
+                            + " y %.2f, on ground %s, status '%s', forward %.1f, strafe %.1f, sneak %s, jump %s", r.tick,
+                    z, p.getX() - postCx, p.getY() - Arena.FLOOR, p.onGround(), TravelBootstrap.movement().status(),
+                    in.forwardImpulse, in.leftImpulse, in.shiftKeyDown, in.jumping);
         }
         if (p.getY() < Arena.FLOOR - 2) {
             r.fell = true;

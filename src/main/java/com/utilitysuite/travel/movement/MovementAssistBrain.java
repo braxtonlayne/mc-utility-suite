@@ -1239,10 +1239,9 @@ public final class MovementAssistBrain {
                 scriptOn = false;
             }
         }
-        // on the ground the search goes on while a script is already being followed: the library re-bases its best
-        // script onto the real body every call and swaps in a better one (wider landing, fewer departures)
-        boolean improve = false;
-        if ((scriptOn && !improve) || !armed || !(approach.exhausted() || techniqueFirst)
+        // (the first valid script is followed; swapping in a better one found later on the ground was tried and
+        // made the corner lanes worse, see the run note of 2026-11-22)
+        if (scriptOn || !armed || !(approach.exhausted() || techniqueFirst)
                 || commitSimTicks + TechniqueSource.MAX_SIM_TICKS_PER_CALL > MAX_COMMIT_SIM_TICKS) {
             return;
         }
