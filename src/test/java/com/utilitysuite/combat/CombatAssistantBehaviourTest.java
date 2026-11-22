@@ -187,10 +187,21 @@ class CombatAssistantBehaviourTest {
     }
 
     @Test
-    void theProductionSolverStubFallsBackToTheBand() {
-        Services.registerBodySims(FakeCombatWorld.stillBodies()); // real HitTradeSolver, still a stub answering invalid
-        closesDistanceAndStrafesInBand();
-        assertEquals(0, assistant.tradeTicks());
+    void theProductionSolverDrivesInsideTheBandAndHazardsStillVeto() {
+        Services.registerBodySims(FakeCombatWorld.stillBodies()); // real HitTradeSolver on still bodies
+        world.entities.get(TARGET).x = 6;
+        world.self.attackStrength = 0.2f;
+        engage();
+        assertTrue(backend.isDown(SimKey.FORWARD), "outside the solver range the band closes the distance");
+        assertTrue(backend.isDown(SimKey.SPRINT));
+        assertEquals(0, assistant.tradeTicks(), "solver not consulted beyond spacingMax + 2.5");
+        world.entities.get(TARGET).x = 2.9;
+        tick(1);
+        assertTrue(assistant.tradeTicks() > 0, "a valid production answer drives the keys");
+        world.self.hazardLeft = true;
+        world.self.hazardRight = true;
+        tick(4); // longer than the answer dwell
+        assertFalse(backend.isDown(SimKey.LEFT) || backend.isDown(SimKey.RIGHT), "hazards on both sides");
     }
 
     @Test

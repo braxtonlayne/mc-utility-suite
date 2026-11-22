@@ -395,3 +395,39 @@ has run in a game client yet**. Details, caveats and the playtest list: `docs/st
   setting keyed on `IAutopilot.noteActed`.
 - A8 hunter-bot reuse and LFM/Raon-driven opponents: only the engine-free `TacticUtility` / `OpponentModel` were in
   scope; the hunter bot is a separate feature.
+
+## Pro-feel volley (2026-11-22, run note `docs/state/run-2026-11-22-pro-feel.md`)
+
+Pro-level combat spacing, route pursuit and parkour intent assist. All nine tasks are merged on main; 1094 unit
+tests pass. **Nothing here has run in a game client yet.**
+
+### Done (unit-tested only)
+
+- [x] `HitTradeSolver`: forward rollout of key combinations with cooldowns, reach, hurt immunity and knockback.
+- [x] Opponent cooldown read (`OpponentModel.noteSwing/attackReadyIn`), snapshot fields from the client, `SwingGate`
+      hurt-window hold.
+- [x] Combat wiring: `TradeDriver` drives spacing; route pursuit and route flee through `IRouteRunner`. Settings
+      `hit_trade`, `hit_trade_horizon`, `cooldown_read`, `route_pursuit`.
+- [x] Plan-only Baritone routes (`IRoutePlanner`), registered only when Baritone is loaded.
+- [x] `RouteFollower` with corridor corner cutting, sprint hops and simulated gap / shortcut jumps.
+- [x] `MinecraftRouteRunner` (pursue / flee, planner beyond 12 blocks, local plan otherwise).
+- [x] `ManualLookAssist` turn gain in the core (scales only the user's own mouse motion, capped at 450 deg/s) with
+      `MouseHandlerTurnGainMixin` (21 mixins).
+- [x] `IntentEstimator` and parkour intent assist: target-aware jumps, ideal takeoff yaw, precision air steer,
+      stick the landing, takeoff timing, `AuthorshipBudget`, opt-in jump buffer, Legit knob for turn gain.
+
+### Open
+
+- [ ] In game: work through the checklist in the run note (7 sections). First: mixin audit with 21 mixins, then
+      "a still mouse moves nothing" for turn gain, then "no movement while a Baritone plan is calculating".
+- [ ] Core input guard (or lease) while a Baritone plan is CALCULATING, to close the same-tick executor race.
+- [ ] Freecam / freelook state in `core.api` so `movement_assist` clears its turn-gain request while the camera is
+      detached.
+- [ ] Test for step-in-after-swing with the real `OpponentModel` behind `TradeDriver`; an end-to-end test of
+      `CombatAssistant` -> `RouteRunnerCore` -> `RouteFollower` on fakes.
+- [ ] Route follower: joint 2-3 jump search; hazard cells (lava, fire, magma) as non-standable; slabs, stairs,
+      ladders and water in `MovementPhysics`.
+- [ ] Route runner: reuse the `RotationTarget` instead of allocating one per 4-degree yaw change.
+- [ ] Lang keys for the 8 new movement settings and 4 new combat settings.
+- [ ] Tune after the playtest: solver dwell and margins, pursuit thresholds (6 / 5 blocks, 10 ticks without line of
+      sight), `HURT_HOLD`, intent weights, turn-gain strength.
