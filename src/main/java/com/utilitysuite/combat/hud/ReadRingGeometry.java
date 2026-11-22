@@ -87,4 +87,25 @@ public final class ReadRingGeometry {
         out[o + 2] = cz + lz + dz * k;
         return o + 3;
     }
+
+    /** Tilt confidence below which no strafe side is shown. */
+    public static final float SIDE_MIN_CONFIDENCE = 0.2f;
+
+    /**
+     * The side of the screen the predicted strafe points to, for the reticle chevron: +1 right, -1 left, 0 when the
+     * tilt is weaker than {@link #SIDE_MIN_CONFIDENCE} or mostly along the view. {@code yawDeg} is the viewer's yaw in
+     * the Minecraft convention (0 = facing +Z, 90 = facing -X); the viewer's right is then (-cos yaw, -sin yaw).
+     */
+    public static int screenSide(float tiltX, float tiltZ, float yawDeg) {
+        float len2 = tiltX * tiltX + tiltZ * tiltZ;
+        if (len2 < SIDE_MIN_CONFIDENCE * SIDE_MIN_CONFIDENCE) {
+            return 0;
+        }
+        double yaw = Math.toRadians(yawDeg);
+        double dot = tiltX * -Math.cos(yaw) + tiltZ * -Math.sin(yaw);
+        if (Math.abs(dot) < Math.sqrt(len2) * 0.25) {
+            return 0; // mostly toward or away from the viewer
+        }
+        return dot > 0 ? 1 : -1;
+    }
 }
