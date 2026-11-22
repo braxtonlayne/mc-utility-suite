@@ -1,0 +1,8 @@
+{
+  "setting.utilitysuite.combat_assistant.threat_fights": "Threat-aware fights",
+  "setting.utilitysuite.combat_assistant.threat_fights.tooltip": "While fighting mobs: switch to the biggest threat (a swelling creeper, a skeleton drawing at you, a mob about to hit from behind), back out of a creeper's blast while it swells, strafe out of a drawn bow's line, and spread a pack out. Only mobs already attacking you count.",
+  "setting.utilitysuite.combat_assistant.mob_playbook": "Mob playbook",
+  "setting.utilitysuite.combat_assistant.mob_playbook.tooltip": "Fight each mob the way a pro does: sprint hits on creepers, no crit hops into a spider's leap or onto a baby zombie, close on skeletons with a strafe, rush witches. Unknown and modded mobs get the normal fight.",
+  "setting.utilitysuite.combat_assistant.combo_escape": "Combo escape",
+  "setting.utilitysuite.combat_assistant.combo_escape.tooltip": "Against a player: after two hits taken without landing one, stop trading from the air and strafe out of the knockback line (along the wall when pinned) until your hit lands or half a second passes. Never backpedals straight."
+}
