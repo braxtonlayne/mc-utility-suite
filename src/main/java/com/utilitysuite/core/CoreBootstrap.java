@@ -121,7 +121,7 @@ public final class CoreBootstrap {
         Services.registerAutopilot(autopilot);
 
         modBus.addListener(KeybindManager::onRegisterKeyMappings);
-        KeybindManager.onPressed(KeybindManager.KeyId.TOGGLE_AUTOPILOT, () -> setAutopilot(!autopilot.isOn()));
+        KeybindManager.onPressed(KeybindManager.KeyId.TOGGLE_AUTOPILOT, () -> setAutopilot(!autopilot.isEnabled()));
         KeybindManager.onPressed(KeybindManager.KeyId.STOP_ALL, CoreBootstrap::stopAllFromKey);
         KeybindManager.onPressed(KeybindManager.KeyId.CLEAN_SCREEN,
                 () -> modState.setCleanScreen(!modState.isCleanScreen()));

@@ -43,6 +43,7 @@ public final class Autopilot implements IModule, IConfigurable, IAutopilot {
     static final String K_BLACKBOX = "black_box";
     static final String K_BLACKBOX_HIT = "black_box_hit";
     static final String K_BLACKBOX_ALWAYS = "black_box_always";
+    static final String K_HANDOVER_LATCH = "hand_over_latch";
 
     static final String WHY_DEATH = "death";
     static final String WHY_BIG_HIT = "big hit";
@@ -69,6 +70,9 @@ public final class Autopilot implements IModule, IConfigurable, IAutopilot {
     private final DangerModel danger;
     private final ReflexScheduler scheduler;
     private final ReflexChain chain;
+    private final HandOverState handOver = new HandOverState();
+    /** The hand-over key (a field read in game; a fake in tests). Null: no key, never held. */
+    private java.util.function.BooleanSupplier handOverKey;
     private final BlackBox blackBox = new BlackBox();
     private final BlackBoxWriter writer = new BlackBoxWriter();
     private final VitalsMonitor vitalsMonitor = new VitalsMonitor();
@@ -96,6 +100,7 @@ public final class Autopilot implements IModule, IConfigurable, IAutopilot {
             this.vitalsSource = source;
             this.vitalsTried = true;
         } else {
+            this.handOverKey = Autopilot::handOverKeyDown;
             registerOffTick();
         }
     }
@@ -147,6 +152,7 @@ public final class Autopilot implements IModule, IConfigurable, IAutopilot {
      * Allocation free.
      */
     void tickWhileOff() {
+        tickHandOver(); // this method runs every client tick, on or off
         if (enabled || !blackBoxOn || !blackBoxAlways) {
             return;
         }
@@ -154,6 +160,66 @@ public final class Autopilot implements IModule, IConfigurable, IAutopilot {
             subscribe();
         }
         recordTick(sampleVitals(), null, true);
+    }
+
+    // ---- hand-over key ---------------------------------------------------------------------------------------------
+
+    /** Game only: the hand-over key mapping. Unit tests never reach this (they pass their own key). */
+    private static boolean handOverKeyDown() {
+        return com.utilitysuite.core.input.KeybindManager.isHeld(
+                com.utilitysuite.core.input.KeybindManager.KeyId.HAND_OVER);
+    }
+
+    /** For tests: the hand-over key. */
+    void useHandOverKey(java.util.function.BooleanSupplier key) {
+        handOverKey = key;
+    }
+
+    private boolean keyDown() {
+        java.util.function.BooleanSupplier k = handOverKey;
+        if (k == null) {
+            return false;
+        }
+        try {
+            return k.getAsBoolean();
+        } catch (LinkageError | RuntimeException e) {
+            handOverKey = null; // no game: never held
+            return false;
+        }
+    }
+
+    /**
+     * The hand-over key, once per client tick (from {@link #tickWhileOff}, which runs whether the autopilot is on or
+     * off). On the tick it ends, everything the autopilot held because of the key alone is let go: the scheduler's
+     * turn and the reflex chain's lease. The modules that acted under it (Movement Assist, Combat Assistant) see
+     * {@link #handOverHeld} turn false and end their own leases the same tick. While it is held with the toggle off,
+     * the chain's upkeep runs here, because the module registry does not tick a module that is off. Allocation free.
+     */
+    private void tickHandOver() {
+        int edge = handOver.update(keyDown(), clock.now());
+        if (edge == HandOverState.ENDED) {
+            endHandOver();
+        } else if (handOver.held() && !enabled && chain.lease() != null) {
+            chain.tick(arbiterOrNull());
+        }
+    }
+
+    private void endHandOver() {
+        if (!enabled) {
+            scheduler.reset();
+            chain.release();
+        }
+    }
+
+    @Override
+    public boolean handOverHeld() {
+        // the key is asked again so a release counts in the same tick, before this module's next tick
+        return handOver.held() && (handOver.latched() || keyDown());
+    }
+
+    @Override
+    public long handOverStartTick() {
+        return handOver.startTick();
     }
 
     /** Samples the vitals into the danger model; returns the {@link VitalsMonitor} event. Allocation free. */
@@ -265,6 +331,7 @@ public final class Autopilot implements IModule, IConfigurable, IAutopilot {
 
     @Override
     public void onStopAll() {
+        handOver.revoke(clock.now()); // Stop-All beats the key: it must be let go and pressed again
         scheduler.reset();
         danger.clearAll();
         chain.release();
@@ -280,11 +347,14 @@ public final class Autopilot implements IModule, IConfigurable, IAutopilot {
 
     @Override
     public boolean isOn() {
-        return enabled;
+        return enabled || handOverHeld();
     }
 
     @Override
     public boolean allows(Reflex reflex) {
+        if (handOverHeld()) {
+            return true; // the hand-over key arms every reflex, whatever the toggle and the reach say
+        }
         if (!enabled) {
             return false;
         }
@@ -303,6 +373,9 @@ public final class Autopilot implements IModule, IConfigurable, IAutopilot {
 
     @Override
     public Reach reach() {
+        if (handOverHeld()) {
+            return Reach.ASSIST;
+        }
         return reach;
     }
 
@@ -363,7 +436,7 @@ public final class Autopilot implements IModule, IConfigurable, IAutopilot {
 
     @Override
     public Reflex activeReflex() {
-        return enabled ? scheduler.active() : null;
+        return isOn() ? scheduler.active() : null;
     }
 
     @Override
@@ -394,6 +467,7 @@ public final class Autopilot implements IModule, IConfigurable, IAutopilot {
         blackBoxOn = p.getBool(ID, K_BLACKBOX, true);
         blackBoxAlways = p.getBool(ID, K_BLACKBOX_ALWAYS, true);
         bigHit = Math.max(1, p.getInt(ID, K_BLACKBOX_HIT, 6));
+        handOver.setLatchOnDoubleTap(p.getBool(ID, K_HANDOVER_LATCH, false));
         try {
             reach = Reach.valueOf(p.getString(ID, K_REACH, Reach.ASSIST.name()));
         } catch (IllegalArgumentException e) {
@@ -468,6 +542,13 @@ public final class Autopilot implements IModule, IConfigurable, IAutopilot {
                                 + " landing. ASSIST only."),
                 SettingSpec.bool(K_BLOCKS, "Parkour blocks", true, "Reflexes",
                         "Mid-jump, place one block when it keeps the run going (uses hotbar blocks). ASSIST only."),
+                SettingSpec.bool(K_HANDOVER_LATCH, "Double-tap to latch", false, "Hand-over key",
+                        "The hand-over key (Controls, Utility Suite: \"Hand over: hold to give the autopilot"
+                                + " control\", unbound by default) gives the autopilot the whole body while you hold"
+                                + " it: parkour Takeover, combat on the threat in front of you, every reflex armed."
+                                + " Let go and you have control back within a tick. With this on, two quick presses"
+                                + " keep it on without holding; the next press or Stop-All ends it. It never raises"
+                                + " the legit level: turns stay smoothed and capped."),
                 SettingSpec.bool(K_BLACKBOX, "Black box", true, "Black box",
                         "Keeps the last 10 seconds of health, dangers and reflex decisions, and saves them to"
                                 + " utilitysuite/blackbox when you die or take a big hit."),

@@ -84,6 +84,7 @@ public final class SuiteHud implements IModule, IConfigurable, LayeredDraw.Layer
     private int ticks;
     private boolean pollNow;
     private IAutopilot.Reflex lastReflex;
+    private boolean lastHandOver;
     private String lastParkour;
 
     // info strip sampling
@@ -153,9 +154,13 @@ public final class SuiteHud implements IModule, IConfigurable, LayeredDraw.Layer
         IAutopilot ap = Services.autopilotOrNull();
         boolean apOn = ap != null && ap.isOn();
         IAutopilot.Reflex reflex = apOn ? ap.activeReflex() : null;
-        autopilotHud.update(apOn, reflex); // engage / takeover / release edges: overlay and notices
-        if (reflex != lastReflex) {
+        // the hand-over key: brackets and one status line while it is held (the toggle alone is "online")
+        boolean handOver = apOn && ap.handOverHeld();
+        boolean toggleOn = apOn && (!(ap instanceof IModule m) || m.isEnabled());
+        autopilotHud.update(toggleOn, reflex, handOver); // engage / takeover / release edges: overlay and notices
+        if (reflex != lastReflex || handOver != lastHandOver) {
             lastReflex = reflex;
+            lastHandOver = handOver;
             pollNow = true;
         }
         // a parkour commitment or landing hold is just as short-lived: one constant string, compared by reference
@@ -175,6 +180,10 @@ public final class SuiteHud implements IModule, IConfigurable, LayeredDraw.Layer
         if (reflex != null) {
             // what is acting right now outranks the job line; one line only
             line.updateAutopilot(AutopilotHud.stemLine(reflex)); // "STEM - FALL CLUTCH", a constant per reflex
+            return;
+        }
+        if (handOver) {
+            line.updateAutopilot(AutopilotHud.HAND_OVER_LINE); // "STEM - FULL CONTROL", one constant
             return;
         }
         if (parkour != null) {
