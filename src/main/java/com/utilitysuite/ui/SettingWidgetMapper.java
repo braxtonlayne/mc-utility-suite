@@ -1,6 +1,7 @@
 package com.utilitysuite.ui;
 
 import com.utilitysuite.core.api.SettingSpec;
+import com.utilitysuite.ui.kit.WidgetKeys;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -78,6 +79,19 @@ public final class SettingWidgetMapper {
             v = Math.max(s.min(), Math.min(s.max(), v));
         }
         return s.type() == SettingSpec.Type.INT ? Math.round(v) : v;
+    }
+
+    /** Stable animation key of the widget of a setting: module id + setting key hash, the same on every rebuild. */
+    public static long widgetKey(String moduleId, SettingSpec s) {
+        return WidgetKeys.setting(moduleId, s.key());
+    }
+
+    /** Slider position 0..1 of the spec's default value (the tick mark), or -1 when it has none. */
+    public static double defaultPosition(SettingSpec s) {
+        if (!hasRange(s) || !(s.defaultValue() instanceof Number n)) {
+            return -1.0;
+        }
+        return toSliderPosition(s, n.doubleValue());
     }
 
     /** Value → slider position 0..1. */

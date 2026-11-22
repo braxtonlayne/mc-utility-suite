@@ -1,5 +1,6 @@
 package com.utilitysuite.ui.kit;
 
+import com.utilitysuite.ui.holo.AnimStore;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
 
@@ -17,6 +18,55 @@ public abstract class UiNode {
     public int h;
     public boolean focused;
     private String tooltip = "";
+
+    // ---- animation (AnimStore.SHARED; keyed so state survives a rebuild) ---------------------------------------------
+
+    protected static final int CH_HOVER = 1;
+    protected static final int CH_PRESS = 2;
+    protected static final int CH_SLIDE = 3;
+    protected static final int CH_VALUE = 4;
+
+    private long animId;
+
+    /** Sets the stable animation key of this widget (see {@link WidgetKeys}). */
+    public UiNode animId(long key) {
+        animId = key;
+        return this;
+    }
+
+    /** The stable key; 0 until set. */
+    public final long animId() {
+        return animId;
+    }
+
+    /** Assigns a positional key when nobody gave this node one (called by the panel when the node is placed). */
+    public final void ensureAnimId() {
+        if (animId == 0L) {
+            animId = WidgetKeys.positional(getClass(), x, y);
+        }
+    }
+
+    /** The key used for drawing: a keyed one, or an identity key for chrome nodes that never saw a panel. */
+    protected final long key() {
+        if (animId == 0L) {
+            animId = WidgetKeys.positional(getClass(), System.identityHashCode(this), 0);
+        }
+        return animId;
+    }
+
+    /** Hover amount 0..1, settled fast. Live from the first frame. */
+    protected final float hoverAmount(boolean hover) {
+        return AnimStore.SHARED.settle(WidgetKeys.channel(key(), CH_HOVER), hover ? 1f : 0f, AnimStore.TAU_FAST, 0f);
+    }
+
+    /** Press flash 0..1: jumps to 1 on {@link #flashPress()} and settles back. */
+    protected final float pressAmount() {
+        return AnimStore.SHARED.settle(WidgetKeys.channel(key(), CH_PRESS), 0f, AnimStore.TAU_NORMAL, 0f);
+    }
+
+    protected final void flashPress() {
+        AnimStore.SHARED.set(WidgetKeys.channel(key(), CH_PRESS), 1f);
+    }
 
     protected UiNode(int w, int h) {
         this.w = w;

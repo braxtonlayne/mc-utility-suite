@@ -3,7 +3,10 @@ package com.utilitysuite.ui.kit;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
 
-/** A plain rounded surface (inset blocks, progress tracks, chips' backgrounds); purely decorative. */
+/**
+ * A plain square surface at the quiet level: fill and an optional hairline (inset blocks, tracks, separators); purely
+ * decorative. The radius and corner mask of the old rounded kit are accepted and ignored.
+ */
 public final class BoxNode extends UiNode {
 
     private final int fill;

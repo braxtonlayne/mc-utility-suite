@@ -1,5 +1,7 @@
 package com.utilitysuite.ui;
 
+import com.utilitysuite.core.api.visual.HoloToken;
+import com.utilitysuite.ui.holo.HoloTheme;
 import com.utilitysuite.ui.kit.BoxNode;
 import com.utilitysuite.ui.kit.CardNode;
 import com.utilitysuite.ui.kit.CollapsibleSection;
@@ -13,6 +15,7 @@ import com.utilitysuite.ui.kit.ToggleSwitch;
 import com.utilitysuite.ui.kit.UiNode;
 import com.utilitysuite.ui.kit.UiRenderUtils;
 import com.utilitysuite.ui.kit.UiTheme;
+import com.utilitysuite.ui.kit.WidgetKeys;
 import net.minecraft.client.gui.Font;
 import net.minecraft.network.chat.FormattedText;
 import net.minecraft.network.chat.Style;
@@ -43,14 +46,14 @@ public final class Panel {
     /** Height of text fields; pills, selectors and sliders are 14-16 px and centered in the row. */
     public static final int WIDGET_H = StyledTextField.H;
 
-    public static final int WHITE = UiTheme.TEXT_SECONDARY;
-    public static final int GRAY = UiTheme.TEXT_MUTED;
-    public static final int DIM = UiTheme.TEXT_DIM;
-    public static final int HEADING = UiTheme.TEXT;
-    public static final int RED = UiTheme.DANGER;
-    public static final int GREEN = UiTheme.RUNNING;
-    public static final int YELLOW = UiTheme.WARNING;
-    public static final int ACCENT = UiTheme.ACCENT;
+    public static int WHITE = UiTheme.TEXT_SECONDARY;
+    public static int GRAY = UiTheme.TEXT_MUTED;
+    public static int DIM = UiTheme.TEXT_DIM;
+    public static int HEADING = UiTheme.TEXT;
+    public static int RED = UiTheme.DANGER;
+    public static int GREEN = UiTheme.RUNNING;
+    public static int YELLOW = UiTheme.WARNING;
+    public static int ACCENT = UiTheme.ACCENT;
 
     private static final int BODY_PAD = 8;
 
@@ -73,7 +76,21 @@ public final class Panel {
     private BoxNode inset;
     private int insetTop;
 
+    /** Re-reads the colour aliases from the theme (accent changes); cheap, runs once per rebuilt panel. */
+    static void refreshColors() {
+        UiTheme.refresh();
+        WHITE = UiTheme.TEXT_SECONDARY;
+        GRAY = UiTheme.TEXT_MUTED;
+        DIM = UiTheme.TEXT_DIM;
+        HEADING = UiTheme.TEXT;
+        RED = UiTheme.DANGER;
+        GREEN = UiTheme.RUNNING;
+        YELLOW = UiTheme.WARNING;
+        ACCENT = UiTheme.ACCENT;
+    }
+
     Panel(SuiteMenuScreen screen, Font font, int contentW) {
+        refreshColors();
         this.screen = screen;
         this.font = font;
         this.contentW = contentW;
@@ -150,6 +167,9 @@ public final class Panel {
     /** A switch at the right end of the open card's header row. */
     public ToggleSwitch cardToggle(boolean value, String animKey, Consumer<Boolean> onChange) {
         ToggleSwitch t = new ToggleSwitch(value, onChange).animKey(animKey);
+        if (animKey != null && animKey.startsWith("module.")) {
+            t.animKey(WidgetKeys.module(animKey.substring(7))); // module id + hash: the same key on every rebuild
+        }
         add(t, contentW - UiTheme.CARD_PAD - ToggleSwitch.W, cardTop + (CardNode.HEADER_H - ToggleSwitch.H) / 2);
         return t;
     }
@@ -252,7 +272,7 @@ public final class Panel {
         add(new LabelNode(font, text, UiTheme.ACCENT, width()), originX, y + 2);
         int tw = font.width(text) + 8;
         if (tw < width() - 10) {
-            add(new BoxNode(width() - tw, 1, 0, 0xFF262B36, 0, UiRenderUtils.ALL), originX + tw, y + 6);
+            add(new BoxNode(width() - tw, 1, 0, HoloTheme.argb(HoloToken.LINE_FAINT), 0, UiRenderUtils.ALL), originX + tw, y + 6);
         }
         y += LINE + 2;
     }
@@ -265,7 +285,7 @@ public final class Panel {
     public void divider() {
         body();
         y += 4;
-        add(new BoxNode(width(), 1, 0, 0xFF22262F, 0, UiRenderUtils.ALL), originX, y);
+        add(new BoxNode(width(), 1, 0, HoloTheme.argb(HoloToken.LINE_FAINT), 0, UiRenderUtils.ALL), originX, y);
         y += 5;
     }
 
@@ -419,6 +439,7 @@ public final class Panel {
     private void add(UiNode n, int x, int yy) {
         n.x = x;
         n.y = yy;
+        n.ensureAnimId(); // nodes nobody keyed get a stable kind+position key, so hover state survives rebuilds
         nodes.add(n);
     }
 

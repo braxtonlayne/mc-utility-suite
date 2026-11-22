@@ -1,5 +1,9 @@
 package com.utilitysuite.ui.kit;
 
+import com.utilitysuite.core.api.visual.HoloToken;
+import com.utilitysuite.ui.holo.AnimStore;
+import com.utilitysuite.ui.holo.HoloFrames;
+import com.utilitysuite.ui.holo.HoloTheme;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
 
@@ -72,32 +76,45 @@ public final class CycleSelector<E> extends UiNode {
             return;
         }
         boolean hover = inside(mouseX, mouseY, sx, sy, w, h);
-        int border = focused ? UiTheme.ACCENT_BORDER : hover ? UiTheme.FIELD_BORDER_HOVER : UiTheme.BORDER;
-        UiRenderUtils.panel(g, sx, sy, w, h, UiTheme.RADIUS_SMALL, UiTheme.FIELD, border);
+        float hv = hoverAmount(hover);
+        int accent = HoloTheme.argb(HoloToken.ACCENT);
+        int edge = focused ? HoloTheme.argb(HoloToken.LINE_STRONG)
+                : HoloTheme.mix(HoloTheme.argb(HoloToken.LINE_FAINT), HoloTheme.argb(HoloToken.LINE), hv);
+        g.fill(sx, sy, sx + w, sy + h, HoloTheme.argb(HoloToken.FIELD));
+        HoloFrames.edge(g, sx, sy, w, h, edge);
         int ty = sy + (h - 8) / 2;
+        int textSel = accent;
+        int textIdle = HoloTheme.argb(HoloToken.TEXT_SECONDARY);
+        int textDim = HoloTheme.argb(HoloToken.TEXT_MUTED);
+        int textHot = HoloTheme.argb(HoloToken.TEXT);
         if (segmented) {
             int n = values.size();
+            // the selected block and its underline slide between segments
+            float pos = AnimStore.SHARED.settle(WidgetKeys.channel(key(), CH_SLIDE), index, AnimStore.TAU_NORMAL, index);
+            int px0 = sx + Math.round(pos * w / n);
+            int px1 = sx + Math.round((pos + 1f) * w / n);
+            g.fill(Math.max(sx + 1, px0), sy + 1, Math.min(sx + w - 1, px1), sy + h - 1,
+                    HoloTheme.argb(HoloToken.GLASS_RAISED));
+            g.fill(Math.max(sx + 1, px0), sy + h - 3, Math.min(sx + w - 1, px1), sy + h - 1, accent);
+            int hairline = HoloTheme.argb(HoloToken.LINE_FAINT);
             for (int i = 0; i < n; i++) {
                 int x0 = sx + i * w / n;
                 int x1 = sx + (i + 1) * w / n;
+                if (i > 0) {
+                    g.fill(x0, sy + 3, x0 + 1, sy + h - 3, hairline);
+                }
                 boolean sel = i == index;
                 boolean segHover = hover && mouseX >= x0 && mouseX < x1;
-                if (sel) {
-                    UiRenderUtils.roundedRect(g, x0 + 2, sy + 2, x1 - x0 - 4, h - 4, 3, 0xFF263445);
-                    UiRenderUtils.roundedOutline(g, x0 + 2, sy + 2, x1 - x0 - 4, h - 4, 3, UiTheme.ACCENT_BORDER);
-                } else if (segHover) {
-                    UiRenderUtils.roundedRect(g, x0 + 2, sy + 2, x1 - x0 - 4, h - 4, 3, UiTheme.CONTROL);
-                }
-                int c = sel ? UiTheme.ACCENT : segHover ? UiTheme.TEXT : UiTheme.TEXT_DIM;
-                UiRenderUtils.text(g, font, shown[i], x0 + (x1 - x0 - labelWidths[i]) / 2, ty, c);
+                int c = sel ? textSel : segHover ? textHot : textDim;
+                UiRenderUtils.text(g, font, shown[i], x0 + (x1 - x0 - labelWidths[i]) / 2, ty - 1, c);
             }
         } else {
             boolean leftHover = hover && mouseX < sx + w / 3;
             boolean rightHover = hover && !leftHover;
-            UiRenderUtils.chevron(g, sx + 7, sy + (h - 5) / 2, 2, leftHover ? UiTheme.ACCENT : UiTheme.TEXT_MUTED);
-            UiRenderUtils.chevron(g, sx + w - 10, sy + (h - 5) / 2, 0, rightHover ? UiTheme.ACCENT : UiTheme.TEXT_MUTED);
+            UiRenderUtils.chevron(g, sx + 7, sy + (h - 5) / 2, 2, leftHover ? accent : textDim);
+            UiRenderUtils.chevron(g, sx + w - 10, sy + (h - 5) / 2, 0, rightHover ? accent : textDim);
             UiRenderUtils.text(g, font, shown[index], sx + (w - labelWidths[index]) / 2, ty,
-                    hover ? UiTheme.TEXT : UiTheme.TEXT_SECONDARY);
+                    HoloTheme.mix(textIdle, textHot, hv));
         }
     }
 

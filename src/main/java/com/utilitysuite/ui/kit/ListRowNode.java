@@ -1,5 +1,8 @@
 package com.utilitysuite.ui.kit;
 
+import com.utilitysuite.core.api.visual.HoloToken;
+import com.utilitysuite.ui.holo.HoloFrames;
+import com.utilitysuite.ui.holo.HoloTheme;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
 
@@ -47,17 +50,23 @@ public final class ListRowNode extends UiNode {
     @Override
     public void render(GuiGraphics g, Font font, int sx, int sy, int mouseX, int mouseY) {
         boolean hover = inside(mouseX, mouseY, sx, sy, w, h);
+        float hv = hoverAmount(hover);
+        int accent = HoloTheme.argb(HoloToken.ACCENT);
         if (selected) {
-            UiRenderUtils.roundedRect(g, sx, sy, w, h, UiTheme.RADIUS_SMALL, hover ? 0x3038BDF8 : 0x1E38BDF8);
-            UiRenderUtils.roundedRect(g, sx, sy + 3, 2, h - 6, 1, UiTheme.ACCENT);
-        } else if (hover) {
-            UiRenderUtils.roundedRect(g, sx, sy, w, h, UiTheme.RADIUS_SMALL, UiTheme.ROW_HOVER);
-        } else if (separator) {
-            UiRenderUtils.hLine(g, sx + 6, sx + w - 6, sy + h, 0xFF20242C);
+            g.fill(sx, sy, sx + w, sy + h, HoloTheme.mix(HoloTheme.argb(HoloToken.ACCENT_GLOW),
+                    HoloTheme.fade(accent, 0.30f), hv));
+            HoloFrames.sideBar(g, sx, sy + 2, h - 4, HoloToken.ACCENT, 1f);
+        } else {
+            if (hv > 0.01f) {
+                g.fill(sx, sy, sx + w, sy + h, HoloTheme.argb(HoloToken.GLASS_RAISED, hv));
+            }
+            if (separator && hv < 0.5f) {
+                UiRenderUtils.hLine(g, sx + 6, sx + w - 6, sy + h, HoloTheme.argb(HoloToken.LINE_FAINT));
+            }
         }
         if (!label.isEmpty()) {
-            UiRenderUtils.text(g, font, label, sx + 8, sy + (h - 8) / 2,
-                    selected ? UiTheme.ACCENT : hover && onPress != null ? UiTheme.TEXT : labelColor);
+            int idle = onPress != null ? HoloTheme.mix(labelColor, UiTheme.TEXT, hv) : labelColor;
+            UiRenderUtils.text(g, font, label, sx + 8, sy + (h - 8) / 2, selected ? accent : idle);
         }
     }
 

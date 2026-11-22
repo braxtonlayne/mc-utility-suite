@@ -1,5 +1,9 @@
 package com.utilitysuite.ui.kit;
 
+import com.utilitysuite.core.api.visual.FrameLevel;
+import com.utilitysuite.core.api.visual.HoloToken;
+import com.utilitysuite.ui.holo.HoloFrames;
+import com.utilitysuite.ui.holo.HoloTheme;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
 
@@ -49,15 +53,19 @@ public final class CardNode extends UiNode {
     @Override
     public void render(GuiGraphics g, Font font, int sx, int sy, int mouseX, int mouseY) {
         boolean hover = inside(mouseX, mouseY, sx, sy, w, h);
-        int bg = hover ? UiTheme.CARD_HOVER : UiTheme.CARD;
-        int border = switch (tone) {
-            case HERO -> hover ? 0xFF2E5A75 : 0xFF274A60;
-            case DANGER -> UiTheme.DANGER_BORDER;
-            default -> hover ? 0xFF2F3442 : UiTheme.BORDER;
-        };
-        UiRenderUtils.panel(g, sx, sy, w, h, UiTheme.RADIUS, bg, border);
+        float hv = hoverAmount(hover);
+        HoloFrames.frame(g, sx, sy, w, h, FrameLevel.FRAMED, false, HoloToken.GLASS,
+                tone == Tone.DANGER ? HoloToken.DANGER : HoloToken.LINE, 1f);
+        if (hv > 0.01f) {
+            // hover: the faint edge rises to LINE and the fill gains about 6 %
+            HoloFrames.edge(g, sx, sy, w, h, HoloTheme.fade(HoloTheme.argb(HoloToken.LINE), hv));
+            g.fill(sx + 1, sy + 1, sx + w - 1, sy + h - 1, HoloTheme.fade(HoloTheme.argb(HoloToken.ACCENT), 0.06f * hv));
+        }
         if (tone == Tone.HERO) {
-            UiRenderUtils.hLine(g, sx + UiTheme.RADIUS, sx + w - UiTheme.RADIUS, sy, 0xFF38BDF8);
+            HoloFrames.brackets(g, sx, sy, w, h, HoloTheme.bracketArm(w, h), HoloTheme.argb(HoloToken.LINE_STRONG));
+        } else if (tone == Tone.DANGER) {
+            HoloFrames.edge(g, sx, sy, w, h, HoloTheme.argb(HoloToken.DANGER, 0.5f));
+            HoloFrames.brackets(g, sx, sy, w, h, HoloTheme.bracketArm(w, h), HoloTheme.argb(HoloToken.DANGER));
         }
         if (!title.isEmpty()) {
             int ty = sy + (HEADER_H - 8) / 2;
@@ -67,7 +75,7 @@ public final class CardNode extends UiNode {
             }
         }
         if (dividerY > 0) {
-            UiRenderUtils.hLine(g, sx + 1, sx + w - 1, sy + dividerY, 0xFF22262F);
+            UiRenderUtils.hLine(g, sx + 1, sx + w - 1, sy + dividerY, HoloTheme.argb(HoloToken.LINE_FAINT));
         }
     }
 }

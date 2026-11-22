@@ -1,5 +1,8 @@
 package com.utilitysuite.ui.kit;
 
+import com.utilitysuite.core.api.visual.HoloToken;
+import com.utilitysuite.ui.holo.HoloFrames;
+import com.utilitysuite.ui.holo.HoloTheme;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
 
@@ -39,17 +42,24 @@ public final class CollapsibleSection extends UiNode {
     @Override
     public void render(GuiGraphics g, Font font, int sx, int sy, int mouseX, int mouseY) {
         boolean hover = inside(mouseX, mouseY, sx, sy, w, h);
-        if (hover || open) {
-            UiRenderUtils.roundedRect(g, sx, sy, w, h, UiTheme.RADIUS_SMALL, open && !hover ? UiTheme.INSET
-                    : UiTheme.ROW_HOVER, open ? UiRenderUtils.TL | UiRenderUtils.TR : UiRenderUtils.ALL);
+        float hv = hoverAmount(hover);
+        if (open) {
+            g.fill(sx, sy, sx + w, sy + h, HoloTheme.argb(HoloToken.FIELD));
         }
-        int c = hover ? UiTheme.TEXT : UiTheme.TEXT_DIM;
-        UiRenderUtils.chevron(g, open ? sx + 7 : sx + 8, sy + (h - 5) / 2, open ? 1 : 0, open ? UiTheme.ACCENT : c);
+        if (hv > 0.01f) {
+            g.fill(sx, sy, sx + w, sy + h, HoloTheme.argb(HoloToken.GLASS_RAISED, hv));
+        }
+        if (open) {
+            g.fill(sx, sy + h - 1, sx + w, sy + h, HoloTheme.argb(HoloToken.LINE_FAINT));
+        }
+        int c = HoloTheme.mix(UiTheme.TEXT_DIM, UiTheme.TEXT, hv);
+        int accent = HoloTheme.argb(HoloToken.ACCENT);
+        UiRenderUtils.chevron(g, open ? sx + 7 : sx + 8, sy + (h - 5) / 2, open ? 1 : 0, open ? accent : c);
         UiRenderUtils.text(g, font, title, sx + 18, sy + (h - 8) / 2, c);
         if (!count.isEmpty()) {
             int cw = font.width(count) + 8;
             int cx = sx + 18 + titleW + 6;
-            UiRenderUtils.roundedRect(g, cx, sy + (h - 11) / 2, cw, 11, 5, UiTheme.CONTROL);
+            HoloFrames.edge(g, cx, sy + (h - 11) / 2, cw, 11, HoloTheme.argb(HoloToken.LINE_FAINT));
             UiRenderUtils.text(g, font, count, cx + 4, sy + (h - 11) / 2 + 2, UiTheme.TEXT_DIM);
         }
     }

@@ -9,6 +9,7 @@ import com.utilitysuite.ui.kit.LabelNode;
 import com.utilitysuite.ui.kit.ModernSlider;
 import com.utilitysuite.ui.kit.StyledTextField;
 import com.utilitysuite.ui.kit.ToggleSwitch;
+import com.utilitysuite.ui.kit.WidgetKeys;
 import com.utilitysuite.ui.kit.UiNode;
 
 import java.util.List;
@@ -93,7 +94,9 @@ public final class SettingsRenderer {
 
     /** The module's enable flag as the card header switch (persisted per profile). */
     public static ToggleSwitch moduleToggle(Panel p, IModule m) {
-        return p.cardToggle(m.isEnabled(), "module." + m.id(), v -> setEnabled(p, m, v));
+        ToggleSwitch t = p.cardToggle(m.isEnabled(), "module." + m.id(), v -> setEnabled(p, m, v));
+        t.animKey(WidgetKeys.module(m.id()));
+        return t;
     }
 
     static void setEnabled(Panel p, IModule m, boolean v) {
@@ -142,6 +145,7 @@ public final class SettingsRenderer {
         int ww = kind == SettingWidgetMapper.Kind.TOGGLE ? ToggleSwitch.W : Math.min(200, w * 46 / 100);
         LabelNode label = p.rowLabel(spec.label(), 0, w - ww - 10, Panel.WHITE);
         UiNode node = widget(p, spec, access, ww, w - ww);
+        node.animId(SettingWidgetMapper.widgetKey(access.moduleId(), spec)); // survives Panel.rebuild()
         if (!spec.tooltip().isEmpty()) {
             label.tooltip(spec.tooltip());
             node.tooltip(spec.tooltip());
@@ -222,6 +226,11 @@ public final class SettingsRenderer {
         @Override
         public String text() {
             return SettingWidgetMapper.format(spec, current);
+        }
+
+        @Override
+        public double defaultPosition() {
+            return SettingWidgetMapper.defaultPosition(spec);
         }
 
         @Override

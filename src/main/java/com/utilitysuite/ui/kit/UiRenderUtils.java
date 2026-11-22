@@ -1,6 +1,9 @@
 package com.utilitysuite.ui.kit;
 
 import com.mojang.blaze3d.vertex.PoseStack;
+import com.utilitysuite.core.api.visual.FrameLevel;
+import com.utilitysuite.core.api.visual.HoloToken;
+import com.utilitysuite.ui.holo.HoloFrames;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.world.item.ItemStack;
@@ -45,81 +48,47 @@ public final class UiRenderUtils {
         return Math.max(0, Math.min(MAX_RADIUS, Math.min(r, Math.min(w, h) / 2)));
     }
 
+    /** Filled rectangle. The radius is accepted and ignored: every surface is square or chamfered now. */
     public static void roundedRect(GuiGraphics g, int x, int y, int w, int h, int radius, int color) {
-        roundedRect(g, x, y, w, h, radius, color, ALL);
-    }
-
-    /** Filled rounded rectangle; {@code corners} is a mask of {@link #TL}, {@link #TR}, {@link #BL}, {@link #BR}. */
-    public static void roundedRect(GuiGraphics g, int x, int y, int w, int h, int radius, int color, int corners) {
         if (w <= 0 || h <= 0 || (color >>> 24) == 0) {
             return;
         }
-        int r = clampRadius(radius, w, h);
-        if (r == 0) {
-            g.fill(x, y, x + w, y + h, color);
-            return;
-        }
-        int[] ins = INSETS[r];
-        int top = corners & (TL | TR);
-        int bottom = corners & (BL | BR);
-        int midTop = top != 0 ? y + r : y;
-        int midBottom = bottom != 0 ? y + h - r : y + h;
-        if (midBottom > midTop) {
-            g.fill(x, midTop, x + w, midBottom, color);
-        }
-        if (top != 0) {
-            for (int i = 0; i < r; i++) {
-                int l = (corners & TL) != 0 ? ins[i] : 0;
-                int rr = (corners & TR) != 0 ? ins[i] : 0;
-                g.fill(x + l, y + i, x + w - rr, y + i + 1, color);
-            }
-        }
-        if (bottom != 0) {
-            for (int i = 0; i < r; i++) {
-                int l = (corners & BL) != 0 ? ins[i] : 0;
-                int rr = (corners & BR) != 0 ? ins[i] : 0;
-                g.fill(x + l, y + h - 1 - i, x + w - rr, y + h - i, color);
-            }
-        }
+        g.fill(x, y, x + w, y + h, color);
     }
 
-    /** 1 px outline following the rounded corners (all four rounded). */
+    /** Filled rectangle; the corner mask and radius are accepted and ignored (square surfaces). */
+    public static void roundedRect(GuiGraphics g, int x, int y, int w, int h, int radius, int color, int corners) {
+        roundedRect(g, x, y, w, h, radius, color);
+    }
+
+    /** 1 px hairline outline (radius ignored). */
     public static void roundedOutline(GuiGraphics g, int x, int y, int w, int h, int radius, int color) {
         if (w <= 1 || h <= 1 || (color >>> 24) == 0) {
             return;
         }
-        int r = clampRadius(radius, w, h);
-        int[] ins = INSETS[r];
-        int i0 = r > 0 ? ins[0] : 0;
-        g.fill(x + i0, y, x + w - i0, y + 1, color);
-        g.fill(x + i0, y + h - 1, x + w - i0, y + h, color);
-        int vTop = Math.max(1, r);
-        int vBottom = h - Math.max(1, r);
-        if (vBottom > vTop) {
-            g.fill(x, y + vTop, x + 1, y + vBottom, color);
-            g.fill(x + w - 1, y + vTop, x + w, y + vBottom, color);
-        }
-        for (int i = 1; i < r; i++) {
-            int a = ins[i];
-            int b = Math.max(a + 1, ins[i - 1]);
-            g.fill(x + a, y + i, x + b, y + i + 1, color);
-            g.fill(x + w - b, y + i, x + w - a, y + i + 1, color);
-            g.fill(x + a, y + h - 1 - i, x + b, y + h - i, color);
-            g.fill(x + w - b, y + h - 1 - i, x + w - a, y + h - i, color);
-        }
+        HoloFrames.edge(g, x, y, w, h, color);
     }
 
-    /** Filled rounded rectangle with a hairline border on top. */
+    /** Filled surface with a hairline border on top. */
     public static void panel(GuiGraphics g, int x, int y, int w, int h, int radius, int fill, int border) {
         roundedRect(g, x, y, w, h, radius, fill);
         roundedOutline(g, x, y, w, h, radius, border);
     }
 
-    /** Soft drop shadow: a few expanding, very transparent rounded layers. */
+    /** No drop shadows in the new language: draws nothing. Kept so existing callers compile. */
     public static void shadow(GuiGraphics g, int x, int y, int w, int h, int radius, int layers) {
-        for (int i = layers; i >= 1; i--) {
-            roundedRect(g, x - i, y - i + 2, w + 2 * i, h + 2 * i, radius + i, 0x12000000);
-        }
+    }
+
+    /** A bracket frame on glass (see {@link HoloFrames#frame}). */
+    public static void bracketFrame(GuiGraphics g, int x, int y, int w, int h, FrameLevel level, boolean chamfer,
+                                    float alpha) {
+        HoloFrames.frame(g, x, y, w, h, level, chamfer, alpha);
+    }
+
+    /** A bracket frame with a chosen fill and bracket token. */
+    public static void bracketFrame(GuiGraphics g, int x, int y, int w, int h, FrameLevel level, boolean chamfer,
+                                    HoloToken fill, HoloToken bracket, float alpha) {
+        HoloFrames.frame(g, x, y, w, h, level, chamfer, fill, bracket, alpha);
     }
 
     public static void hLine(GuiGraphics g, int x0, int x1, int y, int color) {
@@ -132,7 +101,7 @@ public final class UiRenderUtils {
 
     /** A filled circle of diameter {@code d}. */
     public static void dot(GuiGraphics g, int x, int y, int d, int color) {
-        roundedRect(g, x, y, d, d, d / 2, color);
+        roundedRect(g, x, y, d, d, 0, color);
     }
 
     /** Pixel chevron, 5 px tall: direction 0 = right, 1 = down, 2 = left, 3 = up. */
