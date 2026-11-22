@@ -114,6 +114,11 @@ public final class JumpSearch {
         simTicks = 0;
     }
 
+    /** Counts physics ticks a helper simulated on its own bodies (takeoff shaping) toward the per-decision bound. */
+    public void addTicks(int n) {
+        simTicks += n;
+    }
+
     /** Physics ticks simulated since {@link #resetTickCount()}. */
     public int tickCount() {
         return simTicks;
