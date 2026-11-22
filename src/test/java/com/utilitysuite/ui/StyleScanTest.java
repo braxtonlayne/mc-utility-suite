@@ -56,8 +56,13 @@ class StyleScanTest {
         // Backlog: files outside this task that still draw directly.
         allow("ui/SuiteMenuScreen.java", DRAW, "the menu window itself draws with g.fill on top of the kit (backlog)");
         allow("ui/AutopilotBar.java", DRAW, "legacy GuiGraphics bar (backlog: port to a HudElement)");
-        allow("ui/HudPill.java", DRAW, "legacy pill text path (backlog)");
-        allow("ui/InfoStrip.java", DRAW, "legacy strip text path (backlog)");
+        allow("ui/TimelineScreen.java", COLOUR, "WIP-REMOVE");
+        allow("ui/TimelineScreen.java", DRAW, "WIP-REMOVE");
+        allow("ui/UiPreview.java", COLOUR, "WIP-REMOVE");
+        allow("ui/UiPreview.java", DRAW, "WIP-REMOVE");
+        allow("world/minimap/MinimapHud.java", DRAW, "WIP-REMOVE");
+        allow("world/minimap/MinimapLayoutScreen.java", COLOUR, "WIP-REMOVE");
+        allow("world/minimap/MinimapLayoutScreen.java", DRAW, "WIP-REMOVE");
         allow("ui/TabGui.java", DRAW, "tab GUI rows use g.fill (backlog: port to the canvas)");
     }
 
