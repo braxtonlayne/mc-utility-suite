@@ -1,0 +1,21 @@
+{
+  "module.utilitysuite.appearance": "Appearance",
+  "setting.utilitysuite.appearance.effects": "Effects",
+  "setting.utilitysuite.appearance.effects.tooltip": "Off: flat plates and plain 1 px lines, no glow. Subtle: glow and soft lines. Full: everything.",
+  "setting.utilitysuite.appearance.motion": "Motion",
+  "setting.utilitysuite.appearance.motion.tooltip": "Off: every transition is instant. Reduced: fades only, no slides. Full: fades, slides and lock-on snaps.",
+  "setting.utilitysuite.appearance.accent": "Accent colour",
+  "setting.utilitysuite.appearance.accent.tooltip": "Colour of the system lines and highlights. Status colours (danger, warning, acting) stay fixed.",
+  "setting.utilitysuite.appearance.hud_opacity": "HUD opacity (%)",
+  "setting.utilitysuite.appearance.hud_opacity.tooltip": "Multiplies the opacity of everything the suite draws on the in-game HUD. The menu ignores it.",
+  "setting.utilitysuite.appearance.hud_scale": "HUD scale (%)",
+  "setting.utilitysuite.appearance.hud_scale.tooltip": "Size of the suite's in-game HUD on top of the game's GUI scale. The menu keeps its own scale.",
+  "setting.utilitysuite.suite_hud.module_list.tooltip": "List of the modules that are on, top-right, longest name first, with a category colour bar. The autopilot heads it while it is on; a module acting right now is marked. Hidden with F1, F3 and Clean-Screen.",
+  "hud.utilitysuite.automation_stopped": "Automation stopped",
+  "hud.utilitysuite.clean_screen": "Clean-Screen",
+  "hud.utilitysuite.info.pos": "POS",
+  "hud.utilitysuite.info.link": "LINK",
+  "hud.utilitysuite.info.biome": "BIOME",
+  "hud.utilitysuite.info.server": "SERVER",
+  "hud.utilitysuite.info.ping": "PING"
+}

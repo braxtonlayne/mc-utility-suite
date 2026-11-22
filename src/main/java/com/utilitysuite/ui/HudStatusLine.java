@@ -25,6 +25,7 @@ public final class HudStatusLine {
     private String progressText = "";
     private String detailText = "";
     private String itemId = "";
+    private float fraction = -1f;
     private int rebuilds;
 
     /** Updates from a job snapshot. Returns true when the text changed. */
@@ -48,6 +49,7 @@ public final class HudStatusLine {
         target = tgt;
         step = now;
         progressText = tgt > 0 ? Math.max(0, cur) + "/" + tgt : "";
+        fraction = tgt > 0 ? Math.max(0f, Math.min(1f, Math.max(0, cur) / (float) tgt)) : -1f;
         String d = detail(st, now);
         detailText = d.isEmpty() ? prettyLabel(goalLabel == null ? "" : goalLabel) : d;
         itemId = itemIdOf(goalLabel);
@@ -68,6 +70,7 @@ public final class HudStatusLine {
         status = null;
         progressText = "";
         detailText = statusLine;
+        fraction = -1f;
         itemId = "";
         return set("[Build] " + statusLine);
     }
@@ -92,6 +95,7 @@ public final class HudStatusLine {
         target = Integer.MIN_VALUE;
         progressText = "";
         detailText = constantLine;
+        fraction = -1f;
         itemId = "";
         return set(constantLine);
     }
@@ -112,6 +116,7 @@ public final class HudStatusLine {
         target = Integer.MIN_VALUE;
         progressText = "";
         detailText = "";
+        fraction = -1f;
         itemId = "";
         return set("");
     }
@@ -157,6 +162,11 @@ public final class HudStatusLine {
     /** The current step (Paused / Planning / Replanning; the readable goal label when the step is empty). */
     public String detailText() {
         return detailText;
+    }
+
+    /** Progress 0..1 of a counted job, or -1 without a count target (the HUD draws it as a hairline). */
+    public float fraction() {
+        return fraction;
     }
 
     /** Registry id of the goal's target item ("minecraft:diamond"), or empty. */

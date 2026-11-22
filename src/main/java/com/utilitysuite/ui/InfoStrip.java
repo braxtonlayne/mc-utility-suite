@@ -1,53 +1,40 @@
 package com.utilitysuite.ui;
 
-import com.utilitysuite.core.api.Services;
-import com.utilitysuite.ui.kit.UiRenderUtils;
-import com.utilitysuite.ui.kit.UiTheme;
-import net.minecraft.client.DeltaTracker;
-import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.Font;
-import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.client.gui.LayeredDraw;
-import net.minecraft.client.multiplayer.ClientPacketListener;
-import net.minecraft.client.multiplayer.PlayerInfo;
-import net.minecraft.client.player.LocalPlayer;
-import net.minecraft.core.BlockPos;
-import net.minecraft.core.Holder;
-import net.minecraft.server.MinecraftServer;
-import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.level.Level;
-import net.minecraft.world.level.biome.Biome;
-import net.neoforged.neoforge.client.event.ClientTickEvent;
-import net.neoforged.neoforge.common.NeoForge;
+import com.utilitysuite.core.api.visual.FrameLevel;
+import com.utilitysuite.core.api.visual.HoloToken;
+import com.utilitysuite.core.api.visual.HudElement;
+import com.utilitysuite.core.api.visual.HudSlot;
+import com.utilitysuite.core.api.visual.IHoloCanvas;
+import com.utilitysuite.core.api.visual.TextRole;
+import com.utilitysuite.ui.holo.HoloTheme;
 
 /**
- * Optional Info HUD strip (off by default; settings live on the {@code suite_hud} module): coordinates, Nether /
- * Overworld conversion, biome, TPS, ping and durability bars for the main hand and armor, in one compact rounded
- * dark-glass strip.
+ * The optional info strip (off by default; settings live on the {@code suite_hud} module) as a {@link HudElement}:
+ * a quiet glass plate with micro captions ({@code POS}, {@code LINK}, {@code BIOME}, {@code SERVER}, {@code PING})
+ * over mono values (coordinates, Nether / Overworld conversion, biome, TPS, ping), hairline separators and
+ * segmented durability bars for the main hand and armour.
  * <p>
- * Values are sampled once per client tick (early-out when disabled) into {@link InfoStripText}, which rebuilds a string
- * only when its integers changed; the biome name is resolved only when the biome holder changes. The render callback
- * only draws cached strings and re-measures widths when {@link InfoStripText#version()} moved. Hidden in Clean-Screen,
- * with F1, with F3 and while any screen is open.
+ * Values are sampled once per client tick by {@code SuiteHud} into {@link InfoStripText}, which rebuilds a string
+ * only when its integers changed. The caption row and the value row are each joined into one string when that
+ * version moves (two text runs per frame however many segments are on), padded with spaces so every caption sits
+ * over its value; {@link #draw} only draws cached strings. Hidden in Clean-Screen, with F1, with F3 and while a
+ * screen is open ({@link #blocked}, written by the HUD module each frame). Pure Java.
  */
-public final class InfoStrip implements LayeredDraw.Layer {
+public final class InfoStrip implements HudElement {
 
     public enum Position { BOTTOM_LEFT, TOP_LEFT, TOP_RIGHT }
 
-    static final int BG = 0xCC111318;
-    private static final int H = 16;
+    public static final String ID = "info_strip";
+    static final int H = 24;
     private static final int PAD = 7;
-    private static final int GAP = 10;
+    private static final float SEG_GAP = 14f;
     private static final int BAR_W = 14;
     private static final int BAR_H = 2;
     private static final int BAR_GAP = 3;
-    private static final int SLOTS = 5;
-    private static final int TPS_EVERY_TICKS = 10;
+    static final int SLOTS = 5;
+    private static final int MAX_SEGMENTS = 5;
 
     private final InfoStripText text = new InfoStripText();
-    private final InfoStripText.TpsEstimator tpsEstimator = new InfoStripText.TpsEstimator(3_000_000_000L);
-    private final BlockPos.MutableBlockPos probe = new BlockPos.MutableBlockPos();
-    private final SuiteHud hud;
 
     // settings (written by SuiteHud.read on the client thread)
     boolean enabled;
@@ -58,188 +45,219 @@ public final class InfoStrip implements LayeredDraw.Layer {
     boolean showTps = true;
     boolean showPing = true;
     boolean showDurability = true;
+    /** F3 open, a screen open: written each frame by the HUD module. */
+    boolean blocked;
 
-    // durability per slot (0 = main hand, 1..4 = armor feet..head); fill < 0 = no bar
-    private final int[] barFill = new int[SLOTS];
-    private final int[] barColor = new int[SLOTS];
-    private int bars;
+    // durability per slot (0 = main hand, 1..4 = armour head..feet); fraction < 0 = no bar
+    final float[] barFrac = new float[SLOTS];
+    int bars;
 
     // cached layout
     private int seenVersion = -1;
-    private int coordsW, convW, biomeW, tpsW, pingW;
-    private int ticks;
+    private int seenSettings = -1;
+    private String captionLine = "";
+    private String valueLine = "";
+    private final float[] sepX = new float[MAX_SEGMENTS];
+    private int seps;
+    private float textW;
+    private float width;
 
-    InfoStrip(SuiteHud hud) {
-        this.hud = hud;
+    InfoStrip() {
+        for (int i = 0; i < SLOTS; i++) {
+            barFrac[i] = -1f;
+        }
     }
 
-    void subscribe() {
-        NeoForge.EVENT_BUS.addListener(this::onClientTick);
-    }
-
-    /** The text cache (tests and preview). */
+    /** The text cache (sampling, tests and preview). */
     InfoStripText text() {
         return text;
     }
 
-    // ---- sampling (client tick) -------------------------------------------------------------------------------------
-
-    private void onClientTick(ClientTickEvent.Post event) {
-        if (!enabled) {
+    /** Sets the durability of a slot from damage values ({@code max <= 0} = no bar). */
+    void setBar(int slot, int damage, int max) {
+        if (max <= 0) {
+            barFrac[slot] = -1f;
             return;
         }
-        Minecraft mc = Minecraft.getInstance();
-        LocalPlayer p = mc.player;
-        if (p == null || mc.level == null) {
-            text.reset();
-            tpsEstimator.reset();
-            bars = 0;
-            return;
-        }
-        int x = p.getBlockX();
-        int y = p.getBlockY();
-        int z = p.getBlockZ();
-        text.setCoords(x, y, z);
-        var dim = mc.level.dimension();
-        text.setConversion(dim == Level.OVERWORLD ? InfoStripText.DIM_OVERWORLD
-                : dim == Level.NETHER ? InfoStripText.DIM_NETHER : InfoStripText.DIM_OTHER, x, z);
-        if (showBiome) {
-            Holder<Biome> holder = mc.level.getBiome(probe.set(x, y, z));
-            if (!text.isBiome(holder)) {
-                text.setBiome(holder, holder.unwrapKey().map(k -> k.location().toString()).orElse("unknown"));
-            }
-        }
-        sampleTps(mc);
-        if (showPing) {
-            ClientPacketListener conn = mc.getConnection();
-            PlayerInfo info = conn == null ? null : conn.getPlayerInfo(p.getUUID());
-            text.setPing(info == null ? -1 : info.getLatency());
-        }
-        if (showDurability) {
-            bars = 0;
-            sampleBar(0, p.getMainHandItem());
-            for (int i = 0; i < 4; i++) {
-                sampleBar(i + 1, p.getInventory().armor.get(3 - i)); // head first
-            }
-        }
+        barFrac[slot] = Math.max(0f, Math.min(1f, (max - damage) / (float) max));
     }
 
-    private void sampleTps(Minecraft mc) {
-        MinecraftServer server = mc.getSingleplayerServer();
-        if (server != null) {
-            if (++ticks % TPS_EVERY_TICKS == 0) {
-                long avg = server.getAverageTickTimeNanos();
-                float rate = server.tickRateManager().tickrate();
-                double tps = avg <= 0 ? rate : Math.min(rate, 1e9 / avg);
-                text.setTpsTenths((int) Math.round(tps * 10.0));
+    void countBars() {
+        int n = 0;
+        for (int i = 0; i < SLOTS; i++) {
+            if (barFrac[i] >= 0f) {
+                n++;
             }
-            return;
         }
-        tpsEstimator.sample(mc.level.getGameTime(), System.nanoTime());
-        text.setTpsTenths(tpsEstimator.tenths());
+        bars = n;
     }
 
-    private void sampleBar(int slot, ItemStack s) {
-        if (s.isEmpty() || !s.isDamageableItem()) {
-            barFill[slot] = -1;
-            return;
-        }
-        int max = s.getMaxDamage();
-        int dmg = s.getDamageValue();
-        barFill[slot] = InfoStripText.barFill(dmg, max, BAR_W);
-        barColor[slot] = InfoStripText.barColor(dmg, max);
-        bars++;
-    }
-
-    // ---- render -----------------------------------------------------------------------------------------------------
+    // ---- element ----------------------------------------------------------------------------------------------------
 
     @Override
-    public void render(GuiGraphics g, DeltaTracker delta) {
-        if (!enabled) {
+    public String id() {
+        return ID;
+    }
+
+    @Override
+    public HudSlot slot() {
+        return switch (position) {
+            case BOTTOM_LEFT -> HudSlot.FREE;
+            case TOP_RIGHT -> HudSlot.TOP_RIGHT;
+            default -> HudSlot.TOP_LEFT;
+        };
+    }
+
+    @Override
+    public int priority() {
+        return 50;
+    }
+
+    @Override
+    public boolean wantsDraw() {
+        return enabled && !blocked && (!valueLine.isEmpty() || text.version() != seenVersion
+                || settingsMask() != seenSettings || showDurability && bars > 0);
+    }
+
+    private int settingsMask() {
+        return (showCoords ? 1 : 0) | (showConversion ? 2 : 0) | (showBiome ? 4 : 0) | (showTps ? 8 : 0)
+                | (showPing ? 16 : 0);
+    }
+
+    @Override
+    public float width(IHoloCanvas c) {
+        layout(c);
+        return width;
+    }
+
+    @Override
+    public float height(IHoloCanvas c) {
+        return H;
+    }
+
+    /** Rebuilds the joined caption and value rows when a value or a setting changed (not per frame). */
+    void layout(IHoloCanvas c) {
+        int mask = settingsMask();
+        if (text.version() == seenVersion && mask == seenSettings) {
+            width = computeWidth();
             return;
         }
-        Minecraft mc = Minecraft.getInstance();
-        if (mc.player == null || mc.options.hideGui || mc.screen != null || mc.getDebugOverlay().showDebugScreen()
-                || Services.modState().isCleanScreen()) {
+        seenVersion = text.version();
+        seenSettings = mask;
+        StringBuilder cap = new StringBuilder(48);
+        StringBuilder val = new StringBuilder(96);
+        seps = 0;
+        boolean first = true;
+        String conv = text.conversion();
+        for (int s = 0; s < MAX_SEGMENTS; s++) {
+            String v;
+            String k;
+            switch (s) {
+                case 0 -> {
+                    v = showCoords ? text.coords() : "";
+                    k = "POS";
+                }
+                case 1 -> {
+                    v = showConversion ? conv : "";
+                    k = "LINK";
+                }
+                case 2 -> {
+                    v = showBiome ? text.biome() : "";
+                    k = "BIOME";
+                }
+                case 3 -> {
+                    v = showTps ? text.tps() : "";
+                    k = "SERVER";
+                }
+                default -> {
+                    v = showPing ? text.ping() : "";
+                    k = "PING";
+                }
+            }
+            if (v.isEmpty()) {
+                continue;
+            }
+            if (!first) {
+                float end = Math.max(c.width(TextRole.MICRO, cap.toString()), c.width(TextRole.MONO, val.toString()));
+                sepX[seps++] = end + SEG_GAP * 0.5f;
+                float start = end + SEG_GAP;
+                pad(c, cap, TextRole.MICRO, start);
+                pad(c, val, TextRole.MONO, start);
+                // the two rows may land a few pixels apart (one space is 4 px): even them out
+                float cw = c.width(TextRole.MICRO, cap.toString());
+                float vw = c.width(TextRole.MONO, val.toString());
+                if (cw < vw) {
+                    pad(c, cap, TextRole.MICRO, vw);
+                } else if (vw < cw) {
+                    pad(c, val, TextRole.MONO, cw);
+                }
+            }
+            first = false;
+            cap.append(k);
+            val.append(v);
+        }
+        captionLine = cap.toString();
+        valueLine = val.toString();
+        textW = valueLine.isEmpty() ? 0f
+                : Math.max(c.width(TextRole.MICRO, captionLine), c.width(TextRole.MONO, valueLine));
+        width = computeWidth();
+    }
+
+    private static void pad(IHoloCanvas c, StringBuilder sb, TextRole role, float target) {
+        for (int guard = 0; guard < 64 && c.width(role, sb.toString()) < target; guard++) {
+            sb.append(' ');
+        }
+    }
+
+    private float computeWidth() {
+        float w = textW;
+        float barsW = barsWidth();
+        if (barsW > 0f) {
+            w += (w > 0f ? SEG_GAP : 0f) + barsW;
+        }
+        return w <= 0f ? 0f : w + 2 * PAD;
+    }
+
+    private float barsWidth() {
+        return showDurability && bars > 0 ? bars * (BAR_W + BAR_GAP) - BAR_GAP : 0f;
+    }
+
+    @Override
+    public void draw(IHoloCanvas c, float x, float y, float alpha) {
+        layout(c);
+        if (width <= 0f) {
             return;
         }
-        Font font = mc.font;
-        if (text.version() != seenVersion) {
-            seenVersion = text.version();
-            coordsW = width(font, text.coords());
-            convW = width(font, text.conversion());
-            biomeW = width(font, text.biome());
-            tpsW = width(font, text.tps());
-            pingW = width(font, text.ping());
+        if (position == Position.BOTTOM_LEFT) {
+            x = 6f;
+            y = c.screenHeight() - H - 6f;
         }
-        int w = PAD;
-        w += seg(showCoords, coordsW);
-        w += seg(showConversion, convW);
-        w += seg(showBiome, biomeW);
-        w += seg(showTps, tpsW);
-        w += seg(showPing, pingW);
-        int barsW = showDurability && bars > 0 ? bars * (BAR_W + BAR_GAP) - BAR_GAP + GAP : 0;
-        w += barsW;
-        if (w == PAD) {
-            return; // nothing to show
-        }
-        w = w - GAP + PAD;
-        int sw = g.guiWidth();
-        int sh = g.guiHeight();
-        int x;
-        int y;
-        switch (position) {
-            case BOTTOM_LEFT -> {
-                x = 6;
-                y = sh - H - 6;
-            }
-            case TOP_RIGHT -> {
-                x = sw - w - 6;
-                y = 6 + hud.topUsed(SuiteHud.Position.TOP_RIGHT);
-            }
-            default -> {
-                x = 6;
-                y = 6 + hud.topUsed(SuiteHud.Position.TOP_LEFT);
+        c.frame(x, y, width, H, FrameLevel.QUIET, false, alpha);
+        float tx = x + PAD;
+        float capY = y + 3;
+        float valY = capY + c.lineHeight(TextRole.MICRO) + 2;
+        if (!valueLine.isEmpty()) {
+            c.text(TextRole.MICRO, captionLine, tx, capY, HoloToken.TEXT_MUTED, alpha);
+            c.text(TextRole.MONO, valueLine, tx, valY, HoloToken.TEXT, alpha);
+            for (int i = 0; i < seps; i++) {
+                c.vLine(tx + sepX[i], y + 4, y + H - 4, HoloToken.LINE_FAINT, alpha);
             }
         }
-        UiRenderUtils.roundedRect(g, x, y, w, H, 6, BG);
-        UiRenderUtils.roundedOutline(g, x, y, w, H, 6, 0xCC2A2F3B);
-        int cx = x + PAD;
-        int ty = y + (H - 8) / 2;
-        cx = draw(g, font, showCoords, text.coords(), coordsW, cx, ty, UiTheme.TEXT);
-        cx = draw(g, font, showConversion, text.conversion(), convW, cx, ty, UiTheme.TEXT_DIM);
-        cx = draw(g, font, showBiome, text.biome(), biomeW, cx, ty, UiTheme.TEXT_SECONDARY);
-        cx = draw(g, font, showTps, text.tps(), tpsW, cx, ty, UiTheme.TEXT_SECONDARY);
-        cx = draw(g, font, showPing, text.ping(), pingW, cx, ty, UiTheme.TEXT_SECONDARY);
-        if (barsW > 0) {
-            int by = y + (H - BAR_H) / 2;
+        float barsW = barsWidth();
+        if (barsW > 0f) {
+            float bx = tx + textW + (textW > 0f ? SEG_GAP : 0f);
+            if (textW > 0f) {
+                c.vLine(bx - SEG_GAP * 0.5f, y + 4, y + H - 4, HoloToken.LINE_FAINT, alpha);
+            }
+            float by = valY + 3;
             for (int i = 0; i < SLOTS; i++) {
-                int fill = barFill[i];
-                if (fill < 0) {
+                float f = barFrac[i];
+                if (f < 0f) {
                     continue;
                 }
-                g.fill(cx, by, cx + BAR_W, by + BAR_H, 0xFF2A2F3B);
-                if (fill > 0) {
-                    g.fill(cx, by, cx + fill, by + BAR_H, barColor[i]);
-                }
-                cx += BAR_W + BAR_GAP;
+                c.bar(bx, by, BAR_W, BAR_H, f, 1, HoloTheme.healthToken(f), HoloToken.LINE_FAINT, alpha);
+                bx += BAR_W + BAR_GAP;
             }
         }
-    }
-
-    private static int width(Font font, String s) {
-        return s.isEmpty() ? 0 : font.width(s);
-    }
-
-    private static int seg(boolean on, int w) {
-        return on && w > 0 ? w + GAP : 0;
-    }
-
-    private static int draw(GuiGraphics g, Font font, boolean on, String s, int w, int x, int y, int color) {
-        if (!on || w == 0) {
-            return x;
-        }
-        UiRenderUtils.text(g, font, s, x, y, color);
-        return x + w + GAP;
     }
 }
