@@ -14,6 +14,14 @@ import net.minecraft.world.item.alchemy.Potions;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Holder;
+import net.minecraft.world.entity.EquipmentSlot;
+import net.minecraft.world.entity.ai.attributes.Attribute;
+import net.minecraft.world.entity.ai.attributes.AttributeInstance;
+import net.minecraft.world.entity.ai.attributes.AttributeModifier;
+import net.minecraft.world.entity.ai.attributes.Attributes;
+import net.minecraft.world.item.component.ItemAttributeModifiers;
+import java.util.function.BiConsumer;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.tags.FluidTags;
 import net.minecraft.util.Mth;
@@ -198,6 +206,11 @@ public final class MinecraftCombatWorld implements CombatWorld, LineOfSight.Soli
         out.fallDistance = p.fallDistance;
         out.attackStrength = p.getAttackStrengthScale(0.5f);
         out.reach = p.entityInteractionRange();
+        Vec3 pv = p.getDeltaMovement(); // returns the stored vector: no allocation
+        out.pvx = pv.x;
+        out.pvy = pv.y;
+        out.pvz = pv.z;
+        out.sprinting = p.isSprinting();
         sampleInventory(p, out);
 
         // ---- target
@@ -216,6 +229,10 @@ public final class MinecraftCombatWorld implements CombatWorld, LineOfSight.Soli
         out.tvy = v.y;
         out.tvz = v.z;
         out.targetBlocking = t.isBlocking();
+        out.targetYaw = t.yBodyRot;
+        out.targetHurtTime = t.hurtTime;
+        out.targetAttackSpeed = targetAttackSpeed(t);
+        out.targetSwingStarted = swingStarted(t, lvl.getGameTime());
         out.targetHealth = t.getHealth() + t.getAbsorptionAmount();
         out.crosshairOnTarget = mc.hitResult instanceof EntityHitResult ehr && ehr.getEntity() == t;
         out.lineOfSight = LineOfSight.clear(out.px, out.eyeY, out.pz, t.getX(), t.getEyeY(), t.getZ(), this,
@@ -246,6 +263,79 @@ public final class MinecraftCombatWorld implements CombatWorld, LineOfSight.Soli
             sampleTerrain(out, fx, fz, len);
         }
         return true;
+    }
+
+    // ---- target arm-swing edge and attack speed (cooldown reading) -----------------------------------------------
+
+    private static final double BARE_HAND_SPEED = 4.0;
+    /** A baseline older than this many game ticks is stale: no swing edge is reported from it. */
+    private static final long SWING_BASELINE_MAX_AGE = 2;
+
+    private int swingTargetId = -1;
+    private long swingSampleTime = Long.MIN_VALUE;
+    private boolean prevSwinging;
+    private int prevSwingTime;
+
+    /**
+     * True exactly on the sample where a new arm swing started. The server's animate packet runs
+     * {@code LivingEntity.swing} on the client, which sets {@code swinging} and restarts {@code swingTime} (to -1, then 0
+     * in the entity's own tick); a restart is only allowed once half of the swing is over, so a new swing shows as
+     * swinging turning on or swingTime going down. Previous values are kept per target id; a target switch or a gap of
+     * more than {@value #SWING_BASELINE_MAX_AGE} ticks since the last sample never fakes a swing.
+     */
+    private boolean swingStarted(LivingEntity t, long gameTime) {
+        boolean sw = t.swinging;
+        int st = t.swingTime;
+        boolean started = swingTargetId == t.getId() && gameTime - swingSampleTime <= SWING_BASELINE_MAX_AGE
+                && gameTime != swingSampleTime && sw && (!prevSwinging || st < prevSwingTime);
+        if (gameTime != swingSampleTime || swingTargetId != t.getId()) {
+            // a second sample inside the same tick keeps the baseline of the first
+            prevSwinging = sw;
+            prevSwingTime = st;
+        }
+        swingTargetId = t.getId();
+        swingSampleTime = gameTime;
+        return started;
+    }
+
+    // attack speed: the synced attribute wins; items are the fallback and are walked only when the held stack changes
+    private ItemAttributeModifiers speedCacheKey;
+    private double speedCacheValue = BARE_HAND_SPEED;
+    private double speedScan;
+    private final BiConsumer<Holder<Attribute>, AttributeModifier> speedVisitor = (attr, mod) -> {
+        if (attr.value() == Attributes.ATTACK_SPEED.value() && mod.operation() == AttributeModifier.Operation.ADD_VALUE) {
+            speedScan += mod.amount();
+        }
+    };
+
+    /**
+     * Players always have an attack speed attribute and the server syncs it to trackers
+     * (ClientboundUpdateAttributesPacket, the attribute is marked syncable), including the held item's modifiers, so
+     * its value is used directly. When it still equals the base value (a server that does not sync item modifiers) or
+     * the entity has none (mobs), the speed is derived from the main-hand item's attribute modifiers, cached by the
+     * stack's modifier component, else the bare-hand 4.0.
+     */
+    private double targetAttackSpeed(LivingEntity t) {
+        AttributeInstance inst = t.getAttribute(Attributes.ATTACK_SPEED);
+        if (inst != null) {
+            double v = inst.getValue();
+            if (Math.abs(v - inst.getBaseValue()) > 1.0e-9) {
+                return v;
+            }
+            return itemSpeed(t, inst.getBaseValue());
+        }
+        return itemSpeed(t, BARE_HAND_SPEED);
+    }
+
+    private double itemSpeed(LivingEntity t, double base) {
+        ItemAttributeModifiers mods = t.getMainHandItem().getAttributeModifiers();
+        if (mods != speedCacheKey) {
+            speedScan = 0.0;
+            mods.forEach(EquipmentSlot.MAINHAND, speedVisitor);
+            speedCacheKey = mods;
+            speedCacheValue = speedScan;
+        }
+        return base + speedCacheValue;
     }
 
     private static final int DROP_SCAN = 8;

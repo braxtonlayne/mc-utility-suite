@@ -29,6 +29,14 @@ public final class OpponentModel {
     private final long[] hitTick = new long[MAX_OPPONENTS * HIT_RING];
     private final float[] hitDamage = new float[MAX_OPPONENTS * HIT_RING];
     private final int[] hitHead = new int[MAX_OPPONENTS];
+    /** Tick of the last arm swing seen per slot (Long.MIN_VALUE = none) and the cooldown period it started. */
+    private final long[] swingTick = new long[MAX_OPPONENTS];
+    private final double[] swingPeriod = new double[MAX_OPPONENTS];
+
+    /** Attack speed clamp (attacks per second) and the period used when nothing is known (sword, 1.6/s). */
+    public static final double MIN_ATTACK_SPEED = 0.25;
+    public static final double MAX_ATTACK_SPEED = 16.0;
+    public static final double DEFAULT_COOLDOWN_TICKS = 12.5;
 
     public OpponentModel() {
         clear();
@@ -42,6 +50,8 @@ public final class OpponentModel {
             count[i] = 0;
             hitHead[i] = 0;
             wasGround[i] = true;
+            swingTick[i] = Long.MIN_VALUE;
+            swingPeriod[i] = DEFAULT_COOLDOWN_TICKS;
         }
         for (int i = 0; i < hitTick.length; i++) {
             hitTick[i] = Long.MIN_VALUE;
@@ -79,6 +89,8 @@ public final class OpponentModel {
         count[oldest] = 0;
         hitHead[oldest] = 0;
         wasGround[oldest] = true;
+        swingTick[oldest] = Long.MIN_VALUE;
+        swingPeriod[oldest] = DEFAULT_COOLDOWN_TICKS;
         for (int k = 0; k < HIT_RING; k++) {
             hitTick[oldest * HIT_RING + k] = Long.MIN_VALUE;
             hitDamage[oldest * HIT_RING + k] = 0f;
@@ -191,7 +203,7 @@ public final class OpponentModel {
         return sum * 20.0 / DPS_WINDOW;
     }
 
-    // ---- cooldown reading (CONTRACT STUB, volley 2026-11-22: signatures fixed, bodies by the cooldown task) --------
+    // ---- cooldown reading ----------------------------------------------------------------------------------------
 
     /**
      * The opponent started an arm swing on this tick: its attack cooldown restarts.
@@ -199,6 +211,14 @@ public final class OpponentModel {
      * @param attackSpeed attacks per second with its held item (4.0 bare hand, 1.6 sword, 1.0 axe)
      */
     public void noteSwing(int id, long tick, double attackSpeed) {
+        int s = slotFor(id, tick);
+        lastSeen[s] = tick;
+        swingTick[s] = tick;
+        if (attackSpeed != attackSpeed) {
+            swingPeriod[s] = DEFAULT_COOLDOWN_TICKS; // NaN
+        } else {
+            swingPeriod[s] = 20.0 / Math.max(MIN_ATTACK_SPEED, Math.min(MAX_ATTACK_SPEED, attackSpeed));
+        }
     }
 
     /**
@@ -206,16 +226,27 @@ public final class OpponentModel {
      * swinging (an unread opponent counts as ready). Allocation free.
      */
     public int attackReadyIn(int id, long now) {
-        return 0;
+        int s = slotOf(id);
+        if (s < 0 || swingTick[s] == Long.MIN_VALUE) {
+            return 0;
+        }
+        double remaining = swingPeriod[s] - (double) (now - swingTick[s]);
+        return remaining <= 1.0e-9 ? 0 : (int) Math.ceil(remaining - 1.0e-9);
     }
 
     /** The opponent's attack charge 0..1 right now (1 = full, also when unknown). */
     public float attackCharge(int id, long now) {
-        return 1f;
+        int s = slotOf(id);
+        if (s < 0 || swingTick[s] == Long.MIN_VALUE) {
+            return 1f;
+        }
+        double c = (double) (now - swingTick[s]) / swingPeriod[s];
+        return (float) (c < 0.0 ? 0.0 : Math.min(c, 1.0));
     }
 
     /** Its full cooldown period in ticks (20 / attack speed of the last swing seen; 12.5 when unknown). */
     public double cooldownTicks(int id) {
-        return 12.5;
+        int s = slotOf(id);
+        return s < 0 || swingTick[s] == Long.MIN_VALUE ? DEFAULT_COOLDOWN_TICKS : swingPeriod[s];
     }
 }
