@@ -260,14 +260,22 @@ public final class MovementAssistBrain {
                 heldPress++;
             }
             replayScript(now, sprinting, sprintKey, userForward, userStrafe, health, w);
+            if (now.onGround && withholdJump && heldPress == 0) {
+                heldPress = 1; // the script holds the user's press: counted, so a dropped script still lets it go
+            }
+            if (now.onGround && !jump && (heldPress > 0 || withholdJump)) {
+                releaseBeforeSupportEnds(now, yaw, sprinting, userForward, userStrafe, w);
+            }
         } else if (now.onGround) {
             decideGround(now, yaw, sprinting, userForward, userStrafe, jumpIn, health, w);
             lastPlanLands = planOnGround;
             lastPlanForward = KEEP;
             releaseEdgeGuard(now, yaw, sprinting, rawForward, rawStrafe, keys, w);
         } else if (mode != JumpCommit.Mode.NUDGE && commit.driving()) {
+            heldPress = 0; // airborne: a held press can no longer take off (and must not fire on the next landing)
             decideAirCommitted(now, yaw, sprintKey, userForward, userStrafe, health, w);
         } else {
+            heldPress = 0;
             decideAir(now, yaw, sprinting, userForward, userStrafe, health, w);
         }
         // co-steer while ARMED: the ideal takeoff yaw (the sprint-jump boost goes along the yaw of the takeoff tick)
@@ -640,6 +648,12 @@ public final class MovementAssistBrain {
 
     private void decideGround(MovementPhysics now, float yaw, boolean sprinting, int userForward, int userStrafe,
                               boolean jumpIn, float health, MovementPhysics.Voxels w) {
+        if (heldPress > 0 && !techniqueFirst) {
+            // a press held for a search that is gone goes before anything else can own the takeoff
+            pressHeldBack(now, yaw, sprinting, userForward, userStrafe, w);
+            capture(search.evaluate(now, Math.max(userForward, 0), userStrafe, yaw, sprinting, true, health, w));
+            return;
+        }
         if (approach.owns()) {
             // the approach controller owns the takeoff: its jump tick, its eased / walking run-up, nothing else
             jump = approach.jump();
@@ -699,8 +713,15 @@ public final class MovementAssistBrain {
     private boolean pressHeldBack(MovementPhysics now, float yaw, boolean sprinting, int f, int s,
                                   MovementPhysics.Voxels w) {
         if (!techniqueFirst) {
+            if (heldPress == 0) {
+                return false;
+            }
+            // the search was dropped (target lost, the commitment gone) while a press was held: the press goes now,
+            // never swallowed (playtest 2026-11-22 17:37: a dropped hold walked off the corner-fence edge)
             heldPress = 0;
-            return false;
+            jump = !userJumpNow;
+            withholdJump = false;
+            return true;
         }
         if (heldPress == 0) {
             if (!userJumpNow) {
@@ -713,7 +734,10 @@ public final class MovementAssistBrain {
         carry.copyFrom(now);
         carry.tick(f, s, yaw, sprinting, false, w);
         commitSimTicks++;
-        if (heldPress <= ApproachController.MAX_WITHHOLD_TICKS && carry.onGround) {
+        // hold only while the body is still standing after the next tick under the REAL collision box: onGround alone
+        // still reports true on the tick the body steps past the edge (Y resolves before X/Z), so a hold judged by it
+        // can outlive the support by a tick and depends on the tick phase against the edge
+        if (heldPress <= ApproachController.MAX_WITHHOLD_TICKS && carry.onGround && carry.supported(w)) {
             withholdJump = userJumpNow;
             corrected = true;
             return true;
@@ -721,6 +745,27 @@ public final class MovementAssistBrain {
         heldPress = 0;
         jump = !userJumpNow; // the press goes now (the key itself when it is still down)
         return true;
+    }
+
+    /**
+     * A script that keeps the user's press waiting for its own takeoff: when this tick's keys (the script's where it
+     * set them) would leave the ground before that takeoff comes (no jump possible next tick), the press goes now.
+     * Judged by onGround, not {@link MovementPhysics#supported}: a script may take off on the step-off tick.
+     */
+    private void releaseBeforeSupportEnds(MovementPhysics now, float yaw, boolean sprinting, int userForward,
+                                          int userStrafe, MovementPhysics.Voxels w) {
+        int f = forward == KEEP ? userForward : forward;
+        int s = strafe == KEEP ? userStrafe : strafe;
+        carry.copyFrom(now);
+        carry.tick(f, s, yaw, (sprinting && !sprintOff) || sprint, false, w);
+        commitSimTicks++;
+        if (carry.onGround) {
+            return;
+        }
+        heldPress = 0;
+        jump = true;
+        withholdJump = false;
+        corrected = true;
     }
 
     /**

@@ -77,6 +77,8 @@ class ParkourLaneReplicaTest {
     static final int DROPPED_IN_THE_AIR = 2;
     /** The real estimator, but "blocked" reaches the brain three ticks late (its roll cache can lag the pick). */
     static final int LATE_BLOCKED = 3;
+    /** The real estimator until the press, then no target (the search behind a held press is dropped mid-hold). */
+    static final int DROPPED_AFTER_PRESS = 4;
 
     static final class Run {
         int stayed = -1;
@@ -93,6 +95,10 @@ class ParkourLaneReplicaTest {
         int maxCommitSim;
         int pressTick = -1;
         int takeoffTick = -1;
+        /** The body left the ground on a jump (false: it walked off the edge). */
+        boolean takeoffJumped;
+        /** The brain held the user's press back on at least one tick before the body left the ground. */
+        boolean pressHeld;
         boolean frozenInFlight;
         double maxTotalTurn;
         double maxLeftError;
@@ -149,7 +155,10 @@ class ParkourLaneReplicaTest {
             b.intentThreshold = intent.commitThreshold();
             boolean has = intent.estimate(p, yaw, 10f, 1, us, sprint, g) && intent.hasTarget();
             r.maxIntentSim = Math.max(r.maxIntentSim, intent.lastSimTicks());
-            if (intentMode == DROPPED_IN_THE_AIR && !p.onGround) {
+            if (intentMode == DROPPED_AFTER_PRESS && pressTick >= 0 && t > pressTick) {
+                has = false;
+                b.clearIntentTarget();
+            } else if (intentMode == DROPPED_IN_THE_AIR && !p.onGround) {
                 has = false;
                 b.clearIntentTarget();
             } else if (intentMode == FORCED || intentMode == DROPPED_IN_THE_AIR) {
@@ -184,6 +193,10 @@ class ParkourLaneReplicaTest {
                 r.freshKeyReplaced = true; // a fresh strafe key of the user's is never replaced
             }
             boolean jump = (uj && !b.withholdJump()) || b.jump();
+            if (pressTick >= 0 && takeoffTick < 0 && b.withholdJump()) {
+                r.pressHeld = true;
+            }
+            boolean jumpedThisTick = jump && p.onGround;
             // the view: the real follower of the core (YawCoSteer), one request per tick, applied over the rendered
             // frames AFTER this tick's physics, exactly like MouseHandler.turnPlayer in the client
             steer.beginTick();
@@ -216,6 +229,7 @@ class ParkourLaneReplicaTest {
                 r.jumpZ = p.z;
                 takeoffTick = t;
                 r.takeoffTick = t;
+                r.takeoffJumped = jumpedThisTick;
             }
             wasGround = p.onGround;
             r.maxZ = Math.max(r.maxZ, p.z);
@@ -562,6 +576,55 @@ class ParkourLaneReplicaTest {
             assertTrue(r.maxTotalTurn > 2.0, lane.name + ": this lane turns the view (" + r.maxTotalTurn + ")");
             assertTrue(r.maxLeftError <= 4.0, lane.name + ": the brain's count was off by " + r.maxLeftError);
         }
+    }
+
+    /** Sprint run-up distance per tick at top speed (vanilla ground sprint). */
+    static final double SPRINT_TICK = 0.2806;
+
+    /**
+     * A press the brain holds back never outlives the support (playtest 2026-11-22 17:37, corner-fence-2gap in
+     * Co-pilot: the held press at tick 39 turned into a walk-off at z 11.51, jump false, max y 1.00). Every lane, both
+     * committed modes, the run-up started at each quarter-tick phase against the edge and up to 3 whole ticks on: once
+     * the user has pressed, the body leaves the ground on a jump, never by walking off. Also with the target dropped
+     * right after the press (the search behind the hold goes away mid-hold: the held press must still go).
+     */
+    @Test
+    void aHeldBackPressNeverTurnsIntoAWalkOff() {
+        Assumptions.assumeTrue(shapes(), "needs the shape-physics replica");
+        StringBuilder fails = new StringBuilder();
+        int held = 0;
+        int runs = 0;
+        try {
+            for (int ticks = 0; ticks < 4; ticks++) {
+                for (int quarter = 0; quarter < 4; quarter++) {
+                    START_Z = 0.5 + (ticks + quarter * 0.25) * SPRINT_TICK;
+                    for (Lane lane : LANES) {
+                        for (JumpCommit.Mode mode : new JumpCommit.Mode[] {JumpCommit.Mode.GUIDE,
+                                JumpCommit.Mode.CARRY}) {
+                            for (int intentMode : new int[] {REAL, DROPPED_AFTER_PRESS}) {
+                                Run r = roll(lane, mode, false, intentMode);
+                                runs++;
+                                if (r.pressHeld) {
+                                    held++;
+                                }
+                                boolean pressedFirst = r.pressTick >= 0 && r.pressTick <= r.takeoffTick;
+                                if (pressedFirst && !r.takeoffJumped) {
+                                    fails.append(String.format("start %.3f (%s%s): walked off after the press%s: ",
+                                            START_Z, mode, intentMode == REAL ? "" : ", target dropped",
+                                            r.pressHeld ? " (held back)" : ""))
+                                            .append(line(lane, mode, r)).append('\n');
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } finally {
+            START_Z = 0.5;
+        }
+        System.out.println("SEARCH held-press phase sweep: " + runs + " runs, " + held + " with the press held back");
+        assertTrue(held > 0, "the sweep never held a press back: it does not exercise the hold");
+        assertTrue(fails.length() == 0, "\n" + fails);
     }
 
     /** In Co-pilot the user's press is held back at most 4 ticks for a script's takeoff, never swallowed. */
