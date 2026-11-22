@@ -128,3 +128,28 @@ Also open from the agents:
     ravines yet: does the mineflayer pathfinder route around the lava, and does our client.
   - To run after work: start the server (`java -Xmx2G -jar paper-1.21.1-133.jar --nogui` in tools/bot-arena/server),
     then `./gradlew runArena`, then `node arena.js --setup outgeared --rounds 20`. The server is stopped now.
+
+## Menu fonts and Grim in the arena (18:05)
+- **Menu text in the suite face (b707120):**
+  - `UiRenderUtils.text` and the new `UiRenderUtils.width` draw and measure with the UI face, and every menu
+    width call now uses `width`, so layouts follow the narrower face.
+  - Small caps (`SuiteMenuScreen.smallText`) draw natively in the MICRO face instead of a 0.75 pose scale, which
+    had dropped their thin strokes.
+  - Tooltips stay vanilla, because their lines come pre-wrapped by vanilla's splitter.
+  - **Known defect:** some flat-topped capitals lose their top row in the menu ("Tools" reads "Iools", "Fight"
+    reads "Hight"). A shift of 0 did not fix it, so I reverted that. Next suspects: oversample vs the menu's
+    fractional scale, and nearest sampling of the glyph atlas. Vanilla text is one setting away (visual settings,
+    font).
+- **Grim runs during arena fights again** (owner request):
+  - The Grim jar is back in server/plugins.
+  - `server/permissions.yml` (copy: docs/research/bot-arena-permissions.yml) gives ops `grim.exempt`.
+  - arena.js ops only ArenaBot and deops Dev at start. Grim checks our client, but doesn't set back the bot's
+    non-vanilla movement, which earlier measured Grim against the bot instead of us.
+  - Each round record carries `grim: {total, checks}`, counted from server/logs/latest.log lines "Dev failed
+    <Check>", and the round line prints the Grim count and the death cause.
+  - Verified: Grim 2.3.75 loads with no permission errors, and ops.json lists only ArenaBot.
+  - **Unverified:** the exact Grim alert wording in the log. If the first rounds show `grim 0` while Grim's own
+    `/grim` alerts say otherwise, fix the regex in `grimFlags`. Check too that the bot isn't being set back (the
+    `--trace` distance should close).
+- After work: run `node arena.js --setup outgeared --rounds 20` on the hazard arena with Grim on (the server is
+  stopped). The parkour held-back-press fix stays first.

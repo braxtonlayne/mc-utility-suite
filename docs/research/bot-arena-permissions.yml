@@ -1,0 +1,7 @@
+# Bot arena: Grim checks the client under test (Dev) but not the mineflayer opponent, whose non-vanilla movement it
+# would set back (that measured Grim vs the bot, not our client). arena.js ops only the bot, and ops get this.
+arena.botexempt:
+  description: Grim exemption for the arena opponent bot (ops only)
+  default: op
+  children:
+    grim.exempt: true

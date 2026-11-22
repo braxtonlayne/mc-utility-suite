@@ -210,6 +210,7 @@ async function runRound(rcon, bot, n) {
   const target = bot.players[PLAYER] && bot.players[PLAYER].entity;
   if (!target) throw new Error(`player ${PLAYER} not visible to the bot`);
   const t0 = Date.now();
+  const logAt = serverLogSize();
   let result = null;
   const onMsg = (msg) => {
     const s = msg.toString();
@@ -255,7 +256,7 @@ async function runRound(rcon, bot, n) {
   bot.removeListener("messagestr", onMsg);
   await rcon.send(`tellraw ${PLAYER} {"text":"[arena] stop"}`);
   const rec = { setup: SETUP, engine: ENGINE, round: n, ms: Date.now() - t0,
-    arena: ARENA, winner: result ? result.winner : "timeout", line: result ? result.line : null,
+    arena: ARENA, grim: grimFlags(logAt), winner: result ? result.winner : "timeout", line: result ? result.line : null,
     cause: result ? result.cause : null,
     minHp: { ours: Math.min(...hp.ours, 20), bot: Math.min(...hp.bot, 20) },
     lastHp: { ours: hp.ours.at(-1) ?? null, bot: hp.bot.at(-1) ?? null }, hpSeries: hp, distSeries: dist };
@@ -274,6 +275,33 @@ function causeOf(s) {
   return "melee";
 }
 
+// Grim alerts land in the server log; count the ones against our client during the round.
+const SERVER_LOG = path.join(__dirname, "..", "server", "logs", "latest.log");
+function serverLogSize() {
+  try { return fs.statSync(SERVER_LOG).size; } catch (_) { return 0; }
+}
+function grimFlags(from) {
+  let text = "";
+  try {
+    const fd = fs.openSync(SERVER_LOG, "r");
+    const n = Math.max(0, fs.fstatSync(fd).size - from);
+    const buf = Buffer.alloc(n);
+    fs.readSync(fd, buf, 0, n, from);
+    fs.closeSync(fd);
+    text = buf.toString("utf8");
+  } catch (_) { return null; }
+  const checks = {};
+  let total = 0;
+  for (const line of text.split(String.fromCharCode(10))) {
+    if (!/grim/i.test(line) || !line.includes(` ${PLAYER} `)) continue;
+    const m = line.match(new RegExp(`${PLAYER} failed ([A-Za-z0-9]+)`));
+    const k = m ? m[1] : "other";
+    checks[k] = (checks[k] || 0) + 1;
+    total++;
+  }
+  return { total, checks };
+}
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 (async () => {
@@ -282,6 +310,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await rcon.send("gamerule keepInventory false");
   await rcon.send("gamerule naturalRegeneration true");
   await rcon.send("gamerule showDeathMessages true");
+  // Grim runs during fights: only the opponent bot is op (permissions.yml gives ops grim.exempt), never our client
+  await rcon.send(`deop ${PLAYER}`);
+  await rcon.send(`op ${BOT}`);
   if (args.dry) {
     console.log("rcon ok:", await rcon.send("list"));
     if (args.build) {
@@ -312,7 +343,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const rec = await runRound(rcon, bot, n);
     fs.appendFileSync(OUT, JSON.stringify(rec) + "\n");
     if (rec.winner === "ours") wins++; else if (rec.winner === "bot") losses++; else timeouts++;
-    console.log(`round ${n}: ${rec.winner} in ${(rec.ms / 1000).toFixed(1)} s  (${wins}-${losses}, ${timeouts} timeouts)` +
+    console.log(`round ${n}: ${rec.winner}${rec.cause ? " (" + rec.cause + ")" : ""}, grim ${rec.grim ? rec.grim.total : "?"} in ${(rec.ms / 1000).toFixed(1)} s  (${wins}-${losses}, ${timeouts} timeouts)` +
       `  min hp ours ${rec.minHp.ours} bot ${rec.minHp.bot}, last ours ${rec.lastHp.ours} bot ${rec.lastHp.bot}`);
   }
   console.log(`RESULT ${SETUP} vs ${ENGINE}: ours ${wins}/${ROUNDS}, bot ${losses}, timeouts ${timeouts}, ` +
