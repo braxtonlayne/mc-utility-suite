@@ -56,6 +56,10 @@ public final class TravelBootstrap {
                 new com.utilitysuite.travel.pursuit.MinecraftRouteRunner();
         Services.registerRouteRunner(routeRunner);
         NeoForge.EVENT_BUS.addListener(ClientTickEvent.Post.class, routeRunner::onTick);
+        com.utilitysuite.travel.movement.GhostLineModule ghostLine =
+                new com.utilitysuite.travel.movement.GhostLineModule(movement, routeRunner);
+        Services.modules().register(ghostLine);
+        NeoForge.EVENT_BUS.addListener(ghostLine::onRenderLevel);
         onAutopilotKey = autopilot::toggle;
         onBridgeKey = bridge::toggle;
         onBridgeMarkKey = bridge::mark;
