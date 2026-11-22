@@ -71,4 +71,36 @@ class OpponentModelTest {
         assertEquals(2, m.samples(0));
         assertEquals(1, m.samples(99));
     }
+
+    @Test
+    void shieldDisabledWindow() {
+        OpponentModel m = new OpponentModel();
+        assertEquals(Long.MIN_VALUE, m.shieldDisabledUntil(5));
+        assertEquals(false, m.shieldDisabled(5, 0));
+        m.observe(5, 10, 0, 0, 0, 0, 3, 0, true, true);
+        m.noteShieldDisabled(5, 10 + OpponentModel.SHIELD_DISABLE_TICKS);
+        assertEquals(110, m.shieldDisabledUntil(5));
+        assertEquals(true, m.shieldDisabled(5, 10));
+        assertEquals(true, m.shieldDisabled(5, 109));
+        assertEquals(false, m.shieldDisabled(5, 110), "100 ticks, then it can go up again");
+        assertEquals(40, m.shieldDisabledFor(5, 70));
+        assertEquals(0, m.shieldDisabledFor(5, 200));
+        m.noteShieldDisabled(5, 90); // an earlier end does not shorten the window
+        assertEquals(110, m.shieldDisabledUntil(5));
+        m.noteShieldDisabled(5, 150);
+        assertEquals(150, m.shieldDisabledUntil(5));
+        assertEquals(false, m.shieldDisabled(6, 20), "per opponent");
+        m.clear();
+        assertEquals(Long.MIN_VALUE, m.shieldDisabledUntil(5));
+    }
+
+    @Test
+    void reusedSlotForgetsTheShieldWindow() {
+        OpponentModel m = new OpponentModel();
+        m.noteShieldDisabled(1, 200);
+        for (int id = 2; id <= OpponentModel.MAX_OPPONENTS + 1; id++) {
+            m.observe(id, 1000 + id, 0, 0, 0, 0, 3, 0, true, false);
+        }
+        assertEquals(Long.MIN_VALUE, m.shieldDisabledUntil(1), "slot of id 1 was reused");
+    }
 }

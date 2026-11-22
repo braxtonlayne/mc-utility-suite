@@ -1,0 +1,6 @@
+{
+  "setting.utilitysuite.combat_assistant.shield_duel": "Shield duel",
+  "setting.utilitysuite.combat_assistant.shield_duel.tooltip": "Never swing into a raised shield that faces you: circle to its open side and hit the moment it comes down. After an axe disables it, press with crits for the 5 seconds.",
+  "setting.utilitysuite.combat_assistant.shield_duel_block": "Block with shield",
+  "setting.utilitysuite.combat_assistant.shield_duel_block.tooltip": "With a shield in the offhand: raise it just before the opponent's charged hit, take the hit on it, lower and answer inside their cooldown. Never against an axe, never while eating, only with the opponent in front of you."
+}

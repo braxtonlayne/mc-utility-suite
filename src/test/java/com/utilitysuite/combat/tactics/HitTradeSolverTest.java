@@ -296,4 +296,47 @@ class HitTradeSolverTest {
         }
         assertEquals(best, s.score(), 1e-12);
     }
+
+    // ---- shields ----------------------------------------------------------------------------------------------------
+
+    @Test
+    void shieldFieldsDefaultOff() {
+        TradeInput in = new TradeInput();
+        assertTrue(!in.sBlocking && !in.oShieldUp);
+    }
+
+    @Test
+    void ourShieldTurnsTheirChargedHitIntoNothing() {
+        HitTradeSolver s = new HitTradeSolver(provider(FLAT));
+        TradeInput in = chargingOpponent();
+        s.solve(in);
+        double holdOpen = s.scoreOf(HitTradeSolver.combo(0, 0));
+        in.sBlocking = true;
+        s.reset();
+        s.solve(in);
+        double holdBlocked = s.scoreOf(HitTradeSolver.combo(0, 0));
+        assertTrue(holdBlocked > holdOpen + 0.5, "standing still costs no hit behind a shield: " + holdOpen
+                + " -> " + holdBlocked);
+        assertTrue(holdBlocked > -0.5, "no hit counted against us: " + dump(s));
+    }
+
+    @Test
+    void theirShieldTurnsOurHitIntoNothing() {
+        HitTradeSolver s = new HitTradeSolver(provider(FLAT));
+        TradeInput in = duel(3.6);
+        in.sReadyIn = 0;
+        in.oReadyIn = 11;
+        in.oForward = 0;
+        in.oSprinting = false;
+        s.solve(in);
+        double open = s.scoreOf(HitTradeSolver.combo(1, 0));
+        assertTrue(open > 0.5, dump(s));
+        in.oShieldUp = true;
+        s.reset();
+        s.solve(in);
+        double shielded = s.scoreOf(HitTradeSolver.combo(1, 0));
+        assertTrue(shielded < open - 0.5, "stepping in to hit a raised shield lands nothing: " + open + " -> "
+                + shielded);
+        assertTrue(shielded < 0.5, dump(s));
+    }
 }

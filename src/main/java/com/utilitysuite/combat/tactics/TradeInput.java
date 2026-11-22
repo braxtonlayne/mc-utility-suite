@@ -21,6 +21,12 @@ public final class TradeInput {
     public double sCooldownTicks = 12.5;
     /** Remaining ticks of our hurt immunity from a hit already taken (0 = can be hit now). */
     public int sHurtTicks;
+    /**
+     * We hold a raised (effective) shield over the horizon: the opponent's hits count as zero (both fighters face each
+     * other in the rollout, so every hit comes from the front) and cost it the cooldown, no hurt immunity starts.
+     * Default false.
+     */
+    public boolean sBlocking;
 
     // ---- opponent -------------------------------------------------------------------------------------------------
     public double ox, oy, oz, ovx, ovy, ovz;
@@ -38,6 +44,11 @@ public final class TradeInput {
     public boolean oUsesCooldown = true;
     /** Remaining ticks of the opponent's hurt immunity from a hit we already landed (0 = can be hit now). */
     public int oHurtTicks;
+    /**
+     * The opponent holds a raised (effective) shield facing us over the horizon: our hits count as zero, burn our
+     * cooldown and cost the shield's knockback ({@code LivingEntity.blockedByShield}, strength 0.5). Default false.
+     */
+    public boolean oShieldUp;
 
     // ---- arena and tuning -----------------------------------------------------------------------------------------
     /** Hazards relative to our direction toward the opponent; a combination that moves into one is rejected. */
