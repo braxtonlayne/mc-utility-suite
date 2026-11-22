@@ -13,7 +13,8 @@ import java.util.Locale;
 
 /**
  * The "Appearance" card (rendered under Tools, stored in the profile like every other module): effect level, motion
- * level, accent preset, HUD opacity and HUD scale. It writes the {@link HoloTheme} fields when a profile loads and
+ * level, accent preset, HUD opacity, HUD scale, font
+ * face and the opt-in armed marker. It writes the {@link HoloTheme} fields when a profile loads and
  * when a setting changes; drawing code only reads them. Infrastructure, so it reports {@link ModuleCategory#CORE}
  * and is always on (no toggle, never in the enabled-module list). Pure Java.
  */
@@ -25,6 +26,13 @@ public final class VisualSettings implements IModule, IConfigurable {
     public static final String K_ACCENT = "accent";
     public static final String K_HUD_OPACITY = "hud_opacity";
     public static final String K_HUD_SCALE = "hud_scale";
+    public static final String K_FONT = "font";
+    public static final String K_ARMED_MARKER = "armed_marker";
+
+    /** Text face: the suite font when its files are present, or always the game's own. */
+    public enum FontFace {
+        SUITE, VANILLA
+    }
 
     /** Accent presets (0xRRGGBB). Status hues never move with the accent. */
     public enum Accent {
@@ -52,7 +60,12 @@ public final class VisualSettings implements IModule, IConfigurable {
             SettingSpec.integer(K_HUD_OPACITY, "HUD opacity (%)", 100, 40, 100, "",
                     "Multiplies the opacity of everything the suite draws on the in-game HUD. The menu ignores it."),
             SettingSpec.integer(K_HUD_SCALE, "HUD scale (%)", 100, 75, 150, "",
-                    "Size of the suite's in-game HUD on top of the game's GUI scale. The menu keeps its own scale."));
+                    "Size of the suite's in-game HUD on top of the game's GUI scale. The menu keeps its own scale."),
+            SettingSpec.choice(K_FONT, "Font", FontFace.SUITE, "",
+                    "Suite: a clean UI typeface with tabular numerals, once its font files are installed (vanilla "
+                            + "until then, and whenever Force Unicode Font is on). Vanilla: always the game's own font."),
+            SettingSpec.bool(K_ARMED_MARKER, "Armed marker", false, "",
+                    "Shows four dim corner brackets while the autopilot is on and idle."));
 
     // ---- IModule ----------------------------------------------------------------------------------------------------
 
@@ -110,6 +123,9 @@ public final class VisualSettings implements IModule, IConfigurable {
         HoloTheme.setAccent(parse(Accent.class, p.getString(ID, K_ACCENT, Accent.CYAN.name()), Accent.CYAN).rgb());
         HoloTheme.hudOpacity = clamp(p.getInt(ID, K_HUD_OPACITY, 100), 40, 100) / 100f;
         HoloTheme.hudScale = clamp(p.getInt(ID, K_HUD_SCALE, 100), 75, 150) / 100f;
+        HoloTheme.suiteFont = parse(FontFace.class, p.getString(ID, K_FONT, FontFace.SUITE.name()), FontFace.SUITE)
+                == FontFace.SUITE;
+        HoloTheme.armedMarker = p.getBool(ID, K_ARMED_MARKER, false);
     }
 
     /** Writes the current {@link HoloTheme} values and {@code accent} into {@code p} (profile copy, tests). */
@@ -119,6 +135,8 @@ public final class VisualSettings implements IModule, IConfigurable {
         p.set(ID, K_ACCENT, accent.name());
         p.set(ID, K_HUD_OPACITY, Math.round(HoloTheme.hudOpacity * 100f));
         p.set(ID, K_HUD_SCALE, Math.round(HoloTheme.hudScale * 100f));
+        p.set(ID, K_FONT, (HoloTheme.suiteFont ? FontFace.SUITE : FontFace.VANILLA).name());
+        p.set(ID, K_ARMED_MARKER, HoloTheme.armedMarker);
     }
 
     private static int clamp(int v, int lo, int hi) {

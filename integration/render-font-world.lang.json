@@ -1,0 +1,6 @@
+{
+  "setting.utilitysuite.appearance.font": "Font",
+  "setting.utilitysuite.appearance.font.tooltip": "Suite: a clean UI typeface with tabular numerals, once its font files are installed (vanilla until then, and whenever Force Unicode Font is on). Vanilla: always the game's own font.",
+  "setting.utilitysuite.appearance.armed_marker": "Armed marker",
+  "setting.utilitysuite.appearance.armed_marker.tooltip": "Shows four dim corner brackets while the autopilot is on and idle."
+}

@@ -11,6 +11,7 @@ import com.utilitysuite.ui.kit.ItemIcons;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.network.chat.Style;
 import net.minecraft.world.item.Items;
 import org.joml.Matrix4f;
 
@@ -22,7 +23,8 @@ import org.joml.Matrix4f;
  * <p>
  * Rules: no {@code pushPose} (the HUD scale is applied once per frame by {@link #begin}/{@link #end} on the existing
  * matrix, restored from a saved copy), nothing allocated per call by this class (the game's own text and item paths
- * allocate internally), {@link HoloTheme#hudOpacity} multiplied into every alpha, and
+ * allocate internally), text in the face {@link SuiteFonts} resolves for its role (the vanilla path, unchanged, when
+ * the suite font files are absent), {@link HoloTheme#hudOpacity} multiplied into every alpha, and
  * {@link EffectLevel#OFF} = flat fills and plain 1 px lines. Render thread only.
  */
 public final class HoloKit implements IHoloCanvas {
@@ -36,7 +38,11 @@ public final class HoloKit implements IHoloCanvas {
     private final Matrix4f saved = new Matrix4f();
     private VertexConsumer vc;
     private Matrix4f matrix;
-    private int digitW = -1;
+    /** Tabular digit advance per {@link TextRole}, measured through the face that draws it; -1 = not measured. */
+    private final int[] digitW = {-1, -1, -1};
+    private int fontGeneration = Integer.MIN_VALUE;
+    /** The one reusable styled run for suite-font text (no per-string object). */
+    private final SuiteFonts.Client.Run run = new SuiteFonts.Client.Run();
     private final String[] numberCache = new String[NUM_MAX + NUM_NEG];
 
     private static final int NUM_MAX = 10000;
@@ -47,8 +53,13 @@ public final class HoloKit implements IHoloCanvas {
     public void begin(GuiGraphics graphics) {
         g = graphics;
         font = Minecraft.getInstance().font;
-        if (digitW < 0) {
-            digitW = font.width("0");
+        SuiteFonts.Client.frame();
+        int gen = SuiteFonts.generation();
+        if (gen != fontGeneration) {
+            fontGeneration = gen;
+            digitW[0] = -1;
+            digitW[1] = -1;
+            digitW[2] = -1;
         }
         scale = HoloTheme.hudScale;
         scaled = scale < 0.99f || scale > 1.01f;
@@ -222,13 +233,42 @@ public final class HoloKit implements IHoloCanvas {
         return (argb >>> 24) < 4 ? 0 : argb;
     }
 
+    /**
+     * Draws a string in the face of {@code role}: the plain vanilla path when the role resolves to vanilla, else the
+     * reusable styled run through the same game {@code Font} (suite font id in the style).
+     */
+    private void drawText(TextRole role, String s, float x, float y, int argb) {
+        Style style = SuiteFonts.Client.style(role);
+        if (style == null) {
+            g.drawString(font, s, x, y, argb, false);
+        } else {
+            g.drawString(font, run.set(s, style), x, y, argb, false);
+        }
+    }
+
+    /** Width of a string in the face of {@code role}, measured through the font and style that draw it. */
+    private int measure(TextRole role, String s) {
+        Style style = SuiteFonts.Client.style(role);
+        return style == null ? font.width(s) : font.width(run.set(s, style));
+    }
+
+    private int digitWidth(TextRole role) {
+        int i = role == null ? 0 : role.ordinal();
+        int w = digitW[i];
+        if (w < 0) {
+            w = measure(role, DIGITS[0]);
+            digitW[i] = w;
+        }
+        return w;
+    }
+
     @Override
     public void text(TextRole role, String s, float x, float y, HoloToken token, float alpha) {
         int argb = textArgb(token, alpha);
         if (argb == 0 || s == null || s.isEmpty()) {
             return;
         }
-        g.drawString(font, s, x, y, argb, false);
+        drawText(role, s, x, y, argb);
     }
 
     @Override
@@ -239,15 +279,16 @@ public final class HoloKit implements IHoloCanvas {
         }
         String s = cachedNumber(value);
         if (s != null) {
-            g.drawString(font, s, x, y, argb, false);
+            drawText(role, s, x, y, argb);
             return;
         }
         // out of the cached range: digit by digit at a fixed (tabular) advance, nothing allocated
+        int dw = digitWidth(role);
         float cx = x;
         long v = value;
         if (v < 0) {
-            g.drawString(font, DIGITS[10], cx, y, argb, false);
-            cx += digitW;
+            drawText(role, DIGITS[10], cx, y, argb);
+            cx += dw;
             v = -v;
         }
         long div = 1;
@@ -255,8 +296,8 @@ public final class HoloKit implements IHoloCanvas {
             div *= 10;
         }
         for (; div > 0; div /= 10) {
-            g.drawString(font, DIGITS[(int) ((v / div) % 10)], cx, y, argb, false);
-            cx += digitW;
+            drawText(role, DIGITS[(int) ((v / div) % 10)], cx, y, argb);
+            cx += dw;
         }
     }
 
@@ -285,16 +326,22 @@ public final class HoloKit implements IHoloCanvas {
 
     @Override
     public float width(TextRole role, String s) {
-        return s == null || s.isEmpty() ? 0f : font.width(s);
+        return s == null || s.isEmpty() ? 0f : measure(role, s);
     }
 
     @Override
     public float numberWidth(TextRole role, int value) {
+        // a suite face may have proportional digits: measure the same string number() draws (vanilla digits are all
+        // one advance, so the vanilla path keeps the allocation-free count)
+        String s = SuiteFonts.Client.style(role) != null ? cachedNumber(value) : null;
+        if (s != null) {
+            return measure(role, s);
+        }
         int digits = value < 0 ? 2 : 1;
         for (int v = Math.abs(value); v >= 10; v /= 10) {
             digits++;
         }
-        return digits * (float) digitW;
+        return digits * (float) digitWidth(role);
     }
 
     @Override
