@@ -105,13 +105,13 @@ final class ArenaClient {
         int sw = ca.swings();
         PlaytestMod.LOG.info(String.format(java.util.Locale.ROOT,
                 "[tele] d=%.2f me=(%.1f,%.1f,%.1f) yaw=%.0f hp=%.1f food=%d str=%.2f gnd=%b | opp=(%.1f,%.1f) hy=%.0f hp=%.1f"
-                        + " blk=%b use=%b gnd=%b | %s broad=%s tac=%s sw+%d keys=%s%s%s%s%s%s note=%s",
+                        + " blk=%b use=%b gnd=%b | %s broad=%s tac=%s sw+%d keys=%s%s%s%s%s%s note=%s | %s",
                 Math.sqrt(p.distanceToSqr(t)), p.getX(), p.getY(), p.getZ(), p.getYRot(), p.getHealth(),
                 p.getFoodData().getFoodLevel(), p.getAttackStrengthScale(0f), p.onGround(), t.getX(), t.getZ(),
                 t.getYHeadRot(), thp, blk, using, t.onGround(), ca.state(), ca.broadTactic(), ca.tactic(),
                 sw - lastSwings, mc.options.keyUp.isDown() ? "W" : "", mc.options.keyDown.isDown() ? "S" : "",
                 mc.options.keyLeft.isDown() ? "A" : "", mc.options.keyRight.isDown() ? "D" : "",
-                mc.options.keySprint.isDown() ? "^" : "", mc.options.keyUse.isDown() ? "U" : "", ca.lastNote()));
+                mc.options.keySprint.isDown() ? "^" : "", mc.options.keyUse.isDown() ? "U" : "", ca.lastNote(), H.arbiterState()));
         lastSwings = sw;
     }
 
