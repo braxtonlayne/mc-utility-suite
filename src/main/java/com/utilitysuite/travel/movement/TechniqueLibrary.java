@@ -54,15 +54,32 @@ public final class TechniqueLibrary implements TechniqueSource {
     private int lastEdgeTick = -1;
 
     /**
-     * Order in which a pass walks the families: the corner cut first (a small grid, and the shape a blocked straight
-     * line most often needs), then the older families in their old order.
+     * Order in which a pass walks the families when the straight line to the target is blocked by a wall: the corner
+     * cut first (a small grid, and the shape a blocked line most often needs), then the older families.
      */
-    private static final int[] STAGE_TEMPLATE = {TechniqueTemplates.CUT, TechniqueTemplates.CUT,
+    private static final int[] BLOCKED_TEMPLATE = {TechniqueTemplates.CUT, TechniqueTemplates.CUT,
             TechniqueTemplates.CORNER, TechniqueTemplates.HEADHITTER, TechniqueTemplates.NEO,
             TechniqueTemplates.CORNER, TechniqueTemplates.HEADHITTER, TechniqueTemplates.NEO,
             TechniqueTemplates.FORTY_FIVE};
     /** Whether a stage walks the family's yaw variants (skipped when the view may not be turned). */
-    private static final boolean[] STAGE_YAW = {false, true, false, false, false, true, true, true, true};
+    private static final boolean[] BLOCKED_YAW = {false, true, false, false, false, true, true, true, true};
+    /** The order otherwise: the older families as before (keys only, then yaw), the corner cut last. */
+    private static final int[] OPEN_TEMPLATE = {TechniqueTemplates.CORNER, TechniqueTemplates.HEADHITTER,
+            TechniqueTemplates.NEO, TechniqueTemplates.CORNER, TechniqueTemplates.HEADHITTER,
+            TechniqueTemplates.NEO, TechniqueTemplates.FORTY_FIVE, TechniqueTemplates.CUT, TechniqueTemplates.CUT};
+    private static final boolean[] OPEN_YAW = {false, false, false, true, true, true, true, false, true};
+    private int[] stageTemplate = OPEN_TEMPLATE;
+    private boolean[] stageYaw = OPEN_YAW;
+
+    @Override
+    public void setLineBlocked(boolean blocked) {
+        int[] order = blocked ? BLOCKED_TEMPLATE : OPEN_TEMPLATE;
+        if (order != stageTemplate) {
+            stageTemplate = order;
+            stageYaw = blocked ? BLOCKED_YAW : OPEN_YAW;
+            reset();
+        }
+    }
     /** The most a script may turn the view from where it starts (the level's co-steer total). */
     private float maxTurn = TechniqueTemplates.DEFAULT_MAX_TURN;
 
@@ -115,9 +132,9 @@ public final class TechniqueLibrary implements TechniqueSource {
             int maxDecodes = totalSize(yawAllowed);
             while (ticks + ROLL_COST <= MAX_SIM_TICKS_PER_CALL && decodes < maxDecodes) {
                 decodes++;
-                int t = STAGE_TEMPLATE[cursorStage];
+                int t = stageTemplate[cursorStage];
                 int i = cursorIndex;
-                boolean yawPhase = STAGE_YAW[cursorStage] && yawAllowed;
+                boolean yawPhase = stageYaw[cursorStage] && yawAllowed;
                 advanceCursor(yawAllowed);
                 if (!TechniqueTemplates.decode(t, i, yawPhase, edge, yaw, aim, maxTurn, cand)) {
                     continue;
@@ -212,11 +229,11 @@ public final class TechniqueLibrary implements TechniqueSource {
     }
 
     /** Candidates of one full pass: the keys-only grid, then (with yaw) the yaw grid. */
-    private static int totalSize(boolean yawAllowed) {
+    private int totalSize(boolean yawAllowed) {
         int n = 0;
-        for (int s = 0; s < STAGE_TEMPLATE.length; s++) {
-            if (yawAllowed || !STAGE_YAW[s]) {
-                n += TechniqueTemplates.size(STAGE_TEMPLATE[s], STAGE_YAW[s]);
+        for (int s = 0; s < stageTemplate.length; s++) {
+            if (yawAllowed || !stageYaw[s]) {
+                n += TechniqueTemplates.size(stageTemplate[s], stageYaw[s]);
             }
         }
         return n;
@@ -230,10 +247,10 @@ public final class TechniqueLibrary implements TechniqueSource {
     private void advanceCursor(boolean yawAllowed) {
         cursorIndex++;
         int guard = 0;
-        while ((cursorIndex >= TechniqueTemplates.size(STAGE_TEMPLATE[cursorStage], STAGE_YAW[cursorStage])
-                || (STAGE_YAW[cursorStage] && !yawAllowed)) && guard++ <= STAGE_TEMPLATE.length) {
+        while ((cursorIndex >= TechniqueTemplates.size(stageTemplate[cursorStage], stageYaw[cursorStage])
+                || (stageYaw[cursorStage] && !yawAllowed)) && guard++ <= stageTemplate.length) {
             cursorIndex = 0;
-            cursorStage = (cursorStage + 1) % STAGE_TEMPLATE.length;
+            cursorStage = (cursorStage + 1) % stageTemplate.length;
         }
     }
 

@@ -954,6 +954,7 @@ class ParkourLaneReplicaTest {
         }
         TechniqueLibrary lib = new TechniqueLibrary();
         lib.setMaxTurn(maxTurn);
+        lib.setLineBlocked(true);
         int first = -1;
         for (int call = 1; call <= maxCalls && first < 0; call++) {
             boolean got = lib.plan(p, lane.startYaw, true, 1, 0, top, rate > 0f, rate, false, 20f, g);

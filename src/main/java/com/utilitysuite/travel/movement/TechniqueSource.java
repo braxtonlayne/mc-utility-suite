@@ -65,6 +65,13 @@ public interface TechniqueSource {
     default void setMaxTurn(float degrees) {
     }
 
+    /**
+     * The straight line to the target is blocked by a wall (the intent estimator's roll ran into one): the families
+     * made for a way around are walked first.
+     */
+    default void setLineBlocked(boolean blocked) {
+    }
+
     /** Forget the search (target changed, world change). */
     void reset();
 }

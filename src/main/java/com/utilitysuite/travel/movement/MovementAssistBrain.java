@@ -1197,6 +1197,7 @@ public final class MovementAssistBrain {
             return;
         }
         techniques.setMaxTurn(coSteerAllowed ? coSteerMaxTotalDeg : 0f);
+        techniques.setLineBlocked(techniqueFirst);
         boolean got = techniques.plan(now, yaw, sprintKey, userForward, userStrafe, planRegion, coSteerAllowed,
                 coSteerMaxDegPerTick, safeOnly, holdHealth, w);
         commitSimTicks += techniques.lastSimTicks();

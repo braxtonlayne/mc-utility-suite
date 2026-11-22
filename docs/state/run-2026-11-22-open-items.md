@@ -263,14 +263,21 @@ section.
 
 - `IntentEstimator`: jumps longer than 8 blocks are not noted. The only candidate in the cone gets a confidence floor
   of 0.6 when the keys point at it within about 30 degrees, it is not a platform already visited, and its roll was
-  feasible (0.54 when blocked). `lookConfidence()` is the value without that floor. A roll stopped by a wall that is
-  not the target marks the top BLOCKED (score x 0.9, `targetBlocked()`), not infeasible.
+  feasible (0.54 when blocked). `lookConfidence()` is the value without that floor. A roll stopped by a wall marks
+  the top BLOCKED (score x 0.9, `targetBlocked()`), not infeasible. "A wall" is a block beside the body that stands
+  more than 0.6 above the target's top; a roll that falls short and runs into the side of the target's own platform
+  stays infeasible. (The first version counted any touch away from the target cell. On the benchmark course that
+  kept out-of-reach pads as targets, the landing hold judged "safe to walk on" against one of them, and the runner
+  stood on segment 12's strip with W latched: 12 of 19 in the first three client runs, 19 of 19 after the fix.
+  `ParkourBenchmarkIntentTest` now runs the course with the real estimator in Co-pilot.) Once BLOCKED, a cached top
+  stays BLOCKED for later stances.
 - `MovementAssistBrain`: while ARMED the estimator's pick is applied in `decide` after the takeoff is known, so the
   armed target is the one frozen at TAKEOFF. A blocked target sends the approach ticks and the budget to the
   technique search from the first ARMED tick, the assist's own jump waits for the last supported tick, and the
   straight aim at the blocked target is not co-steered. Corrections ignores blocked targets (it has no technique
-  search). A script holds the user's press back at most 4 ticks; a press further ahead of the script's takeoff drops
-  the script. The planner is told the level's co-steer total (`coSteerMaxTotalDeg`, set by `MovementAssist`).
+  search). The user's press is held back at most 4 ticks, for a script's takeoff or, while the search is still
+  running, as long as the body is still supported on the next tick; a press further ahead of a script's takeoff
+  drops the script. The planner is told the level's co-steer total (`coSteerMaxTotalDeg`, set by `MovementAssist`).
 - **Landing-hold rules: unchanged, and one guard added to keep them so.** "The user is going on" (`continuing`) reads
   `lookConfidence()`, not the floored confidence: with the floor, W toward the only top ahead would have counted as
   going on, and W alone must never chain a jump.
@@ -282,6 +289,8 @@ section.
   i, view over the frames after, physics on tick i + 1) and replayed by asking for the segment's goal, not a
   per-tick yaw. `CoSteerModelTest` holds it to the real follower: identical at 60 fps, within 1.5 degrees at 40 to
   160 fps. The lane replica uses the real `YawCoSteer` and passes at 40, 60, 100 and 160 fps.
+- A script must touch down at least 0.08 block inside the support region (the replay's own drift limit). Before,
+  a script that predicted a touchdown on the rim was accepted and missed in the client.
 - Every view change still goes through the co-steer (rate and total capped in the core, 450 deg/s hard cap). No
   fresh key is replaced (asserted per lane).
 - Tried and reverted: keeping the incumbent target inside the estimator's near limit while airborne. It keeps the
@@ -318,7 +327,11 @@ is an air brake, no slow run-up needed). 2.3 blocks is the figure for releasing 
   the body sliding along the column. A scan of 49392 (Co-pilot) and 235200 (Takeover) clean corner shapes, with no
   wall touch, lands the fence post 0 times and the wall post 2 times (`deepCornersHaveNoCleanTechniqueAndTheRebuiltOnesDo`).
   The post is half a block up, which leaves 10 air ticks for 2.78 blocks plus 0.4 to 0.6 sideways, all of it after
-  the column corner. Approaching from the far side of the platform is out of reach (3.45 blocks against 2.9).
+  the column corner. A straight diagonal from the far side of the platform is too long by hand arithmetic (about
+  3.45 blocks against 2.9 of reach), and starting the run-up one block to the side did not help the search (keys
+  only: none; with a view change: 11000 rolls and more).
+- The playtest checklist describes the corner as "behind the corner of a block beside the gap": one block, which is
+  what the rebuilt lanes have.
 - **Rebuilt as the closest lanes with a clean technique:** the column is one block deep (z 11); the wall post stays
   across 3 (64 clean shapes in Co-pilot, 158 in Takeover), the fence post moves to across 2 (2811 and 7361). The fence
   post across 3 behind the thin column still has none.

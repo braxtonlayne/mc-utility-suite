@@ -16,7 +16,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  */
 class ParkourBenchmarkIntentTest {
 
-    static ParkourRun run(ParkourCourse course, JumpCommit.Mode mode, StringBuilder log) {
+    static float PITCH = System.getenv("BENCH_PITCH") != null ? Float.parseFloat(System.getenv("BENCH_PITCH")) : 15f;
+
+    static ParkourRun run(ParkourCourse course, JumpCommit.Mode mode, float camDegPerTick, StringBuilder log) {
         MovementAssistBrain brain = new MovementAssistBrain();
         brain.mode = mode;
         brain.landingHold = true;
@@ -31,22 +33,27 @@ class ParkourBenchmarkIntentTest {
         double takeoffX = 0;
         double takeoffZ = 0;
         boolean haveTakeoff = false;
+        boolean sprinting = true;
+        float yaw = run.aimYaw(p.x, p.z);
         for (int t = 1; t <= ParkourBenchmarkTest.MAX_TICKS; t++) {
-            float yaw = run.aimYaw(p.x, p.z);
+            float aim = run.aimYaw(p.x, p.z);
+            float turn = aim - yaw;
+            turn = turn > 180f ? turn - 360f : (turn < -180f ? turn + 360f : turn);
+            yaw += Math.max(-camDegPerTick, Math.min(camDegPerTick, turn)); // the runner's camera turns at a finite speed
             if (p.onGround) {
                 groundX = p.x;
                 groundZ = p.z;
             }
             intent.setCommitThreshold(IntentEstimator.GUIDE_THRESHOLD);
             brain.intentThreshold = intent.commitThreshold();
-            if (intent.estimate(p, yaw, 15f, 1, 0, true, course) && intent.hasTarget()) {
+            if (intent.estimate(p, yaw, PITCH, 1, 0, sprinting, course) && intent.hasTarget()) {
                 brain.setIntentBlocked(intent.targetBlocked());
                 brain.setIntentLook(intent.lookConfidence());
                 brain.setIntentTarget(intent.targetX(), intent.targetY(), intent.targetZ(), intent.confidence());
             } else {
                 brain.clearIntentTarget();
             }
-            brain.decide(p, yaw, true, 1, 0, false, 20f, course);
+            brain.decide(p, yaw, sprinting, 1, 0, false, 20f, course);
             if (brain.tookOff()) {
                 haveTakeoff = true;
                 takeoffX = groundX;
@@ -63,7 +70,9 @@ class ParkourBenchmarkIntentTest {
                         brain.intentActive(), brain.targetX(), brain.targetY(), brain.targetZ(),
                         intent.targetBlocked()));
             }
+            // vanilla: no sprint without forward; with the sprint key held it comes back with W on the next tick
             p.tick(f, s, yaw, f > 0, brain.jump(), brain.sneak(), course);
+            sprinting = f > 0 && !brain.sneak();
             if (!run.update(t, p.x, p.y, p.z, p.onGround)) {
                 break;
             }
@@ -74,11 +83,14 @@ class ParkourBenchmarkIntentTest {
     @Test
     void coPilotWithTheRealEstimatorClearsTheWholeCourse() {
         ParkourCourse course = ParkourCourse.standard();
-        StringBuilder log = new StringBuilder();
-        ParkourRun r = run(course, JumpCommit.Mode.GUIDE, log);
-        String report = "\n" + r.report() + log;
-        System.out.println("Parkour benchmark (sim, estimator, Co-pilot): " + r.cleared() + "/"
-                + course.segments().size());
-        assertEquals(course.segments().size(), r.cleared(), report);
+        // the runner's camera: instant, at the hard cap (450 deg/s), at the default speed (240), slow (120)
+        for (float cam : new float[] {360f, 22.5f, 12f, 6f}) {
+            StringBuilder log = new StringBuilder();
+            ParkourRun r = run(course, JumpCommit.Mode.GUIDE, cam, log);
+            String report = "\ncamera " + cam + " deg/tick\n" + r.report() + log;
+            System.out.println("Parkour benchmark (sim, estimator, Co-pilot, camera " + cam + " deg/tick): "
+                    + r.cleared() + "/" + course.segments().size());
+            assertEquals(course.segments().size(), r.cleared(), report);
+        }
     }
 }
