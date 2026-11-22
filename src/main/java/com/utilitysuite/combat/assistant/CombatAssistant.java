@@ -245,6 +245,11 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
     private final TargetSelector.AllyTest allyTest;
     private int scanClock;
     private int proactivePause;
+    // hand-over key (core): sampled each client tick by handOverTick
+    private boolean handOverHeld;
+    private boolean handOverEngaged;
+    private int handOverScan;
+    private int handOverPause;
     private boolean proactiveBlockedNoted;
     private int proactiveEngagements;
 
@@ -340,6 +345,10 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         }
         if (enabled && state != CombatState.ENGAGED) {
             engage(causeId, "defensive: " + typeId);
+        } else if (handOverHeld && state != CombatState.ENGAGED) {
+            // module off, hand-over key held: the one attacking you is the threat (reactive, allowed everywhere)
+            engage(causeId, "hand-over key, defensive: " + typeId);
+            handOverEngaged = true;
         }
     }
 
@@ -471,6 +480,11 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
             }
             return;
         }
+        tickFight();
+    }
+
+    /** One tick of a running engagement (ENGAGED or DISENGAGING). */
+    private void tickFight() {
         if (state == CombatState.DISENGAGING) {
             if (!holdsLease() || clicker.pending() == 0 || ++disengageTicks > DISENGAGE_MAX_TICKS) {
                 finishDisengage();
@@ -1477,6 +1491,93 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
             };
             diagnostic(lastNote);
         }
+    }
+
+    // ---- hand-over key --------------------------------------------------------------------------------------------
+
+    /**
+     * The core's hand-over key ({@link com.utilitysuite.core.api.IAutopilot#handOverHeld}), once per client tick,
+     * whether this module is on or off. While held and dormant it engages the threat in front of you: every
+     * {@value #SCAN_INTERVAL_TICKS} ticks the entity under the crosshair when the target filter accepts it (a
+     * proactive pick: single-player and allow-listed servers only), else whoever attacked you last (reactive: allowed
+     * everywhere). The fight itself is the ordinary engagement: same lease, same smoothed aim, same reach and
+     * line-of-sight rules. A fresh movement press still ends it, and the scan then waits out the usual pause. When
+     * the key comes up (or Stop-All revokes it), an engagement that started under it ends on this tick with
+     * {@link DisengageReason#HAND_OVER_RELEASED}; one the module started itself is left alone. Allocation free
+     * except the scan's own entity query (a few times a second, only while held and dormant).
+     */
+    public void handOverTick() {
+        com.utilitysuite.core.api.IAutopilot ap = Services.autopilotOrNull();
+        boolean held = ap != null && ap.handOverHeld();
+        if (!held) {
+            if (handOverHeld) {
+                handOverHeld = false;
+                handOverScan = 0;
+                handOverPause = 0;
+                if (handOverEngaged) {
+                    handOverEngaged = false;
+                    if (state != CombatState.DORMANT) {
+                        disengageNow(DisengageReason.HAND_OVER_RELEASED);
+                    }
+                }
+            }
+            return;
+        }
+        handOverHeld = true;
+        if (state == CombatState.DORMANT) {
+            if (handOverEngaged) {
+                handOverEngaged = false; // it ended by itself (target down, the user moved): honour the usual pause
+                handOverPause = proactivePause;
+            }
+            if (handOverPause > 0) {
+                handOverPause--;
+                return;
+            }
+            if (--handOverScan > 0) {
+                return;
+            }
+            handOverScan = SCAN_INTERVAL_TICKS;
+            int id = pickHandOverTarget();
+            if (id < 0) {
+                return;
+            }
+            engage(id, "hand-over key");
+            handOverEngaged = true;
+        }
+        if (!enabled && state != CombatState.DORMANT) {
+            tickFight(); // the module registry does not tick a module that is off
+        }
+    }
+
+    /** The threat in front: the crosshair entity the target filter accepts, else the last attacker. -1 for none. */
+    private int pickHandOverTarget() {
+        if (arbiter.isAutomationStopped() || world.localPlayerId() < 0) {
+            return -1;
+        }
+        int c = world.crosshairEntityId();
+        if (c >= 0 && world.extrasAllowedHere() && world.isLivingAlive(c)
+                && !roster.isNeverTarget(world.uuidOf(c))) {
+            world.scanTargets(settings.engageRange, false, candidates);
+            for (int i = 0; i < candidates.size; i++) {
+                if (candidates.ids[i] == c) {
+                    if (TargetSelector.accepts(settings.targets, candidates.flags[i])) {
+                        return c;
+                    }
+                    break;
+                }
+            }
+        }
+        int a = lastAttacker;
+        if (a >= 0 && world.isLivingAlive(a) && !roster.isNeverTarget(world.uuidOf(a))
+                && world.distanceSqToLocal(a) <= settings.engageRange * settings.engageRange) {
+            return a;
+        }
+        return -1;
+    }
+
+    /** True while the current engagement was started by the hand-over key (diagnostics, tests). */
+    public boolean handOverEngaged() {
+        return handOverEngaged;
     }
 
     // ---- proactive engagement -------------------------------------------------------------------------------------

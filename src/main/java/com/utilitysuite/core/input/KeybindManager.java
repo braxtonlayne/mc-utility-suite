@@ -15,7 +15,7 @@ import java.util.Arrays;
  * {@link #onPressed(KeyId, Runnable)} during construction; the core dispatches presses once per client tick.
  * <p>
  * Defaults: Open Menu = Right Shift, Stop-All = Backspace (unused by vanilla in game, large and easy to hit in a hurry),
- * Clean-Screen = F10 (unused by vanilla). Quick toggles start unbound. All bindings only act in game (no screen open),
+ * Clean-Screen = F10 (unused by vanilla). Quick toggles and the hand-over hold key start unbound. All bindings only act in game (no screen open),
  * so typing Backspace in chat never triggers Stop-All.
  */
 public final class KeybindManager {
@@ -30,7 +30,9 @@ public final class KeybindManager {
         TOGGLE_TERRAIN_SURFACE("toggle_terrain_surface", InputConstants.UNKNOWN.getValue()),
         TOGGLE_WORLD_OVERLAYS("toggle_world_overlays", InputConstants.UNKNOWN.getValue()),
         TOGGLE_SCOUT_CAMERA("toggle_scout_camera", InputConstants.UNKNOWN.getValue()),
-        TOGGLE_AUTOPILOT("toggle_autopilot", InputConstants.UNKNOWN.getValue());
+        TOGGLE_AUTOPILOT("toggle_autopilot", InputConstants.UNKNOWN.getValue()),
+        /** Hold to hand the whole body to the autopilot (read with {@link #isHeld}; unbound by default). */
+        HAND_OVER("hand_over", InputConstants.UNKNOWN.getValue());
 
         private static final KeyId[] VALUES = values();
 
@@ -83,6 +85,15 @@ public final class KeybindManager {
     /** The vanilla mapping (null before {@code RegisterKeyMappingsEvent}). For display, e.g. the bound key name. */
     public static KeyMapping mapping(KeyId id) {
         return MAPPINGS[id.ordinal()];
+    }
+
+    /**
+     * True while the key is held in game (false while unbound, before registration, or with a screen open, where
+     * vanilla releases every mapping). For hold keys; a field read, allocation free.
+     */
+    public static boolean isHeld(KeyId id) {
+        KeyMapping m = MAPPINGS[id.ordinal()];
+        return m != null && !m.isUnbound() && m.isDown();
     }
 
     /** Mod-bus listener. */

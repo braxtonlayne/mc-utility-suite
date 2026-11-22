@@ -507,6 +507,8 @@ public final class ToolsTab {
         hotkey(p, "Stop-All (stops every automation at once)", KeybindManager.mapping(KeybindManager.KeyId.STOP_ALL));
         hotkey(p, "Clean-Screen (hides overlays and the HUD pill)",
                 KeybindManager.mapping(KeybindManager.KeyId.CLEAN_SCREEN));
+        hotkey(p, "Hand over (hold: the autopilot takes the whole body)",
+                KeybindManager.mapping(KeybindManager.KeyId.HAND_OVER));
         if (ToolsBootstrap.containerButtons() != null) {
             hotkey(p, "Quick deposit in a chest (Shift = dump all)",
                     ToolsBootstrap.containerButtons().quickDepositKey());

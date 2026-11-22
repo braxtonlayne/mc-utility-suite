@@ -158,6 +158,8 @@ public final class MovementAssist implements IModule, IConfigurable {
     private final double[] opposingRing = new double[OPPOSE_WINDOW_TICKS];
     private int opposingAt;
     private boolean takeoverHeld;
+    /** The core's hand-over key ({@link IAutopilot#handOverHeld}), sampled once per movement tick. */
+    private boolean handOverHeld;
     private int coSteerTicks;
     private ControlMode controlMode = ControlMode.CO_PILOT;
     /** IWorldMarks slot for the locked target top: -2 = not claimed yet, -1 = the table was full. */
@@ -232,7 +234,10 @@ public final class MovementAssist implements IModule, IConfigurable {
     public void onMovementInput(MovementInputUpdateEvent event) {
         jumpingThisTick = false;
         // the autopilot runs the reflexes it is allowed even while this module is off (no overlays then)
-        IAutopilot ap = enabled ? null : Services.autopilotOrNull();
+        IAutopilot core = Services.autopilotOrNull();
+        // the core's hand-over key: Takeover for the jump in progress and the ones after it, every reflex armed
+        handOverHeld = core != null && core.handOverHeld();
+        IAutopilot ap = enabled ? null : core;
         boolean auto = ap != null && ap.isOn();
         if (!enabled && !auto) {
             endGrant();
@@ -242,9 +247,9 @@ public final class MovementAssist implements IModule, IConfigurable {
             }
             return;
         }
-        boolean useClutch = enabled ? clutchOn : ap.allows(IAutopilot.Reflex.FALL_CLUTCH);
+        boolean useClutch = enabled ? clutchOn || handOverHeld : ap.allows(IAutopilot.Reflex.FALL_CLUTCH);
         boolean useParkour = enabled || ap.allows(IAutopilot.Reflex.PARKOUR);
-        boolean useBlocks = enabled ? blocksOn : ap.allows(IAutopilot.Reflex.PARKOUR_BLOCKS);
+        boolean useBlocks = enabled ? blocksOn || handOverHeld : ap.allows(IAutopilot.Reflex.PARKOUR_BLOCKS);
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer p = mc.player;
         if (event.getEntity() != p || p == null || mc.level == null) {
@@ -335,6 +340,7 @@ public final class MovementAssist implements IModule, IConfigurable {
         }
         // Takeover commits on a lower confidence than Co-pilot; the brain reads the same threshold
         intent.setCommitThreshold(controlMode.mode == JumpCommit.Mode.CARRY || TravelKeys.takeoverHeld()
+                || handOverHeld
                 ? IntentEstimator.CARRY_THRESHOLD : IntentEstimator.GUIDE_THRESHOLD);
         brain.intentThreshold = intent.commitThreshold();
         if (brain.intentAssist && (userF != 0 || userS != 0 || !now.onGround)
@@ -350,7 +356,8 @@ public final class MovementAssist implements IModule, IConfigurable {
         boolean canSprint = !sprinting && canStartSprint(p, in);
         brain.sprintFillAllowed = canSprint;
         // hold-to-take-over (D3 unbound, D4): while held, this tick runs Takeover whatever "Control" says
-        takeoverHeld = TravelKeys.takeoverHeld();
+        // the core's hand-over key counts as this key held (same thresholds, same limits as Takeover)
+        takeoverHeld = TravelKeys.takeoverHeld() || handOverHeld;
         JumpCommit.Mode mode = takeoverHeld ? JumpCommit.Mode.CARRY
                 : auto && controlMode.mode == JumpCommit.Mode.NUDGE ? JumpCommit.Mode.GUIDE : controlMode.mode;
         if (!brain.commit().live()) {
@@ -1311,7 +1318,7 @@ public final class MovementAssist implements IModule, IConfigurable {
         return coSteerTicks;
     }
 
-    /** The hold-to-take-over key was held on the last movement tick. */
+    /** The hold-to-take-over key (or the core's hand-over key) was held on the last movement tick. */
     public boolean takeoverHeld() {
         return takeoverHeld;
     }

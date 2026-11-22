@@ -7,6 +7,7 @@
   "key.utilitysuite.toggle_world_overlays": "Toggle World Overlays",
   "key.utilitysuite.toggle_scout_camera": "Toggle Scout Camera",
   "key.utilitysuite.toggle_autopilot": "Toggle Autopilot",
+  "key.utilitysuite.hand_over": "Hand over: hold to give the autopilot control",
   "message.utilitysuite.autopilot_on": "Autopilot on",
   "message.utilitysuite.autopilot_off": "Autopilot off",
   "message.utilitysuite.stop_all": "Utility Suite: all automation stopped",

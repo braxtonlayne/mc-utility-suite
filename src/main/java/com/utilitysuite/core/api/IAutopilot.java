@@ -44,6 +44,24 @@ public interface IAutopilot {
 
     Reach reach();
 
+    // ---- hand-over key (defaults keep fakes and an absent autopilot working) --------------------------------------
+
+    /**
+     * True while the user holds the hand-over key: the autopilot has the whole body (Movement Assist runs Takeover,
+     * the Combat Assistant takes the threat in front, every reflex is armed, and {@link #isOn} and {@link #allows}
+     * answer yes even when the autopilot's own toggle is off). It raises authority, never the legit level: rotation
+     * caps, reach and line-of-sight rules are untouched. False from the tick the key comes up, and after Stop-All
+     * until the key was let go. Allocation free; ask every tick instead of caching it.
+     */
+    default boolean handOverHeld() {
+        return false;
+    }
+
+    /** The autopilot tick on which the current (or last) hand-over started, -1 before the first. */
+    default long handOverStartTick() {
+        return -1L;
+    }
+
     // ---- danger model and reflex scheduler (defaults keep fakes and an absent autopilot working) -----------------
 
     /** What is about to hurt the player. Never null; {@link IDangerModel#NONE} while nothing feeds it. */

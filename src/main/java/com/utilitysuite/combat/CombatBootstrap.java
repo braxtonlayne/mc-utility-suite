@@ -116,6 +116,7 @@ public final class CombatBootstrap {
             net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
             if (mc.player != null && mc.level != null) {
                 assistant.autopilotTick();
+                assistant.handOverTick(); // the core's hand-over key: engage while held, let go on release
             }
             reflexes.clientTick();
         });

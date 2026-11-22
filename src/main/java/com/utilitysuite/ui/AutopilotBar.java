@@ -77,7 +77,7 @@ final class AutopilotBar extends UiNode {
     @Override
     public void refresh(Font font) {
         Autopilot ap = CoreBootstrap.autopilot();
-        on = ap != null && ap.isOn();
+        on = ap != null && ap.isEnabled(); // the toggle, not the hand-over key
         KeyMapping key = KeybindManager.mapping(KeybindManager.KeyId.TOGGLE_AUTOPILOT);
         keyHint = key == null || key.isUnbound() ? "" : "[" + key.getTranslatedKeyMessage().getString() + "]";
         keyHintW = keyHint.isEmpty() ? 0 : font.width(keyHint);

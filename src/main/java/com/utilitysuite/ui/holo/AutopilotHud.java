@@ -41,6 +41,10 @@ public final class AutopilotHud implements HudElement {
     public static final float MARKER_ALPHA = 0.35f;
     public static final String ONLINE = "AUTOPILOT ONLINE";
     public static final String OFFLINE = "AUTOPILOT OFFLINE";
+    /** The one status line while the hand-over key is held and no reflex has its own line. */
+    public static final String HAND_OVER_LINE = "STEM - FULL CONTROL";
+    public static final String HAND_OVER_ON = "STEM HAS CONTROL";
+    public static final String HAND_OVER_OFF = "CONTROL RETURNED";
 
     private static final String[] STEM_LINE = new String[Reflex.values().length];
 
@@ -56,6 +60,7 @@ public final class AutopilotHud implements HudElement {
     private boolean seeded;
     private boolean on;
     private Reflex reflex;
+    private boolean handOver;
     private long pulseAt;
     private long takeoverAt;
     private long releasedAt;
@@ -76,12 +81,27 @@ public final class AutopilotHud implements HudElement {
      * @param reflex the reflex acting right now (ignored while off)
      */
     public void update(boolean autopilotOn, Reflex acting) {
-        Reflex r = autopilotOn ? acting : null;
+        update(autopilotOn, acting, false);
+    }
+
+    /** The status line while the hand-over key is held ({@link #HAND_OVER_LINE}); null when it is not. */
+    public static String handOverLine(boolean held) {
+        return held ? HAND_OVER_LINE : null;
+    }
+
+    /**
+     * As {@link #update(boolean, Reflex)}, plus the hand-over key: while it is held the takeover brackets stay in
+     * (as if a reflex acted the whole time), with one notice when it starts and one when control is returned.
+     * @param autopilotOn the autopilot's own toggle (the key does not count as "online")
+     */
+    public void update(boolean autopilotOn, Reflex acting, boolean handOverHeld) {
+        Reflex r = autopilotOn || handOverHeld ? acting : null;
         if (!seeded) {
             seeded = true;
             on = autopilotOn;
             reflex = r;
-            if (r != null) {
+            handOver = handOverHeld;
+            if (r != null || handOverHeld) {
                 takeoverAt = clock.getAsLong();
             }
             return;
@@ -97,15 +117,21 @@ public final class AutopilotHud implements HudElement {
                 notices.get().post(NoticeKind.INFO, OFFLINE, null);
             }
         }
-        if (r != reflex) {
-            if (reflex == null) {
+        if (handOverHeld != handOver) {
+            notices.get().post(NoticeKind.INFO, handOverHeld ? HAND_OVER_ON : HAND_OVER_OFF, null);
+        }
+        boolean was = reflex != null || handOver;
+        boolean is = r != null || handOverHeld;
+        if (is != was) {
+            if (is) {
                 takeoverAt = now;
                 releasedAt = 0L;
-            } else if (r == null) {
+            } else {
                 releasedAt = now;
             }
-            reflex = r;
         }
+        reflex = r;
+        handOver = handOverHeld;
     }
 
     /** World left: the next update re-seeds. */
@@ -113,6 +139,7 @@ public final class AutopilotHud implements HudElement {
         seeded = false;
         on = false;
         reflex = null;
+        handOver = false;
         pulseAt = 0L;
         takeoverAt = 0L;
         releasedAt = 0L;
@@ -130,7 +157,7 @@ public final class AutopilotHud implements HudElement {
 
     @Override
     public boolean wantsDraw() {
-        if (reflex != null) {
+        if (reflex != null || handOver) {
             return true;
         }
         long now = clock.getAsLong();
@@ -161,7 +188,7 @@ public final class AutopilotHud implements HudElement {
                 c.hLine(cx + PULSE_GAP, cx + half, cy, HoloToken.ACCENT, a);
             }
         }
-        if (reflex != null) {
+        if (reflex != null || handOver) {
             float inset = INSET;
             float a = alpha;
             if (HoloTheme.motion == Motion.FULL) {

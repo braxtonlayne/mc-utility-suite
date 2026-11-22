@@ -11,5 +11,7 @@ public enum DisengageReason {
     STOP_ALL,
     DISARMED,
     LEASE_ENDED,
+    /** The hand-over key that started this engagement was let go. */
+    HAND_OVER_RELEASED,
     WORLD_UNLOAD
 }
