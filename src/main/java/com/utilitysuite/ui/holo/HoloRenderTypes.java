@@ -7,7 +7,7 @@ import net.minecraft.client.renderer.RenderStateShard;
 import net.minecraft.client.renderer.RenderType;
 
 /**
- * The render types of the 2D kit, created once (lazily, on the render thread). Both use position-tex-colour quads
+ * The render types of the holo kits, created once (lazily, on the render thread). Both use position-tex-colour quads
  * sampling the {@link HoloAtlas}, translucent blending, no depth test, no depth write and no culling (ribbon quads may
  * wind either way):
  * <ul>
@@ -28,6 +28,7 @@ public final class HoloRenderTypes {
 
     private static RenderType gui;
     private static RenderType glyphs;
+    private static RenderType world;
 
     private HoloRenderTypes() {
     }
@@ -48,6 +49,32 @@ public final class HoloRenderTypes {
         if (t == null) {
             t = create("holo_gui_glyph", false);
             glyphs = t;
+        }
+        return t;
+    }
+
+    /**
+     * The world ribbon type ("holo_world"): the same atlas and shader with linear filtering, translucent blending,
+     * the depth test on ({@code LEQUAL_DEPTH_TEST}) but no depth write, no culling, and the item-entity output
+     * target that vanilla {@code RenderType.lines()} uses (so the Fabulous graphics mode composites it the same way).
+     * Render thread only.
+     */
+    public static RenderType world() {
+        RenderType t = world;
+        if (t == null) {
+            HoloAtlas.ensureUploaded();
+            RenderType.CompositeState state = RenderType.CompositeState.builder()
+                    .setShaderState(new RenderStateShard.ShaderStateShard(GameRenderer::getPositionTexColorShader))
+                    .setTextureState(new RenderStateShard.TextureStateShard(HoloAtlas.ID, true, false))
+                    .setTransparencyState(RenderStateShard.TRANSLUCENT_TRANSPARENCY)
+                    .setDepthTestState(RenderStateShard.LEQUAL_DEPTH_TEST)
+                    .setOutputState(RenderStateShard.ITEM_ENTITY_TARGET)
+                    .setWriteMaskState(RenderStateShard.COLOR_WRITE)
+                    .setCullState(RenderStateShard.NO_CULL)
+                    .createCompositeState(false);
+            t = RenderType.create("utilitysuite_holo_world", DefaultVertexFormat.POSITION_TEX_COLOR,
+                    VertexFormat.Mode.QUADS, BUFFER_SIZE, false, true, state);
+            world = t;
         }
         return t;
     }

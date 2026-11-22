@@ -1,19 +1,17 @@
 package com.utilitysuite.travel.movement;
 
-import com.mojang.blaze3d.vertex.PoseStack;
-import com.mojang.blaze3d.vertex.VertexConsumer;
 import com.utilitysuite.core.api.IConfigurable;
 import com.utilitysuite.core.api.IModule;
 import com.utilitysuite.core.api.ModuleCategory;
 import com.utilitysuite.core.api.ProfileConfig;
 import com.utilitysuite.core.api.Services;
 import com.utilitysuite.core.api.SettingSpec;
+import com.utilitysuite.core.api.visual.HoloToken;
+import com.utilitysuite.core.api.visual.IHoloWorld;
+import com.utilitysuite.core.api.visual.IVisuals;
 import com.utilitysuite.travel.pursuit.MinecraftRouteRunner;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
-import net.minecraft.client.renderer.LevelRenderer;
-import net.minecraft.client.renderer.MultiBufferSource;
-import net.minecraft.client.renderer.RenderType;
 import net.minecraft.util.Mth;
 import net.minecraft.world.phys.Vec3;
 import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
@@ -21,11 +19,16 @@ import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
 import java.util.List;
 
 /**
- * "Ghost Line": a translucent player-sized box (0.6 x 1.8, outline only) about a second ahead of the player along the
- * route the route runner follows, or, when no route runs, at the landing Movement Assist predicts for the current jump
- * (with the arc drawn). The samples are computed once per client tick in {@link GhostLine}; the render callback only
- * interpolates and pushes lines into one batched buffer. Off by default; nothing is drawn when neither source is
- * active, in Clean-Screen, or when the ghost is within 1.5 blocks of the camera.
+ * "Ghost Line": the path about a second ahead of the player along the route the route runner follows (with a
+ * player-sized ghost outline, 0.6 x 1.8, at its end), or, when no route runs, the arc to the landing Movement Assist
+ * predicts for the current jump with a bracketed ground mark there, coloured by jump quality ({@code ACCENT} good,
+ * {@code WARN} marginal, {@code DANGER} miss). The samples are computed once per client tick in {@link GhostLine}; the
+ * render callback only interpolates and hands segments to the Shell's world kit ({@code Services.visuals().world()}):
+ * the path is a dashed ribbon whose dashes advance toward the end and whose alpha fades with distance along the path
+ * (drawn band by band, each band a whole number of dash periods so the dash pattern stays continuous), over a faint
+ * continuous base. The kit owns the look (ribbons, or plain lines with effects off or a shader pack), the segment cap
+ * and the single batch. Off by default; nothing is drawn when neither source is active, in Clean-Screen (the kit is
+ * absent then), or when the ghost is within 1.5 blocks of the camera.
  */
 public final class GhostLineModule implements IModule, IConfigurable {
 
@@ -33,14 +36,16 @@ public final class GhostLineModule implements IModule, IConfigurable {
     public static final String K_LEAD = "lead_seconds";
     public static final String K_OPACITY = "opacity";
     public static final String K_TRAIL = "show_trail";
-    static final double HALF_WIDTH = 0.3;
-    static final double HEIGHT = 1.8;
 
     private final MovementAssist movement;
     private final MinecraftRouteRunner routeRunner;
     private final GhostLine ghost = new GhostLine();
     private final long[] routeBuf = new long[RouteFollower.MAX_ROUTE];
     private final float[] pos = new float[3];
+    /** The camera-relative path drawn this frame (rendered player position first). */
+    private final float[] path = new float[GhostLine.MAX_TRAIL * 3];
+    /** One fade band of the path. */
+    private final float[] bandBuf = new float[(GhostLine.MAX_TRAIL + 2) * 3];
 
     private boolean enabled;
     private double leadSeconds = 1.0;
@@ -74,6 +79,7 @@ public final class GhostLineModule implements IModule, IConfigurable {
         boolean moving = !p.onGround() || speed * speed > 0.0025;
         if (movement.isEnabled() && moving && brain.hasLanding()) {
             ghost.updateJump(p.getX(), p.getY(), p.getZ(), brain.landX(), brain.landY(), brain.landZ());
+            ghost.setQuality(GhostLine.quality(brain.lethal(), brain.landDamage(), brain.missDistance()));
         } else {
             ghost.clear();
         }
@@ -83,66 +89,37 @@ public final class GhostLineModule implements IModule, IConfigurable {
         if (!enabled || !ghost.active() || event.getStage() != RenderLevelStageEvent.Stage.AFTER_PARTICLES) {
             return;
         }
+        IVisuals visuals = Services.visualsOrNull();
+        IHoloWorld world = visuals != null ? visuals.world() : null;
         Minecraft mc = Minecraft.getInstance();
-        PoseStack pose = event.getPoseStack();
-        if (pose == null || mc.player == null || Services.modState().isCleanScreen()) {
-            return;
+        if (world == null || mc.player == null) {
+            return; // no world pass (Clean-Screen, no Shell) or no player: nothing to draw
         }
         float pt = event.getPartialTick().getGameTimeDeltaPartialTick(false);
         Vec3 cam = event.getCamera().getPosition();
         ghost.interpolate(pt, pos);
-        double bx = pos[0] - cam.x;
-        double by = pos[1] - cam.y;
-        double bz = pos[2] - cam.z;
-        if (bx * bx + by * by + bz * bz < GhostLine.MIN_SHOW * GhostLine.MIN_SHOW) {
+        float gx = (float) (pos[0] - cam.x);
+        float gy = (float) (pos[1] - cam.y);
+        float gz = (float) (pos[2] - cam.z);
+        if (gx * gx + gy * gy + gz * gz < GhostLine.MIN_SHOW * GhostLine.MIN_SHOW) {
             return;
         }
         boolean jump = ghost.mode() == GhostLine.JUMP;
-        float r = jump ? 0.55f : 0.35f;
-        float g = jump ? 0.85f : 0.8f;
-        float b = 1.0f;
-        MultiBufferSource.BufferSource buffers = mc.renderBuffers().bufferSource();
-        VertexConsumer lines = buffers.getBuffer(RenderType.lines());
-        LevelRenderer.renderLineBox(pose, lines, bx - HALF_WIDTH, by, bz - HALF_WIDTH, bx + HALF_WIDTH, by + HEIGHT,
-                bz + HALF_WIDTH, r, g, b, opacity);
+        int n = 0;
         if (jump || showTrail) {
-            PoseStack.Pose last = pose.last();
-            int n = ghost.trailCount();
+            n = ghost.trailCount();
             // the first point follows the player's rendered position so the line does not step at tick rate
-            float sx = (float) (Mth.lerp(pt, mc.player.xo, mc.player.getX()) - cam.x);
-            float sy = (float) (Mth.lerp(pt, mc.player.yo, mc.player.getY()) - cam.y);
-            float sz = (float) (Mth.lerp(pt, mc.player.zo, mc.player.getZ()) - cam.z);
-            float ax = sx;
-            float ay = sy + 0.1f;
-            float az = sz;
-            float la = opacity * 0.7f;
+            path[0] = (float) (Mth.lerp(pt, mc.player.xo, mc.player.getX()) - cam.x);
+            path[1] = (float) (Mth.lerp(pt, mc.player.yo, mc.player.getY()) - cam.y) + GhostLine.PATH_LIFT;
+            path[2] = (float) (Mth.lerp(pt, mc.player.zo, mc.player.getZ()) - cam.z);
             for (int i = 1; i < n; i++) {
-                float x = (float) (ghost.trailX(i) - cam.x);
-                float y = (float) (ghost.trailY(i) - cam.y) + 0.1f;
-                float z = (float) (ghost.trailZ(i) - cam.z);
-                segment(lines, last, ax, ay, az, x, y, z, r, g, b, la);
-                ax = x;
-                ay = y;
-                az = z;
+                int o = i * 3;
+                path[o] = (float) (ghost.trailX(i) - cam.x);
+                path[o + 1] = (float) (ghost.trailY(i) - cam.y) + GhostLine.PATH_LIFT;
+                path[o + 2] = (float) (ghost.trailZ(i) - cam.z);
             }
         }
-        buffers.endBatch(RenderType.lines());
-    }
-
-    private static void segment(VertexConsumer c, PoseStack.Pose p, float x0, float y0, float z0, float x1, float y1,
-                                float z1, float r, float g, float b, float a) {
-        float nx = x1 - x0;
-        float ny = y1 - y0;
-        float nz = z1 - z0;
-        float len = (float) Math.sqrt(nx * nx + ny * ny + nz * nz);
-        if (len < 1.0e-4f) {
-            return;
-        }
-        nx /= len;
-        ny /= len;
-        nz /= len;
-        c.addVertex(p, x0, y0, z0).setColor(r, g, b, a).setNormal(p, nx, ny, nz);
-        c.addVertex(p, x1, y1, z1).setColor(r, g, b, a).setNormal(p, nx, ny, nz);
+        GhostLine.draw(world, path, n, bandBuf, opacity, jump, ghost.quality(), gx, gy, gz);
     }
 
     @Override
