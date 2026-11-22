@@ -5,13 +5,17 @@ import com.utilitysuite.combat.allies.AllyPickHandler;
 import com.utilitysuite.combat.allies.AllyRosterModule;
 import com.utilitysuite.combat.allies.AllyRosterStore;
 import com.utilitysuite.combat.assistant.CombatAssistant;
+import com.utilitysuite.combat.assistant.mc.ArenaVoxels;
 import com.utilitysuite.combat.assistant.mc.CombatEventBridge;
 import com.utilitysuite.combat.assistant.mc.MinecraftCombatWorld;
+import com.utilitysuite.combat.assistant.mc.PearlWatch;
 import com.utilitysuite.combat.coach.FightCoach;
 import com.utilitysuite.combat.coach.FightCoachHud;
 import com.utilitysuite.combat.coach.ThreatTracker;
+import com.utilitysuite.combat.hud.ReadRingModule;
 import com.utilitysuite.combat.hud.TargetHud;
 import com.utilitysuite.combat.reflex.CombatReflexes;
+import com.utilitysuite.combat.tactics.ReadState;
 import com.utilitysuite.combat.trigger.TriggerAssist;
 import com.utilitysuite.core.api.Services;
 import net.minecraft.resources.ResourceLocation;
@@ -37,6 +41,9 @@ public final class CombatBootstrap {
     private static CombatReflexes reflexes;
     private static TriggerAssist trigger;
     private static TargetHud targetHud;
+    private static PearlWatch pearls;
+    private static ReadState readState;
+    private static ReadRingModule readRing;
 
     private CombatBootstrap() {
     }
@@ -47,6 +54,13 @@ public final class CombatBootstrap {
         MinecraftCombatWorld world = new MinecraftCombatWorld();
         assistant = new CombatAssistant(world, allies.roster(), Services.arbiter(), Services.input(),
                 Services.clicker(), System::currentTimeMillis);
+        // pro-feel units: the arena read and pearl landings over the live level, pearls from entity events, the read
+        pearls = new PearlWatch();
+        readState = new ReadState();
+        assistant.useArenaVoxels(new ArenaVoxels());
+        assistant.usePearlSource(pearls);
+        assistant.useReadState(readState);
+        readRing = new ReadRingModule(readState);
         threats = new ThreatTracker();
         coach = new FightCoach(world, assistant, allies.roster(), threats,
                 () -> Services.modState().isCleanScreen());
@@ -61,6 +75,7 @@ public final class CombatBootstrap {
         Services.modules().register(reflexes);
         Services.modules().register(trigger);
         Services.modules().register(targetHud);
+        Services.modules().register(readRing);
         assistant.bindModuleRegistry(Services.modules());
 
         CombatEventBridge.install(assistant);
@@ -79,6 +94,10 @@ public final class CombatBootstrap {
         bus.addListener(threats::onJoin);
         bus.addListener(threats::onLeave);
         bus.addListener(ClientPlayerNetworkEvent.LoggingOut.class, event -> threats.clear());
+        bus.addListener(pearls::onJoin);
+        bus.addListener(pearls::onLeave);
+        bus.addListener(ClientPlayerNetworkEvent.LoggingOut.class, event -> pearls.clear());
+        bus.addListener(readRing::onRenderLevel);
         // the autopilot's totem reflex runs here while the Combat Assistant module itself is off
         bus.addListener(net.neoforged.neoforge.client.event.ClientTickEvent.Post.class, event -> {
             net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
@@ -95,6 +114,10 @@ public final class CombatBootstrap {
 
     public static CombatReflexes reflexes() {
         return reflexes;
+    }
+
+    public static ReadRingModule readRing() {
+        return readRing;
     }
 
     public static TargetHud targetHud() {

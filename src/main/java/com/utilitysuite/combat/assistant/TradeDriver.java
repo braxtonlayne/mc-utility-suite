@@ -289,6 +289,14 @@ public final class TradeDriver {
         return jump;
     }
 
+    /**
+     * This tick's solver score of one key combination ({@link HitTradeSolver#combo}); used to break ties in favour of
+     * strafing with the opponent without overriding an answer that scores better.
+     */
+    public double scoreOf(int combo) {
+        return step.scoreOf(combo);
+    }
+
     /** Ticks the current answer has been held. */
     public int heldTicks() {
         return heldTicks;

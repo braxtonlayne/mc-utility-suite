@@ -39,6 +39,7 @@ class CombatRouteHandoverTest {
         ControlLease runLease;
         double lastStopRange;
         double lastMinDistance;
+        double lastX;
 
         FakeRunner(IInputSmoother input) {
             this.input = input;
@@ -72,6 +73,7 @@ class CombatRouteHandoverTest {
             assertTrue(lookAlongRoute);
             pursues++;
             lastStopRange = stopRange;
+            lastX = x;
             return run(lease);
         }
 
@@ -326,5 +328,111 @@ class CombatRouteHandoverTest {
         assistant.setEnabled(false);
         assertEquals(1, runner.stops);
         assertFalse(assistant.routeActive());
+    }
+
+    // ---- pearl intercept (third route mode) -------------------------------------------------------------------------
+
+    PearlInterceptTest.ScriptedPearls pearls;
+    PearlInterceptTest.ScriptedLanding landing;
+
+    void pearlSetup() {
+        pearls = new PearlInterceptTest.ScriptedPearls();
+        pearls.thrower = TARGET;
+        landing = new PearlInterceptTest.ScriptedLanding();
+        landing.x = 30;
+        assistant.usePearlSource(pearls);
+        assistant.proFeel().usePearlLanding(landing);
+        assistant.useArenaVoxels(ProFeelLayerTest.FLAT);
+    }
+
+    @Test
+    void runsToThePearlLandingAndKeepsTheTargetAcrossTheTeleport() {
+        pearlSetup();
+        engage();
+        assertFalse(assistant.routeActive(), "melee range, no pearl");
+        pearls.flying = true;
+        tick(1);
+        assertTrue(assistant.routeActive(), "runs for the landing while the pearl flies");
+        assertEquals(PearlIntercept.STOP_RANGE, runner.lastStopRange);
+        assertEquals(30.0, runner.lastX);
+        assertTrue(assistant.lastNote().contains("pearl"), "noted on the hand-over");
+
+        landing.x = 34; // the landing moved: retarget
+        tick(1);
+        assertEquals(34.0, runner.lastX);
+
+        pearls.flying = false; // it landed: the thrower teleports far beyond the disengage radius
+        world.entities.get(TARGET).x = 34;
+        tick(3);
+        assertEquals(CombatState.ENGAGED, assistant.state(), "no disengage on the teleport");
+        assertEquals(PearlIntercept.STOP_RANGE, runner.lastStopRange, "still heading for the landing");
+
+        world.entities.get(TARGET).x = 12; // inside the disengage radius: normal pursuit takes over
+        tick(1);
+        assertEquals(CombatState.ENGAGED, assistant.state());
+        assertTrue(assistant.routeActive());
+        assertEquals(assistant.config().spacingMax, runner.lastStopRange, "normal pursuit of the target");
+        assertEquals(12.0, runner.lastX);
+    }
+
+    @Test
+    void theRunEndsSixtyTicksAfterThePearlVanished() {
+        pearlSetup();
+        engage();
+        pearls.flying = true;
+        tick(1);
+        pearls.flying = false;
+        world.entities.get(TARGET).x = 30; // at the landing, beyond the normal disengage radius
+        tick(PearlIntercept.LINGER_TICKS - 2);
+        assertEquals(CombatState.ENGAGED, assistant.state());
+        tick(4);
+        assertEquals(CombatState.DORMANT, assistant.state(), "the normal disengage radius applies again");
+        assertEquals(DisengageReason.OUT_OF_RANGE, assistant.lastDisengageReason());
+    }
+
+    @Test
+    void noInterceptWithoutRoutePursuitOrWithTheSettingOff() {
+        pearlSetup();
+        assistant.config().routePursuit = false;
+        engage();
+        pearls.flying = true;
+        tick(2);
+        assertEquals(0, runner.pursues, "route pursuit off: no route of any kind");
+        pearls.flying = false;
+        world.entities.get(TARGET).x = 30;
+        tick(1);
+        assertEquals(CombatState.DORMANT, assistant.state(), "the teleport is out of range as before");
+
+        assistant.config().routePursuit = true;
+        assistant.config().pearlIntercept = false;
+        world.entities.get(TARGET).x = 3;
+        engage();
+        pearls.flying = true;
+        tick(2);
+        assertEquals(0, runner.pursues, "setting off");
+    }
+
+    @Test
+    void aNearLandingIsNotWorthARun() {
+        pearlSetup();
+        landing.x = 4.5; // within spacing max + 2 of us
+        engage();
+        pearls.flying = true;
+        tick(3);
+        assertFalse(assistant.routeActive());
+        assertEquals(0, runner.pursues);
+    }
+
+    @Test
+    void theInterceptEndsOnDisengage() {
+        pearlSetup();
+        engage();
+        pearls.flying = true;
+        tick(1);
+        assertTrue(assistant.routeActive());
+        assistant.onCancelKey();
+        assertEquals(CombatState.DORMANT, assistant.state());
+        assertFalse(assistant.proFeel().pearl().active());
+        assertTrue(runner.stops > 0);
     }
 }

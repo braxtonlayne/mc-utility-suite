@@ -51,6 +51,13 @@ public final class CombatSettings {
     public static final String HIT_TRADE_HORIZON = "hit_trade_horizon";
     public static final String COOLDOWN_READ = "cooldown_read";
     public static final String ROUTE_PURSUIT = "route_pursuit";
+    public static final String COMBO_KEEPER = "combo_keeper";
+    public static final String ANTICIPATORY_AIM = "anticipatory_aim";
+    public static final String STRAFE_WITH = "strafe_with";
+    public static final String ARENA_READ = "arena_read";
+    public static final String FEINTS = "feints";
+    public static final String RANK_DIAL = "rank_dial";
+    public static final String PEARL_INTERCEPT = "pearl_intercept";
 
     public TargetSelector.Mode engageMode = TargetSelector.Mode.REACTIVE;
     public TargetSelector.Targets targets = TargetSelector.Targets.HOSTILE;
@@ -90,6 +97,13 @@ public final class CombatSettings {
     public int hitTradeHorizon = 7;
     public boolean cooldownRead = true;
     public boolean routePursuit = true;
+    public boolean comboKeeper = true;
+    public boolean anticipatoryAim = true;
+    public boolean strafeWith = true;
+    public boolean arenaRead = true;
+    public boolean feints = true;
+    public boolean rankDial = false;
+    public boolean pearlIntercept = true;
 
     public void read(ProfileConfig p, String id) {
         engageMode = parseEnum(p.getString(id, ENGAGE_MODE, ""), TargetSelector.Mode.REACTIVE);
@@ -129,6 +143,13 @@ public final class CombatSettings {
         hitTradeHorizon = Math.max(6, Math.min(8, p.getInt(id, HIT_TRADE_HORIZON, 7)));
         cooldownRead = p.getBool(id, COOLDOWN_READ, true);
         routePursuit = p.getBool(id, ROUTE_PURSUIT, true);
+        comboKeeper = p.getBool(id, COMBO_KEEPER, true);
+        anticipatoryAim = p.getBool(id, ANTICIPATORY_AIM, true);
+        strafeWith = p.getBool(id, STRAFE_WITH, true);
+        arenaRead = p.getBool(id, ARENA_READ, true);
+        feints = p.getBool(id, FEINTS, true);
+        rankDial = p.getBool(id, RANK_DIAL, false);
+        pearlIntercept = p.getBool(id, PEARL_INTERCEPT, true);
     }
 
     static <E extends Enum<E>> E parseEnum(String s, E def) {
@@ -183,6 +204,29 @@ public final class CombatSettings {
                                 + " a planned route like a person would (looking where you run) instead of walking"
                                 + " straight at it or backing away. Falls back to the old moves when no route is"
                                 + " available."),
+                SettingSpec.bool(COMBO_KEEPER, "Keep combos going", true, "Tactics",
+                        "After a hit, predict where the target's knockback lands it and time the sprint reset and the"
+                                + " steps so the next hit comes the moment it can be hit again. Needs Sprint reset on."),
+                SettingSpec.bool(ANTICIPATORY_AIM, "Aim where they strafe to", true, "Tactics",
+                        "Learn the rhythm of the target's strafing and lead the aim to where it is about to be, not"
+                                + " just along its current movement. Needs Lead moving targets on."),
+                SettingSpec.bool(STRAFE_WITH, "Strafe with them", true, "Tactics",
+                        "Circle the same way round as the target when its strafe is readable, so it stays near your"
+                                + " crosshair. Never overrides a better step from the trade solver."),
+                SettingSpec.bool(ARENA_READ, "Read the arena", true, "Tactics",
+                        "Scan the ground around the fight a few columns per tick: knock the target toward lava, drops,"
+                                + " cobwebs or walls, take nearby high ground, back under a low ceiling against a"
+                                + " crit-hopper, and never hop where there is no room to jump."),
+                SettingSpec.bool(FEINTS, "Feints against players", true, "Tactics",
+                        "Against players only (never mobs): break your strafe pattern when they pre-aim it, and back"
+                                + " off to bait a sprint-in before stepping back in on their cooldown."),
+                SettingSpec.bool(RANK_DIAL, "Match the opponent's rank (one notch above)", false, "Tactics",
+                        "Estimate the opponent's skill from the fight and set the shared aim and timing skill one"
+                                + " notch above it, so you win like a slightly better player. Changes the skill every"
+                                + " module uses while the fight lasts; a fixed skill in the settings still wins."),
+                SettingSpec.bool(PEARL_INTERCEPT, "Chase ender pearls", true, "Tactics",
+                        "When the target throws an ender pearl, run to where it will land instead of walking after"
+                                + " it. Needs Run routes when chasing or fleeing."),
                 SettingSpec.bool(AUTO_WEAPON, "Draw the best weapon", true, "Tactics",
                         "When a fight starts, switch to the hotbar weapon with the most damage per second."),
                 SettingSpec.bool(TACTIC_UTILITY, "Read the fight", true, "Tactics",

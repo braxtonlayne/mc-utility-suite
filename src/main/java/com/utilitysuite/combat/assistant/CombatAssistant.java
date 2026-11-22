@@ -1,8 +1,13 @@
 package com.utilitysuite.combat.assistant;
 
 import com.utilitysuite.combat.allies.AllyRoster;
+import com.utilitysuite.combat.tactics.CombatVoxels;
+import com.utilitysuite.combat.tactics.ComboKeeper;
+import com.utilitysuite.combat.tactics.FeintPlanner;
 import com.utilitysuite.combat.tactics.HitTradeSolver;
 import com.utilitysuite.combat.tactics.OpponentModel;
+import com.utilitysuite.combat.tactics.PearlSource;
+import com.utilitysuite.combat.tactics.ReadState;
 import com.utilitysuite.combat.tactics.TacticUtility;
 import com.utilitysuite.core.api.ControlChannel;
 import com.utilitysuite.core.api.ControlLease;
@@ -96,6 +101,13 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
     /** Damage this player dealt, per target (same ring structure, used for the own-DPS estimate). */
     private final OpponentModel dealt = new OpponentModel();
     private final TacticUtility utility = new TacticUtility();
+    /** Combo keeper, strafe-phase read, arena read, feints, rank dial, pearl intercept, the read (one facade). */
+    private final ProFeelLayer feel = new ProFeelLayer(ID);
+    private final double[] aimOffset = new double[2];
+    /** Sprint reset of the last swing: the setting, or the combo keeper's choice. */
+    private CombatSettings.SprintReset resetKind = CombatSettings.SprintReset.W_RELEASE;
+    private TacticUtility.Tactic lastPositional = TacticUtility.Tactic.FIGHT;
+    private FeintPlanner.Move lastFeintNoted = FeintPlanner.Move.NONE;
 
     // hit-trade solver (built lazily once a body-sim provider is registered; null in plain unit tests)
     /** Distance beyond spacing max inside which the trade solver drives the keys instead of the band. */
@@ -122,6 +134,8 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
     static final int ROUTE_NONE = 0;
     static final int ROUTE_PURSUE = 1;
     static final int ROUTE_FLEE = 2;
+    /** Run to where the target's ender pearl lands ({@link PearlIntercept}). */
+    static final int ROUTE_INTERCEPT = 3;
     private int routeMode = ROUTE_NONE;
     private int routeRetry;
     private int routeRuns;
@@ -280,6 +294,9 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
             return;
         }
         rememberOpponent(causeId);
+        if (state == CombatState.ENGAGED && causeId == targetId) {
+            feel.noteOpponentHit(tacticClock, lastHitDamage); // rank dial: its hit landed
+        }
         if (enabled && state != CombatState.ENGAGED) {
             engage(causeId, "defensive: " + typeId);
         }
@@ -295,6 +312,9 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
             return;
         }
         rememberOpponent(victimId);
+        if (state == CombatState.ENGAGED && victimId == targetId) {
+            feel.noteOwnHit(tacticClock); // rank dial: our hit landed
+        }
         if (enabled) {
             engage(victimId, "offensive: confirmed hit");
         }
@@ -367,6 +387,9 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         utility.reset();
         broadTactic = TacticUtility.Tactic.FIGHT;
         lastTactic = TacticsPlanner.Tactic.NONE;
+        lastPositional = TacticUtility.Tactic.FIGHT;
+        lastFeintNoted = FeintPlanner.Move.NONE;
+        feel.engage(entityId, targetIsPlayer); // a target switch ends the combo plan, feints and any pearl run
         wind.reset();
         spacing.reset();
         state = CombatState.ENGAGED;
@@ -447,7 +470,10 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
             disengage(DisengageReason.TARGET_IS_ALLY);
             return;
         }
-        double r = settings.disengageRadius;
+        // pearl intercept first: a target that teleports to its pearl must not trip the disengage radius
+        feel.pearlTick(settings.pearlIntercept && settings.routePursuit && Services.routeRunnerOrNull() != null,
+                tacticClock, s, settings.spacingMax, settings.disengageRadius);
+        double r = Math.max(settings.disengageRadius, feel.pearl().radiusNeeded(s.px, s.py, s.pz));
         if (s.distanceSq() > r * r) {
             if (retarget()) {
                 return;
@@ -472,6 +498,8 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         }
         lastHealth = eff;
         observeOpponent(s);
+        feel.observe(s, settings, opponents, tacticClock,
+                keyDown[SimKey.LEFT.ordinal()] ? 1 : (keyDown[SimKey.RIGHT.ordinal()] ? -1 : 0), tradeAllowJump(s));
         if (!holdsLease() && !tryAcquire()) {
             return;
         }
@@ -570,7 +598,12 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
             return;
         }
 
-        // ---- 1c. pursuit along a route (far away or out of sight), melee code inside the range -------------------
+        // ---- 1c. pearl intercept: run to where the target's pearl lands (a third route mode) ---------------------
+        if (feel.pearl().active() && runRoute(s, ROUTE_INTERCEPT)) {
+            return;
+        }
+
+        // ---- 1d. pursuit along a route (far away or out of sight), melee code inside the range -------------------
         double dist = s.horizontalDistance();
         boolean chase = losLostTicks > LOS_PURSUIT_TICKS || dist > settings.spacingMax
                 + (routeMode == ROUTE_PURSUE ? PURSUIT_EXIT_EXTRA : PURSUIT_ENTER_EXTRA);
@@ -611,7 +644,7 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
                 selectWeapon();
             }
             if (shield.active() || a != ShieldBreakSequencer.Action.NONE) {
-                movement(s);
+                movement(s, false); // no feints during a shield break
                 return;
             }
         }
@@ -631,8 +664,9 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
                     false);
             return;
         }
-        // no crit hops at the lip of a gap
-        boolean crit = settings.critSync && tac != TacticsPlanner.Tactic.HOLD_GAP;
+        // no crit hops at the lip of a gap, nor where the arena read sees no room to jump
+        boolean crit = settings.critSync && tac != TacticsPlanner.Tactic.HOLD_GAP
+                && s.headroom > ProFeelLayer.LOW_HEADROOM;
         SwingGate.Action sw = SwingGate.decide(s, crit, jumpedThisCycle, critWait, MAX_CRIT_WAIT);
         if (sw == SwingGate.Action.JUMP) {
             input.scheduleKeyTap(lease, SimKey.JUMP, 1, 2);
@@ -651,9 +685,48 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         // ---- 6. spacing, strafe, sprint reset -------------------------------------------------------------------
         if (tac != TacticsPlanner.Tactic.NONE) {
             move(tactics.forward(), tactics.side(), tactics.sprint());
-        } else {
-            movement(s);
+        } else if (!positionalMove(s)) {
+            movement(s, true);
         }
+    }
+
+    /**
+     * HIGH_GROUND / CEILING_DENY from the arena read: walk to (or hold) the spot while aim and swings carry on.
+     * Hazards veto; a step-up jump is a 1-tick tap through the smoother. Notes only on a change of tactic.
+     *
+     * @return false when no positional tactic drives this tick (the caller runs the normal movement)
+     */
+    private boolean positionalMove(CombatSnapshot s) {
+        TacticUtility.Tactic bt = broadTactic;
+        boolean positional = settings.arenaRead
+                && (bt == TacticUtility.Tactic.HIGH_GROUND || bt == TacticUtility.Tactic.CEILING_DENY)
+                && feel.planPositional(s, bt);
+        if (!positional) {
+            if (lastPositional != TacticUtility.Tactic.FIGHT) {
+                lastPositional = TacticUtility.Tactic.FIGHT;
+                feel.resetPositional();
+            }
+            return false;
+        }
+        if (bt != lastPositional) {
+            lastPositional = bt;
+            lastNote = (bt == TacticUtility.Tactic.HIGH_GROUND ? "Taking the high ground over "
+                    : "Backing under a low ceiling against ") + world.describe(targetId);
+            diagnostic(lastNote);
+        }
+        int fwd = feel.positionalForward();
+        int side = feel.positionalSide();
+        if ((fwd > 0 && s.hazardFront) || (fwd < 0 && s.hazardBack)) {
+            fwd = SpacingController.HOLD;
+        }
+        if ((side == StrafePlanner.LEFT && s.hazardLeft) || (side == StrafePlanner.RIGHT && s.hazardRight)) {
+            side = StrafePlanner.NONE;
+        }
+        if (feel.positionalJump() && s.onGround) {
+            input.scheduleKeyTap(lease, SimKey.JUMP, 1, 1);
+        }
+        move(fwd, side, fwd > 0 && feel.positionalSprint());
+        return true;
     }
 
     private void tapAttack() {
@@ -661,10 +734,27 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         swings++;
         critWait = 0;
         jumpedThisCycle = false;
+        // the combo keeper plans the follow-up of a hit sent in reach (its reset replaces the fixed one)
+        boolean planned = feel.onSwingSent(snap, settings, tacticClock);
         if (settings.sprintReset != CombatSettings.SprintReset.OFF) {
-            sprintResetTicks = input.nextGaussianTicks(1.5, 0.5, 1, 2);
+            if (planned) {
+                int kind = feel.comboResetKind();
+                resetKind = kind == ComboKeeper.RESET_S_TAP ? CombatSettings.SprintReset.S_TAP
+                        : CombatSettings.SprintReset.W_RELEASE;
+                sprintResetTicks = kind == ComboKeeper.RESET_NONE ? 0 : Math.max(1, feel.comboResetTicks());
+            } else {
+                resetKind = settings.sprintReset;
+                sprintResetTicks = input.nextGaussianTicks(1.5, 0.5, 1, 2);
+            }
             sprintResetFirst = true;
         }
+    }
+
+    /** allowJump of the trade solver and the combo keeper this tick (crit sync owns hops; none at a gap or low roof). */
+    private boolean tradeAllowJump(CombatSnapshot s) {
+        return lastTactic != TacticsPlanner.Tactic.HOLD_GAP
+                && !(settings.critSync && (critWait > 0 || jumpedThisCycle || !s.onGround))
+                && s.headroom > ProFeelLayer.LOW_HEADROOM;
     }
 
     /** Feeds the opponent model and the damage-dealt model from this tick's snapshot. Allocation free. */
@@ -676,6 +766,7 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         }
         if (targetId == lastTargetHealthId && s.targetHealth < lastTargetHealth - 0.01f) {
             dealt.recordHit(targetId, tacticClock, lastTargetHealth - s.targetHealth);
+            feel.noteOwnHit(tacticClock); // rank dial: a swing in reach landed
         }
         lastTargetHealthId = targetId;
         lastTargetHealth = s.targetHealth;
@@ -691,6 +782,8 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         u.healingItems = s.gappleSlot >= 0 || s.sustainInvSlot >= 0 ? 1 : 0;
         u.distance = s.horizontalDistance();
         u.oppHopRate = opponents.hopRate(targetId);
+        u.highGround = feel.highGround(); // 0 while the arena read is off or idle
+        u.ceilingDeny = feel.ceilingDeny();
         return u.choose();
     }
 
@@ -704,34 +797,49 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         return opponents;
     }
 
-    private void movement(CombatSnapshot s) {
+    /**
+     * Spacing, strafe and sprint reset. Precedence: combo keeper, then the trade solver (inside spacing max + 2.5),
+     * then the band; feints (players only) on top of the solver or band; the hazard veto over all of them; the
+     * sprint-reset taps last.
+     *
+     * @param allowFeint false while a shield break runs
+     */
+    private void movement(CombatSnapshot s, boolean allowFeint) {
         double d = s.horizontalDistance();
         boolean kiting = broadTactic == TacticUtility.Tactic.KITE;
         int fwd;
         int side = StrafePlanner.NONE;
         boolean sprint;
+        boolean planned = false; // the solver or the keeper chose the step (the read's "stepping in")
         TradeDriver t = settings.hitTrade && d <= settings.spacingMax + TRADE_RANGE_EXTRA ? tradeDriver() : null;
-        // crit sync owns the hops while it waits for or rides one; no solver hops at the lip of a gap
-        boolean allowJump = lastTactic != TacticsPlanner.Tactic.HOLD_GAP
-                && !(settings.critSync && (critWait > 0 || jumpedThisCycle || !s.onGround));
-        if (t != null && t.decide(s, opponents, targetId, tacticClock, targetIsPlayer, settings.cooldownRead,
+        // crit sync owns the hops while it waits for or rides one; no solver hops at the lip of a gap or a low roof
+        boolean allowJump = tradeAllowJump(s);
+        int withDir = feel.withDir();
+        if (feel.comboDrives(settings)) {
+            // ---- combo keeper: steer for the next hit on the predicted knockback arc ----
+            if (t != null) {
+                t.reset();
+            }
+            spacing.reset();
+            planned = true;
+            fwd = feel.comboForward();
+            side = feel.comboSide();
+            sprint = feel.comboSprint();
+        } else if (t != null && t.decide(s, opponents, targetId, tacticClock, targetIsPlayer, settings.cooldownRead,
                 settings.hitTradeHorizon, kiting ? KITE_TAKEN_WEIGHT : BASE_TAKEN_WEIGHT, allowJump)) {
             tradeTicks++;
+            planned = true;
             spacing.reset(); // the band restarts from HOLD when the solver hands back
             fwd = t.forward();
-            if (t.strafe() > 0) {
-                side = StrafePlanner.LEFT;
-            } else if (t.strafe() < 0) {
-                side = StrafePlanner.RIGHT;
+            side = ProFeelLayer.sideOf(t.strafe());
+            if (withDir != StrafePlanner.NONE && side != withDir) {
+                // strafe with the opponent only on a tie: never over an answer that scores better
+                int with = ProFeelLayer.solverStrafe(withDir);
+                if (t.scoreOf(HitTradeSolver.combo(fwd, with)) >= t.scoreOf(HitTradeSolver.combo(fwd, t.strafe()))) {
+                    side = withDir;
+                }
             }
-            // the hazard flags veto a step whatever the solver says
-            if ((fwd > 0 && s.hazardFront) || (fwd < 0 && s.hazardBack)) {
-                fwd = SpacingController.HOLD;
-            }
-            if ((side == StrafePlanner.LEFT && s.hazardLeft) || (side == StrafePlanner.RIGHT && s.hazardRight)) {
-                side = StrafePlanner.NONE;
-            }
-            sprint = fwd > 0 && t.sprint();
+            sprint = t.sprint();
             if (t.jump() && allowJump && s.onGround && sprintResetTicks == 0) {
                 input.scheduleKeyTap(lease, SimKey.JUMP, 1, 1);
             }
@@ -744,13 +852,42 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
                     s.hazardBack);
             if (settings.strafe && d <= settings.spacingMax + 1.0) {
                 side = strafe.update(s.hazardLeft, s.hazardRight, input.nextGaussianTicks(30, 8, 15, 50),
-                        settings.tacticUtility ? opponents.strafeBias(targetId) : 0.0);
+                        settings.tacticUtility ? opponents.strafeBias(targetId) : 0.0, withDir, feel.withStrength());
             }
             sprint = fwd == SpacingController.FORWARD && d > settings.spacingMax + 0.5;
         }
+        if (!feel.comboDrives(settings) && allowFeint && !eating && routeMode == ROUTE_NONE) {
+            // ---- feints (players only, never mobs) on top of the solver or band ----
+            FeintPlanner.Move m = feel.planFeint(s, settings, opponents, tacticClock, side, d);
+            if (m != FeintPlanner.Move.NONE) {
+                fwd = feel.feintForward(fwd);
+                side = feel.feintSide(side);
+                sprint = feel.feintSprint(sprint);
+            }
+            if (m != lastFeintNoted) {
+                lastFeintNoted = m;
+                if (m != FeintPlanner.Move.NONE) {
+                    lastNote = switch (m) {
+                        case BREAK_PATTERN -> "Feint: breaking the strafe pattern";
+                        case BAIT_RETREAT -> "Feint: backing off to draw a sprint-in";
+                        default -> "Feint: stepping in on the bait";
+                    }; // constants: no allocation, only on a change
+                }
+            }
+        } else {
+            feel.endFeint();
+        }
+        // the hazard flags veto a step whatever the keeper, the solver or a feint says
+        if ((fwd > 0 && s.hazardFront) || (fwd < 0 && s.hazardBack)) {
+            fwd = SpacingController.HOLD;
+        }
+        if ((side == StrafePlanner.LEFT && s.hazardLeft) || (side == StrafePlanner.RIGHT && s.hazardRight)) {
+            side = StrafePlanner.NONE;
+        }
+        sprint = sprint && fwd > 0;
         if (sprintResetTicks > 0) {
             sprintResetTicks--;
-            if (settings.sprintReset == CombatSettings.SprintReset.S_TAP && sprintResetFirst) {
+            if (resetKind == CombatSettings.SprintReset.S_TAP && sprintResetFirst) {
                 fwd = s.hazardBack ? SpacingController.HOLD : SpacingController.BACK;
             } else if (fwd == SpacingController.FORWARD) {
                 fwd = SpacingController.HOLD;
@@ -759,6 +896,8 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
             sprint = false;
         }
         move(fwd, side, sprint);
+        feel.afterMovement(fwd, planned, ProFeelLayer.oppReadyIn(settings, opponents, targetId, tacticClock),
+                tacticClock);
     }
 
     /**
@@ -784,6 +923,26 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
     public void useTradeDriver(TradeDriver driver) {
         trade = driver;
         tradeFixed = driver != null;
+    }
+
+    /** Blocks for the arena read and the pearl landing (the bootstrap passes the live level); null = both idle. */
+    public void useArenaVoxels(CombatVoxels voxels) {
+        feel.useVoxels(voxels);
+    }
+
+    /** Ender pearls in flight by thrower (the bootstrap passes the entity-event watch). */
+    public void usePearlSource(PearlSource source) {
+        feel.usePearlSource(source);
+    }
+
+    /** Where the read of the target is published each engaged tick (for "The Read" overlay); null = not published. */
+    public void useReadState(ReadState read) {
+        feel.useReadState(read);
+    }
+
+    /** The pro-feel units (tests script them through its seams). */
+    public ProFeelLayer proFeel() {
+        return feel;
     }
 
     /** Ticks the trade solver drove the movement keys (diagnostics, tests). */
@@ -845,13 +1004,23 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
             clearKeyCache();
             routeMode = mode;
             routeRuns++;
-            lastNote = (mode == ROUTE_PURSUE ? "Chasing " : "Running from ") + world.describe(targetId)
+            lastNote = mode == ROUTE_INTERCEPT
+                    ? "Running to where " + world.describe(targetId) + "'s ender pearl lands"
+                    : (mode == ROUTE_PURSUE ? "Chasing " : "Running from ") + world.describe(targetId)
                     + " along a route"; // only on the hand-over, never per tick
         }
-        boolean ok = mode == ROUTE_PURSUE
+        PearlIntercept pi = feel.pearl();
+        boolean ok = mode == ROUTE_INTERCEPT
+                ? r.pursue(lease, pi.landX(), pi.landY(), pi.landZ(), PearlIntercept.STOP_RANGE, true)
+                : mode == ROUTE_PURSUE
                 ? r.pursue(lease, s.tx, s.ty, s.tz, settings.spacingMax, true)
                 : r.flee(lease, s.tx, s.ty, s.tz, FLEE_DISTANCE, true);
         IRouteRunner.State st = ok ? r.state() : IRouteRunner.State.FAILED;
+        if (mode == ROUTE_INTERCEPT && st == IRouteRunner.State.ARRIVED) {
+            pi.reset(); // at the landing: normal pursuit or melee takes over at once (no retry wait)
+            leaveRoute();
+            return false;
+        }
         if (!ok || st == IRouteRunner.State.FAILED || st == IRouteRunner.State.ARRIVED
                 || st == IRouteRunner.State.IDLE) {
             leaveRoute();
@@ -900,7 +1069,14 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
     }
 
     private void aimAtTarget(CombatSnapshot s) {
-        AimSolver.solve(s, settings.velocityLead ? settings.leadTicks : 0.0, aim);
+        if (settings.velocityLead && settings.anticipatoryAim) {
+            // lead by where the learned strafe phase puts the target (the plain velocity lead without a pattern)
+            double lead = settings.leadTicks;
+            feel.aimOffset(s, tacticClock, lead, aimOffset);
+            AimSolver.solve(s, aimOffset[0], s.tvy * lead, aimOffset[1], aim);
+        } else {
+            AimSolver.solve(s, settings.velocityLead ? settings.leadTicks : 0.0, aim);
+        }
         aimAt(aim[0], aim[1], settings.aimSpeed);
     }
 
@@ -1093,6 +1269,8 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
             lastNote = switch (tac) {
                 case HOLD_GAP -> "Holding the gap: waiting at the edge for " + world.describe(targetId) + " to jump";
                 case EDGE_KNOCK -> "Edge knock: circling to knock " + world.describe(targetId) + " off the edge";
+                case KNOCK_VECTOR -> "Knock vector: lining up to knock " + world.describe(targetId)
+                        + " toward the hazard";
                 default -> lastNote;
             };
             diagnostic(lastNote);
@@ -1236,6 +1414,9 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         restoreWeaponNextTick = false;
         sprintResetTicks = 0;
         leaveRoute(); // stop any pursuit or flight before our own keys go up
+        feel.disengage(snap); // combo plan, feints, pearl run, arena read, the read and any rank-dial request end
+        lastPositional = TacticUtility.Tactic.FIGHT;
+        lastFeintNoted = FeintPlanner.Move.NONE;
         if (trade != null) {
             trade.reset();
         }
@@ -1354,6 +1535,7 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         }
         if (!enabled) {
             releaseKeeper();
+            feel.clearSkillRequest();
         }
         this.enabled = enabled;
     }
@@ -1363,6 +1545,7 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         pendingAttackTarget = -1;
         keeperLease = null; // Stop-All revoked it already
         totemKeepCooldown = 100; // do not grab the hotbar again right after Stop-All
+        feel.clearSkillRequest();
         if (state != CombatState.DORMANT) {
             disengageNow(DisengageReason.STOP_ALL);
         }
@@ -1385,6 +1568,7 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         wind.reset();
         pendingAttackTarget = -1;
         recentOpponent = -1;
+        feel.worldUnload(snap);
     }
 
     @Override
