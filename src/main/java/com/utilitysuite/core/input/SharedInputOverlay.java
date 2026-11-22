@@ -32,6 +32,12 @@ import java.util.function.BooleanSupplier;
  *   <li>{@code startSprint}: fill only, under vanilla's own start conditions ({@link #sprintAllowed}, mirrored from
  *       {@code LocalPlayer.aiStep} / {@code canStartSprinting} of 1.21.1); vanilla's stop rules run right after the
  *       event in the same {@code aiStep}. The only {@code setSprinting} call of shared control.</li>
+ *   <li>{@code withholdSprint}: for that tick a running sprint ends ({@code setSprinting(false)} in the event) and
+ *       no sprint starts later in the same {@code aiStep}: {@link #isSprintStartBlocked()} is read by
+ *       {@code mixin.input.LocalPlayerSprintWithholdMixin}, which skips every {@code setSprinting(true)} of
+ *       {@code LocalPlayer.aiStep} (the sprint-key start, the double-tap-forward start) while it is set. Wins over
+ *       {@code startSprint} in the same tick; the flag lapses at the next tick start, on {@code end()}, Stop-All and
+ *       a screen opening.</li>
  *   <li>{@code coSteer}: forwarded to {@link YawCoSteer} unless the grant was begun without {@code wantsYaw} or the
  *       legit level was LEGIT at {@link #begin} (the core refuses; the module should not ask either).</li>
  * </ul>
@@ -58,6 +64,10 @@ public final class SharedInputOverlay implements ISharedControl {
     private final Grant grant = new Grant();
     /** Scratch copy of the movement input the writes are applied to (reused). */
     private final MoveFields fields = new MoveFields();
+    /** The overlay the sprint-withhold mixin reads (the registered one; null before the core starts). */
+    private static SharedInputOverlay active;
+    /** Set while this tick's movement input carries a sprint withhold: no sprint may start in this aiStep. */
+    private boolean sprintBlocked;
 
     /**
      * @param screenOpen true while a screen is open (read on begin and per tick)
@@ -70,6 +80,21 @@ public final class SharedInputOverlay implements ISharedControl {
         this.steer = steer;
         this.screenOpen = screenOpen;
         this.legitLevel = legitLevel;
+        active = this;
+    }
+
+    /**
+     * True while the current tick's movement input carries a sprint withhold: {@code LocalPlayer.aiStep} must not start
+     * a sprint (read by {@code LocalPlayerSprintWithholdMixin}, client thread). A field read when idle.
+     */
+    public static boolean isSprintStartBlocked() {
+        SharedInputOverlay o = active;
+        return o != null && o.sprintBlocked;
+    }
+
+    /** This overlay's sprint-start block for the current tick (tests, diagnostics). */
+    public boolean sprintStartBlocked() {
+        return sprintBlocked;
     }
 
     // ---- ISharedControl ---------------------------------------------------------------------------------------------
@@ -113,6 +138,7 @@ public final class SharedInputOverlay implements ISharedControl {
 
     /** ClientTickEvent.Pre (after {@link ManualFactsTracker#beginTick}): screen check, co-steer lapse. */
     public void beginTick(boolean screenIsOpen) {
+        sprintBlocked = false; // a withhold covers one tick only
         if (screenIsOpen) {
             onScreenOpening();
         }
@@ -129,6 +155,7 @@ public final class SharedInputOverlay implements ISharedControl {
 
     /** MovementInputUpdateEvent (EventPriority.LOW): applies this tick's writes to the player's input. */
     public void onMovementInput(MovementInputUpdateEvent event) {
+        sprintBlocked = false;
         Grant g = grant;
         if (g.active && g.hasWrites()) {
             GameSide.apply(this, event);
@@ -166,6 +193,11 @@ public final class SharedInputOverlay implements ISharedControl {
             f.shiftKeyDown = in.shiftKeyDown;
             float slow = p.isMovingSlowly() ? (float) p.getAttributeValue(Attributes.SNEAKING_SPEED) : 1.0f;
             boolean sprint = o.apply(f, slow);
+            if (o.sprintBlocked && p.isSprinting()) {
+                // withhold: a running sprint ends as if the sprint key were up and forward released for a tick; the
+                // mixin keeps aiStep from starting one again later in this tick
+                p.setSprinting(false);
+            }
             in.forwardImpulse = f.forwardImpulse;
             in.leftImpulse = f.leftImpulse;
             in.up = f.up;
@@ -191,12 +223,14 @@ public final class SharedInputOverlay implements ISharedControl {
 
     /**
      * Engine-free core of {@link #onMovementInput}: applies the pending writes of the live grant to {@code f} and clears
-     * them. Writes older than the previous tick are dropped. Returns whether a sprint start was asked for.
+     * them. Writes older than the previous tick are dropped. Returns whether a sprint start was asked for (never with a
+     * sprint withhold in the same tick, which sets {@link #sprintStartBlocked()} instead).
      *
      * @param slow vanilla's impulse multiplier while moving slowly (sneaking speed), else 1
      */
     public boolean apply(MoveFields f, float slow) {
         Grant g = grant;
+        sprintBlocked = false;
         if (!g.active) {
             return false;
         }
@@ -221,7 +255,8 @@ public final class SharedInputOverlay implements ISharedControl {
             if (g.sneak) {
                 f.shiftKeyDown = true;
             }
-            sprint = g.sprint;
+            sprint = g.sprint && !g.noSprint;
+            sprintBlocked = g.noSprint;
         }
         g.clearWrites();
         return sprint;
@@ -263,6 +298,7 @@ public final class SharedInputOverlay implements ISharedControl {
         int jump = KEEP;
         boolean sneak;
         boolean sprint;
+        boolean noSprint;
 
         void start(String id, boolean wantsYaw, boolean yawAllowed) {
             this.active = true;
@@ -277,6 +313,7 @@ public final class SharedInputOverlay implements ISharedControl {
         void finish(LeaseEndReason reason) {
             active = false;
             endReason = reason;
+            sprintBlocked = false;
             clearWrites();
             steer.reset();
         }
@@ -287,10 +324,11 @@ public final class SharedInputOverlay implements ISharedControl {
             jump = KEEP;
             sneak = false;
             sprint = false;
+            noSprint = false;
         }
 
         boolean hasWrites() {
-            return forward != KEEP || strafe != KEEP || jump != KEEP || sneak || sprint;
+            return forward != KEEP || strafe != KEEP || jump != KEEP || sneak || sprint || noSprint;
         }
 
         private void stamp() {
@@ -337,6 +375,20 @@ public final class SharedInputOverlay implements ISharedControl {
             }
             stamp();
             this.sprint = true;
+        }
+
+        @Override
+        public void withholdSprint() {
+            if (!active) {
+                return;
+            }
+            stamp();
+            this.noSprint = true;
+        }
+
+        @Override
+        public boolean canWithholdSprint() {
+            return true;
         }
 
         @Override

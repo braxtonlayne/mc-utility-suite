@@ -10,6 +10,7 @@
     "MouseHandlerTurnGainMixin",
     "combat.ClientPacketListenerDamageMixin",
     "combat.ClientPacketListenerTotemPopMixin",
+    "input.LocalPlayerSprintWithholdMixin",
     "travel.ClientPacketListenerCorrectionMixin",
     "travel.ClientPacketListenerVelocityMixin",
     "travel.LiquidBlockSolidSurfaceMixin",
