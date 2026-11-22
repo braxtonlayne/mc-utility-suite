@@ -345,11 +345,15 @@ class CombatAssistantBehaviourTest {
         world.self.attackStrength = 0.3f;
         engage();
         tick(1); // the solver is built once here (its scratch bodies allocate once)
-        long bytes = AllocationProbe.measure(50_000, () -> {
+        Runnable body = () -> {
             smoother.preTick();
             assistant.onTick();
             smoother.postTick();
-        });
+        };
+        // a first window absorbs one-time JIT recompiles (the scripted pro-feel tests in this JVM make the seam call
+        // sites polymorphic, and a deopt in the window rematerializes a few objects once); steady state is measured
+        AllocationProbe.measure(50_000, body);
+        long bytes = AllocationProbe.measure(50_000, body);
         assertTrue(bytes < 4_096, "engaged onTick (production solver) allocated " + bytes + " bytes");
     }
 
@@ -639,5 +643,320 @@ class CombatAssistantBehaviourTest {
         on[0] = false;
         tick(60);
         assertFalse(backend.containerClicks.isEmpty(), "keeper resumes when it is off");
+    }
+
+    // ---- pro-feel wiring (scripted units through the ProFeelLayer seams) --------------------------------------------
+
+    static final int DUELIST = 30;
+
+    com.utilitysuite.combat.assistant.ProFeelLayerTest.ScriptedCombo scriptedCombo() {
+        var c = new com.utilitysuite.combat.assistant.ProFeelLayerTest.ScriptedCombo();
+        assistant.proFeel().useCombo(c);
+        return c;
+    }
+
+    com.utilitysuite.combat.assistant.ProFeelLayerTest.ScriptedPhase scriptedPhase() {
+        var p = new com.utilitysuite.combat.assistant.ProFeelLayerTest.ScriptedPhase();
+        assistant.proFeel().usePhase(p);
+        return p;
+    }
+
+    com.utilitysuite.combat.assistant.ProFeelLayerTest.ScriptedFeints scriptedFeints() {
+        var f = new com.utilitysuite.combat.assistant.ProFeelLayerTest.ScriptedFeints();
+        assistant.proFeel().useFeints(f);
+        return f;
+    }
+
+    /** Engage a player opponent (feints are a player-only feature). */
+    void engagePlayer(double x) {
+        world.addPlayer(DUELIST, "Duelist", x, 64, 0);
+        assistant.onDamageEvent(LOCAL, "minecraft:player_attack", DUELIST, DUELIST);
+        tick(1);
+        assertNotNull(assistant.lease());
+        assertEquals(DUELIST, assistant.targetId());
+    }
+
+    void tickWithFrames(int n) {
+        for (int i = 0; i < n; i++) {
+            smoother.preTick();
+            arbiter.tick();
+            registry.tick();
+            smoother.postTick();
+            smoother.onFrame(0.025);
+            smoother.onFrame(0.025);
+            now[0] += 50;
+        }
+    }
+
+    @Test
+    void comboKeeperDrivesAheadOfTheSolverAfterItsReset() {
+        TradeDriverTest.ScriptedStep step = scripted();
+        step.answer(-1, 0, 1.0, 0.0); // the solver would back off
+        var combo = scriptedCombo();
+        combo.forward = 1;
+        combo.strafe = 1; // left key
+        combo.sprint = true;
+        combo.resetTicks = 2;
+        assistant.config().critSync = false;
+        world.entities.get(TARGET).x = 3.0;
+        world.self.attackStrength = 1f; // swings on the engage tick
+        engage();
+        assertEquals(1, combo.begins, "the hit in reach started a plan");
+        assertFalse(backend.isDown(SimKey.FORWARD), "W released for the keeper's reset");
+        assertFalse(backend.isDown(SimKey.BACK), "not the solver's back step");
+        world.self.attackStrength = 0.2f;
+        tick(2);
+        assertTrue(backend.isDown(SimKey.FORWARD), "the keeper's keys after its reset");
+        assertTrue(backend.isDown(SimKey.LEFT));
+        assertTrue(backend.isDown(SimKey.SPRINT));
+        assertTrue(combo.steps > 0, "stepped every tick");
+
+        world.self.hazardLeft = true;
+        world.self.hazardFront = true;
+        tick(1);
+        assertFalse(backend.isDown(SimKey.LEFT), "hazards veto the keeper");
+        assertFalse(backend.isDown(SimKey.FORWARD));
+        assertFalse(backend.isDown(SimKey.SPRINT));
+
+        world.self.hazardLeft = false;
+        world.self.hazardFront = false;
+        combo.stepAnswer = false; // plan over: the solver drives again
+        tick(5);
+        assertTrue(backend.isDown(SimKey.BACK), "back to the solver's answer");
+    }
+
+    @Test
+    void comboKeeperSTapReplacesTheFixedReset() {
+        scripted().answer(1, 0, 1.0, 0.0);
+        var combo = scriptedCombo();
+        combo.resetKind = com.utilitysuite.combat.tactics.ComboKeeper.RESET_S_TAP;
+        combo.resetTicks = 2;
+        assistant.config().critSync = false;
+        world.entities.get(TARGET).x = 3.0;
+        world.self.attackStrength = 1f;
+        engage();
+        assertTrue(backend.isDown(SimKey.BACK), "the keeper's S-tap although the setting says W release");
+    }
+
+    @Test
+    void comboKeeperOffOrSprintResetOffKeepsTheOldKeys() {
+        TradeDriverTest.ScriptedStep step = scripted();
+        step.answer(-1, 0, 1.0, 0.0);
+        var combo = scriptedCombo();
+        assistant.config().comboKeeper = false;
+        assistant.config().critSync = false;
+        world.entities.get(TARGET).x = 3.0;
+        world.self.attackStrength = 1f;
+        engage();
+        world.self.attackStrength = 0.2f;
+        tick(3);
+        assertEquals(0, combo.begins, "never consulted");
+        assertTrue(backend.isDown(SimKey.BACK), "the solver drives");
+
+        assistant.config().comboKeeper = true;
+        assistant.config().sprintReset = com.utilitysuite.combat.assistant.CombatSettings.SprintReset.OFF;
+        world.self.attackStrength = 1f;
+        tick(1);
+        assertEquals(0, combo.begins, "sprint reset OFF disables the keeper");
+    }
+
+    @Test
+    void anticipatoryAimLeadsByTheLearnedPhaseAndOffRestoresTheVelocityLead() {
+        var phase = scriptedPhase();
+        phase.useOffset = true;
+        phase.offX = 0.0;
+        phase.offZ = 2.0; // it is about to be two blocks to the side
+        world.self.attackStrength = 0.2f;
+        world.entities.get(TARGET).x = 3.0;
+        engage();
+        tickWithFrames(40);
+        assertEquals(-57.4f, backend.yaw, 3f, "aims where the strafe phase puts the target");
+
+        assistant.config().anticipatoryAim = false;
+        tickWithFrames(40);
+        assertEquals(-90f, backend.yaw, 3f, "setting off: the plain velocity lead (target standing still)");
+    }
+
+    @Test
+    void strafeWithOnlyBreaksSolverTies() {
+        TradeDriverTest.ScriptedStep step = scripted();
+        var phase = scriptedPhase();
+        phase.confidence = 0.8;
+        phase.sign = 1; // moving to its own right: we strafe left with it
+        step.answer(0, -1, 1.0, 1.0); // right key chosen, every combination ties
+        world.self.attackStrength = 0.2f;
+        world.entities.get(TARGET).x = 3.0;
+        engage();
+        tick(2);
+        assertTrue(backend.isDown(SimKey.LEFT), "a tie goes to strafing with the opponent");
+        assertFalse(backend.isDown(SimKey.RIGHT));
+
+        step.answer(0, -1, 1.0, 0.0); // the right key now scores better
+        tick(2);
+        assertTrue(backend.isDown(SimKey.RIGHT), "never over a better answer");
+        assertFalse(backend.isDown(SimKey.LEFT));
+
+        step.answer(0, -1, 1.0, 1.0);
+        assistant.config().strafeWith = false;
+        tick(2);
+        assertTrue(backend.isDown(SimKey.RIGHT), "setting off: the solver's own pick");
+    }
+
+    @Test
+    void lowHeadroomSuppressesCritHopsAndSolverJumps() {
+        var arena = new com.utilitysuite.combat.assistant.ProFeelLayerTest.ScriptedArena();
+        arena.headroom = 2;
+        assistant.proFeel().useArena(arena);
+        assistant.useArenaVoxels(com.utilitysuite.combat.assistant.ProFeelLayerTest.FLAT);
+        TradeDriverTest.ScriptedStep step = scripted();
+        step.answer(0, 1, 1.0, 0.0);
+        step.jump = true;
+        world.entities.get(TARGET).x = 3.0;
+        world.self.attackStrength = 1f; // ready: crit sync would hop first
+        engage();
+        boolean jumped = backend.down[SimKey.JUMP.ordinal()];
+        for (int i = 0; i < 4; i++) {
+            tick(1);
+            jumped |= backend.down[SimKey.JUMP.ordinal()];
+        }
+        assertFalse(jumped, "no hop under a two-block ceiling");
+        assertTrue(assistant.swings() > 0, "swings straight away instead of waiting on a crit hop");
+
+        arena.headroom = 4;
+        world.self.attackStrength = 1f;
+        jumped = false;
+        for (int i = 0; i < 4; i++) {
+            tick(1);
+            jumped |= backend.down[SimKey.JUMP.ordinal()];
+        }
+        assertTrue(jumped, "room to jump: the hops come back");
+    }
+
+    @Test
+    void arenaReadOffOrWithoutVoxelsNeverScans() {
+        var arena = new com.utilitysuite.combat.assistant.ProFeelLayerTest.ScriptedArena();
+        assistant.proFeel().useArena(arena);
+        world.self.attackStrength = 0.2f;
+        engage();
+        tick(5);
+        assertEquals(0, arena.scans, "no voxels set: idle");
+        assistant.useArenaVoxels(com.utilitysuite.combat.assistant.ProFeelLayerTest.FLAT);
+        tick(2);
+        assertEquals(2, arena.scans, "budgeted scan every engaged tick");
+        assistant.config().arenaRead = false;
+        tick(3);
+        assertEquals(2, arena.scans, "setting off");
+        assistant.config().arenaRead = true;
+        world.entities.get(TARGET).alive = false;
+        tick(1);
+        assertTrue(arena.clears > 0, "cleared on disengage");
+    }
+
+    @Test
+    void feintsOverrideTheBandAgainstAPlayerAndHazardsVeto() {
+        var feints = scriptedFeints();
+        feints.move = com.utilitysuite.combat.tactics.FeintPlanner.Move.BAIT_RETREAT;
+        feints.forwardOverride = -1;
+        feints.allowSprint = false;
+        world.self.attackStrength = 0.2f;
+        world.entities.remove(TARGET);
+        engagePlayer(3.0);
+        tick(1);
+        assertTrue(feints.plans > 0);
+        assertTrue(backend.isDown(SimKey.BACK), "baiting a sprint-in");
+        assertFalse(backend.isDown(SimKey.FORWARD));
+        assertTrue(assistant.lastNote().startsWith("Feint"), "noted on the transition");
+        world.self.hazardBack = true;
+        tick(1);
+        assertFalse(backend.isDown(SimKey.BACK), "never back into a hazard");
+
+        world.self.hazardBack = false;
+        assistant.config().feints = false;
+        tick(2);
+        assertFalse(backend.isDown(SimKey.BACK), "setting off: the band holds in its range");
+    }
+
+    @Test
+    void feintsNeverFireAgainstAMob() {
+        var feints = scriptedFeints();
+        feints.move = com.utilitysuite.combat.tactics.FeintPlanner.Move.BAIT_RETREAT;
+        feints.forwardOverride = -1;
+        world.self.attackStrength = 0.2f;
+        world.entities.get(TARGET).x = 2.9;
+        engage(); // the Vindicator
+        tick(5);
+        assertEquals(0, feints.plans);
+        assertFalse(backend.isDown(SimKey.BACK));
+    }
+
+    @Test
+    void rankDialRequestsAndClearsTheHumanizerSkill() {
+        var human = new com.utilitysuite.combat.assistant.ProFeelLayerTest.RecordingHumanizer();
+        Services.registerHumanizer(human);
+        var skill = new com.utilitysuite.combat.assistant.ProFeelLayerTest.ScriptedSkill();
+        skill.samples = 20;
+        skill.skill = 0.6;
+        assistant.proFeel().useSkill(skill);
+        world.self.attackStrength = 0.2f;
+        engage();
+        tick(30);
+        assertEquals(0, human.requests, "off by default");
+
+        assistant.config().rankDial = true;
+        tick(1);
+        assertEquals(1, human.requests);
+        assertEquals(0.7, human.lastSkill, 1e-9);
+        assertEquals(CombatAssistant.ID, human.lastModule);
+        world.entities.get(TARGET).alive = false;
+        tick(1);
+        assertEquals(CombatState.DORMANT, assistant.state());
+        assertEquals(1, human.clears, "dropped on disengage");
+
+        world.entities.get(TARGET).alive = true;
+        engage();
+        tick(1);
+        assertTrue(human.holding);
+        assistant.onStopAll();
+        assertFalse(human.holding, "dropped on Stop-All");
+
+        engage();
+        tick(1);
+        assertTrue(human.holding);
+        assistant.setEnabled(false);
+        assertFalse(human.holding, "dropped on disable");
+
+        assistant.setEnabled(true);
+        engage();
+        tick(1);
+        assertTrue(human.holding);
+        assistant.onWorldUnload();
+        assertFalse(human.holding, "dropped on world unload");
+    }
+
+    @Test
+    void theReadIsPublishedWhileEngagedAndClearedAfter() {
+        var read = new com.utilitysuite.combat.tactics.ReadState();
+        assistant.useReadState(read);
+        world.entities.get(TARGET).swingStarted = true;
+        world.entities.get(TARGET).attackSpeed = 1.6;
+        world.self.attackStrength = 0.2f;
+        engage();
+        tick(1);
+        assertTrue(read.active);
+        assertEquals(TARGET, read.targetId);
+        assertTrue(read.charge < 1f);
+        assertTrue(read.readyIn > 0);
+        world.entities.get(TARGET).alive = false;
+        tick(1);
+        assertFalse(read.active);
+    }
+
+    @Test
+    void theProductionStubsChangeNothing() {
+        // every pro-feel setting on, production stubs, voxels and a read: the band test passes unchanged
+        assistant.useArenaVoxels(com.utilitysuite.combat.assistant.ProFeelLayerTest.FLAT);
+        assistant.useReadState(new com.utilitysuite.combat.tactics.ReadState());
+        assistant.config().rankDial = true;
+        closesDistanceAndStrafesInBand();
     }
 }
