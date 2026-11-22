@@ -50,6 +50,8 @@ public final class SmartInventory implements IModule, IConfigurable, LeaseListen
     public static final String K_REFILL_ROCKETS = "refill_rockets";
     public static final String K_REFILL_PCT = "refill_threshold_pct";
     public static final String K_PINNED = "pinned_slots";
+    public static final String K_SAME_CLASS = "refill_same_class";
+    public static final String K_SAME_CLASS_PINNED = "refill_same_class_pinned";
     public static final String K_DEPOSIT_BUTTONS = "deposit_buttons";
     public static final String K_DUMP_KEEP_HOTBAR = "dump_keep_hotbar";
     public static final String K_SHULKER = "shulker_preview";
@@ -67,6 +69,7 @@ public final class SmartInventory implements IModule, IConfigurable, LeaseListen
     private final InventoryModel model = new InventoryModel();
     private final ClickPlan plan = new ClickPlan();
     private final HotbarRefillPlanner refill = new HotbarRefillPlanner();
+    private final HotbarRefillPlanner.ItemClasses classes = new HotbarRefillPlanner.ItemClasses();
     private final DepositPlanner deposit = new DepositPlanner();
     private final McInventory mc = new McInventory();
     private final LeaseRequest leaseRequest;
@@ -77,6 +80,8 @@ public final class SmartInventory implements IModule, IConfigurable, LeaseListen
             | InventoryModel.FLAG_ROCKET;
     private int refillPct = 25;
     private int pinnedMask;
+    private boolean sameClass = true;
+    private boolean sameClassPinned;
     private boolean depositButtons = true;
     private boolean dumpKeepHotbar;
     private boolean shulkerPreview = true;
@@ -150,15 +155,19 @@ public final class SmartInventory implements IModule, IConfigurable, LeaseListen
             return;
         }
         mc.read(player, model, armorDue);
+        if (refillOn) {
+            mc.readClasses(player, classes);
+        }
         if (client.screen != null) {
-            refill.observe(model);
+            refill.observe(model, classes);
             return;
         }
         if (!noScreen || Services.arbiter().isAutomationStopped()) {
             return;
         }
         plan.clear();
-        if (refillOn && refill.plan(model, categoryMask, refillPct, plan) > 0) {
+        if (refillOn && refill.plan(model, classes, categoryMask, refillPct, pinnedMask, sameClass, sameClassPinned,
+                plan) > 0) {
             start(Op.REFILL, player.inventoryMenu.containerId, player);
             return;
         }
@@ -383,6 +392,10 @@ public final class SmartInventory implements IModule, IConfigurable, LeaseListen
                         "Refill when a stack drops below this share of a full stack."),
                 SettingSpec.text(K_PINNED, "Pinned slots", "", "Hotbar refill",
                         "Hotbar slots 1-9 that are never overwritten or dumped, e.g. 1,2,9."),
+                SettingSpec.bool(K_SAME_CLASS, "Allow same class", true, "Hotbar refill",
+                        "When a tool, weapon, totem or food runs out, refill the slot with the best remaining item of the same kind (unpinned slots)."),
+                SettingSpec.bool(K_SAME_CLASS_PINNED, "Allow same class (pinned)", false, "Hotbar refill",
+                        "Also let pinned slots take a different item of the same kind.").asAdvanced(),
                 SettingSpec.bool(K_DEPOSIT_BUTTONS, "Deposit buttons", true, "Deposit",
                         "Show Deposit / Dump buttons on chests, shulker boxes, hoppers and dispensers."),
                 SettingSpec.bool(K_DUMP_KEEP_HOTBAR, "Dump keeps hotbar", false, "Deposit",
@@ -416,6 +429,8 @@ public final class SmartInventory implements IModule, IConfigurable, LeaseListen
         categoryMask = mask;
         refillPct = clamp(p.getInt(ID, K_REFILL_PCT, 25), 1, 90);
         pinnedMask = PinnedSlots.parse(p.getString(ID, K_PINNED, ""));
+        sameClass = p.getBool(ID, K_SAME_CLASS, true);
+        sameClassPinned = p.getBool(ID, K_SAME_CLASS_PINNED, false);
         depositButtons = p.getBool(ID, K_DEPOSIT_BUTTONS, true);
         dumpKeepHotbar = p.getBool(ID, K_DUMP_KEEP_HOTBAR, false);
         shulkerPreview = p.getBool(ID, K_SHULKER, true);

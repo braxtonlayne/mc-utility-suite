@@ -92,6 +92,8 @@ public final class SurvivalAutopilot implements IModule, IConfigurable, LeaseLis
     private boolean autoTool = true;
     private boolean durabilityProtect = true;
     private float protectBelow = 0.10f;
+    private enum EatPhase { NONE, PULL, USE, BACK }
+
     private boolean autoEat = true;
     private int hungerThreshold = 14;
     private float healthThreshold = 0.5f;
@@ -114,6 +116,12 @@ public final class SurvivalAutopilot implements IModule, IConfigurable, LeaseLis
     private long eatStart;
     private int eatStartFood;
     private int eatPrevSlot = -1;
+    private int eatSlot = -1;
+    private int eatSource = -1;
+    private boolean eatPulled;
+    private EatPhase eatPhase = EatPhase.NONE;
+    private boolean useInventoryFood = true;
+    private boolean swapBackFood = true;
     private long hazardUntil;
     private long hazardCooldown;
     private boolean warnedDurability;
@@ -123,9 +131,10 @@ public final class SurvivalAutopilot implements IModule, IConfigurable, LeaseLis
     private long interruptedJob = -1;
 
     private final ToolSelector.Candidate[] candidates = new ToolSelector.Candidate[9];
-    private final String[] foodIds = new String[9];
-    private final int[] foodNutrition = new int[9];
-    private final float[] foodSaturation = new float[9];
+    private final String[] foodIds = new String[36];
+    private final boolean[] foodOccupied = new boolean[FoodSelector.HOTBAR];
+    private final int[] foodNutrition = new int[36];
+    private final float[] foodSaturation = new float[36];
     private final BlockPos.MutableBlockPos probe = new BlockPos.MutableBlockPos();
     private ResourceKey<Level> dimKey;
     private String dimId = "minecraft:overworld";
@@ -273,20 +282,27 @@ public final class SurvivalAutopilot implements IModule, IConfigurable, LeaseLis
 
     private void maybeStartEating(Minecraft mc, LocalPlayer player) {
         int food = player.getFoodData().getFoodLevel();
-        if (!FoodSelector.shouldEat(food, player.getHealth(), player.getMaxHealth(), hungerThreshold, healthThreshold)
-                || player.isUsingItem() || mc.screen != null || player.isCreative()) {
+        boolean longLeg = Services.arbiter().isHeldBy(ControlChannel.MOVEMENT, GoalEngine.ID);
+        if (!FoodSelector.shouldEat(food, player.getHealth(), player.getMaxHealth(), hungerThreshold, healthThreshold,
+                longLeg) || player.isUsingItem() || mc.screen != null || player.isCreative()
+                || player.containerMenu != player.inventoryMenu) {
             return;
         }
         Inventory inv = player.getInventory();
-        for (int i = 0; i < 9; i++) {
-            ItemStack s = inv.items.get(i);
+        int scan = useInventoryFood ? 36 : 9;
+        for (int i = 0; i < 36; i++) {
+            ItemStack s = i < scan ? inv.items.get(i) : ItemStack.EMPTY;
             FoodProperties fp = s.isEmpty() ? null : s.get(DataComponents.FOOD);
             foodIds[i] = fp == null ? null : invView.idOf(s.getItem());
             foodNutrition[i] = fp == null ? 0 : fp.nutrition();
             foodSaturation[i] = fp == null ? 0 : fp.saturation();
         }
-        int slot = FoodSelector.choose(foodIds, foodNutrition, foodSaturation, food);
+        int slot = FoodSelector.choose(foodIds, foodNutrition, foodSaturation, food, longLeg);
         if (slot < 0 || targetsInteractiveBlock(mc)) {
+            return;
+        }
+        boolean pull = slot >= FoodSelector.HOTBAR;
+        if (pull && !FoodSelector.canPull(mc.screen != null, mc.gameMode != null && mc.gameMode.isDestroying())) {
             return;
         }
         ControlLease l = Services.arbiter().request(new LeaseRequest(ID, ControlPriority.SURVIVAL,
@@ -298,25 +314,82 @@ public final class SurvivalAutopilot implements IModule, IConfigurable, LeaseLis
         eatPrevSlot = selectedSlot(inv);
         eatStart = tick;
         eatStartFood = food;
-        Services.input().selectHotbarSlot(l, slot);
+        eatPulled = false;
+        if (pull) {
+            for (int i = 0; i < FoodSelector.HOTBAR; i++) {
+                foodOccupied[i] = !inv.items.get(i).isEmpty();
+            }
+            eatSource = slot;
+            eatSlot = FoodSelector.chooseSwapTarget(foodOccupied, eatPrevSlot);
+            // SWAP: the menu slot of a main-inventory index equals the index; button = hotbar index.
+            if (!Services.clicker().queueClick(l, slot, eatSlot, IContainerClicker.Click.SWAP)) {
+                closeLease(l);
+                eatLease = null;
+                return;
+            }
+            eatPulled = true;
+            eatPhase = EatPhase.PULL;
+            return;
+        }
+        eatSlot = slot;
+        beginUsing(l);
+    }
+
+    private void beginUsing(ControlLease l) {
+        eatPhase = EatPhase.USE;
+        eatStart = tick;
+        Services.input().selectHotbarSlot(l, eatSlot);
         Services.input().setKeyHeld(l, SimKey.USE, true);
     }
 
     private void tickEating(LocalPlayer player) {
         ControlLease l = eatLease;
-        boolean done = !l.isActive() || player.getFoodData().getFoodLevel() > eatStartFood
+        if (!l.isActive()) {
+            endEating(l);
+            return;
+        }
+        if (eatPhase == EatPhase.PULL) {
+            if (Services.clicker().pending() == 0 && tick - eatStart > 1) {
+                if (player.getInventory().items.get(eatSlot).has(DataComponents.FOOD)) {
+                    beginUsing(l);
+                } else {
+                    endEating(l); // the swap did not land (screen opened, items moved): give up quietly
+                }
+            } else if (tick - eatStart > 60) {
+                Services.clicker().cancel(l);
+                endEating(l);
+            }
+            return;
+        }
+        if (eatPhase == EatPhase.BACK) {
+            if ((Services.clicker().pending() == 0 && tick - eatStart > 1) || tick - eatStart > 60) {
+                endEating(l);
+            }
+            return;
+        }
+        boolean done = player.getFoodData().getFoodLevel() > eatStartFood
                 || (tick - eatStart > 10 && !player.isUsingItem()) || tick - eatStart > 80;
         if (!done) {
             return;
         }
-        if (l.isActive()) {
-            Services.input().setKeyHeld(l, SimKey.USE, false);
-            if (eatPrevSlot >= 0) {
-                Services.input().selectHotbarSlot(l, eatPrevSlot);
-            }
+        Services.input().setKeyHeld(l, SimKey.USE, false);
+        if (eatPrevSlot >= 0) {
+            Services.input().selectHotbarSlot(l, eatPrevSlot);
         }
+        if (FoodSelector.needsSwapBack(eatPulled, swapBackFood)
+                && Services.clicker().queueClick(l, eatSource, eatSlot, IContainerClicker.Click.SWAP)) {
+            eatPhase = EatPhase.BACK;
+            eatStart = tick;
+            return;
+        }
+        endEating(l);
+    }
+
+    private void endEating(ControlLease l) {
         closeLease(l);
         eatLease = null;
+        eatPhase = EatPhase.NONE;
+        eatPulled = false;
     }
 
     /** Holding USE on a door, chest or table would interact with it instead of eating. */
@@ -477,6 +550,9 @@ public final class SurvivalAutopilot implements IModule, IConfigurable, LeaseLis
     public void onPreempted(ControlLease lease, LeaseEndReason reason, String byModuleId) {
         if (lease == eatLease) {
             eatLease = null;
+            eatPhase = EatPhase.NONE;
+            eatPulled = false;
+            Services.clicker().cancel(lease);
         } else if (lease == hazardLease) {
             hazardLease = null;
         } else if (lease == pressureLease) {
@@ -561,6 +637,8 @@ public final class SurvivalAutopilot implements IModule, IConfigurable, LeaseLis
         protectBelow = p.getInt(ID, "durability_percent", 10) / 100f;
         autoEat = p.getBool(ID, "auto_eat", true);
         hungerThreshold = p.getInt(ID, "hunger_threshold", 14);
+        useInventoryFood = p.getBool(ID, "use_inventory_food", true);
+        swapBackFood = p.getBool(ID, "eat_swap_back", true);
         healthThreshold = p.getInt(ID, "health_percent", 50) / 100f;
         hazardGuard = p.getBool(ID, "hazard_guard", true);
         pressure = p.getBool(ID, "inventory_pressure", true);
@@ -621,8 +699,12 @@ public final class SurvivalAutopilot implements IModule, IConfigurable, LeaseLis
                         "Never auto-select enchanted/diamond tools below the threshold"),
                 SettingSpec.integer("durability_percent", "Protect below (%)", 10, 1, 50, "Auto-Tool", ""),
                 SettingSpec.bool("auto_eat", "Auto-Eat", true, "Auto-Eat",
-                        "Eat safe hotbar food below the threshold (briefly pauses jobs)"),
+                        "Eat safe food below the threshold (briefly pauses jobs)"),
                 SettingSpec.integer("hunger_threshold", "Eat at hunger", 14, 1, 19, "Auto-Eat", ""),
+                SettingSpec.bool("use_inventory_food", "Use food from the whole inventory", true, "Auto-Eat",
+                        "Pull the best food from the pack into the hotbar when the hotbar has none"),
+                SettingSpec.bool("eat_swap_back", "Swap back", true, "Auto-Eat",
+                        "Put the hotbar item back after eating food pulled from the pack"),
                 SettingSpec.integer("health_percent", "Top up below health (%)", 50, 10, 100, "Auto-Eat", "")
                         .asAdvanced(),
                 SettingSpec.bool("hazard_guard", "Lava guard", true, "Safety",
