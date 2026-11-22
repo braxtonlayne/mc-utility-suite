@@ -10,7 +10,7 @@ package com.utilitysuite.combat.tactics;
  * CONTRACT STUB: signatures are fixed for the volley; the bodies are filled in by the arena-field task. Until then
  * nothing is ever scanned and every query answers "nothing found".
  */
-public final class ArenaField {
+public final class ArenaField implements ArenaQuery {
 
     public static final int RADIUS = 16;
     public static final int SIZE = RADIUS * 2 + 1;
@@ -49,6 +49,7 @@ public final class ArenaField {
     }
 
     /** Share of the grid's columns scanned at least once, 0..1. */
+    @Override
     public double coverage() {
         return 0.0;
     }
@@ -60,16 +61,19 @@ public final class ArenaField {
     }
 
     /** Y of the floor block (the block stood ON) of the column, or {@link #NO_FLOOR}. */
+    @Override
     public int floorY(int x, int z) {
         return NO_FLOOR;
     }
 
     /** Open blocks above the column's floor, 0..{@link #MAX_HEADROOM}; {@link #MAX_HEADROOM} when unknown. */
+    @Override
     public int headroom(int x, int z) {
         return MAX_HEADROOM;
     }
 
     /** {@link CombatVoxels} kind of the column's floor block ({@code UNKNOWN} when not scanned). */
+    @Override
     public int floorKind(int x, int z) {
         return CombatVoxels.UNKNOWN;
     }
@@ -83,6 +87,7 @@ public final class ArenaField {
      *
      * @return true when something worth steering toward exists ({@link #knockValue()} above 0)
      */
+    @Override
     public boolean evalKnock(double tx, double ty, double tz) {
         knockKind = KNOCK_NONE;
         knockValue = 0.0;
@@ -90,19 +95,23 @@ public final class ArenaField {
     }
 
     /** Unit direction (x part) from the target toward the feature; the attacker should stand on the opposite side. */
+    @Override
     public double knockX() {
         return knockX;
     }
 
+    @Override
     public double knockZ() {
         return knockZ;
     }
 
     /** 0..1: 1 = lava or a lethal drop one block behind the target. */
+    @Override
     public double knockValue() {
         return knockValue;
     }
 
+    @Override
     public int knockKind() {
         return knockKind;
     }
@@ -114,6 +123,7 @@ public final class ArenaField {
      * and within about 4 blocks of the target, not next to a hazard, reachable by walking and 1-block steps over
      * scanned columns. Result in {@link #spotX()}.. {@link #spotGain()} (height above the target in blocks).
      */
+    @Override
     public boolean findHighGround(double px, double py, double pz, double tx, double ty, double tz, double maxDist) {
         return false;
     }
@@ -123,24 +133,29 @@ public final class ArenaField {
      * player's height and within {@code maxDist} blocks, where a crit-hopping opponent has to follow under the roof.
      * Result in {@link #spotX()}..; {@link #spotGain()} is the number of connected low-ceiling columns (room to fight).
      */
+    @Override
     public boolean findLowCeiling(double px, double py, double pz, double tx, double ty, double tz, double maxDist) {
         return false;
     }
 
     /** Block-centre x of the spot the last successful find returned. */
+    @Override
     public double spotX() {
         return spotX;
     }
 
     /** Feet y of that spot. */
+    @Override
     public double spotY() {
         return spotY;
     }
 
+    @Override
     public double spotZ() {
         return spotZ;
     }
 
+    @Override
     public double spotGain() {
         return spotGain;
     }

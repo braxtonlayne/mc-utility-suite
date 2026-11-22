@@ -1,6 +1,6 @@
 package com.utilitysuite.combat.assistant;
 
-import com.utilitysuite.combat.tactics.ArenaField;
+import com.utilitysuite.combat.tactics.ArenaQuery;
 import com.utilitysuite.combat.tactics.TacticUtility;
 
 /**
@@ -27,7 +27,7 @@ public final class ArenaTactics {
      * Rates both tactics for the current positions from the scanned field. Call a few times a second, not every tick
      * (it runs the field's spot searches).
      */
-    public void assess(CombatSnapshot s, ArenaField field) {
+    public void assess(CombatSnapshot s, ArenaQuery field) {
     }
 
     /** 0..1: a useful higher spot is close (0 = none, or we already hold the high ground). */
@@ -46,7 +46,7 @@ public final class ArenaTactics {
      * @return true when this tick's movement is planned ({@link #forward()}.. are valid); false = the tactic has no
      *         spot any more or is not a positional one, the caller runs its normal spacing
      */
-    public boolean plan(CombatSnapshot s, ArenaField field, TacticUtility.Tactic tactic) {
+    public boolean plan(CombatSnapshot s, ArenaQuery field, TacticUtility.Tactic tactic) {
         return false;
     }
 
