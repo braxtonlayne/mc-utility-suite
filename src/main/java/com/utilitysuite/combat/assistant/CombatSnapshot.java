@@ -51,6 +51,30 @@ public final class CombatSnapshot {
     /** Target health plus absorption. */
     public float targetHealth = 20f;
 
+    // ---- hit choice and gear read (filled by the world sampler; the defaults are an even sword-vs-sword fight) -------
+    /** The local player's attack speed attribute (attacks per second; 1.6 = sword). */
+    public double ownAttackSpeed = 1.6;
+    /** The local player's attack damage attribute with the held item (7 = diamond sword). */
+    public double ownAttackDamage = 7.0;
+    /** The local player's armour and armour toughness attributes. */
+    public double ownArmor, ownToughness;
+    /** The main-hand item can sweep (NeoForge {@code ItemAbilities.SWORD_SWEEP}: swords). */
+    public boolean sweepWeapon;
+    /** The target's synced armour and toughness (players and mobs both sync these attributes). */
+    public double targetArmor, targetToughness;
+    /** The target's estimated melee damage per hit before armour (base plus held-item modifiers). */
+    public double targetAttackDamage = 7.0;
+    /** The target is eating or drinking (using an item that is not a raised shield). */
+    public boolean targetUsingItem;
+    /** The target is a mob whose hits launch (iron golem, ravager, hoglin, zoglin, warden). */
+    public boolean targetHeavyHitter;
+    /**
+     * Living entities other than the target and the player inside the vanilla sweep box (the target's box grown by
+     * 1 / 0.25 / 1, within reach of the player), refreshed every few ticks: hostiles, and everything a sweep must
+     * never touch (players, pets, villagers, neutral and passive mobs).
+     */
+    public int sweepHostiles, sweepProtected;
+
     // ---- hazards (relative to the player->target direction) -------------------------------------------------------
     public boolean hazardFront, hazardBack, hazardLeft, hazardRight;
 
@@ -115,9 +139,18 @@ public final class CombatSnapshot {
         return reachDistanceSq() <= reach * reach;
     }
 
-    /** True while airborne and falling: the vanilla critical-hit condition (minus sprint/blindness details). */
+    /**
+     * The vanilla critical-hit condition of the local player ({@code Player.attack}, 1.21.1): airborne, falling
+     * ({@code fallDistance > 0}), not climbing, not in water and <b>not sprinting</b> (a sprint hit is never critical).
+     * Blindness and riding are not sampled. Charge above 0.9 is checked by the caller.
+     */
     public boolean fallingForCrit() {
-        return !onGround && fallDistance > 0f && !inWater && !climbing;
+        return !onGround && fallDistance > 0f && !inWater && !climbing && !sprinting;
+    }
+
+    /** Horizontal speed of the local player, blocks per tick. */
+    public double horizontalSpeed() {
+        return Math.sqrt(pvx * pvx + pvz * pvz);
     }
 
     public float effectiveHealth() {

@@ -1,5 +1,6 @@
 package com.utilitysuite.combat.assistant;
 
+import com.utilitysuite.combat.tactics.HitPlanner;
 import com.utilitysuite.core.api.ProfileConfig;
 import com.utilitysuite.core.api.SettingSpec;
 
@@ -58,6 +59,8 @@ public final class CombatSettings {
     public static final String FEINTS = "feints";
     public static final String RANK_DIAL = "rank_dial";
     public static final String PEARL_INTERCEPT = "pearl_intercept";
+    public static final String HIT_CHOICE = "hit_choice";
+    public static final String DUEL_MODE = "duel_mode";
 
     public TargetSelector.Mode engageMode = TargetSelector.Mode.REACTIVE;
     public TargetSelector.Targets targets = TargetSelector.Targets.HOSTILE;
@@ -104,6 +107,10 @@ public final class CombatSettings {
     public boolean feints = true;
     public boolean rankDial = false;
     public boolean pearlIntercept = true;
+    /** Kind of hit to throw: AUTO picks per hit (sprint knockback, crit, sweep); the others force one. */
+    public HitPlanner.Policy hitChoice = HitPlanner.Policy.AUTO;
+    /** Never disengage: fleeing becomes a reset, range and sight never end the fight while the target is loaded. */
+    public boolean duelMode = false;
 
     public void read(ProfileConfig p, String id) {
         engageMode = parseEnum(p.getString(id, ENGAGE_MODE, ""), TargetSelector.Mode.REACTIVE);
@@ -150,6 +157,8 @@ public final class CombatSettings {
         feints = p.getBool(id, FEINTS, true);
         rankDial = p.getBool(id, RANK_DIAL, false);
         pearlIntercept = p.getBool(id, PEARL_INTERCEPT, true);
+        hitChoice = parseEnum(p.getString(id, HIT_CHOICE, ""), HitPlanner.Policy.AUTO);
+        duelMode = p.getBool(id, DUEL_MODE, false);
     }
 
     static <E extends Enum<E>> E parseEnum(String s, E def) {
@@ -246,6 +255,15 @@ public final class CombatSettings {
                         "How far ahead to lead, in ticks of target movement.").asAdvanced(),
                 SettingSpec.bool(CRIT_SYNC, "Critical-hit timing", true, "Cooldown",
                         "Hop and swing while falling for critical hits.").asAdvanced(),
+                SettingSpec.choice(HIT_CHOICE, "Hit choice", HitPlanner.Policy.AUTO, "Hit choice",
+                        "Auto: open and re-engage with a sprint knockback hit, keep combos with knockback, crit when"
+                                + " knockback is worth little (cornered or eating target, out-damaged, a big mob), sweep"
+                                + " only when two or more hostiles stand together and nothing else is in reach of the"
+                                + " sweep. Knockback, Crits or Plain force one kind.").asAdvanced(),
+                SettingSpec.bool(DUEL_MODE, "Never disengage (duel mode)", false, "Tactics",
+                        "Never run from the fight or drop it when the target gets far or out of sight while it is"
+                                + " alive and loaded: back off, heal and come back instead. For closed arenas and boss"
+                                + " rooms."),
                 SettingSpec.bool(COOLDOWN_READ, "Read their cooldown", true, "Cooldown",
                         "Watch the opponent's swings to know when their next hit is charged. Off treats them as"
                                 + " always ready to hit.").asAdvanced(),

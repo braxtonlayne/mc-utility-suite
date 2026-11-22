@@ -42,6 +42,13 @@ import net.minecraft.world.phys.Vec3;
 import com.utilitysuite.combat.assistant.TacticsPlanner;
 import com.utilitysuite.combat.assistant.TargetCandidates;
 import net.minecraft.world.entity.Mob;
+import net.minecraft.world.entity.animal.IronGolem;
+import net.minecraft.world.entity.monster.Ravager;
+import net.minecraft.world.entity.monster.Zoglin;
+import net.minecraft.world.entity.monster.hoglin.Hoglin;
+import net.minecraft.world.entity.monster.piglin.AbstractPiglin;
+import net.minecraft.world.entity.monster.warden.Warden;
+import net.neoforged.neoforge.common.ItemAbilities;
 import net.minecraft.world.entity.NeutralMob;
 import net.minecraft.world.entity.decoration.ArmorStand;
 import net.minecraft.world.entity.monster.Blaze;
@@ -262,7 +269,110 @@ public final class MinecraftCombatWorld implements CombatWorld, LineOfSight.Soli
         if (out.wantTerrain) {
             sampleTerrain(out, fx, fz, len);
         }
+        sampleHitChoice(p, t, lvl, out);
         return true;
+    }
+
+    // ---- hit choice and gear read --------------------------------------------------------------------------------
+
+    /** The sweep box is re-scanned every this many samples (the proactive scan's cadence), not per tick. */
+    static final int SWEEP_SCAN_INTERVAL = 5;
+    private static final int SWEEP_SCAN_MAX = 16;
+    private int sweepScanClock;
+    private int sweepTargetId = -1;
+    private int sweepHostiles;
+    private int sweepProtected;
+
+    /**
+     * Own attributes, the target's synced armour (ARMOR and ARMOR_TOUGHNESS are syncable attributes, sent to
+     * trackers for players and mobs), its estimated weapon damage, and the sweep-box census. Attribute reads do not
+     * allocate; the census runs every {@value #SWEEP_SCAN_INTERVAL} samples (one small AABB and the level's section
+     * walk, like the proactive scan) and is reused in between.
+     */
+    private void sampleHitChoice(LocalPlayer p, LivingEntity t, ClientLevel lvl, CombatSnapshot out) {
+        out.ownAttackSpeed = p.getAttributeValue(Attributes.ATTACK_SPEED);
+        out.ownAttackDamage = p.getAttributeValue(Attributes.ATTACK_DAMAGE);
+        out.ownArmor = p.getArmorValue();
+        out.ownToughness = p.getAttributeValue(Attributes.ARMOR_TOUGHNESS);
+        out.sweepWeapon = p.getMainHandItem().canPerformAction(ItemAbilities.SWORD_SWEEP);
+        out.targetArmor = t.getArmorValue();
+        AttributeInstance tough = t.getAttribute(Attributes.ARMOR_TOUGHNESS);
+        out.targetToughness = tough != null ? tough.getValue() : 0.0;
+        out.targetAttackDamage = targetAttackDamage(t);
+        out.targetUsingItem = t.isUsingItem() && !t.isBlocking();
+        out.targetHeavyHitter = t instanceof IronGolem || t instanceof Ravager || t instanceof Hoglin
+                || t instanceof Zoglin || t instanceof Warden;
+        if (t.getId() != sweepTargetId || ++sweepScanClock >= SWEEP_SCAN_INTERVAL) {
+            sweepScanClock = 0;
+            sweepTargetId = t.getId();
+            censusSweepBox(p, t, lvl);
+        }
+        out.sweepHostiles = sweepHostiles;
+        out.sweepProtected = sweepProtected;
+    }
+
+    /**
+     * Vanilla's sweep set ({@code Player.attack}): living entities in the target's box grown by 1 / 0.25 / 1, not the
+     * player or the target, not a team ally, not a marker armour stand, with feet-to-feet distance below the
+     * interaction range. Hostile = an {@code Enemy} that is not neutral (a wolf, an enderman or a zombified piglin
+     * would anger) and not a piglin; everything else (players, pets, villagers, golems, passive animals, armour
+     * stands) is protected.
+     */
+    private void censusSweepBox(LocalPlayer p, LivingEntity t, ClientLevel lvl) {
+        int hostile = 0;
+        int prot = 0;
+        double reach = p.entityInteractionRange();
+        double reachSq = reach * reach;
+        scanBuffer.clear();
+        lvl.getEntities(LIVING, t.getBoundingBox().inflate(1.0, 0.25, 1.0), MinecraftCombatWorld::sweepCandidate,
+                scanBuffer, SWEEP_SCAN_MAX);
+        for (int i = 0; i < scanBuffer.size(); i++) {
+            LivingEntity e = scanBuffer.get(i);
+            if (e == p || e == t || p.isAlliedTo(e) || p.distanceToSqr(e) >= reachSq) {
+                continue;
+            }
+            if (e instanceof Enemy && !(e instanceof NeutralMob) && !(e instanceof AbstractPiglin)
+                    && !(e instanceof Player)) {
+                hostile++;
+            } else {
+                prot++;
+            }
+        }
+        scanBuffer.clear();
+        sweepHostiles = hostile;
+        sweepProtected = prot;
+    }
+
+    private static boolean sweepCandidate(LivingEntity e) {
+        return e.isAlive() && !e.isRemoved() && !(e instanceof ArmorStand as && as.isMarker());
+    }
+
+    private ItemAttributeModifiers damageCacheKey;
+    private double damageCacheValue;
+    private double damageScan;
+    private final BiConsumer<Holder<Attribute>, AttributeModifier> damageVisitor = (attr, mod) -> {
+        if (attr.value() == Attributes.ATTACK_DAMAGE.value()
+                && mod.operation() == AttributeModifier.Operation.ADD_VALUE) {
+            damageScan += mod.amount();
+        }
+    };
+
+    /**
+     * The target's melee damage per hit before armour: its base attack damage (1 for players; the mob's default) plus
+     * the held item's modifiers (attack damage is not a synced attribute, so the item is read), cached by the stack's
+     * modifier component. Difficulty scaling and enchantments are left out.
+     */
+    private double targetAttackDamage(LivingEntity t) {
+        AttributeInstance inst = t.getAttribute(Attributes.ATTACK_DAMAGE);
+        double base = inst != null ? inst.getBaseValue() : 1.0;
+        ItemAttributeModifiers mods = t.getMainHandItem().getAttributeModifiers();
+        if (mods != damageCacheKey) {
+            damageScan = 0.0;
+            mods.forEach(EquipmentSlot.MAINHAND, damageVisitor);
+            damageCacheKey = mods;
+            damageCacheValue = damageScan;
+        }
+        return Math.max(0.5, base + damageCacheValue);
     }
 
     // ---- target arm-swing edge and attack speed (cooldown reading) -----------------------------------------------

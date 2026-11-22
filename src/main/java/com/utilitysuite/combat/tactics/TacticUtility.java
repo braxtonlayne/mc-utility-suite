@@ -49,6 +49,15 @@ public final class TacticUtility {
     public double highGround;
     /** 0..1: a low-ceiling spot is close ({@code ArenaTactics.ceilingDeny}); 0 = none (scores 0). */
     public double ceilingDeny;
+    /**
+     * {@link GearRead#ratio()} (1 = even, 3 = one of their hits is worth three of ours); 0 = no gear read. When set,
+     * the advantage is the mean of the DPS read and {@code 1 / (1 + gearRatio)}, so a stronger kit counts from the
+     * first tick instead of after seconds of observed damage.
+     */
+    public double gearRatio;
+    /** Duel mode ("Never disengage"): FLEE is never chosen; its score goes to RETREAT_HEAL, which the caller runs as a
+     * reset (make distance, heal, come back). */
+    public boolean duelMode;
 
     private final double[] scores = new double[Tactic.values().length];
     private static final Tactic[] TACTICS = Tactic.values();
@@ -59,7 +68,11 @@ public final class TacticUtility {
     public double advantage() {
         double ttkOpp = oppHealth / Math.max(ownDps, MIN_DPS);
         double ttkMe = ownHealth / Math.max(oppDps, MIN_DPS);
-        return ttkMe / (ttkOpp + ttkMe);
+        double a = ttkMe / (ttkOpp + ttkMe);
+        if (gearRatio > 0.0) {
+            a = 0.5 * a + 0.5 / (1.0 + gearRatio);
+        }
+        return a;
     }
 
     /** Raw scores for the current inputs, written into {@link #score}. */
@@ -71,6 +84,11 @@ public final class TacticUtility {
         scores[Tactic.KITE.ordinal()] = 0.75 * a + 0.3 * pressure * (1.0 - Math.abs(a - 0.5));
         scores[Tactic.RETREAT_HEAL.ordinal()] = healingItems > 0 ? (1.0 - hp) * 1.2 * (1.0 - 0.5 * a) : 0.0;
         scores[Tactic.FLEE.ordinal()] = (1.0 - a) * (1.0 - hp) * (healingItems > 0 ? 0.8 : 2.0);
+        if (duelMode) {
+            int r = Tactic.RETREAT_HEAL.ordinal();
+            scores[r] = Math.max(scores[r], scores[Tactic.FLEE.ordinal()]);
+            scores[Tactic.FLEE.ordinal()] = 0.0;
+        }
         double hg = 0.0;
         if (highGround > 0.0) {
             double reach = distance >= 2.0 ? 1.0 : 0.8 + 0.1 * Math.max(0.0, distance);
@@ -91,6 +109,9 @@ public final class TacticUtility {
     /** Scores and picks the winner, keeping the current tactic unless a challenger beats it by the hysteresis. */
     public Tactic choose() {
         scoreAll();
+        if (duelMode && current == Tactic.FLEE) {
+            current = Tactic.RETREAT_HEAL; // duel mode switched on mid-flight: the flight becomes a reset
+        }
         Tactic best = current;
         double bestScore = scores[current.ordinal()] + HYSTERESIS;
         for (Tactic t : TACTICS) {

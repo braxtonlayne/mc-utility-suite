@@ -1,0 +1,11 @@
+{
+  "setting.utilitysuite.combat_assistant.hit_choice": "Hit choice",
+  "setting.utilitysuite.combat_assistant.hit_choice.tooltip": "Auto: open and re-engage with a sprint knockback hit, keep combos with knockback, crit when knockback is worth little (cornered or eating target, out-damaged, a big mob), sweep only when two or more hostiles stand together and nothing else is in reach of the sweep. Knockback, Crits or Plain force one kind.",
+  "setting.utilitysuite.combat_assistant.hit_choice.AUTO": "Auto",
+  "setting.utilitysuite.combat_assistant.hit_choice.KNOCKBACK": "Knockback",
+  "setting.utilitysuite.combat_assistant.hit_choice.CRITS": "Crits",
+  "setting.utilitysuite.combat_assistant.hit_choice.PLAIN": "Plain",
+  "setting.utilitysuite.combat_assistant.group.hit_choice": "Hit choice",
+  "setting.utilitysuite.combat_assistant.duel_mode": "Never disengage (duel mode)",
+  "setting.utilitysuite.combat_assistant.duel_mode.tooltip": "Never run from the fight or drop it when the target gets far or out of sight while it is alive and loaded: back off, heal and come back instead. For closed arenas and boss rooms."
+}
