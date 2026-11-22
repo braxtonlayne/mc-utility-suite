@@ -35,6 +35,36 @@ public interface FightContext {
     /** Half-hearts the last hit taken cost. */
     float lastHitDamage();
 
+    // ---- hit records (added for the threat and combo-escape stages; defaults keep older implementations valid) ----
+
+    /** Fight-clock tick of the last hit the target landed on the player, or -1. */
+    default long lastHitTakenAt() {
+        return -1L;
+    }
+
+    /** Fight-clock tick of the last hit the player landed on the target, or -1. */
+    default long lastHitLandedAt() {
+        return -1L;
+    }
+
+    /** Hits taken from the target since the player last landed one (0 after a target switch). */
+    default int hitsTakenUnanswered() {
+        return 0;
+    }
+
+    /**
+     * The living entity whose attack last damaged the player in this fight (the target or any other mob), or -1.
+     * Proof that it is already hostile to the player (the reactive rule for a target switch).
+     */
+    default int lastAttackerId() {
+        return -1;
+    }
+
+    /** Fight-clock tick of {@link #lastAttackerId()}'s hit, or -1. */
+    default long lastAttackerAt() {
+        return -1L;
+    }
+
     // ---- actions (this tick) ------------------------------------------------------------------------------------
 
     /** Smoothed aim at the target with the configured lead. */

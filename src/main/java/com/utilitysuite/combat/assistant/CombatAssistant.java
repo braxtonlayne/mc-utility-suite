@@ -184,6 +184,12 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
     private double stageSpacing;
     private boolean stagePress;
     private int stageTarget = -1;
+    // hit records the stages read (FightContext): fight-clock ticks, hits taken since our last landed one
+    private long hitTakenAt = -1L;
+    private long hitLandedAt = -1L;
+    private int takenUnanswered;
+    private int lastAttacker = -1;
+    private long lastAttackerAt = -1L;
 
     private boolean enabled;
     private CombatState state = CombatState.DORMANT;
@@ -326,6 +332,8 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
             return;
         }
         rememberOpponent(causeId);
+        lastAttacker = causeId; // read by stages: proof the entity is already hostile to the player
+        lastAttackerAt = tacticClock;
         if (state == CombatState.ENGAGED && causeId == targetId) {
             feel.noteOpponentHit(tacticClock, lastHitDamage); // rank dial: its hit landed
             targetHitPending = TARGET_HIT_PENDING_TICKS; // the gear read takes the matching health drop
@@ -424,6 +432,7 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         lastFeintNoted = FeintPlanner.Move.NONE;
         feel.engage(entityId, targetIsPlayer); // a target switch ends the combo plan, feints and any pearl run
         stageTarget = -1;
+        takenUnanswered = 0; // a new opponent owes us nothing yet
         for (FightStage st : allStages) {
             st.onEngage(stageCtx);
         }
@@ -540,6 +549,8 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
             if (targetHitPending > 0) {
                 gear.noteTaken(lastHitDamage);
                 targetHitPending = 0;
+                hitTakenAt = tacticClock; // the target's hit (stages: combo escape)
+                takenUnanswered++;
             }
         }
         if (targetHitPending > 0) {
@@ -565,7 +576,9 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         if (stageTarget >= 0) {
             int next = stageTarget;
             stageTarget = -1;
-            if (next != targetId && state == CombatState.ENGAGED && world.isLivingAlive(next)) {
+            // seam fix: a requested target is never a roster ally (the next tick would end the whole fight on it)
+            if (next != targetId && state == CombatState.ENGAGED && world.isLivingAlive(next)
+                    && !roster.isNeverTarget(world.uuidOf(next))) {
                 engage(next, "threat");
             }
         }
@@ -813,7 +826,8 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
      */
     private boolean positionalMove(CombatSnapshot s) {
         TacticUtility.Tactic bt = broadTactic;
-        boolean positional = settings.arenaRead
+        // a stage widening the band (a fuse back-off) outranks the high ground: the spot is no use inside a blast
+        boolean positional = stageSpacing <= 0.0 && settings.arenaRead
                 && (bt == TacticUtility.Tactic.HIGH_GROUND || bt == TacticUtility.Tactic.CEILING_DENY)
                 && feel.planPositional(s, bt);
         if (!positional) {
@@ -884,6 +898,8 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
             dealt.recordHit(targetId, tacticClock, lastTargetHealth - s.targetHealth);
             gear.noteDealt(lastTargetHealth - s.targetHealth);
             feel.noteOwnHit(tacticClock); // rank dial: a swing in reach landed
+            hitLandedAt = tacticClock;
+            takenUnanswered = 0;
         }
         lastTargetHealthId = targetId;
         lastTargetHealth = s.targetHealth;
@@ -1600,6 +1616,9 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         targetId = -1;
         state = CombatState.DORMANT;
         stageTarget = -1;
+        takenUnanswered = 0;
+        lastAttacker = -1;
+        lastAttackerAt = -1L;
         for (FightStage st : allStages) {
             st.reset();
         }
@@ -1944,6 +1963,36 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         public void requestTarget(int entityId) {
             stageTarget = entityId;
         }
+
+        @Override
+        public long lastHitTakenAt() {
+            return hitTakenAt;
+        }
+
+        @Override
+        public long lastHitLandedAt() {
+            return hitLandedAt;
+        }
+
+        @Override
+        public int hitsTakenUnanswered() {
+            return takenUnanswered;
+        }
+
+        @Override
+        public int lastAttackerId() {
+            return lastAttacker;
+        }
+
+        @Override
+        public long lastAttackerAt() {
+            return lastAttackerAt;
+        }
+    }
+
+    /** Hit policy the hit planner used on its last decision (a stage's one-tick override included; tests). */
+    public HitPlanner.Policy lastHitPolicy() {
+        return hits.policy;
     }
 
     // =================================================================================================================
