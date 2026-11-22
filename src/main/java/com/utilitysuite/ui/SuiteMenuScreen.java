@@ -16,6 +16,7 @@ import com.utilitysuite.core.api.visual.EffectLevel;
 import com.utilitysuite.core.api.visual.FrameLevel;
 import com.utilitysuite.core.api.visual.HoloToken;
 import com.utilitysuite.ui.holo.AnimStore;
+import com.utilitysuite.ui.holo.BootSequence;
 import com.utilitysuite.ui.holo.FrameClock;
 import com.utilitysuite.ui.holo.HoloFrames;
 import com.utilitysuite.ui.holo.HoloTheme;
@@ -247,6 +248,23 @@ public final class SuiteMenuScreen extends Screen {
     /** Cached pixel width of the toast text (-1 = measure on the next frame it shows). */
     private int statusW = -1;
 
+    // boot sequence (first open per session, motion FULL only)
+    private final BootSequence boot = new BootSequence();
+    private boolean bootChecked;
+    private static final String[] PERCENT = new String[101];
+    private static final int[] PERCENT_W = new int[101];
+    private static boolean percentMeasured;
+    private static final String READOUT_HEAD = "SYNC ";
+    private String readoutTail = "";
+    private int readoutHeadW;
+    private int readoutTailW;
+
+    static {
+        for (int i = 0; i <= 100; i++) {
+            PERCENT[i] = Integer.toString(i);
+        }
+    }
+
     public SuiteMenuScreen(Screen parent) {
         super(Component.literal("Utility Suite"));
         this.parent = parent;
@@ -357,6 +375,12 @@ public final class SuiteMenuScreen extends Screen {
             blurOn = true;
         }
         refreshLeases();
+        if (!bootChecked) {
+            bootChecked = true;
+            if (boot.begin(openedAt, HoloTheme.motion)) {
+                prepareReadout();
+            }
+        }
 
         buildChrome();
         buildList();
@@ -1005,6 +1029,7 @@ public final class SuiteMenuScreen extends Screen {
 
     @Override
     public boolean mouseClicked(double mx, double my, int button) {
+        boot.skip(); // any input ends the boot sequence; the input itself is handled as usual
         mx = toVirtual(mx);
         my = toVirtual(my);
         for (int i = chrome.size() - 1; i >= 0; i--) {
@@ -1095,6 +1120,7 @@ public final class SuiteMenuScreen extends Screen {
 
     @Override
     public boolean mouseScrolled(double mx, double my, double scrollX, double scrollY) {
+        boot.skip();
         mx = toVirtual(mx);
         my = toVirtual(my);
         if (inList(mx, my)) {
@@ -1111,6 +1137,10 @@ public final class SuiteMenuScreen extends Screen {
 
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        var openKey = KeybindManager.mapping(KeybindManager.KeyId.OPEN_MENU);
+        if (openKeyReleased || openKey == null || !openKey.matches(keyCode, scanCode)) {
+            boot.skip(); // any input skips the boot, except the key-repeat of the press that opened the menu
+        }
         if (keyCode == 256) {
             onClose();
             return true;
@@ -1259,6 +1289,114 @@ public final class SuiteMenuScreen extends Screen {
         }
     }
 
+    /** The boot readout's strings and widths, from real numbers (registry module count), built once at open. */
+    private void prepareReadout() {
+        int modules = 0;
+        try {
+            for (Tab t : Tab.values()) {
+                modules += Services.modules().byCategory(t.category()).size();
+            }
+        } catch (RuntimeException ignored) {
+            // readout is decoration; zero is still honest
+        }
+        readoutTail = " %  ·  " + modules + " MODULES  ·  LINK OK";
+        readoutHeadW = smallWidth(font, READOUT_HEAD);
+        readoutTailW = smallWidth(font, readoutTail);
+        if (!percentMeasured) {
+            percentMeasured = true;
+            for (int i = 0; i <= 100; i++) {
+                PERCENT_W[i] = smallWidth(font, PERCENT[i]);
+            }
+        }
+    }
+
+    /**
+     * The 900 ms boot (design 8.2): centre line, frame unfold with a bracket snap and flicker, the columns revealed
+     * left to right behind a bright caret, then a counting readout. Input stays live (any input skips to the end).
+     */
+    private void renderBoot(GuiGraphics g, int mouseX, int mouseY, float partialTick, long t, long now) {
+        backdropAlpha = clamp01(t / (float) BootSequence.LINE_END_MS);
+        renderBackground(g, mouseX, mouseY, partialTick);
+        stepScroll(now);
+        int accent = HoloTheme.argb(HoloToken.ACCENT);
+        int cx = wx + ww / 2;
+        if (t < BootSequence.LINE_END_MS) {
+            int half = Math.max(1, Math.round(ww / 2f * BootSequence.line(t)));
+            g.fill(cx - half, wy + wh / 2, cx + half, wy + wh / 2 + 1, accent);
+            return;
+        }
+        if (t < BootSequence.UNFOLD_END_MS) {
+            int fh = Math.max(2, Math.round(wh * BootSequence.unfold(t)));
+            int fy = wy + (wh - fh) / 2;
+            float fa = BootSequence.flicker(t) ? 0.55f : 1f;
+            if (!blurOn) {
+                HoloFrames.frame(g, wx, fy, ww, fh, FrameLevel.QUIET, true, HoloToken.VOID, HoloToken.LINE, 0.62f * fa);
+            }
+            HoloFrames.frame(g, wx, fy, ww, fh, FrameLevel.HERO, true, fa);
+            HoloFrames.scanlines(g, wx, fy, ww, fh, fa);
+            int arm = Math.max(1, Math.round(14f * BootSequence.brackets(t)));
+            HoloFrames.brackets(g, wx - 2, fy - 2, ww + 4, fh + 4, Math.min(arm, Math.max(1, fh / 2)), accent);
+            return;
+        }
+        drawWindow(g, 1f, now);
+        float c0 = BootSequence.column(0, t);
+        float c1 = BootSequence.column(1, t);
+        float c2 = BootSequence.column(2, t);
+        int barsH = UiTheme.TOP_BAR_H + 1 + AutopilotBar.H;
+        if (revealClip(g, wx, wy, ww, barsH, c0)) {
+            drawTopBar(g, mouseX, mouseY);
+            UiRenderUtils.endClip(g);
+        }
+        int colH = wy + wh - viewY;
+        if (revealClip(g, wx, viewY, sidebarW, colH, c0)) {
+            drawSidebar(g, mouseX, mouseY);
+            UiRenderUtils.endClip(g);
+        }
+        if (listW > 0 && revealClip(g, listX, viewY, listW, colH, c1)) {
+            drawList(g, mouseX, mouseY);
+            UiRenderUtils.endClip(g);
+        }
+        if (revealClip(g, viewX, viewY, viewW, viewH, c2)) {
+            drawContent(g, mouseX, mouseY, 0);
+            UiRenderUtils.endClip(g);
+        }
+        revealCaret(g, wx, wy, ww, barsH, c0, accent);
+        revealCaret(g, wx, viewY, sidebarW, colH, c0, accent);
+        if (listW > 0) {
+            revealCaret(g, listX, viewY, listW, colH, c1, accent);
+        }
+        revealCaret(g, viewX, viewY, viewW, viewH, c2, accent);
+        if (t >= BootSequence.COLUMNS_END_MS && !readoutTail.isEmpty()) {
+            int pct = Math.max(0, Math.min(100, BootSequence.readoutPercent(t)));
+            int color = HoloTheme.mix(HoloTheme.argb(HoloToken.TEXT_FAINT), accent, BootSequence.readoutBright(t));
+            int slot = PERCENT_W[100];
+            int x = viewX + viewW - 12 - readoutHeadW - slot - readoutTailW;
+            int y = viewY + 4;
+            smallText(g, font, READOUT_HEAD, x, y, color);
+            smallText(g, font, PERCENT[pct], x + readoutHeadW + slot - PERCENT_W[pct], y, color);
+            smallText(g, font, readoutTail, x + readoutHeadW + slot, y, color);
+        }
+        updateHover(mouseX, mouseY, now);
+    }
+
+    /** Scissors a column to its revealed part; false (nothing pushed) while it is still hidden. */
+    private static boolean revealClip(GuiGraphics g, int x, int y, int w, int h, float reveal) {
+        int rw = Math.round(w * reveal);
+        if (rw <= 0 || h <= 0) {
+            return false;
+        }
+        UiRenderUtils.clip(g, x, y, rw, h);
+        return true;
+    }
+
+    /** The bright 1 px caret at a column's reveal edge while it is moving. */
+    private static void revealCaret(GuiGraphics g, int x, int y, int w, int h, float reveal, int argb) {
+        if (reveal > 0f && reveal < 1f) {
+            int ex = x + Math.round(w * reveal);
+            g.fill(ex, y, ex + 1, y + h, argb);
+        }
+    }
+
     private static float clamp01(float v) {
         return v <= 0f ? 0f : Math.min(v, 1f);
     }
@@ -1270,6 +1408,11 @@ public final class SuiteMenuScreen extends Screen {
      */
     private void renderScaled(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
         long now = Util.getMillis();
+        long bootT = boot.elapsed(now);
+        if (bootT >= 0L) {
+            renderBoot(g, mouseX, mouseY, partialTick, bootT, now);
+            return;
+        }
         Motion motion = HoloTheme.motion;
         float age = now - openedAt;
         float frameP = motion == Motion.OFF ? 1f : clamp01(age / OPEN_FRAME_MS);
