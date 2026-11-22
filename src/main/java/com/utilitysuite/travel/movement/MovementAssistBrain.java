@@ -310,7 +310,7 @@ public final class MovementAssistBrain {
             return true;
         }
         // where the user is looking now: the estimator's latest pick, not the target frozen for the commitment
-        if (!intentAssist || !rawSet || rawConfidence < IntentEstimator.MIN_CONFIDENCE) {
+        if (!intentAssist || !rawSet || rawConfidence < intentThreshold) {
             return false;
         }
         double dx = rtx + 0.5 - at.x;
@@ -815,7 +815,7 @@ public final class MovementAssistBrain {
             return;
         }
         targetFrozen = true;
-        if (!trimUsed && rawSet && rawConfidence >= IntentEstimator.MIN_CONFIDENCE && !now.onGround && now.vy > 0.0
+        if (!trimUsed && rawSet && rawConfidence >= intentThreshold && !now.onGround && now.vy > 0.0
                 && (rtx != itx || rty != ity || rtz != itz)) {
             trimUsed = true; // the one trim of this flight
             lockFromRaw();
@@ -842,7 +842,7 @@ public final class MovementAssistBrain {
 
     /** A target is set, confident enough, and "Follow my intent" is on. */
     public boolean intentActive() {
-        return intentAssist && intentSet && intentConfidence >= IntentEstimator.MIN_CONFIDENCE;
+        return intentAssist && intentSet && intentConfidence >= intentThreshold;
     }
 
     /** The user's mouse yaw rate (deg/tick, + = yaw increasing), for the tick-phase check. */
@@ -1025,6 +1025,11 @@ public final class MovementAssistBrain {
 
     // ---- approach control, technique scripts, co-steer clamp ----------------------------------------------------------
 
+    /**
+     * Confidence an intent target needs to count. The module sets it to the estimator's commit threshold:
+     * {@link IntentEstimator#GUIDE_THRESHOLD}, or {@link IntentEstimator#CARRY_THRESHOLD} in Takeover.
+     */
+    public double intentThreshold = IntentEstimator.MIN_CONFIDENCE;
     /** Approach and takeoff control in GUIDE and CARRY ({@link ApproachController}); on by default. */
     public boolean approachControl = true;
     private final ApproachController approach = new ApproachController();

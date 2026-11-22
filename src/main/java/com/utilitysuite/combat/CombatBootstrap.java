@@ -11,6 +11,13 @@ import com.utilitysuite.combat.assistant.mc.MinecraftCombatWorld;
 import com.utilitysuite.combat.assistant.mc.PearlWatch;
 import com.utilitysuite.combat.coach.FightCoach;
 import com.utilitysuite.combat.coach.FightCoachHud;
+import com.utilitysuite.combat.assistant.mc.McHealFacts;
+import com.utilitysuite.combat.assistant.mc.McNearbyThreats;
+import com.utilitysuite.combat.assistant.mc.McShieldFacts;
+import com.utilitysuite.combat.assistant.stages.ComboEscapeStage;
+import com.utilitysuite.combat.assistant.stages.HealWindowStage;
+import com.utilitysuite.combat.assistant.stages.ShieldDuelStage;
+import com.utilitysuite.combat.assistant.stages.ThreatFightStage;
 import com.utilitysuite.combat.coach.ThreatTracker;
 import com.utilitysuite.combat.hud.ReadRingModule;
 import com.utilitysuite.combat.hud.TargetHud;
@@ -69,6 +76,11 @@ public final class CombatBootstrap {
         trigger = new TriggerAssist(world, allies.roster());
         targetHud = new TargetHud(world, assistant, allies.roster());
 
+        // fight stages (settings must be in the module's list before it is registered)
+        assistant.addStage(new ThreatFightStage(new McNearbyThreats())); // PRE_AIM
+        assistant.addStage(new ShieldDuelStage(new McShieldFacts()));    // PRE_SWING
+        assistant.addStage(new HealWindowStage(new McHealFacts()));
+        assistant.addStage(new ComboEscapeStage());                      // MOVEMENT
         Services.modules().register(assistant);
         Services.modules().register(coach);
         Services.modules().register(allies);

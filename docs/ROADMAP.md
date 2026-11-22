@@ -501,3 +501,38 @@ Ten tasks merged on main; 1542 unit tests pass. Nothing was run in a game client
 - [ ] Remove the no-op `target_hud` GUI layer and the unused `TargetLine`.
 - [ ] Switch settings and HUD text to the lang keys now in `en_us.json`.
 - [ ] Eat-from-pack: swap the food back when the lease is preempted between the pull and the swap-back.
+
+## Approach-control volley (2026-11-22, run note `docs/state/run-2026-11-22-open-items.md`)
+
+Eleven tasks merged on main, none left on a branch; 1797 unit tests pass. Nothing was run in a game client.
+
+### Done (unit-tested only)
+
+- [x] Movement Assist on `ISharedControl` (no direct `Input` or `setSprinting` writes); core sprint withhold with
+      one new mixin (22 total).
+- [x] Approach control: takeoff-tick search, held-back press, eased W, walking run-up; target frozen at takeoff.
+- [x] Owner decision D1 built: yaw co-steer in Co-pilot / Takeover on Balanced and above; hold-to-take-over key.
+- [x] Technique templates (corner, neo, headhitter, 45-degree) as `TechniqueLibrary`, wired into the brain.
+- [x] Intent v2: real tops, simulated reach, gaze over time, course ring, per-mode threshold (wired).
+- [x] Replica parity: measurement fixed, full path on vanilla float arithmetic, `VanillaParityTest`.
+- [x] Combat stages wired: threat fights with a mob playbook, combo escape, shield duel, heal windows.
+- [x] Eat-from-pack swap-back after a preempted lease.
+- [x] UI: notices (toasts), autopilot HUD, coach cooldown arc, world ribbons (`HoloWorldKit`), suite font pipeline
+      (off until the font files are added), Timeline and minimap restyle, lang keys resolved for settings, style scan.
+
+### Open
+
+- [ ] In game: the run note's checklist (42 steps). First the startup and mixin audit, then the Parkour lanes.
+- [ ] Owner: approve and add the three font files (Rajdhani Medium and SemiBold, JetBrains Mono Regular, SIL OFL
+      1.1 to verify) with licence texts and `THIRD-PARTY-NOTICES.md`.
+- [ ] Owner: confirm Co-pilot easing W on the ground while ARMED (design table 4 says it withholds nothing there).
+- [ ] Owner: Movement Assist standing down while a job holds MOVEMENT with "Assist automation" on.
+- [ ] Parkour: exact in-flight co-steer yaw (design 6.1 step 3), CHAIN phase, straight-line corner onto a fence
+      post, corner lane geometry, techniques in the estimator's reach roll, `intent.targetTopY()` in the jump search.
+- [ ] Replica: climbables and water landings, slime, honey, soul sand, cobweb, powder snow.
+- [ ] Combat: shield reflex stands down while the shield stage blocks; shield disable without the sound;
+      `FightContext` requests (`takenWeightScale`, `holdGround`, `pullConsumable`, no-kite, hop veto in an escape);
+      offhand totem/shield policy, splash healing, ranged opener, weapon choice by enchantments, fight log.
+- [ ] UI: place the `GoalConsole` nodes in `JobsTab`; hero frame for the takeover status line; remove the duplicate
+      autopilot action-bar message; move the remaining chat / action-bar call sites to notices; `show_swing` for
+      the coach arc; `world_lines` setting and a see-through world render type; style-scan backlog.

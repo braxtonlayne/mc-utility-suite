@@ -122,6 +122,7 @@ public final class MovementAssist implements IModule, IConfigurable {
     static final String K_JUMP_BUFFER = "jump_buffer";
     static final String K_JUMP_BUFFER_TICKS = "jump_buffer_ticks";
     static final String K_CO_STEER = "co_steer";
+    static final String K_APPROACH = "approach_control";
     /** Ticks over which opposing hand yaw is summed for the co-steer override (design 4.1: 6 degrees within 5). */
     static final int OPPOSE_WINDOW_TICKS = 5;
     /** Turn-gain requests lapse after this many ticks unless renewed. */
@@ -136,6 +137,10 @@ public final class MovementAssist implements IModule, IConfigurable {
     static final int REACH_EVERY_TICKS = 5;
 
     private final MovementAssistBrain brain = new MovementAssistBrain();
+
+    {
+        brain.setTechniques(new TechniqueLibrary()); // scripted takeoffs once the plain approach search is exhausted
+    }
     /** The shared-control grant while the assist writes (null or inactive otherwise). */
     private SharedGrant grant;
     /** The last grant could withhold sprint (what the brain may plan with before the next grant). */
@@ -328,6 +333,10 @@ public final class MovementAssist implements IModule, IConfigurable {
             groundX = now.x;
             groundZ = now.z;
         }
+        // Takeover commits on a lower confidence than Co-pilot; the brain reads the same threshold
+        intent.setCommitThreshold(controlMode.mode == JumpCommit.Mode.CARRY || TravelKeys.takeoverHeld()
+                ? IntentEstimator.CARRY_THRESHOLD : IntentEstimator.GUIDE_THRESHOLD);
+        brain.intentThreshold = intent.commitThreshold();
         if (brain.intentAssist && (userF != 0 || userS != 0 || !now.onGround)
                 && intent.estimate(now, yaw, p.getXRot(), userF, userS, sprinting, voxels) && intent.hasTarget()) {
             brain.setIntentTarget(intent.targetX(), intent.targetY(), intent.targetZ(), intent.confidence());
@@ -399,7 +408,7 @@ public final class MovementAssist implements IModule, IConfigurable {
             takeoffX = groundX;
             takeoffZ = groundZ;
         } else if (brain.touchedDown() && haveTakeoff) {
-            intent.noteJump(takeoffX, takeoffZ, now.x, now.z);
+            intent.noteJump(takeoffX, takeoffZ, now.x, now.y, now.z);
             haveTakeoff = false;
         }
         if (!auto && turnGain && turnGainLevelOk) {
@@ -1018,7 +1027,10 @@ public final class MovementAssist implements IModule, IConfigurable {
         reachOverlay = p.getBool(ID, K_REACH, true);
         assistAutomation = p.getBool(ID, K_AUTOMATION, false);
         blocksOn = p.getBool(ID, K_BLOCKS, true);
-        blocks.setNaturalLook(!"FREE".equals(p.getString(ID, K_LOOK, LookStyle.NATURAL.name())));
+        boolean freeLook = "FREE".equals(p.getString(ID, K_LOOK, LookStyle.NATURAL.name()));
+        blocks.setNaturalLook(!freeLook);
+        brain.freeLook = freeLook; // lifts the co-steer's along-the-movement clamp (less legit, the user's choice)
+        brain.approachControl = p.getBool(ID, K_APPROACH, true);
         if (!blocksOn) {
             blocks.release();
         }
@@ -1098,6 +1110,9 @@ public final class MovementAssist implements IModule, IConfigurable {
                         "While you turn your mouse toward the best takeoff direction for that block, it turns a little"
                                 + " faster; turning away, a little slower. It only scales your own mouse: with a still"
                                 + " mouse nothing moves. Off on the Legit level."),
+                SettingSpec.bool(K_APPROACH, "Approach control", true, "",
+                        "Co-pilot and Takeover ease the run-up and pick the takeoff tick so a near, narrow landing can"
+                                + " be stopped on."),
                 SettingSpec.bool(K_CO_STEER, "Co-steer", true, "",
                         "During a committed jump on Balanced and above, the camera eases toward the jump line (smoothed,"
                                 + " a few degrees per jump, never faster than the camera cap). Your mouse always comes"
