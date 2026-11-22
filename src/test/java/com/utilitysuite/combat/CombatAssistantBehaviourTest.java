@@ -14,6 +14,9 @@ import com.utilitysuite.core.api.SimKey;
 import com.utilitysuite.core.arbiter.ActionArbiter;
 import com.utilitysuite.core.input.FakeInputBackend;
 import com.utilitysuite.core.input.InputSmoother;
+import com.utilitysuite.combat.assistant.TradeDriver;
+import com.utilitysuite.combat.assistant.TradeDriverTest;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -160,6 +163,165 @@ class CombatAssistantBehaviourTest {
         });
         assertEquals(CombatState.ENGAGED, assistant.state());
         assertTrue(bytes < 4_096, "engaged onTick allocated " + bytes + " bytes over 50k ticks");
+    }
+
+    // ---- hit-trade solver wiring ------------------------------------------------------------------------------------
+
+    @AfterEach
+    void tearDown() {
+        Services.resetForTests();
+    }
+
+    TradeDriverTest.ScriptedStep scripted() {
+        TradeDriverTest.ScriptedStep step = new TradeDriverTest.ScriptedStep();
+        assistant.useTradeDriver(new TradeDriver(step));
+        return step;
+    }
+
+    @Test
+    void anInvalidSolverAnswerKeepsTheBandBehaviour() {
+        TradeDriverTest.ScriptedStep step = scripted();
+        step.valid = false;
+        closesDistanceAndStrafesInBand();
+        assertEquals(0, assistant.tradeTicks(), "the band and the strafe planner drove");
+    }
+
+    @Test
+    void theProductionSolverStubFallsBackToTheBand() {
+        Services.registerBodySims(FakeCombatWorld.stillBodies()); // real HitTradeSolver, still a stub answering invalid
+        closesDistanceAndStrafesInBand();
+        assertEquals(0, assistant.tradeTicks());
+    }
+
+    @Test
+    void aValidSolverAnswerDrivesTheKeysInsteadOfTheBand() {
+        TradeDriverTest.ScriptedStep step = scripted();
+        world.entities.get(TARGET).x = 2.9; // inside the band: the band alone would hold
+        world.self.attackStrength = 0.2f;
+        step.answer(-1, 1, 1.0, 0.0); // back off to the left
+        engage();
+        tick(1);
+        assertTrue(assistant.tradeTicks() > 0);
+        assertTrue(backend.isDown(SimKey.BACK));
+        assertFalse(backend.isDown(SimKey.FORWARD));
+        assertTrue(backend.isDown(SimKey.LEFT));
+        assertFalse(backend.isDown(SimKey.RIGHT));
+        assertFalse(backend.isDown(SimKey.SPRINT), "no sprint while backing off");
+    }
+
+    @Test
+    void theSolverIsNotUsedFarOutsideTheBandOrWhenOff() {
+        TradeDriverTest.ScriptedStep step = scripted();
+        step.answer(-1, 0, 1.0, 0.0);
+        world.entities.get(TARGET).x = 7; // beyond spacing max + 2.5
+        world.self.attackStrength = 0.2f;
+        engage();
+        tick(1);
+        assertEquals(0, assistant.tradeTicks());
+        assertTrue(backend.isDown(SimKey.FORWARD), "the band closes in");
+        world.entities.get(TARGET).x = 3;
+        assistant.config().hitTrade = false;
+        tick(2);
+        assertEquals(0, assistant.tradeTicks(), "setting off");
+    }
+
+    @Test
+    void hazardsVetoTheSolverAnswer() {
+        TradeDriverTest.ScriptedStep step = scripted();
+        world.entities.get(TARGET).x = 3.0;
+        world.self.attackStrength = 0.2f;
+        world.self.hazardFront = true;
+        world.self.hazardLeft = true;
+        step.answer(1, 1, 1.0, 0.0); // forward-left, straight into both hazards
+        step.sprint = true;
+        engage();
+        tick(2);
+        assertTrue(assistant.tradeTicks() > 0);
+        assertFalse(backend.isDown(SimKey.FORWARD), "never steps toward the front hazard");
+        assertFalse(backend.isDown(SimKey.LEFT), "never strafes into the left hazard");
+        assertFalse(backend.isDown(SimKey.SPRINT));
+    }
+
+    @Test
+    void sprintResetTakesPriorityOverTheSolver() {
+        TradeDriverTest.ScriptedStep step = scripted();
+        assistant.config().critSync = false;
+        world.entities.get(TARGET).x = 3.0;
+        world.self.attackStrength = 1f; // swings on the engage tick
+        step.answer(1, 0, 1.0, 0.0);
+        step.sprint = true;
+        int clicks = backend.clicks[SimKey.ATTACK.ordinal()];
+        engage();
+        assertTrue(backend.clicks[SimKey.ATTACK.ordinal()] > clicks || assistant.swings() > 0, "swung");
+        assertFalse(backend.isDown(SimKey.FORWARD), "W released for the sprint reset");
+        assertFalse(backend.isDown(SimKey.SPRINT));
+        world.self.attackStrength = 0.2f;
+        tick(4);
+        assertTrue(backend.isDown(SimKey.FORWARD), "the solver's keys come back after the reset");
+        assertTrue(backend.isDown(SimKey.SPRINT));
+    }
+
+    @Test
+    void solverJumpsOnlyWhenCritSyncIsNotManagingHops() {
+        TradeDriverTest.ScriptedStep step = scripted();
+        world.entities.get(TARGET).x = 3.0;
+        world.self.attackStrength = 0.2f; // charging: crit sync is not waiting yet
+        step.answer(0, 1, 1.0, 0.0);
+        step.jump = true;
+        engage();
+        boolean jumped = false;
+        for (int i = 0; i < 4; i++) {
+            tick(1);
+            jumped |= backend.down[SimKey.JUMP.ordinal()];
+        }
+        assertTrue(jumped, "the solver's hop was tapped");
+        assertTrue(assistant.tradeTicks() > 0);
+    }
+
+    @Test
+    void opponentSwingsFeedTheCooldownReading() {
+        world.entities.get(TARGET).swingStarted = true;
+        world.entities.get(TARGET).attackSpeed = 1.6;
+        world.self.attackStrength = 0.2f;
+        engage();
+        tick(2);
+        assertTrue(assistant.opponents().attackReadyIn(TARGET, 3) >= 0);
+        assertTrue(assistant.opponents().cooldownTicks(TARGET) > 0);
+    }
+
+    @Test
+    void engagedTickWithTheSolverPathAllocatesNothing() {
+        Assumptions.assumeTrue(AllocationProbe.supported());
+        TradeDriverTest.ScriptedStep step = scripted();
+        step.answer(1, -1, 1.0, 0.0);
+        step.sprint = true;
+        world.entities.get(TARGET).x = 3.0;
+        world.self.attackStrength = 0.3f;
+        engage();
+        long bytes = AllocationProbe.measure(50_000, () -> {
+            smoother.preTick();
+            assistant.onTick();
+            smoother.postTick();
+        });
+        assertEquals(CombatState.ENGAGED, assistant.state());
+        assertTrue(assistant.tradeTicks() > 0);
+        assertTrue(bytes < 4_096, "engaged onTick (solver path) allocated " + bytes + " bytes over 50k ticks");
+    }
+
+    @Test
+    void engagedTickWithTheProductionSolverAllocatesNothing() {
+        Assumptions.assumeTrue(AllocationProbe.supported());
+        Services.registerBodySims(FakeCombatWorld.stillBodies());
+        world.entities.get(TARGET).x = 3.0;
+        world.self.attackStrength = 0.3f;
+        engage();
+        tick(1); // the solver is built once here (its scratch bodies allocate once)
+        long bytes = AllocationProbe.measure(50_000, () -> {
+            smoother.preTick();
+            assistant.onTick();
+            smoother.postTick();
+        });
+        assertTrue(bytes < 4_096, "engaged onTick (production solver) allocated " + bytes + " bytes");
     }
 
     @Test
