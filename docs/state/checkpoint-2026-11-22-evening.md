@@ -153,3 +153,26 @@ Also open from the agents:
     `--trace` distance should close).
 - After work: run `node arena.js --setup outgeared --rounds 20` on the hazard arena with Grim on (the server is
   stopped). The parkour held-back-press fix stays first.
+
+## Volley at 18:05, both merged (18:16). Stopping point for the night
+- **Held-back press walk-off fixed** (merge 581f9c4):
+  - A held press was lost when its search or script went away mid-hold. That matches "commitment IDLE all flight".
+  - It now fires at once in that case, holds only while the next tick is still supported, and the script path
+    tracks its hold.
+  - New test `ParkourLaneReplicaTest.aHeldBackPressNeverTurnsIntoAWalkOff`: 320 replica runs (5 lanes, 2 modes,
+    16 run-up phases, 2 target modes). It reproduced the walk-off before the fix.
+  - **Unverified in game:** run the corner-fence-2gap Co-pilot lane
+    (`./gradlew runPlaytest -PplaytestOnly=...parkour`).
+- **Clipped menu capitals fixed** (merge 4bfb68b):
+  - Root cause: glyphs were rasterised at oversample 4 but drawn at 2 screen px per GUI px. Nearest sampling then
+    dropped every other texel row, which took out the thin bars. The HUD had it too: "Y=-54" showed as "Y=-b4".
+  - Each face now has variants `_x1`..`_x6`, and the style picks the one matching GUI scale x menu scale x HUD
+    scale.
+  - The menu preview reads clean.
+  - **Unverified:** the other preview screens, GUI scales 1/3/5/6, Sodium, and the extra reload cost (18 font faces
+    instead of 3).
+- Full `./gradlew test` is green on main after both merges.
+- **Next after work:**
+  1. The parkour playtest on the lane above.
+  2. The arena: `node arena.js --setup outgeared --rounds 20` on the hazard arena with Grim on.
+  3. A look at the menu in game.
