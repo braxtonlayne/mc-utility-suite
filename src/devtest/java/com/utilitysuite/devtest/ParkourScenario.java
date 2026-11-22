@@ -173,8 +173,8 @@ final class ParkourScenario {
 
     /**
      * Parkour blocks. {@code wall}: a 2-high wall across the lane at z+9; the runner sprints at it and holds jump
-     * from two blocks out (a player trying to get over). Otherwise a 4-air gap (z+11..z+14, one block more than a
-     * sprint jump clears) and the runner holds only forward + sprint. Either way the run must end past the obstacle
+     * from two blocks out (a player trying to get over). Otherwise a 5-air gap (z+11..z+15, one block more than a
+     * perfect last-tick sprint jump clears) and the runner holds only forward + sprint. Either way the run must end past the obstacle
      * with a block placed.
      */
     private static void blockLane(Scenario s, ControlLease[] lease, String name, int dx, boolean wall,
@@ -189,7 +189,7 @@ final class ParkourScenario {
             s.cmd(() -> fillWorld(dx - 2, 1, 9, dx + 2, 2, 9, "minecraft:stone_bricks"));
         } else {
             s.cmd(() -> fillWorld(dx - 1, 0, 0, dx + 1, 0, 10, "minecraft:smooth_stone"));
-            s.cmd(() -> fillWorld(dx - 1, 0, 15, dx + 1, 0, 25, "minecraft:smooth_stone"));
+            s.cmd(() -> fillWorld(dx - 1, 0, 16, dx + 1, 0, 25, "minecraft:smooth_stone"));
         }
         s.cmd("clear @s");
         s.cmd("give @s minecraft:cobblestone 32");
@@ -205,7 +205,7 @@ final class ParkourScenario {
             Services.input().setKeyHeld(lease[0], SimKey.FORWARD, true);
             Services.input().setKeyHeld(lease[0], SimKey.SPRINT, true);
         });
-        double goalZ = wall ? 10.5 : 15.5;
+        double goalZ = wall ? 10.5 : 16.5;
         s.waitUpTo(name + ": run", 20 * 10, () -> {
             var p = H.p();
             double z = p.getZ() - Arena.cz - OZ;
