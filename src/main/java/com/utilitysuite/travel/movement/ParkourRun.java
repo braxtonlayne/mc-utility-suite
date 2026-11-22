@@ -77,7 +77,11 @@ public final class ParkourRun {
         var segs = course.segments();
         for (int i = 0; i < segs.size(); i++) {
             int t = reachedTick[i + 1];
-            sb.append(i + 1).append(". ").append(segs.get(i).name()).append(": ")
+            sb.append(i + 1).append(". ").append(segs.get(i).name());
+            if (segs.get(i).landing() != ParkourCourse.Landing.FULL) {
+                sb.append(" [").append(segs.get(i).landing()).append(']');
+            }
+            sb.append(": ")
                     .append(t >= 0 ? "cleared at tick " + t : (fellOnSegment() == i + 1 ? "FELL" : "not reached"))
                     .append('\n');
         }

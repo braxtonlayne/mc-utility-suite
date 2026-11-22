@@ -24,6 +24,10 @@ public final class PhysicsBodySim implements BodySim {
     public BodySim set(double x, double y, double z, double vx, double vy, double vz, boolean onGround) {
         body.set(x, y, z, vx, vy, vz, onGround);
         body.horizontalCollision = false;
+        body.crouching = false;
+        body.jumpDelay = 0;
+        body.sprintBlocked = false;
+        body.sprinting = false;
         return this;
     }
 
@@ -42,6 +46,14 @@ public final class PhysicsBodySim implements BodySim {
     @Override
     public void tick(int forward, int strafe, float yawDeg, boolean sprint, boolean jump) {
         body.tick(forward, strafe, yawDeg, sprint, jump, voxels);
+    }
+
+    /**
+     * {@link #tick} with the sneak key (edge back-off on the same tick, 0.3 input and the crouched hitbox one tick
+     * later). Not part of {@link BodySim}: callers that hold a {@code PhysicsBodySim} use it directly.
+     */
+    public void tick(int forward, int strafe, float yawDeg, boolean sprint, boolean jump, boolean sneak) {
+        body.tick(forward, strafe, yawDeg, sprint, jump, sneak, voxels);
     }
 
     @Override
