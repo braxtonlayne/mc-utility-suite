@@ -27,6 +27,9 @@ public final class FlightController {
      * here when it verifies a takeoff, so a plan it offers fits the per-level limits; 0 for the in-flight re-plan.
      */
     public int minBrakeTick;
+    /** Hard cap on the replica ticks of one {@link #plan} (the approach controller's per-tick budget); no cap by default. */
+    public int simCap = Integer.MAX_VALUE;
+    private boolean truncated;
     private int simTicks;
     private boolean found;
     private int brakeTick;
@@ -48,6 +51,7 @@ public final class FlightController {
     public boolean plan(MovementPhysics now, int f, int s, float yaw, boolean sprint, boolean allowBack,
                         SupportRegion region, MovementPhysics.Voxels w) {
         simTicks = 0;
+        truncated = false;
         found = false;
         brakeTick = -1;
         brakeForward = f;
@@ -118,6 +122,10 @@ public final class FlightController {
         sim.copyFrom(now);
         lastAir = 0;
         for (int t = 0; t < HORIZON; t++) {
+            if (simTicks >= simCap) {
+                truncated = true; // the caller's budget is spent: this candidate (and the rest) count as not landing
+                return -Double.MAX_VALUE;
+            }
             int ff = t < keepTicks ? f : bf;
             sim.tick(ff, s, yaw, sprint && ff > 0, false, w);
             simTicks++;
@@ -157,6 +165,11 @@ public final class FlightController {
         byte s1 = w.surface(x, y - 1, z);
         return s0 == MovementPhysics.SURFACE_UNMODELLED || s0 == MovementPhysics.SURFACE_STUCK
                 || s1 == MovementPhysics.SURFACE_UNMODELLED || s1 == MovementPhysics.SURFACE_STUCK;
+    }
+
+    /** The last plan hit {@link #simCap} before every candidate was rolled. */
+    public boolean truncated() {
+        return truncated;
     }
 
     /** Some candidate lands on the region. */

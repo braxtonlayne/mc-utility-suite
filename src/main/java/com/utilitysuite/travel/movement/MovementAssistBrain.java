@@ -176,8 +176,10 @@ public final class MovementAssistBrain {
         // (vanilla ends the sprint on a tick without forward; with the sprint key held it comes back with W)
         if (sprinting) {
             sprintIntent = true;
-        } else if (userForward <= 0 || !(approach.engaged() || commit.live() || scriptOn)) {
-            sprintIntent = false;
+            sprintGap = 0;
+        } else if (userForward <= 0 || !(approach.engaged() || commit.live() || scriptOn)
+                || ++sprintGap > SPRINT_INTENT_TICKS) {
+            sprintIntent = false; // a sprint that stays off longer than any eased or walking run-up was let go
         }
         boolean sprintKey = sprinting || sprintIntent;
         int keys = LandingHold.keys(userForward, userStrafe, userJump);
@@ -234,7 +236,9 @@ public final class MovementAssistBrain {
             int edge = approach.engaged() ? -1
                     : search.ticksToEdge(now, userForward, userStrafe, yaw, sprintKey, ApproachController.WINDOW_TICKS,
                     w);
-            approach.update(now, yaw, sprintKey, userForward, userStrafe, userJump, edgeJump,
+            // SafeWalk: the assist's own takeoff only onto a top it reaches without fall damage
+            boolean assistMayJump = edgeJump && (!safeOnly || planRegion.top() >= now.y - SAFE_DROP);
+            approach.update(now, yaw, sprintKey, userForward, userStrafe, userJump, assistMayJump,
                     mode == JumpCommit.Mode.CARRY, sprintWithholdAvailable, commit.reactionTicks,
                     commit.maxKeyChanges, edge, planRegion, w);
             commitSimTicks += approach.simTicks();
@@ -823,6 +827,19 @@ public final class MovementAssistBrain {
         return targetFrozen;
     }
 
+    /** The locked target block (the one the plans use; valid while {@link #intentActive()}). */
+    public int targetX() {
+        return itx;
+    }
+
+    public int targetY() {
+        return ity;
+    }
+
+    public int targetZ() {
+        return itz;
+    }
+
     /** A target is set, confident enough, and "Follow my intent" is on. */
     public boolean intentActive() {
         return intentAssist && intentSet && intentConfidence >= IntentEstimator.MIN_CONFIDENCE;
@@ -1012,6 +1029,11 @@ public final class MovementAssistBrain {
     public boolean approachControl = true;
     private final ApproachController approach = new ApproachController();
     private boolean sprintIntent;
+    private int sprintGap;
+    /** Ticks a sprint may stay off and still count as meant (the longest walking run-up plus the takeoff tick). */
+    static final int SPRINT_INTENT_TICKS = 10;
+    /** A drop (blocks) a jump can take without fall damage, with room to spare (damage starts past 3). */
+    static final double SAFE_DROP = 2.5;
     /** NATURAL look style: a co-steer ideal stays within this many degrees of the horizontal velocity direction. */
     public static final float NATURAL_CLAMP_DEG = 30f;
     /** FREE look style lifts the NATURAL clamp (the module sets it from the look-style setting; NATURAL by default). */

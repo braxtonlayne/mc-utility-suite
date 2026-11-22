@@ -38,6 +38,12 @@ public final class ApproachController {
     static final int[] WALK_TICKS = {2, 4, 6, 9};
     /** Replica ticks one {@link #update} may roll (scan and re-verify together). */
     public static final int SIM_BUDGET = 1000;
+    /**
+     * Hard cap on the replica ticks of one {@link #update}: a candidate that would cross it is cut off and rolled again
+     * on the next tick. Leaves the rest of {@link MovementAssistBrain#MAX_COMMIT_SIM_TICKS} to the hold's checks.
+     */
+    public static final int HARD_CAP = 1120;
+    private boolean lastTruncated;
     /** A plan's no-key stop point must keep at least this margin inside the target's support region. */
     public static final double MIN_MARGIN = 0.02;
     /** A body this far (blocks) from where the last tick's keys should have put it restarts the scan. */
@@ -178,8 +184,10 @@ public final class ApproachController {
                 active = false;
             }
         }
-        // scan: cheaper than the active plan, deadline not passed
-        while (cursor < count && simTicks < SIM_BUDGET - 160) {
+        // scan: cheaper than the active plan, deadline not passed; a candidate cut off by the hard cap is rolled again
+        // next tick (its deadline permitting)
+        int scanned = 0;
+        while (cursor < count && simTicks < SIM_BUDGET) {
             int i = cursor++;
             long T = anchorTick + cT[i];
             long E = anchorTick + cE[i];
@@ -191,6 +199,13 @@ public final class ApproachController {
                 continue;
             }
             double m = evaluate(now, yaw, sprintKey, userF, userS, allowBack, maxChanges, T, E, cKind[i], region, w);
+            if (lastTruncated) {
+                if (scanned > 0) {
+                    cursor = i; // cut off by this tick's cap: roll it again next tick
+                }
+                break;
+            }
+            scanned++;
             if (m >= MIN_MARGIN) {
                 active = true;
                 planT = T;
@@ -321,6 +336,7 @@ public final class ApproachController {
     private double evaluate(MovementPhysics now, float yaw, boolean sprintKey, int userF, int userS, boolean allowBack,
                             int maxChanges, long T, long E, int kind, SupportRegion region, MovementPhysics.Voxels w) {
         evaluated++;
+        lastTruncated = false;
         sim.copyFrom(now);
         for (long t = tick; t <= T; t++) {
             if (!sim.onGround) {
@@ -338,7 +354,9 @@ public final class ApproachController {
         if (sim.onGround) {
             return -Double.MAX_VALUE; // the jump did not leave the ground (jump delay, a ceiling)
         }
+        flight.simCap = Math.max(1, HARD_CAP - simTicks);
         boolean found = flight.plan(sim, userF, userS, yaw, sprintKey, allowBack, region, w);
+        lastTruncated = flight.truncated();
         simTicks += flight.simTicks();
         if (!found) {
             return -Double.MAX_VALUE;
