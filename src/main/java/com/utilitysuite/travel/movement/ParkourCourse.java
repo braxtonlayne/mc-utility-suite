@@ -98,6 +98,31 @@ public final class ParkourCourse implements MovementPhysics.Voxels {
             new Segment("slab up", 1, 1, 0, 3, 3, 0, Landing.SLAB_BOTTOM));
 
     public static final int RUNUP = 8;
+    /** Last z cell of the run-up. */
+    private static final int RUNUP_LAST = RUNUP - 1;
+
+    /**
+     * A one-segment technique scene (design 2026-11-22, section 8): the segment plus extra full blocks in course
+     * coordinates {x0, y0, z0, x1, y1, z1} (a column beside the gap, a low ceiling over the takeoff) that make the
+     * plain jump fail and a {@link TechniqueLibrary} template land.
+     */
+    public record TechniqueCase(String name, Segment segment, List<int[]> blocks) {
+    }
+
+    /**
+     * Technique scenes, kept apart from {@link #EDGE_CASES} so existing indices and the benchmark stay unchanged
+     * (append only). The run-up ends at z = {@link #RUNUP} - 1, floor top at y = 1.
+     */
+    public static final List<TechniqueCase> TECHNIQUE_CASES = List.of(
+            new TechniqueCase("corner column onto a block",
+                    new Segment("corner column onto a block", 2, 0, 1, 1, 1),
+                    List.of(new int[]{1, 1, RUNUP_LAST + 1, 1, 2, RUNUP_LAST + 1})),
+            new TechniqueCase("headhitter, 2 gap",
+                    new Segment("headhitter, 2 gap", 2, 0, 0, 3, 5),
+                    List.of(new int[]{-1, 3, RUNUP_LAST - 1, 1, 3, RUNUP_LAST})),
+            new TechniqueCase("headhitter, 3 gap",
+                    new Segment("headhitter, 3 gap", 3, 0, 0, 3, 5),
+                    List.of(new int[]{-1, 3, RUNUP_LAST - 1, 1, 3, RUNUP_LAST})));
 
     private final List<Segment> segments;
     private final List<int[]> boxes = new ArrayList<>();
@@ -115,6 +140,11 @@ public final class ParkourCourse implements MovementPhysics.Voxels {
     private final Landing[] padLanding;
 
     public ParkourCourse(List<Segment> segments) {
+        this(segments, List.of());
+    }
+
+    /** A course plus extra full blocks (course coordinates {x0, y0, z0, x1, y1, z1}), added after the pads. */
+    public ParkourCourse(List<Segment> segments, List<int[]> extraBlocks) {
         this.segments = List.copyOf(segments);
         int n = segments.size() + 1;
         padX = new int[n];
@@ -146,7 +176,16 @@ public final class ParkourCourse implements MovementPhysics.Voxels {
                 box(x0, cy, padZ1[i] - 1, x1, cy, padZ0[p] - 1, Landing.FULL);
             }
         }
+        for (int[] b : extraBlocks) {
+            box(b[0], b[1], b[2], b[3], b[4], b[5], Landing.FULL);
+        }
         shaped = anyShape;
+    }
+
+    /** Technique case {@code i} of {@link #TECHNIQUE_CASES} as a one-segment course with its extra blocks. */
+    public static ParkourCourse techniqueCase(int i) {
+        TechniqueCase c = TECHNIQUE_CASES.get(i);
+        return new ParkourCourse(List.of(c.segment()), c.blocks());
     }
 
     public static ParkourCourse standard() {
@@ -350,6 +389,16 @@ public final class ParkourCourse implements MovementPhysics.Voxels {
 
     public int padY(int pad) {
         return padY[pad];
+    }
+
+    /** Centre cell x of a pad. */
+    public int padX(int pad) {
+        return padX[pad];
+    }
+
+    /** First z cell of a pad. */
+    public int padZ0(int pad) {
+        return padZ0[pad];
     }
 
     public Landing padLanding(int pad) {
