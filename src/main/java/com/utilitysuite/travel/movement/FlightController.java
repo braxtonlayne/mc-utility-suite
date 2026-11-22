@@ -22,6 +22,14 @@ public final class FlightController {
     private static final double TOP_EPS = 1.0e-3;
 
     private final MovementPhysics sim = new MovementPhysics();
+    /**
+     * Earliest air tick a brake may start on (0 = this tick). The approach controller sets the level's reaction delay
+     * here when it verifies a takeoff, so a plan it offers fits the per-level limits; 0 for the in-flight re-plan.
+     */
+    public int minBrakeTick;
+    /** Hard cap on the replica ticks of one {@link #plan} (the approach controller's per-tick budget); no cap by default. */
+    public int simCap = Integer.MAX_VALUE;
+    private boolean truncated;
     private int simTicks;
     private boolean found;
     private int brakeTick;
@@ -43,6 +51,7 @@ public final class FlightController {
     public boolean plan(MovementPhysics now, int f, int s, float yaw, boolean sprint, boolean allowBack,
                         SupportRegion region, MovementPhysics.Voxels w) {
         simTicks = 0;
+        truncated = false;
         found = false;
         brakeTick = -1;
         brakeForward = f;
@@ -68,10 +77,23 @@ public final class FlightController {
         // not depend on the horizontal keys, so this is the touchdown tick of every candidate that reaches the top,
         // including when the current keys overfly it (their own landing, far below, says nothing about this one).
         int n = crossAir > 0 ? crossAir : lastAir > 0 ? lastAir : HORIZON;
-        for (int oi = 0; oi < BRAKE_OFFSETS.length; oi++) {
-            int k = n - 1 - BRAKE_OFFSETS[oi]; // brake from air tick k (0 = this tick) to the touchdown
+        boolean nowTried = false;
+        for (int oi = 0; oi <= BRAKE_OFFSETS.length; oi++) {
+            // brake from air tick k (0 = this tick) to the touchdown; the extra last candidate is "brake from now",
+            // the continuation of a brake that already started (the family anchored on n only offers later brake
+            // starts once the first one has begun, which the per-tick re-plan would otherwise lose)
+            int k = oi < BRAKE_OFFSETS.length ? n - 1 - BRAKE_OFFSETS[oi] : 0;
             if (k < 0) {
-                break;
+                k = 0;
+            }
+            if (k == 0) {
+                if (nowTried) {
+                    continue;
+                }
+                nowTried = true;
+            }
+            if (k < minBrakeTick) {
+                continue; // the level's reaction delay: nothing changes this early in the flight
             }
             for (int b = 0; b <= 1; b++) {
                 int bf = b == 0 ? 0 : -1;
@@ -100,6 +122,10 @@ public final class FlightController {
         sim.copyFrom(now);
         lastAir = 0;
         for (int t = 0; t < HORIZON; t++) {
+            if (simTicks >= simCap) {
+                truncated = true; // the caller's budget is spent: this candidate (and the rest) count as not landing
+                return -Double.MAX_VALUE;
+            }
             int ff = t < keepTicks ? f : bf;
             sim.tick(ff, s, yaw, sprint && ff > 0, false, w);
             simTicks++;
@@ -108,6 +134,9 @@ public final class FlightController {
             }
             if (sim.horizontalCollision || unmodelled(sim, w)) {
                 return -Double.MAX_VALUE;
+            }
+            if (!sim.onGround && sim.vy <= 0.0 && sim.y < region.top() - TOP_EPS) {
+                return -Double.MAX_VALUE; // falling past the top's height beside it: it can never land on it now
             }
             if (sim.onGround) {
                 lastAir = t + 1;
@@ -136,6 +165,11 @@ public final class FlightController {
         byte s1 = w.surface(x, y - 1, z);
         return s0 == MovementPhysics.SURFACE_UNMODELLED || s0 == MovementPhysics.SURFACE_STUCK
                 || s1 == MovementPhysics.SURFACE_UNMODELLED || s1 == MovementPhysics.SURFACE_STUCK;
+    }
+
+    /** The last plan hit {@link #simCap} before every candidate was rolled. */
+    public boolean truncated() {
+        return truncated;
     }
 
     /** Some candidate lands on the region. */

@@ -100,6 +100,10 @@ public final class MovementAssistBrain {
     /** Region of the locked target's real top (flight plan, mark). */
     private final SupportRegion targetRegion = new SupportRegion();
     private boolean targetRegionValid;
+    /** The target block's own top only (no neighbouring tops at the same height). */
+    private final SupportRegion targetCell = new SupportRegion();
+    /** Region the flight and approach plans land on: the whole top when it is wide, else the target's own top. */
+    private SupportRegion planRegion = targetRegion;
     private boolean targetSafe;
     private boolean userSneak;
     private boolean externalAbort;
@@ -167,6 +171,17 @@ public final class MovementAssistBrain {
         coSteer = false;
         commitSimTicks = 0;
         trackJump(now);
+        updateFreeze(now, commit.phase());
+        // the user means to sprint: sprinting, or was sprinting until the assist's own eased tick / withheld sprint
+        // (vanilla ends the sprint on a tick without forward; with the sprint key held it comes back with W)
+        if (sprinting) {
+            sprintIntent = true;
+            sprintGap = 0;
+        } else if (userForward <= 0 || !(approach.engaged() || commit.live() || scriptOn)
+                || ++sprintGap > SPRINT_INTENT_TICKS) {
+            sprintIntent = false; // a sprint that stays off longer than any eased or walking run-up was let go
+        }
+        boolean sprintKey = sprinting || sprintIntent;
         int keys = LandingHold.keys(userForward, userStrafe, userJump);
         // landing hold first (every mode): the latch decides which of the user's keys count this tick
         updateHold(now, yaw, sprinting, userForward, userStrafe, keys, health, w);
@@ -214,15 +229,39 @@ public final class MovementAssistBrain {
             hasIdealYaw = false;
             missNow = 0.0;
         }
-        if (now.onGround) {
+        // approach and takeoff control: ARMED on the ground with a locked, safe target (GUIDE / CARRY only)
+        boolean armed = mode != JumpCommit.Mode.NUDGE && now.onGround && commit.phase() == JumpCommit.Phase.ARMED
+                && targetOn && targetRegionValid && targetSafe && userForward > 0 && hold.latched() == 0;
+        if (armed && approachControl) {
+            int edge = approach.engaged() ? -1
+                    : search.ticksToEdge(now, userForward, userStrafe, yaw, sprintKey, ApproachController.WINDOW_TICKS,
+                    w);
+            // SafeWalk: the assist's own takeoff only onto a top it reaches without fall damage
+            boolean assistMayJump = edgeJump && (!safeOnly || planRegion.top() >= now.y - SAFE_DROP);
+            approach.update(now, yaw, sprintKey, userForward, userStrafe, userJump, assistMayJump,
+                    mode == JumpCommit.Mode.CARRY, sprintWithholdAvailable, commit.reactionTicks,
+                    commit.maxKeyChanges, edge, planRegion, w);
+            commitSimTicks += approach.simTicks();
+        } else {
+            approach.reset();
+        }
+        updateScript(now, yaw, sprintKey, userForward, userStrafe, armed, health, w);
+        if (scriptOn) {
+            replayScript(now, sprinting, sprintKey, userForward, userStrafe, health, w);
+        } else if (now.onGround) {
             decideGround(now, yaw, sprinting, userForward, userStrafe, jumpIn, health, w);
             lastPlanLands = planOnGround;
             lastPlanForward = KEEP;
             releaseEdgeGuard(now, yaw, sprinting, rawForward, rawStrafe, keys, w);
         } else if (mode != JumpCommit.Mode.NUDGE && commit.driving()) {
-            decideAirCommitted(now, yaw, sprinting, userForward, userStrafe, health, w);
+            decideAirCommitted(now, yaw, sprintKey, userForward, userStrafe, health, w);
         } else {
             decideAir(now, yaw, sprinting, userForward, userStrafe, health, w);
+        }
+        // co-steer while ARMED: the ideal takeoff yaw (the sprint-jump boost goes along the yaw of the takeoff tick)
+        if (coSteerAllowed && !coSteer && armed && hasIdealYaw) {
+            coSteer = true;
+            coSteerYaw = naturalYaw(idealYaw, now, yaw);
         }
         // the latch outranks every fill: a key held through the flight never moves the body off a narrow top
         if (hold.latched() != 0) {
@@ -270,11 +309,12 @@ public final class MovementAssistBrain {
         if ((keys & LandingHold.JUMP) != 0) {
             return true;
         }
-        if (!intentActive()) {
+        // where the user is looking now: the estimator's latest pick, not the target frozen for the commitment
+        if (!intentAssist || !rawSet || rawConfidence < IntentEstimator.MIN_CONFIDENCE) {
             return false;
         }
-        double dx = itx + 0.5 - at.x;
-        double dz = itz + 0.5 - at.z;
+        double dx = rtx + 0.5 - at.x;
+        double dz = rtz + 0.5 - at.z;
         return dx * dx + dz * dz > CONTINUE_MIN_DIST * CONTINUE_MIN_DIST;
     }
 
@@ -425,7 +465,14 @@ public final class MovementAssistBrain {
             targetSafe = false;
             return;
         }
+        // the target block's own top: a narrow target level with the run-up (a pane beside the platform) must not count
+        // a landing back on the platform as a landing on the target
+        targetCell.clear();
+        targetCell.setTop(top);
+        targetCell.addTopBox(targetRegion.cellTopBound(0), targetRegion.cellTopBound(1),
+                targetRegion.cellTopBound(2), targetRegion.cellTopBound(3));
         targetRegionValid = targetRegion.build(w, itx + 0.5, top, itz + 0.5);
+        planRegion = targetRegionValid && targetRegion.wide(itx + 0.5, itz + 0.5) ? targetRegion : targetCell;
         if (targetRegionValid) {
             search.setTargetTop(top, targetRegion.cellTopBound(0), targetRegion.cellTopBound(1),
                     targetRegion.cellTopBound(2),
@@ -448,7 +495,7 @@ public final class MovementAssistBrain {
         boolean lands = false;
         if (airSteer && targetRegionValid) {
             boolean allowBack = mode == JumpCommit.Mode.CARRY || userForward == 0;
-            if (flight.plan(now, userForward, userStrafe, yaw, sprinting, allowBack, targetRegion, w)) {
+            if (flight.plan(now, userForward, userStrafe, yaw, sprinting, allowBack, planRegion, w)) {
                 lands = true;
                 boolean alreadyFine = flight.userLands() && flight.userMargin() >= SupportRegion.STABLE_MARGIN;
                 if (!(mode == JumpCommit.Mode.GUIDE && alreadyFine) && flight.brakeNow()) {
@@ -469,6 +516,14 @@ public final class MovementAssistBrain {
         }
         lastPlanLands = lands || myMiss <= 0.0;
         lastPlanForward = planF == KEEP ? userForward : planF;
+        // co-steer from the flight plan: toward the target's centre when the keys at this yaw do not land it
+        if (coSteerAllowed && targetRegionValid && !(flight.found() && flight.userLands())) {
+            double dx = itx + 0.5 - now.x;
+            double dz = itz + 0.5 - now.z;
+            float aim = yaw + wrap((float) Math.toDegrees(Math.atan2(-dx, dz)) - yaw);
+            coSteer = true;
+            coSteerYaw = naturalYaw(aim, now, yaw);
+        }
         int f = commit.resolveAxis(0, userForward, planF);
         int s = commit.resolveAxis(1, userStrafe, planS);
         commit.limit(f, s, userForward, userStrafe);
@@ -537,6 +592,18 @@ public final class MovementAssistBrain {
 
     private void decideGround(MovementPhysics now, float yaw, boolean sprinting, int userForward, int userStrafe,
                               boolean jumpIn, float health, MovementPhysics.Voxels w) {
+        if (approach.owns()) {
+            // the approach controller owns the takeoff: its jump tick, its eased / walking run-up, nothing else
+            jump = approach.jump();
+            withholdJump = approach.withholdJump();
+            forward = approach.forward();
+            sprintOff = approach.sprintOff() && sprintWithholdAvailable;
+            corrected = forward != KEEP || sprintOff || withholdJump
+                    || (jump && approach.planCost() != 0);
+            capture(search.evaluate(now, Math.max(forward == KEEP ? userForward : forward, 0), userStrafe, yaw,
+                    sprinting && !sprintOff, true, health, w));
+            return;
+        }
         shapeTakeoff(now, yaw, sprinting, userForward, userStrafe, jumpIn, health, w);
         if (shaped) {
             jump = shaper.jumpNow(); // the shape takes off on its own last supported tick
@@ -678,21 +745,99 @@ public final class MovementAssistBrain {
      * {@link IntentEstimator#MIN_CONFIDENCE} it is ignored.
      */
     public void setIntentTarget(int x, int y, int z, double confidence) {
-        if (!intentSet || x != itx || y != ity || z != itz) {
-            idealValid = false;
-            yawCursor = 0;
+        rawSet = true;
+        rtx = x;
+        rty = y;
+        rtz = z;
+        rawConfidence = confidence;
+        if (!targetFrozen) {
+            lockFromRaw();
         }
-        intentSet = true;
-        itx = x;
-        ity = y;
-        itz = z;
-        intentConfidence = confidence;
     }
 
     public void clearIntentTarget() {
-        intentSet = false;
-        idealValid = false;
-        hasIdealYaw = false;
+        rawSet = false;
+        if (!targetFrozen) {
+            lockFromRaw();
+        }
+    }
+
+    // raw intent (the estimator's latest pick; where the user is looking) vs the locked target the plans use
+    private boolean rawSet;
+    private int rtx, rty, rtz;
+    private double rawConfidence;
+    /** From TAKEOFF until the commitment ends the locked target ignores the estimator (design 9.6). */
+    private boolean targetFrozen;
+    private boolean trimUsed;
+
+    private void lockFromRaw() {
+        if (!rawSet) {
+            if (intentSet) {
+                intentSet = false;
+                idealValid = false;
+                hasIdealYaw = false;
+                targetChanged();
+            }
+            return;
+        }
+        if (!intentSet || rtx != itx || rty != ity || rtz != itz) {
+            idealValid = false;
+            yawCursor = 0;
+            targetChanged();
+        }
+        intentSet = true;
+        itx = rtx;
+        ity = rty;
+        itz = rtz;
+        intentConfidence = rawConfidence;
+    }
+
+    private void targetChanged() {
+        approach.reset();
+        techniques.reset();
+        scriptOn = false;
+    }
+
+    /**
+     * Target freeze (design 9.6): from TAKEOFF until the commitment ends (SETTLE included, RELEASE not, so the next
+     * jump's target is free during the hand-back) the locked target ignores the estimator, except one trim before the
+     * apex when the user's look sweeps to another top (or forward is released and the estimator picks a nearer one).
+     */
+    private void updateFreeze(MovementPhysics now, JumpCommit.Phase before) {
+        boolean frozen = mode != JumpCommit.Mode.NUDGE && intentSet
+                && (before == JumpCommit.Phase.TAKEOFF || before == JumpCommit.Phase.FLIGHT
+                || before == JumpCommit.Phase.TOUCHDOWN || before == JumpCommit.Phase.SETTLE
+                || before == JumpCommit.Phase.CHAIN || (before == JumpCommit.Phase.ARMED && tookOff));
+        if (!frozen) {
+            targetFrozen = false;
+            trimUsed = false;
+            lockFromRaw();
+            return;
+        }
+        targetFrozen = true;
+        if (!trimUsed && rawSet && rawConfidence >= IntentEstimator.MIN_CONFIDENCE && !now.onGround && now.vy > 0.0
+                && (rtx != itx || rty != ity || rtz != itz)) {
+            trimUsed = true; // the one trim of this flight
+            lockFromRaw();
+        }
+    }
+
+    /** The locked target is frozen for the running commitment. */
+    public boolean targetFrozen() {
+        return targetFrozen;
+    }
+
+    /** The locked target block (the one the plans use; valid while {@link #intentActive()}). */
+    public int targetX() {
+        return itx;
+    }
+
+    public int targetY() {
+        return ity;
+    }
+
+    public int targetZ() {
+        return itz;
     }
 
     /** A target is set, confident enough, and "Follow my intent" is on. */
@@ -787,7 +932,12 @@ public final class MovementAssistBrain {
 
     /** Forget jump history (world change, teleport). */
     public void reset() {
+        targetFrozen = false;
+        trimUsed = false;
         clearIntentTarget();
+        approach.reset();
+        scriptOn = false;
+        sprintIntent = false;
         budget.reset();
         jumpBuffer.reset();
         hold.reset();
@@ -871,6 +1021,135 @@ public final class MovementAssistBrain {
      */
     public boolean sprint() {
         return sprint;
+    }
+
+    // ---- approach control, technique scripts, co-steer clamp ----------------------------------------------------------
+
+    /** Approach and takeoff control in GUIDE and CARRY ({@link ApproachController}); on by default. */
+    public boolean approachControl = true;
+    private final ApproachController approach = new ApproachController();
+    private boolean sprintIntent;
+    private int sprintGap;
+    /** Ticks a sprint may stay off and still count as meant (the longest walking run-up plus the takeoff tick). */
+    static final int SPRINT_INTENT_TICKS = 10;
+    /** A drop (blocks) a jump can take without fall damage, with room to spare (damage starts past 3). */
+    static final double SAFE_DROP = 2.5;
+    /** NATURAL look style: a co-steer ideal stays within this many degrees of the horizontal velocity direction. */
+    public static final float NATURAL_CLAMP_DEG = 30f;
+    /** FREE look style lifts the NATURAL clamp (the module sets it from the look-style setting; NATURAL by default). */
+    public boolean freeLook;
+
+    private final FlightScript script = new FlightScript();
+    private boolean scriptOn;
+    private int scriptIndex;
+
+    public ApproachController approach() {
+        return approach;
+    }
+
+    /** A technique script is being replayed. */
+    public boolean scriptActive() {
+        return scriptOn;
+    }
+
+    /** The script being replayed (valid while {@link #scriptActive()}). */
+    public FlightScript activeScript() {
+        return script;
+    }
+
+    /** Index of the script tick the last decision applied (-1 when none). */
+    public int scriptIndex() {
+        return scriptOn ? scriptIndex - 1 : -1;
+    }
+
+    /**
+     * Drops a script that no longer holds (W released, an override, off its predicted line, ended, the commitment
+     * gone) and asks the technique source for one when ARMED with a locked, safe target and neither the user's plan
+     * nor the approach family lands. The source's replica ticks count into the commitment budget.
+     */
+    private void updateScript(MovementPhysics now, float yaw, boolean sprintKey, int userForward, int userStrafe,
+                              boolean armed, float health, MovementPhysics.Voxels w) {
+        if (scriptOn) {
+            JumpCommit.Phase ph = commit.phase();
+            boolean phaseOk = ph == JumpCommit.Phase.ARMED || ph == JumpCommit.Phase.TAKEOFF
+                    || ph == JumpCommit.Phase.FLIGHT;
+            if (userForward <= 0 || !phaseOk || commit.overrideThisTick() || scriptIndex >= script.length
+                    || (scriptIndex > 0 && !script.onLine(scriptIndex - 1, now.x, now.y, now.z))
+                    || (script.usesYaw && !coSteerAllowed)) {
+                scriptOn = false;
+            }
+        }
+        if (scriptOn || !armed || !approach.exhausted()
+                || commitSimTicks + TechniqueSource.MAX_SIM_TICKS_PER_CALL > MAX_COMMIT_SIM_TICKS) {
+            return;
+        }
+        boolean got = techniques.plan(now, yaw, sprintKey, userForward, userStrafe, planRegion, coSteerAllowed,
+                coSteerMaxDegPerTick, safeOnly, holdHealth, w);
+        commitSimTicks += techniques.lastSimTicks();
+        if (got) {
+            FlightScript s = techniques.script();
+            if (!s.isEmpty() && (!s.usesYaw || coSteerAllowed)) {
+                script.copyFrom(s);
+                scriptOn = true;
+                scriptIndex = 0;
+            }
+        }
+    }
+
+    /** One tick of the replayed script: its keys (in the air under the commitment's rules), sprint, jump and yaw. */
+    private void replayScript(MovementPhysics now, boolean sprinting, boolean sprintKey, int userForward,
+                              int userStrafe, float health, MovementPhysics.Voxels w) {
+        int i = scriptIndex++;
+        int sf = script.forward[i];
+        int ss = script.strafe[i];
+        if (now.onGround) {
+            forward = sf == userForward ? KEEP : sf;
+            strafe = ss == userStrafe ? KEEP : ss;
+            jump = script.jump[i];
+        } else {
+            int f = commit.resolveAxis(0, userForward, sf == userForward ? KEEP : sf);
+            int s = commit.resolveAxis(1, userStrafe, ss == userStrafe ? KEEP : ss);
+            commit.limit(f, s, userForward, userStrafe);
+            forward = commit.limitedForward();
+            strafe = commit.limitedStrafe();
+        }
+        boolean wantSprint = script.sprint[i];
+        if (!wantSprint && sprintKey && sf > 0 && sprintWithholdAvailable) {
+            sprintOff = true;
+        } else if (wantSprint && !sprinting && sprintFillAllowed) {
+            sprint = true;
+        }
+        if (script.usesYaw && coSteerAllowed) {
+            coSteer = true;
+            coSteerYaw = script.yaw[i];
+        }
+        corrected = true;
+        lastPlanLands = true; // a verified script: the commitment holds while the body stays on its line
+        lastPlanForward = sf;
+        int af = forward == KEEP ? userForward : forward;
+        int as = strafe == KEEP ? userStrafe : strafe;
+        capture(search.evaluate(now, Math.max(af, 0), as, script.yaw[i], sprintKey, now.onGround, health, w));
+    }
+
+    /**
+     * NATURAL look style (design 6.2): the ideal yaw is clamped to within {@link #NATURAL_CLAMP_DEG} of the horizontal
+     * velocity direction (the camera yaw when the body is nearly still), expressed as the same turn as the camera's.
+     */
+    float naturalYaw(float ideal, MovementPhysics now, float yaw) {
+        float out = yaw + wrap(ideal - yaw);
+        if (freeLook) {
+            return out;
+        }
+        double h2 = now.vx * now.vx + now.vz * now.vz;
+        float ref = h2 > 1.0e-4 ? (float) Math.toDegrees(Math.atan2(-now.vx, now.vz)) : yaw;
+        ref = yaw + wrap(ref - yaw);
+        float d = wrap(out - ref);
+        if (d > NATURAL_CLAMP_DEG) {
+            d = NATURAL_CLAMP_DEG;
+        } else if (d < -NATURAL_CLAMP_DEG) {
+            d = -NATURAL_CLAMP_DEG;
+        }
+        return ref + d;
     }
 
     // ---- seams between the brain and the module (contracts of the 2026-11-22 control-model volley) -----------------
