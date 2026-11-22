@@ -118,6 +118,82 @@ class TacticsPlannerTest {
         assertEquals(StrafePlanner.NONE, t.side());
     }
 
+    /** Lava pool east of the target (field knock direction +x): the player must end up west of it. */
+    private static CombatSnapshot lava(double dx) {
+        CombatSnapshot s = snap(dx);
+        s.knockValue = 0.8;
+        s.knockFieldX = 1;
+        s.knockFieldZ = 0;
+        s.knockKind = com.utilitysuite.combat.tactics.ArenaField.KNOCK_LAVA;
+        return s;
+    }
+
+    @Test
+    void knockVectorSprintsInWhenAlignedAndCirclesOtherwise() {
+        TacticsPlanner t = new TacticsPlanner();
+        CombatSnapshot s = lava(3); // player already west of the target: aligned
+        assertEquals(Tactic.KNOCK_VECTOR, t.plan(s, true, true));
+        assertEquals(StrafePlanner.NONE, t.side());
+        assertEquals(SpacingController.FORWARD, t.forward());
+        assertTrue(t.sprint());
+        // player north of the target (z -3): wanted west. Atan2 angle -90 -> 180: error -90 -> RIGHT? check sign
+        s.px = 3;
+        s.pz = -3;
+        t.plan(s, true, true);
+        // have = atan2(-3, 0) = -90, want = atan2(0, -1) = 180 -> d = 270 -> -90 -> RIGHT (clockwise)
+        assertEquals(StrafePlanner.RIGHT, t.side());
+        assertFalse(t.sprint());
+        // player south of the target: mirrored
+        s.pz = 3;
+        t.plan(s, true, true);
+        assertEquals(StrafePlanner.LEFT, t.side());
+    }
+
+    @Test
+    void knockVectorNeedsValueAndSwitch() {
+        TacticsPlanner t = new TacticsPlanner();
+        CombatSnapshot s = lava(3);
+        s.knockValue = 0.2;
+        assertEquals(Tactic.NONE, t.plan(s, true, true));
+        s.knockValue = 0.8;
+        assertEquals(Tactic.NONE, t.plan(s, true, false));
+    }
+
+    @Test
+    void knockVectorAgainstAWallPinsWithoutSprinting() {
+        TacticsPlanner t = new TacticsPlanner();
+        CombatSnapshot s = lava(5);
+        s.knockKind = com.utilitysuite.combat.tactics.ArenaField.KNOCK_WALL;
+        assertEquals(Tactic.KNOCK_VECTOR, t.plan(s, true, true));
+        assertFalse(t.sprint());
+        assertEquals(SpacingController.FORWARD, t.forward(), "closes to normal spacing");
+        s = lava(2.5);
+        s.knockKind = com.utilitysuite.combat.tactics.ArenaField.KNOCK_WALL;
+        t.plan(s, true, true);
+        assertEquals(SpacingController.HOLD, t.forward());
+        assertFalse(t.sprint());
+    }
+
+    @Test
+    void edgeKnockKeepsPriorityOverKnockVector() {
+        TacticsPlanner t = new TacticsPlanner();
+        CombatSnapshot s = lava(3);
+        s.knockDepth = 10;
+        s.knockX = 0;
+        s.knockZ = -1;
+        assertEquals(Tactic.EDGE_KNOCK, t.plan(s, true, true));
+        assertEquals(StrafePlanner.RIGHT, t.side(), "uses knockX/knockZ, not the field vector");
+    }
+
+    @Test
+    void knockVectorPlanningAllocatesNothing() {
+        Assumptions.assumeTrue(AllocationProbe.supported());
+        TacticsPlanner t = new TacticsPlanner();
+        CombatSnapshot s = lava(3);
+        long bytes = AllocationProbe.measure(100_000, () -> t.plan(s, true, true));
+        assertTrue(bytes < 1_024, "plan allocated " + bytes + " bytes");
+    }
+
     @Test
     void planningAllocatesNothing() {
         Assumptions.assumeTrue(AllocationProbe.supported());

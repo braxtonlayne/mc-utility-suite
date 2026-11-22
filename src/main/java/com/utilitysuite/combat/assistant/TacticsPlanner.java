@@ -1,5 +1,7 @@
 package com.utilitysuite.combat.assistant;
 
+import com.utilitysuite.combat.tactics.ArenaField;
+
 /**
  * Player-style terrain tactics on top of the normal spacing/strafe/swing loop. Pure and allocation free; reads the
  * terrain probes of a {@link CombatSnapshot}.
@@ -23,8 +25,9 @@ public final class TacticsPlanner {
         NONE, HOLD_GAP, EDGE_KNOCK,
         /**
          * Knockback vectoring from the arena read ({@link CombatSnapshot#knockValue}): approach from the side that
-         * sends the target toward lava, a drop, a cobweb or a wall. Not planned yet (contract stub; the arena-tactics
-         * task fills it in).
+         * sends the target toward lava, a drop, a cobweb or a wall. Generalises {@link #EDGE_KNOCK} (which keeps
+         * priority): used when edge knock is on, the old probe found nothing and the arena read scores at least
+         * {@link #KNOCK_VECTOR_MIN_VALUE}.
          */
         KNOCK_VECTOR
     }
@@ -38,6 +41,8 @@ public final class TacticsPlanner {
     public static final double EDGE_STANDOFF_MAX = 1.3;
     /** Edge knock: on the right side when the bearing error is below this. */
     public static final double KNOCK_ALIGNED_DEG = 25.0;
+    /** Minimum {@link CombatSnapshot#knockValue} that is worth circling for. */
+    public static final double KNOCK_VECTOR_MIN_VALUE = 0.35;
     /** Minimum attack charge for a forced swing (a weaker hit still knocks back, but this keeps it human). */
     public static final float FORCED_SWING_CHARGE = 0.6f;
 
@@ -74,22 +79,35 @@ public final class TacticsPlanner {
         }
         if (edgeKnock && s.knockDepth >= GAP_DEPTH) {
             tactic = Tactic.EDGE_KNOCK;
-            double err = bearingErrorDeg(s);
-            if (Math.abs(err) > KNOCK_ALIGNED_DEG) {
-                // LEFT turns the player counter-clockwise around the target (see bearingErrorDeg)
-                int want = err > 0 ? StrafePlanner.LEFT : StrafePlanner.RIGHT;
-                boolean blocked = want == StrafePlanner.LEFT ? s.hazardLeft : s.hazardRight;
-                side = blocked ? StrafePlanner.NONE : want;
-                // keep a little distance while circling so the target does not get free hits
-                forward = dist < 2.2 && !s.hazardBack ? SpacingController.BACK
-                        : (dist > 3.4 && !s.hazardFront ? SpacingController.FORWARD : SpacingController.HOLD);
-            } else if (!s.hazardFront) {
-                // lined up: close in sprinting so the swing is a sprint hit toward the drop
-                forward = s.inReach() && dist < 2.0 ? SpacingController.HOLD : SpacingController.FORWARD;
-                sprint = forward == SpacingController.FORWARD;
-            }
+            circleAndCloseIn(s, s.knockX, s.knockZ, dist, true);
+        } else if (edgeKnock && s.knockValue >= KNOCK_VECTOR_MIN_VALUE) {
+            tactic = Tactic.KNOCK_VECTOR;
+            // a wall cannot be knocked into: keep the aligned side at normal spacing, no harder sprint-in
+            circleAndCloseIn(s, s.knockFieldX, s.knockFieldZ, dist, s.knockKind != ArenaField.KNOCK_WALL);
         }
         return tactic;
+    }
+
+    /** Circles to the side opposite the knock direction (kx, kz), then closes in (sprinting when {@code sprintIn}). */
+    private void circleAndCloseIn(CombatSnapshot s, double kx, double kz, double dist, boolean sprintIn) {
+        double err = bearingErrorDeg(s, kx, kz);
+        if (Math.abs(err) > KNOCK_ALIGNED_DEG) {
+            // LEFT turns the player counter-clockwise around the target (see bearingErrorDeg)
+            int want = err > 0 ? StrafePlanner.LEFT : StrafePlanner.RIGHT;
+            boolean blocked = want == StrafePlanner.LEFT ? s.hazardLeft : s.hazardRight;
+            side = blocked ? StrafePlanner.NONE : want;
+            // keep a little distance while circling so the target does not get free hits
+            forward = dist < 2.2 && !s.hazardBack ? SpacingController.BACK
+                    : (dist > 3.4 && !s.hazardFront ? SpacingController.FORWARD : SpacingController.HOLD);
+        } else if (!s.hazardFront) {
+            if (sprintIn) {
+                // lined up: close in sprinting so the swing is a sprint hit toward the hazard
+                forward = s.inReach() && dist < 2.0 ? SpacingController.HOLD : SpacingController.FORWARD;
+                sprint = forward == SpacingController.FORWARD;
+            } else {
+                forward = dist > 2.8 ? SpacingController.FORWARD : SpacingController.HOLD;
+            }
+        }
     }
 
     /**
@@ -98,10 +116,14 @@ public final class TacticsPlanner {
      * the target increases it (Minecraft's left of a forward vector (fx, fz) is (fz, -fx)).
      */
     static double bearingErrorDeg(CombatSnapshot s) {
+        return bearingErrorDeg(s, s.knockX, s.knockZ);
+    }
+
+    static double bearingErrorDeg(CombatSnapshot s, double kx, double kz) {
         double rx = s.px - s.tx;
         double rz = s.pz - s.tz;
         double have = Math.toDegrees(Math.atan2(rz, rx));
-        double want = Math.toDegrees(Math.atan2(-s.knockZ, -s.knockX));
+        double want = Math.toDegrees(Math.atan2(-kz, -kx));
         double d = (want - have) % 360.0;
         if (d > 180.0) {
             d -= 360.0;
