@@ -68,10 +68,23 @@ final class ParkourBlocks {
     private int placed;
     private int plans;
     private int aborted;
+    /** Last placement attempt (diagnostics): primitives only on the tick, formatted by {@link #lastNote()} on demand. */
+    private InteractionResult lastResult;
+    private long lastCell;
+    private double lastEyeDist;
+    private double lastBodyY;
 
     void setNaturalLook(boolean natural) {
         naturalLook = natural;
         planner.headingWeight = natural ? BlockAssistPlanner.NATURAL_HEADING_WEIGHT : 0.0;
+    }
+
+    String lastNote() {
+        if (lastResult == null) {
+            return "none";
+        }
+        return String.format("%s into %d,%d,%d, eye distance %.2f, body y %.2f", lastResult, Packed.x(lastCell),
+                Packed.y(lastCell), Packed.z(lastCell), lastEyeDist, lastBodyY);
     }
 
     boolean active() {
@@ -169,6 +182,10 @@ final class ParkourBlocks {
             p.swing(InteractionHand.MAIN_HAND);
             placed++;
         }
+        lastResult = r;
+        lastCell = cell;
+        lastEyeDist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        lastBodyY = p.getY();
         startReturn();
     }
 

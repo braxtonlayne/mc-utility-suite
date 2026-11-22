@@ -174,7 +174,7 @@ final class ParkourScenario {
     /**
      * Parkour blocks. {@code wall}: a 2-high wall across the lane at z+9; the runner sprints at it and holds jump
      * from two blocks out (a player trying to get over). Otherwise a 5-air gap (z+11..z+15, one block more than a
-     * perfect last-tick sprint jump clears) and the runner holds only forward + sprint. Either way the run must end past the obstacle
+     * perfect last-tick sprint jump clears) and the runner holds forward + sprint and presses jump at the edge. Either way the run must end past the obstacle
      * with a block placed.
      */
     private static void blockLane(Scenario s, ControlLease[] lease, String name, int dx, boolean wall,
@@ -206,11 +206,27 @@ final class ParkourScenario {
             Services.input().setKeyHeld(lease[0], SimKey.SPRINT, true);
         });
         double goalZ = wall ? 10.5 : 16.5;
+        StringBuilder takeoffs = new StringBuilder();
+        boolean[] wasGround = {true};
         s.waitUpTo(name + ": run", 20 * 10, () -> {
             var p = H.p();
             double z = p.getZ() - Arena.cz - OZ;
             minY[0] = Math.min(minY[0], p.getY());
+            if (wasGround[0] && !p.onGround() && takeoffs.length() < 300) {
+                takeoffs.append(Harness.fmt(" z%.2f/y%.2f/vz%.3f/%s", z, p.getY() - Arena.FLOOR, p.getDeltaMovement().z,
+                        TravelBootstrap.movement().status()));
+            }
+            if (!wall && p.onGround() && z > 9.5 && takeoffs.length() < 600) {
+                takeoffs.append(Harness.fmt(" g[z%.2f spr %s fwd %.2f jump %s]", z, p.isSprinting(), p.input.forwardImpulse,
+                        p.input.jumping));
+            }
+            wasGround[0] = p.onGround();
             if (wall && z >= 7.0) {
+                Services.input().setKeyHeld(lease[0], SimKey.JUMP, true);
+            } else if (!wall && p.onGround() && z + p.getDeltaMovement().z >= 11.3) {
+                // a player trying to cross presses jump on the last supported tick (the next one would be past the
+                // edge's support, z 11 + half the body width); a gap no jump clears gets no edge jump of its own (the
+                // assist does not leap into a pit), so without this press the body just walks off
                 Services.input().setKeyHeld(lease[0], SimKey.JUMP, true);
             }
             if (!shot[0] && TravelBootstrap.movement().blocksPlaced() > before[0]) {
@@ -233,7 +249,7 @@ final class ParkourScenario {
                     z > goalZ && p.getY() >= Arena.FLOOR + 0.99 && ma.blocksPlaced() > before[0],
                     Harness.fmt("z=+%.2f (goal +%.1f) y=%.2f min y %.2f; blocks placed %d, plans %d, aborts %d", z,
                             goalZ, p.getY(), minY[0], ma.blocksPlaced() - before[0], ma.blockPlans(),
-                            ma.blockAborts()));
+                            ma.blockAborts()) + "; last placement: " + ma.blockNote() + "; takeoffs:" + takeoffs);
         });
     }
 

@@ -1262,6 +1262,11 @@ public final class MovementAssist implements IModule, IConfigurable {
         return blocks.plans();
     }
 
+    /** Outcome of the last Parkour-blocks placement attempt (diagnostics). */
+    public String blockNote() {
+        return blocks.lastNote();
+    }
+
     public int blockAborts() {
         return blocks.aborted();
     }
