@@ -81,6 +81,7 @@ public final class CombatBootstrap {
         CombatEventBridge.install(assistant);
         AllyPickHandler pick = new AllyPickHandler(allies);
         FightCoachHud hud = new FightCoachHud(coach);
+        hud.useThreats(threats); // threats are published as screen marks instead of the old arrow
 
         modBus.addListener(CombatEventBridge::onRegisterKeys);
         modBus.addListener(RegisterGuiLayersEvent.class, event -> event.registerAbove(VanillaGuiLayers.CROSSHAIR,

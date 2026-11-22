@@ -27,6 +27,7 @@ import com.utilitysuite.ui.SettingsAccess;
 import com.utilitysuite.ui.SettingsRenderer;
 import com.utilitysuite.ui.SuiteHud;
 import com.utilitysuite.ui.TimelineScreen;
+import com.utilitysuite.ui.holo.VisualSettings;
 import com.utilitysuite.ui.kit.CardNode;
 import com.utilitysuite.ui.kit.PillButton;
 import com.utilitysuite.ui.kit.UiRenderUtils;
@@ -108,6 +109,7 @@ public final class ToolsTab {
         }
         p.section("Suite");
         Services.modules().byId(SuiteHud.ID).ifPresent(m -> SettingsRenderer.module(p, m));
+        Services.modules().byId(VisualSettings.ID).ifPresent(m -> SettingsRenderer.module(p, m, false));
         profiles(p);
         hotkeys(p);
         coreSettings(p);

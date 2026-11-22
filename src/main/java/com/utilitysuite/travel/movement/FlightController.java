@@ -53,6 +53,7 @@ public final class FlightController {
             return false;
         }
         // the current keys held to the landing: n and the reference
+        crossAir = 0;
         double m = roll(now, f, s, yaw, sprint, HORIZON, f, region, w);
         airTicks = lastAir;
         if (m > -Double.MAX_VALUE) {
@@ -63,7 +64,10 @@ public final class FlightController {
             brakeTick = -1;
             brakeForward = f;
         }
-        int n = lastAir > 0 ? lastAir : HORIZON;
+        // Anchor the brake family on the tick the body comes down through the top's height. Air time to a height does
+        // not depend on the horizontal keys, so this is the touchdown tick of every candidate that reaches the top,
+        // including when the current keys overfly it (their own landing, far below, says nothing about this one).
+        int n = crossAir > 0 ? crossAir : lastAir > 0 ? lastAir : HORIZON;
         for (int oi = 0; oi < BRAKE_OFFSETS.length; oi++) {
             int k = n - 1 - BRAKE_OFFSETS[oi]; // brake from air tick k (0 = this tick) to the touchdown
             if (k < 0) {
@@ -87,6 +91,8 @@ public final class FlightController {
     }
 
     private int lastAir;
+    /** Air ticks until the reference roll first descends to the region's top height (0 = never within the horizon). */
+    private int crossAir;
 
     /** Keys (f, s) for {@code keepTicks} ticks, then (bf, s); margin of the no-key stop point, or -MAX when it fails. */
     private double roll(MovementPhysics now, int f, int s, float yaw, boolean sprint, int keepTicks, int bf,
@@ -97,6 +103,9 @@ public final class FlightController {
             int ff = t < keepTicks ? f : bf;
             sim.tick(ff, s, yaw, sprint && ff > 0, false, w);
             simTicks++;
+            if (crossAir == 0 && sim.vy <= 0.0 && sim.y <= region.top() + TOP_EPS) {
+                crossAir = t + 1;
+            }
             if (sim.horizontalCollision || unmodelled(sim, w)) {
                 return -Double.MAX_VALUE;
             }

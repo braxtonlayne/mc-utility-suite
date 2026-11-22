@@ -515,6 +515,8 @@ public final class MovementAssist implements IModule, IConfigurable {
         Vec3 v = p.getDeltaMovement();
         double attr = p.getAttributeValue(Attributes.MOVEMENT_SPEED);
         now.set(p.getX(), p.getY(), p.getZ(), v.x, v.y, v.z, p.onGround());
+        now.crouching = p.isCrouching(); // set() keeps the shape-path state: mirror the real body
+        now.sprinting = p.isSprinting();
         now.speed = p.isSprinting() ? attr / 1.3 : attr; // the attribute already carries the sprint modifier
         now.jumpBoost = p.getJumpBoostPower();
         now.fallDistance = p.fallDistance;

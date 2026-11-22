@@ -82,6 +82,7 @@ public final class SuiteHud implements IModule, IConfigurable, LayeredDraw.Layer
     private int ticks;
     private boolean pollNow;
     private IAutopilot.Reflex lastReflex;
+    private String lastParkour;
 
     // info strip sampling
     private final InfoStripText.TpsEstimator tpsEstimator = new InfoStripText.TpsEstimator(3_000_000_000L);
@@ -151,6 +152,13 @@ public final class SuiteHud implements IModule, IConfigurable, LayeredDraw.Layer
             lastReflex = reflex;
             pollNow = true;
         }
+        // a parkour commitment or landing hold is just as short-lived: one constant string, compared by reference
+        com.utilitysuite.travel.movement.MovementAssist assist = com.utilitysuite.travel.TravelBootstrap.movement();
+        String parkour = assist == null ? null : assist.parkourStatus();
+        if (parkour != lastParkour) {
+            lastParkour = parkour;
+            pollNow = true;
+        }
         if (!pollNow && ++ticks % POLL_TICKS != 0) {
             return;
         }
@@ -161,6 +169,10 @@ public final class SuiteHud implements IModule, IConfigurable, LayeredDraw.Layer
         if (reflex != null) {
             // what is acting right now outranks the job line; one line only
             line.updateAutopilot(ReflexChips.statusLine(reflex));
+            return;
+        }
+        if (parkour != null) {
+            line.updateAutopilot(parkour); // constant strings (MovementAssist.STATUS_*)
             return;
         }
         IGoalEngine goals = Services.goalsOrNull();

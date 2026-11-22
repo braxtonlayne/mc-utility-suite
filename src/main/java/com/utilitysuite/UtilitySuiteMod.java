@@ -41,6 +41,7 @@ public final class UtilitySuiteMod {
         CombatBootstrap.init(modBus);     // combat assistant, ally roster, fight coach
         ToolsBootstrap.init(modBus);      // smart inventory, packet lab, local rules
         UiBootstrap.init(modBus);         // menu screen (Right Shift), HUD status line
+        com.utilitysuite.ui.holo.MarksBootstrap.init(modBus); // screen projector, reticle layer, authority bar
 
         if (Boolean.getBoolean(MIXIN_AUDIT_PROPERTY)) {
             modBus.addListener(FMLLoadCompleteEvent.class, e -> e.enqueueWork(UtilitySuiteMod::auditMixins));

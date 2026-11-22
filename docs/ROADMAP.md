@@ -1,6 +1,6 @@
 # Utility Suite roadmap
 
-Status as of 2026-11-20 evening. Phase 2 directive ("Capability Expansion, Performance & UI Polish") plus the user's
+Status as of 2026-11-22 morning (latest volley at the end of this file). Phase 2 directive ("Capability Expansion, Performance & UI Polish") plus the user's
 additions. Items gated "SP/allow-list" run only in single-player or on servers listed in the allow list (Tools tab,
 shared with the Latency Simulator), same as today.
 
@@ -466,3 +466,38 @@ on main; 1257 unit tests pass. **Nothing here has run in a game client yet.**
 - [ ] Lang keys for the 7 new combat settings, `takeoff_shaping`, and the `the_read` / `ghost_line` settings.
 - [ ] Tune after the playtest: combo deviation tolerance under ping, feint cooldowns and bait window, rank-dial
       step, knock values, high-ground reach cap, pearl start distance, shaping cost against the authorship budget.
+
+## Advanced-client volley (2026-11-22, run note `docs/state/run-2026-11-22-advanced-client.md`)
+
+Ten tasks merged on main; 1542 unit tests pass. Nothing was run in a game client.
+
+### Done (unit-tested only)
+
+- [x] Parkour control model: `JumpCommit`, `LandingHold`, `OverrideClassifier`, `FlightController` air brake,
+      `SupportRegion`; three modes (`control_mode`: CORRECTIONS, CO_PILOT default, TAKEOVER); the HUD status line.
+- [x] Shape physics: exact boxes, sneak edge back-off, step-up, real `LevelShapes`; shaped `ParkourCourse` cases.
+- [x] Core shared control (`ISharedControl`): input overlay, manual facts, yaw co-steer, shared grants in the arbiter.
+- [x] STEM UI: `HoloKit` / `HudHost` / `Visuals`, the Appearance module, HUD elements ported, kit widgets restyled,
+      menu chrome, boot sequence, autopilot strip, reticle layer, authority bar, threat and target marks.
+- [x] Combat: `HitPlanner` (sprint knockback, crit, sweep, plain; "Hit choice"), `GearRead`, duel mode.
+- [x] Inventory: eat from the whole pack with swap-back; same-class hotbar refill.
+- [x] Devtest: 17 control-model lanes in `ParkourScenario` (not run yet).
+
+### Open
+
+- [ ] In game: work through the run note's checklist (startup, menu, HUD, parkour modes, combat, inventory).
+- [ ] Run and tune the 17 parkour devtest lanes; read the replica parity note.
+- [ ] Move Movement Assist onto `ISharedControl` (keys through the grant; `startSprint()` replaces
+      `LocalPlayer.setSprinting(true)`, which closes the open item of the next-layer volley).
+- [ ] Owner decision D1: co-steer (yaw) in Co-pilot / Takeover. Core support exists; nothing requests it.
+- [ ] Technique templates (corner, neo, headhitter, 45-degree), takeoff-tick search, momentum chains (CHAIN is a
+      stub), intent v2 with the target frozen at takeoff, the hold-to-take-over key.
+- [ ] Replica: slime, honey, soul sand, climbables, water landings, cobweb and powder snow.
+- [ ] Combat, left from the upgrade pass: shield duel, healing in windows, mob-pack fights, combo escape, ranged
+      opener, weapon choice by enchantments, fight log; sprint-hit opener when the target is already in reach.
+- [ ] UI: menu close animation, section headings inside cards, tabs still passing literal colours, the suite font,
+      `ToggleSwitch.warn` on less-legit toggles, coach pips as a cooldown arc, notices and world ribbons, the status
+      line cross-fade, flight arc and stop pip (`CommitView`), greying Corrections-only settings in other modes.
+- [ ] Remove the no-op `target_hud` GUI layer and the unused `TargetLine`.
+- [ ] Switch settings and HUD text to the lang keys now in `en_us.json`.
+- [ ] Eat-from-pack: swap the food back when the lease is preempted between the pull and the swap-back.

@@ -45,7 +45,8 @@ public final class SettingsRenderer {
             Map.entry("world_overlays", "Outlines of observed blocks by preset"),
             Map.entry("world_radar", "Players, mobs and items around you"),
             Map.entry("waypoints", "Groups, beacons and the breadcrumb trail"),
-            Map.entry(SuiteHud.ID, "Job pill and status badges"));
+            Map.entry(SuiteHud.ID, "Job pill and status badges"),
+            Map.entry(com.utilitysuite.ui.holo.VisualSettings.ID, "Look of the menu and HUD"));
 
     private SettingsRenderer() {
     }
