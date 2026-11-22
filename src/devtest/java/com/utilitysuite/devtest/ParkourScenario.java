@@ -617,6 +617,12 @@ final class ParkourScenario {
             // ("automation drives movement"), so leased keys would test nothing. The tp above sets the view.
             H.physicalKey(GLFW.GLFW_KEY_W, true);
             H.physicalKey(GLFW.GLFW_KEY_LEFT_CONTROL, true);
+            // the lane assumes the view the teleport set; a view left over from the lane before makes the result void
+            float view = net.minecraft.util.Mth.wrapDegrees(H.p().getYRot());
+            if (Math.abs(view) > 0.5f) {
+                s.note(label + ": START VIEW " + view + " degrees (expected 0, set by the teleport): this lane's"
+                        + " result is not valid");
+            }
         });
         s.waitUpTo(label + ": flight and landing", 300, () -> laneTick(s, r, lz, kind, topY, post[0], post[1], ovr));
         // fresh press: release forward for 2 ticks, press it again, the body must leave the top within 10 ticks

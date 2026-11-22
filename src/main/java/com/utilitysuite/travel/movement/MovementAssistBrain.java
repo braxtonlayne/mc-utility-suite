@@ -1091,6 +1091,16 @@ public final class MovementAssistBrain {
         jumpBuffer.reset();
         hold.reset();
         commit.reset();
+        // (the clear above is deferred while ARMED: apply it now that the commitment is gone)
+        rawSet = false;
+        lockFromRaw();
+        rawBlocked = false;
+        lineBlocked = false;
+        techniqueFirst = false;
+        heldPress = 0;
+        landedSprinting = false;
+        steerBaseSet = false;
+        pendingLook = Double.NaN;
         lastPlanLands = false;
         lastPlanForward = KEEP;
         prevOnGround = true;

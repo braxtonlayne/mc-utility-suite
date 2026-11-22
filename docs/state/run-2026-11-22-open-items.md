@@ -236,11 +236,13 @@ section.
 
 ### What was wrong (found in the replica, `ParkourLaneReplicaTest`, real estimator in front of the brain)
 
-1. **A teleport was noted as a jump.** After a fall and the `tp` to the next lane, `IntentEstimator.noteJump` stored a
-   13-block "jump". The line term then cost every later target 0.075 of its score. On the pane lane the fresh
-   replica has 0.51 to 0.57 near the press, so the client would have had about 0.43 to 0.5: under Co-pilot's 0.5,
-   over Takeover's 0.35, which fits Co-pilot never arming while Takeover did (the value was not read in the client).
-   A checkpoint teleport on a real course does the same.
+1. **A teleport was noted as a jump** (inferred, not read in the client). `MovementAssist` forgets the jump history
+   on a teleport, but keeps the last ground position; a takeoff and touchdown right after the teleport is then
+   noted as a "jump" from the old place to the new one, far longer than any jump. One such entry makes the line
+   term cost every target 0.075 of its score. On the pane lane the fresh replica has 0.51 to 0.57 near the press,
+   so the client would have had about 0.43 to 0.5: under Co-pilot's 0.5, over Takeover's 0.35, which is exactly what
+   the first report showed (Co-pilot never armed, Takeover did). The estimator now refuses a "jump" longer than 8
+   blocks. A checkpoint teleport on a real course would do the same.
 2. **The look term held a lone target down.** The lane camera (pitch 10) looks past a low post, and so does a player
    sprinting at it. With one top in the movement cone the confidence was the bare score, 0.51 at the press.
 3. **The target was dropped on the takeoff tick.** The estimator has a near limit of 1.2 blocks and a "can I walk
