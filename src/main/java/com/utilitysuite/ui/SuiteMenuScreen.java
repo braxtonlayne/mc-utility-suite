@@ -10,6 +10,17 @@ import com.utilitysuite.core.api.JobSnapshot;
 import com.utilitysuite.core.api.ModuleCategory;
 import com.utilitysuite.core.api.SettingSpec;
 import com.utilitysuite.core.api.Services;
+import com.utilitysuite.core.api.ControlChannel;
+import com.utilitysuite.core.api.ControlLease;
+import com.utilitysuite.core.api.visual.EffectLevel;
+import com.utilitysuite.core.api.visual.FrameLevel;
+import com.utilitysuite.core.api.visual.HoloToken;
+import com.utilitysuite.ui.holo.AnimStore;
+import com.utilitysuite.ui.holo.BootSequence;
+import com.utilitysuite.ui.holo.FrameClock;
+import com.utilitysuite.ui.holo.HoloFrames;
+import com.utilitysuite.ui.holo.HoloTheme;
+import com.utilitysuite.ui.holo.Motion;
 import com.utilitysuite.core.input.KeybindManager;
 import com.utilitysuite.ui.kit.CollapsibleSection;
 import com.utilitysuite.ui.kit.GoalHeroCard;
@@ -87,14 +98,19 @@ public final class SuiteMenuScreen extends Screen {
             };
         }
 
-        int chipColor() {
+        /** The category hue token (a 2 px bar and micro label tint only, never a filled chip). */
+        HoloToken token() {
             return switch (this) {
-                case JOBS -> 0xFF38BDF8;
-                case WORLD -> 0xFFA78BFA;
-                case TRAVEL -> 0xFF34D399;
-                case COMBAT -> 0xFFF87171;
-                case TOOLS -> 0xFFFBBF24;
+                case JOBS -> HoloToken.CAT_JOBS;
+                case WORLD -> HoloToken.CAT_WORLD;
+                case TRAVEL -> HoloToken.CAT_TRAVEL;
+                case COMBAT -> HoloToken.CAT_COMBAT;
+                case TOOLS -> HoloToken.CAT_TOOLS;
             };
+        }
+
+        int chipColor() {
+            return HoloTheme.argb(token());
         }
 
         Item icon() {
@@ -201,6 +217,54 @@ public final class SuiteMenuScreen extends Screen {
     private int footerH = 42;
     private int tabPitch = TAB_PITCH;
 
+    // STEM chrome: motion and cached state (nothing here is built per frame)
+    private static final long SIDEBAR_BAR_KEY = AnimStore.key("menu.sidebar.bar", 0);
+    private static final long PRESET_BAR_KEY = AnimStore.key("menu.preset.bar", 0);
+    /** Open: frame unfold 0-110 ms, content fade 60-220 ms. */
+    private static final float OPEN_FRAME_MS = 110f;
+    private static final float OPEN_FADE_FROM_MS = 60f;
+    private static final float OPEN_FADE_MS = 160f;
+    /** Category switch: content fades in and slides 6 px over 140 ms. */
+    private static final float SWITCH_MS = 140f;
+    private static final int SWITCH_SLIDE = 6;
+    private static final float TOOLTIP_FADE_MS = 90f;
+    private static final long SWEEP_PERIOD_MS = 8000L;
+    private static final float SWEEP_MS = 900f;
+    private static final int SWEEP_H = 24;
+    private long contentSwitchAt;
+    /** The player's menu blur is on (accessibility setting); without it the glass gets a darker base. */
+    private boolean blurOn = true;
+    /** Module ids holding a lease per control channel, sampled at the refresh cadence (never per frame). */
+    private final String[] leaseHolders = new String[ControlChannel.all().length];
+    /** The next list build follows a search edit: rows reflow from where they were instead of snapping. */
+    private boolean searchReflow;
+    private int titleTextW;
+    private int versionW;
+    private int profileTextW;
+    private int cleanLabelW;
+    private int enterW;
+    private int hoverSx;
+    private int hoverSy;
+    /** Cached pixel width of the toast text (-1 = measure on the next frame it shows). */
+    private int statusW = -1;
+
+    // boot sequence (first open per session, motion FULL only)
+    private final BootSequence boot = new BootSequence();
+    private boolean bootChecked;
+    private static final String[] PERCENT = new String[101];
+    private static final int[] PERCENT_W = new int[101];
+    private static boolean percentMeasured;
+    private static final String READOUT_HEAD = "SYNC ";
+    private String readoutTail = "";
+    private int readoutHeadW;
+    private int readoutTailW;
+
+    static {
+        for (int i = 0; i <= 100; i++) {
+            PERCENT[i] = Integer.toString(i);
+        }
+    }
+
     public SuiteMenuScreen(Screen parent) {
         super(Component.literal("Utility Suite"));
         this.parent = parent;
@@ -239,6 +303,7 @@ public final class SuiteMenuScreen extends Screen {
 
     void setStatus(String message) {
         status = message == null ? "" : message;
+        statusW = -1;
         statusTicks = status.isEmpty() ? 0 : 100;
     }
 
@@ -267,6 +332,7 @@ public final class SuiteMenuScreen extends Screen {
         tab = t;
         lastTab = t;
         focusNode = null;
+        contentSwitchAt = Util.getMillis();
         rebuildKeepingFocus();
     }
 
@@ -302,6 +368,18 @@ public final class SuiteMenuScreen extends Screen {
         viewH = wy + wh - viewY - 1;
         if (versionText.isEmpty()) {
             versionText = modVersion();
+        }
+        try {
+            blurOn = minecraft == null || minecraft.options.getMenuBackgroundBlurriness() >= 1;
+        } catch (RuntimeException e) {
+            blurOn = true;
+        }
+        refreshLeases();
+        if (!bootChecked) {
+            bootChecked = true;
+            if (boot.begin(openedAt, HoloTheme.motion)) {
+                prepareReadout();
+            }
         }
 
         buildChrome();
@@ -350,7 +428,12 @@ public final class SuiteMenuScreen extends Screen {
         clean.y = wy + (UiTheme.TOP_BAR_H - ToggleSwitch.H) / 2;
         chrome.add(clean);
         cleanLabel = "CLEAN"; // short caption so the switch is never unlabeled, even in a narrow window
-        cleanLabelX = clean.x - 6 - f.width(cleanLabel);
+        cleanLabelW = f.width(cleanLabel);
+        cleanLabelX = clean.x - 6 - cleanLabelW;
+        titleTextW = f.width(TITLE);
+        versionW = versionText.isEmpty() ? 0 : smallWidth(f, versionText);
+        profileTextW = profileText.isEmpty() ? 0 : f.width(profileText);
+        enterW = f.width("Enter");
 
         // center: goal bar, centered over the content canvas, clamped between the two groups
         int regionL = leftEnd + 14;
@@ -460,6 +543,7 @@ public final class SuiteMenuScreen extends Screen {
         SCROLL[tab.ordinal()] = 0;
         builtTab = null; // reset the content scroll for the new page
         focusNode = null;
+        contentSwitchAt = Util.getMillis();
         rebuildKeepingFocus();
     }
 
@@ -481,6 +565,7 @@ public final class SuiteMenuScreen extends Screen {
             if (!v.equals(state(K_SEARCH, ""))) {
                 setState(K_SEARCH, v);
                 listScroll = 0;
+                searchReflow = true;
                 requestRebuild();
             }
         });
@@ -531,6 +616,19 @@ public final class SuiteMenuScreen extends Screen {
             }
         } catch (RuntimeException e) {
             UtilitySuiteMod.LOGGER.warn("Module list failed to build", e);
+        }
+        // list reflow: after a search edit, rows that stay glide to their new place and new rows enter 10 px low;
+        // any other rebuild snaps every row to its place (build time only, never per frame)
+        boolean reflow = searchReflow && HoloTheme.motion == Motion.FULL;
+        searchReflow = false;
+        for (int i = 0; i < out.size(); i++) {
+            if (out.get(i) instanceof ListRow r) {
+                if (!reflow) {
+                    AnimStore.SHARED.set(r.animKey, r.y);
+                } else if (Float.isNaN(AnimStore.SHARED.peek(r.animKey, Float.NaN))) {
+                    AnimStore.SHARED.set(r.animKey, r.y + 10);
+                }
+            }
         }
         listNodes = out;
         listContentH = y;
@@ -604,6 +702,7 @@ public final class SuiteMenuScreen extends Screen {
         autopilotPage = !autopilotPage;
         builtTab = null; // reset the content scroll for the page
         focusNode = null;
+        contentSwitchAt = Util.getMillis();
         rebuildKeepingFocus();
     }
 
@@ -727,6 +826,7 @@ public final class SuiteMenuScreen extends Screen {
             for (int i = 0; i < nodes.size(); i++) {
                 nodes.get(i).refresh(font);
             }
+            refreshLeases();
             for (int i = 0; i < listNodes.size(); i++) {
                 listNodes.get(i).refresh(font);
             }
@@ -779,6 +879,33 @@ public final class SuiteMenuScreen extends Screen {
         }
         footerJob = UiRenderUtils.ellipsize(font, job, sidebarW - 30);
         footerStatus = UiRenderUtils.ellipsize(font, footerStatus, sidebarW - 30);
+    }
+
+    /** Samples which module holds each control channel (refresh cadence only: a few lookups, no per-frame polling). */
+    private void refreshLeases() {
+        ControlChannel[] all = ControlChannel.all();
+        try {
+            var arbiter = Services.arbiter();
+            for (int i = 0; i < leaseHolders.length && i < all.length; i++) {
+                Optional<ControlLease> l = arbiter.holder(all[i]);
+                leaseHolders[i] = l.isPresent() ? l.get().moduleId() : null;
+            }
+        } catch (RuntimeException e) {
+            java.util.Arrays.fill(leaseHolders, null);
+        }
+    }
+
+    /** True when the module held a lease at the last {@link #refreshLeases} sample. */
+    private boolean holdsLease(String moduleId) {
+        if (moduleId == null || moduleId.isEmpty()) {
+            return false;
+        }
+        for (String h : leaseHolders) {
+            if (moduleId.equals(h)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static boolean autopilotOn() {
@@ -902,6 +1029,7 @@ public final class SuiteMenuScreen extends Screen {
 
     @Override
     public boolean mouseClicked(double mx, double my, int button) {
+        boot.skip(); // any input ends the boot sequence; the input itself is handled as usual
         mx = toVirtual(mx);
         my = toVirtual(my);
         for (int i = chrome.size() - 1; i >= 0; i--) {
@@ -992,6 +1120,7 @@ public final class SuiteMenuScreen extends Screen {
 
     @Override
     public boolean mouseScrolled(double mx, double my, double scrollX, double scrollY) {
+        boot.skip();
         mx = toVirtual(mx);
         my = toVirtual(my);
         if (inList(mx, my)) {
@@ -1008,6 +1137,10 @@ public final class SuiteMenuScreen extends Screen {
 
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        var openKey = KeybindManager.mapping(KeybindManager.KeyId.OPEN_MENU);
+        if (openKeyReleased || openKey == null || !openKey.matches(keyCode, scanCode)) {
+            boot.skip(); // any input skips the boot, except the key-repeat of the press that opened the menu
+        }
         if (keyCode == 256) {
             onClose();
             return true;
@@ -1120,14 +1253,23 @@ public final class SuiteMenuScreen extends Screen {
 
     // ---- rendering --------------------------------------------------------------------------------------------------
 
-    /** Light dim only: no vanilla blur, menu texture or panorama. */
+    /** Fraction of the backdrop tint drawn this frame (it fades in with the frame unfold). */
+    private float backdropAlpha = 1f;
+
+    /** Backdrop: VOID at 55 % over the vanilla menu blur (the blur itself runs first, in {@link #render}). */
     @Override
     public void renderBackground(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
-        g.fill(0, 0, width, height, UiTheme.BACKDROP);
+        g.fill(0, 0, width, height, HoloTheme.argb(HoloToken.VOID, 0.55f * backdropAlpha));
     }
 
     @Override
     public void render(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
+        FrameClock.sample();
+        // Screen#renderBlurredBackground (1.21.1, NeoForge-patched to disable depth first): runs the vanilla blur post
+        // effect, which reads the player's Menu Background Blur accessibility option and does nothing at 0. Flush
+        // first so whatever the HUD batched before the screen is part of the blurred image.
+        g.flush();
+        renderBlurredBackground(partialTick);
         double gs = guiScale();
         float f = (float) MenuScale.factor(gs);
         if (f == 1f) {
@@ -1147,32 +1289,164 @@ public final class SuiteMenuScreen extends Screen {
         }
     }
 
+    /** The boot readout's strings and widths, from real numbers (registry module count), built once at open. */
+    private void prepareReadout() {
+        int modules = 0;
+        try {
+            for (Tab t : Tab.values()) {
+                modules += Services.modules().byCategory(t.category()).size();
+            }
+        } catch (RuntimeException ignored) {
+            // readout is decoration; zero is still honest
+        }
+        readoutTail = " %  ·  " + modules + " MODULES  ·  LINK OK";
+        readoutHeadW = smallWidth(font, READOUT_HEAD);
+        readoutTailW = smallWidth(font, readoutTail);
+        if (!percentMeasured) {
+            percentMeasured = true;
+            for (int i = 0; i <= 100; i++) {
+                PERCENT_W[i] = smallWidth(font, PERCENT[i]);
+            }
+        }
+    }
+
+    /**
+     * The 900 ms boot (design 8.2): centre line, frame unfold with a bracket snap and flicker, the columns revealed
+     * left to right behind a bright caret, then a counting readout. Input stays live (any input skips to the end).
+     */
+    private void renderBoot(GuiGraphics g, int mouseX, int mouseY, float partialTick, long t, long now) {
+        backdropAlpha = clamp01(t / (float) BootSequence.LINE_END_MS);
+        renderBackground(g, mouseX, mouseY, partialTick);
+        stepScroll(now);
+        int accent = HoloTheme.argb(HoloToken.ACCENT);
+        int cx = wx + ww / 2;
+        if (t < BootSequence.LINE_END_MS) {
+            int half = Math.max(1, Math.round(ww / 2f * BootSequence.line(t)));
+            g.fill(cx - half, wy + wh / 2, cx + half, wy + wh / 2 + 1, accent);
+            return;
+        }
+        if (t < BootSequence.UNFOLD_END_MS) {
+            int fh = Math.max(2, Math.round(wh * BootSequence.unfold(t)));
+            int fy = wy + (wh - fh) / 2;
+            float fa = BootSequence.flicker(t) ? 0.55f : 1f;
+            if (!blurOn) {
+                HoloFrames.frame(g, wx, fy, ww, fh, FrameLevel.QUIET, true, HoloToken.VOID, HoloToken.LINE, 0.62f * fa);
+            }
+            HoloFrames.frame(g, wx, fy, ww, fh, FrameLevel.HERO, true, fa);
+            HoloFrames.scanlines(g, wx, fy, ww, fh, fa);
+            int arm = Math.max(1, Math.round(14f * BootSequence.brackets(t)));
+            HoloFrames.brackets(g, wx - 2, fy - 2, ww + 4, fh + 4, Math.min(arm, Math.max(1, fh / 2)), accent);
+            return;
+        }
+        drawWindow(g, 1f, now);
+        float c0 = BootSequence.column(0, t);
+        float c1 = BootSequence.column(1, t);
+        float c2 = BootSequence.column(2, t);
+        int barsH = UiTheme.TOP_BAR_H + 1 + AutopilotBar.H;
+        if (revealClip(g, wx, wy, ww, barsH, c0)) {
+            drawTopBar(g, mouseX, mouseY);
+            UiRenderUtils.endClip(g);
+        }
+        int colH = wy + wh - viewY;
+        if (revealClip(g, wx, viewY, sidebarW, colH, c0)) {
+            drawSidebar(g, mouseX, mouseY);
+            UiRenderUtils.endClip(g);
+        }
+        if (listW > 0 && revealClip(g, listX, viewY, listW, colH, c1)) {
+            drawList(g, mouseX, mouseY);
+            UiRenderUtils.endClip(g);
+        }
+        if (revealClip(g, viewX, viewY, viewW, viewH, c2)) {
+            drawContent(g, mouseX, mouseY, 0);
+            UiRenderUtils.endClip(g);
+        }
+        revealCaret(g, wx, wy, ww, barsH, c0, accent);
+        revealCaret(g, wx, viewY, sidebarW, colH, c0, accent);
+        if (listW > 0) {
+            revealCaret(g, listX, viewY, listW, colH, c1, accent);
+        }
+        revealCaret(g, viewX, viewY, viewW, viewH, c2, accent);
+        if (t >= BootSequence.COLUMNS_END_MS && !readoutTail.isEmpty()) {
+            int pct = Math.max(0, Math.min(100, BootSequence.readoutPercent(t)));
+            int color = HoloTheme.mix(HoloTheme.argb(HoloToken.TEXT_FAINT), accent, BootSequence.readoutBright(t));
+            int slot = PERCENT_W[100];
+            int x = viewX + viewW - 12 - readoutHeadW - slot - readoutTailW;
+            int y = viewY + 4;
+            smallText(g, font, READOUT_HEAD, x, y, color);
+            smallText(g, font, PERCENT[pct], x + readoutHeadW + slot - PERCENT_W[pct], y, color);
+            smallText(g, font, readoutTail, x + readoutHeadW + slot, y, color);
+        }
+        updateHover(mouseX, mouseY, now);
+    }
+
+    /** Scissors a column to its revealed part; false (nothing pushed) while it is still hidden. */
+    private static boolean revealClip(GuiGraphics g, int x, int y, int w, int h, float reveal) {
+        int rw = Math.round(w * reveal);
+        if (rw <= 0 || h <= 0) {
+            return false;
+        }
+        UiRenderUtils.clip(g, x, y, rw, h);
+        return true;
+    }
+
+    /** The bright 1 px caret at a column's reveal edge while it is moving. */
+    private static void revealCaret(GuiGraphics g, int x, int y, int w, int h, float reveal, int argb) {
+        if (reveal > 0f && reveal < 1f) {
+            int ex = x + Math.round(w * reveal);
+            g.fill(ex, y, ex + 1, y + h, argb);
+        }
+    }
+
+    private static float clamp01(float v) {
+        return v <= 0f ? 0f : Math.min(v, 1f);
+    }
+
+    /**
+     * Open: the frame unfolds from its centre line over 110 ms, the content fades in from 60 to 220 ms; a category
+     * switch fades the content column in and slides it 6 px. Input is live from the first frame (nothing here gates
+     * a click), Stop all is a chrome node and never waits. Motion OFF: all instant; REDUCED: fades only.
+     */
     private void renderScaled(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
         long now = Util.getMillis();
-        float open = UiRenderUtils.easeOut((now - openedAt) / (float) UiTheme.OPEN_MS);
-        boolean animating = open < 1f;
-        if (animating) {
-            RenderSystem.setShaderColor(1f, 1f, 1f, Math.max(0.05f, open));
+        long bootT = boot.elapsed(now);
+        if (bootT >= 0L) {
+            renderBoot(g, mouseX, mouseY, partialTick, bootT, now);
+            return;
         }
+        Motion motion = HoloTheme.motion;
+        float age = now - openedAt;
+        float frameP = motion == Motion.OFF ? 1f : clamp01(age / OPEN_FRAME_MS);
+        float contentA = motion == Motion.OFF ? 1f : clamp01((age - OPEN_FADE_FROM_MS) / OPEN_FADE_MS);
+        float switchP = motion == Motion.OFF || contentSwitchAt == 0L ? 1f
+                : clamp01((now - contentSwitchAt) / SWITCH_MS);
+        backdropAlpha = frameP;
         renderBackground(g, mouseX, mouseY, partialTick);
-        g.pose().pushPose();
-        if (animating) {
-            float s = 0.96f + 0.04f * open;
-            g.pose().translate(width / 2f, height / 2f, 0);
-            g.pose().scale(s, s, 1f);
-            g.pose().translate(-width / 2f, -height / 2f, 0);
-        }
         stepScroll(now);
-        drawWindow(g);
+        drawWindow(g, frameP, now);
+        boolean fading = contentA < 1f;
+        if (fading) {
+            g.flush();
+            RenderSystem.setShaderColor(1f, 1f, 1f, Math.max(0.02f, contentA));
+        }
         drawTopBar(g, mouseX, mouseY);
         drawSidebar(g, mouseX, mouseY);
         drawList(g, mouseX, mouseY);
-        drawContent(g, mouseX, mouseY);
+        boolean switching = switchP < 1f;
+        float sw = AnimStore.easeOut(switchP);
+        if (switching) {
+            g.flush();
+            RenderSystem.setShaderColor(1f, 1f, 1f, Math.max(0.02f, contentA * sw));
+        }
+        int slide = switching && motion == Motion.FULL ? Math.round(SWITCH_SLIDE * (1f - sw)) : 0;
+        drawContent(g, mouseX, mouseY, slide);
+        if (switching) {
+            g.flush();
+            RenderSystem.setShaderColor(1f, 1f, 1f, fading ? Math.max(0.02f, contentA) : 1f);
+        }
         drawToast(g);
         updateHover(mouseX, mouseY, now);
         drawTooltip(g, mouseX, mouseY, now);
-        g.pose().popPose();
-        if (animating) {
+        if (fading) {
             g.flush();
             RenderSystem.setShaderColor(1f, 1f, 1f, 1f);
         }
@@ -1189,21 +1463,77 @@ public final class SuiteMenuScreen extends Screen {
         }
     }
 
-    private void drawWindow(GuiGraphics g) {
-        UiRenderUtils.shadow(g, wx, wy, ww, wh, UiTheme.RADIUS, 6);
-        // Opaque base: with the 0xE8 glass alpha the chat and other HUD text drawn before the screen showed through
-        // the window as faint ghost text.
-        UiRenderUtils.roundedRect(g, wx, wy, ww, wh, UiTheme.RADIUS, UiTheme.WINDOW | 0xFF000000);
-        UiRenderUtils.roundedRect(g, wx, viewY, sidebarW, wy + wh - viewY, UiTheme.RADIUS, UiTheme.SIDEBAR,
-                UiRenderUtils.BL);
-        if (listW > 0) {
-            g.fill(listX, viewY, listX + listW, wy + wh - 1, UiTheme.LIST_BG);
-            UiRenderUtils.vLine(g, listX + listW, viewY, wy + wh - 1, UiTheme.BORDER);
+    /**
+     * The window: one hero bracket frame on glass with the chamfer and scanlines; the three columns are one glass
+     * surface split by faint hairlines. Without the player's blur the glass gets a darker base so HUD text behind
+     * the window cannot ghost through.
+     */
+    private void drawWindow(GuiGraphics g, float frameP, long now) {
+        int fy = wy;
+        int fh = wh;
+        float fa = 1f;
+        if (frameP < 1f) {
+            if (HoloTheme.motion == Motion.FULL) {
+                float e = AnimStore.easeOut(frameP);
+                fh = Math.max(2, Math.round(wh * e));
+                fy = wy + (wh - fh) / 2;
+                fa = Math.min(1f, 0.35f + e);
+            } else {
+                fa = frameP;
+            }
         }
-        UiRenderUtils.hLine(g, wx + 1, wx + ww - 1, wy + UiTheme.TOP_BAR_H, UiTheme.BORDER);
-        UiRenderUtils.hLine(g, wx + 1, wx + ww - 1, autopilotBarY() + AutopilotBar.H, UiTheme.BORDER);
-        UiRenderUtils.vLine(g, wx + sidebarW, viewY, wy + wh - 1, UiTheme.BORDER);
-        UiRenderUtils.roundedOutline(g, wx, wy, ww, wh, UiTheme.RADIUS, UiTheme.BORDER);
+        if (!blurOn) {
+            HoloFrames.frame(g, wx, fy, ww, fh, FrameLevel.QUIET, true, HoloToken.VOID, HoloToken.LINE, 0.62f * fa);
+        }
+        HoloFrames.frame(g, wx, fy, ww, fh, FrameLevel.HERO, true, fa);
+        HoloFrames.scanlines(g, wx, fy, ww, fh, fa);
+        if (fh < wh) {
+            return;
+        }
+        drawSweep(g, now);
+        int line = HoloTheme.argb(HoloToken.LINE_FAINT, fa);
+        HoloFrames.hLine(g, wx + 1, wx + ww - 1, wy + UiTheme.TOP_BAR_H, line);
+        HoloFrames.hLine(g, wx + 1, wx + ww - 1, autopilotBarY() + AutopilotBar.H, line);
+        HoloFrames.vLine(g, wx + sidebarW, viewY, wy + wh - 1, line);
+        if (listW > 0) {
+            HoloFrames.vLine(g, listX + listW, viewY, wy + wh - 1, line);
+        }
+    }
+
+    /** A 24 px band at 5 % accent travelling down the window on open and then every 8 s (effects FULL, motion FULL). */
+    private void drawSweep(GuiGraphics g, long now) {
+        if (HoloTheme.effects != EffectLevel.FULL || HoloTheme.motion != Motion.FULL) {
+            return;
+        }
+        long phase = (now - openedAt) % SWEEP_PERIOD_MS;
+        if (phase < 0L || phase >= (long) SWEEP_MS) {
+            return;
+        }
+        int y0 = wy - SWEEP_H + Math.round((wh + SWEEP_H) * (phase / SWEEP_MS));
+        int mid = y0 + SWEEP_H / 2;
+        int y1 = y0 + SWEEP_H;
+        int top = wy + 1;
+        int bot = wy + wh - 1;
+        int c = HoloTheme.argb(HoloToken.ACCENT, 0.05f);
+        int clear = c & 0x00FFFFFF;
+        int a0 = Math.max(y0, top);
+        int a1 = Math.min(mid, bot);
+        if (a1 > a0) {
+            g.fillGradient(wx + 1, a0, wx + ww - 1, a1, clear, c);
+        }
+        int b0 = Math.max(mid, top);
+        int b1 = Math.min(y1, bot);
+        if (b1 > b0) {
+            g.fillGradient(wx + 1, b0, wx + ww - 1, b1, c, clear);
+        }
+    }
+
+    /** The y a list row is drawn at: its laid-out place, or the reflow position while it settles there. */
+    private int listDrawY(UiNode n) {
+        if (n instanceof ListRow r && HoloTheme.motion == Motion.FULL) {
+            return listTop + Math.round(AnimStore.SHARED.settle(r.animKey, n.y, AnimStore.TAU_NORMAL)) - listScroll;
+        }
+        return listSy(n);
     }
 
     private void drawList(GuiGraphics g, int mouseX, int mouseY) {
@@ -1218,7 +1548,7 @@ public final class SuiteMenuScreen extends Screen {
         UiRenderUtils.clip(g, listX, top, listW, bottom - top);
         for (int i = 0; i < listNodes.size(); i++) {
             UiNode n = listNodes.get(i);
-            int sy = listSy(n);
+            int sy = listDrawY(n); // every row settles, visible or not, so none jumps when scrolled into view
             if (sy + n.h < top || sy > bottom) {
                 continue;
             }
@@ -1230,11 +1560,17 @@ public final class SuiteMenuScreen extends Screen {
             int trackH = bottom - top - 8;
             int thumbH = Math.max(14, trackH * (bottom - top) / (bottom - top + max));
             int thumbY = top + 4 + Math.round((trackH - thumbH) * (listScroll / (float) max));
-            UiRenderUtils.roundedRect(g, listX + listW - 4, thumbY, 2, thumbH, 1, 0x706B7280);
+            int rx = listX + listW - 4;
+            boolean hot = mouseIn && mouseX >= rx - 6;
+            g.fill(rx, top + 4, rx + 2, top + 4 + trackH, HoloTheme.argb(HoloToken.LINE_FAINT));
+            g.fill(rx, thumbY, rx + 2, thumbY + thumbH, HoloTheme.argb(hot ? HoloToken.LINE_STRONG : HoloToken.LINE));
         }
     }
 
-    /** Small caps text at 0.75 scale (chips, captions, version). */
+    /**
+     * Small caps text at 0.75 scale (chips, captions, version). Kept: replacing the pose scaling needs the suite font
+     * (design 4.2), which has not landed yet.
+     */
     static void smallText(GuiGraphics g, Font font, String s, int x, int y, int color) {
         g.pose().pushPose();
         g.pose().translate(x, y, 0);
@@ -1247,24 +1583,61 @@ public final class SuiteMenuScreen extends Screen {
         return (int) Math.ceil(font.width(s) * 0.75f);
     }
 
+    /** Square brackets around a readout, drawn as hairlines (no fill). */
+    private static void readoutBrackets(GuiGraphics g, int x, int y, int w, int h, int argb) {
+        g.fill(x, y, x + 1, y + h, argb);
+        g.fill(x + 1, y, x + 3, y + 1, argb);
+        g.fill(x + 1, y + h - 1, x + 3, y + h, argb);
+        g.fill(x + w - 1, y, x + w, y + h, argb);
+        g.fill(x + w - 3, y, x + w - 1, y + 1, argb);
+        g.fill(x + w - 3, y + h - 1, x + w - 1, y + h, argb);
+    }
+
+    /** The "acting" glyph: a 5 px diamond centred on (cx, cy). */
+    static void diamond(GuiGraphics g, int cx, int cy, int argb) {
+        g.fill(cx, cy - 2, cx + 1, cy - 1, argb);
+        g.fill(cx - 1, cy - 1, cx + 2, cy, argb);
+        g.fill(cx - 2, cy, cx + 3, cy + 1, argb);
+        g.fill(cx - 1, cy + 1, cx + 2, cy + 2, argb);
+        g.fill(cx, cy + 2, cx + 1, cy + 3, argb);
+    }
+
+    /** The "armed" glyph: a 3 px dot with a faint 5 px halo, centred on (cx, cy). */
+    static void armedDot(GuiGraphics g, int cx, int cy, HoloToken token) {
+        g.fill(cx - 2, cy - 2, cx + 3, cy + 3, HoloTheme.argb(token, 0.22f));
+        g.fill(cx - 1, cy - 1, cx + 2, cy + 2, HoloTheme.argb(token));
+    }
+
+    /** The "stopped" glyph: a 5 px cross with its top-left at (x, y). */
+    static void cross(GuiGraphics g, int x, int y, int argb) {
+        for (int i = 0; i < 5; i++) {
+            g.fill(x + i, y + i, x + i + 1, y + i + 1, argb);
+            g.fill(x + 4 - i, y + i, x + 5 - i, y + i + 1, argb);
+        }
+    }
+
     private void drawTopBar(GuiGraphics g, int mx, int my) {
         int ty = wy + (UiTheme.TOP_BAR_H - 8) / 2;
-        UiRenderUtils.roundedRect(g, wx + 12, ty, 3, 8, 1, UiTheme.ACCENT);
-        UiRenderUtils.text(g, font, TITLE, wx + 20, ty, UiTheme.TEXT);
-        if (!versionText.isEmpty()) {
-            int vx = wx + 20 + font.width(TITLE) + 6;
-            int vw = smallWidth(font, versionText) + 8;
-            UiRenderUtils.panel(g, vx, ty - 1, vw, 10, 2, UiTheme.CONTROL, UiTheme.CONTROL_BORDER);
-            smallText(g, font, versionText, vx + 4, ty + 2, UiTheme.TEXT_DIM);
+        HoloFrames.sideBar(g, wx + 12, ty - 1, 10, HoloToken.ACCENT, 1f);
+        UiRenderUtils.text(g, font, TITLE, wx + 20, ty, HoloTheme.argb(HoloToken.TEXT));
+        if (versionW > 0) {
+            int vx = wx + 20 + titleTextW + 6;
+            int vw = versionW + 8;
+            readoutBrackets(g, vx, ty - 1, vw, 10, HoloTheme.argb(HoloToken.LINE));
+            smallText(g, font, versionText, vx + 4, ty + 2, HoloTheme.argb(HoloToken.TEXT_MUTED));
         }
         if (profilePillW > 0) {
             int px = wx + 20 + titleW + 8;
             int py = wy + (UiTheme.TOP_BAR_H - 14) / 2;
-            UiRenderUtils.panel(g, px, py, profilePillW, 14, 7, UiTheme.CONTROL, UiTheme.CONTROL_BORDER);
-            UiRenderUtils.dot(g, px + 5, py + 5, 4, UiTheme.TEXT_MUTED);
-            UiRenderUtils.text(g, font, profileText, px + 12, py + 3, UiTheme.TEXT_DIM);
+            readoutBrackets(g, px, py, profilePillW, 14, HoloTheme.argb(HoloToken.LINE));
+            g.fill(px + 5, py + 6, px + 8, py + 9, HoloTheme.argb(HoloToken.ACCENT, 0.8f));
+            UiRenderUtils.text(g, font, profileText, px + 12, py + 3, HoloTheme.argb(HoloToken.TEXT_SECONDARY));
         }
-        UiRenderUtils.text(g, font, cleanLabel, cleanLabelX, ty, UiTheme.TEXT_DIM);
+        UiRenderUtils.text(g, font, cleanLabel, cleanLabelX, ty, HoloTheme.argb(HoloToken.TEXT_MUTED));
+        if (goalField != null) { // FIELD inset under the goal console (the kit field draws its own edge on top)
+            g.fill(goalField.x, goalField.y, goalField.x + goalField.w, goalField.y + goalField.h,
+                    HoloTheme.argb(HoloToken.FIELD));
+        }
         for (int i = 0; i < chrome.size(); i++) {
             UiNode n = chrome.get(i);
             if (n instanceof SidebarTab || !chromeVisible(n)) {
@@ -1275,34 +1648,47 @@ public final class SuiteMenuScreen extends Screen {
         if (goalField != null && !GoalConsole.canStart(this) && goalField.box().isFocused()
                 && !goalField.box().getValue().isEmpty()) {
             int hx = goalField.x + goalField.w - START_W + 4;
-            UiRenderUtils.panel(g, hx, goalField.y + 4, START_W - 8, 12, 3, UiTheme.CONTROL, UiTheme.CONTROL_BORDER);
-            UiRenderUtils.text(g, font, "Enter", hx + (START_W - 8 - font.width("Enter")) / 2, goalField.y + 6,
-                    UiTheme.TEXT_MUTED);
+            g.fill(hx, goalField.y + 4, hx + START_W - 8, goalField.y + 16, HoloTheme.argb(HoloToken.FIELD));
+            HoloFrames.edge(g, hx, goalField.y + 4, START_W - 8, 12, HoloTheme.argb(HoloToken.LINE_FAINT));
+            UiRenderUtils.text(g, font, "Enter", hx + (START_W - 8 - enterW) / 2, goalField.y + 6,
+                    HoloTheme.argb(HoloToken.TEXT_MUTED));
         }
     }
 
     private void drawSidebar(GuiGraphics g, int mx, int my) {
+        SidebarTab active = null;
         for (int i = 0; i < chrome.size(); i++) {
             UiNode n = chrome.get(i);
-            if (n instanceof SidebarTab) {
+            if (n instanceof SidebarTab st) {
+                if (st.active) {
+                    active = st;
+                }
                 n.render(g, font, n.x, n.y, mx, my);
             }
         }
+        if (active != null) { // the 2 px selection bar travels to the newly selected row
+            int y0 = Math.round(AnimStore.SHARED.settle(SIDEBAR_BAR_KEY, active.y + 4, AnimStore.TAU_NORMAL));
+            g.fill(active.x, y0, active.x + HoloTheme.BAR, y0 + Math.max(4, active.h - 8),
+                    HoloTheme.argb(HoloToken.ACCENT));
+        }
         int fy = wy + wh - footerH;
-        UiRenderUtils.hLine(g, wx + 10, wx + sidebarW - 10, fy, UiTheme.BORDER);
-        int dotColor = footerStopped ? UiTheme.DANGER : UiTheme.RUNNING;
+        HoloFrames.hLine(g, wx + 10, wx + sidebarW - 10, fy, HoloTheme.argb(HoloToken.LINE_FAINT));
         boolean twoLines = footerH >= 42;
         // one-line footer: the job state replaces the automation text unless automation is stopped
         String first = twoLines || footerStopped ? footerStatus : footerJob;
-        UiRenderUtils.dot(g, wx + 14, fy + 11, 6, dotColor);
-        UiRenderUtils.text(g, font, first, wx + 26, fy + 10, footerStopped ? UiTheme.DANGER_TEXT
-                : UiTheme.TEXT_SECONDARY);
+        if (footerStopped) {
+            cross(g, wx + 12, fy + 9, HoloTheme.argb(HoloToken.DANGER));
+        } else {
+            armedDot(g, wx + 14, fy + 11, HoloToken.ACCENT);
+        }
+        UiRenderUtils.text(g, font, first, wx + 26, fy + 10, HoloTheme.argb(footerStopped ? HoloToken.DANGER
+                : HoloToken.TEXT_SECONDARY));
         if (twoLines) {
-            UiRenderUtils.text(g, font, footerJob, wx + 26, fy + 23, UiTheme.TEXT_MUTED);
+            UiRenderUtils.text(g, font, footerJob, wx + 26, fy + 23, HoloTheme.argb(HoloToken.TEXT_MUTED));
         }
     }
 
-    private void drawContent(GuiGraphics g, int mouseX, int mouseY) {
+    private void drawContent(GuiGraphics g, int mouseX, int mouseY, int slide) {
         boolean mouseIn = inView(mouseX, mouseY);
         int mx = mouseIn ? mouseX : -10000;
         int my = mouseIn ? mouseY : -10000;
@@ -1318,23 +1704,24 @@ public final class SuiteMenuScreen extends Screen {
                 }
                 continue;
             }
-            n.render(g, font, contentSx(n), sy, mx, my);
+            n.render(g, font, contentSx(n), sy + slide, mx, my);
         }
-        // fade edges so cards slide under the bars
-        g.fillGradient(viewX, viewY, viewX + viewW, viewY + 6, 0x40000000, 0x00000000);
+        // fade edge so cards slide under the bars
+        g.fillGradient(viewX, viewY, viewX + viewW, viewY + 6, HoloTheme.argb(HoloToken.VOID, 0.4f),
+                HoloTheme.argb(HoloToken.VOID) & 0x00FFFFFF);
         UiRenderUtils.endClip(g);
 
         int max = maxScroll();
         if (max > 0) {
-            int trackX = viewX + viewW - 6;
+            int trackX = viewX + viewW - 5;
             int trackY = viewY + 6;
             int trackH = viewH - 12;
             int thumbH = thumbHeight(trackH, max);
             int thumbY = trackY + Math.round((trackH - thumbH) * (scrollCur / max));
             boolean hot = scrollDragging || (mouseX >= viewX + viewW - 9 && mouseIn);
-            int bw = hot ? 4 : 3;
-            UiRenderUtils.roundedRect(g, trackX - (bw - 3), trackY, bw, trackH, 2, 0x18FFFFFF);
-            UiRenderUtils.roundedRect(g, trackX - (bw - 3), thumbY, bw, thumbH, 2, hot ? 0xC0D1D5DB : 0x706B7280);
+            g.fill(trackX, trackY, trackX + 2, trackY + trackH, HoloTheme.argb(HoloToken.LINE_FAINT));
+            g.fill(trackX, thumbY, trackX + 2, thumbY + thumbH,
+                    HoloTheme.argb(hot ? HoloToken.LINE_STRONG : HoloToken.LINE));
         }
     }
 
@@ -1342,27 +1729,33 @@ public final class SuiteMenuScreen extends Screen {
         if (status.isEmpty()) {
             return;
         }
-        String s = status;
-        int tw = Math.min(font.width(s), viewW - 60);
-        int w = tw + 24;
+        if (statusW < 0) {
+            statusW = font.width(status);
+        }
+        int tw = Math.min(statusW, viewW - 60);
+        int w = tw + 20;
         int x = viewX + (viewW - w) / 2;
         int y = viewY + viewH - 28;
         float alpha = statusTicks < 10 ? statusTicks / 10f : 1f;
-        UiRenderUtils.panel(g, x, y, w, 18, 9, UiTheme.fade(0xF5181B22, alpha), UiTheme.fade(0xFF30384A, alpha));
-        UiRenderUtils.dot(g, x + 8, y + 6, 6, UiTheme.fade(UiTheme.ACCENT, alpha));
+        HoloFrames.frame(g, x, y, w, 18, FrameLevel.FRAMED, false, HoloToken.GLASS_RAISED, HoloToken.LINE, alpha);
+        HoloFrames.sideBar(g, x, y, 18, HoloToken.ACCENT, alpha);
         if (alpha > 0.1f) {
-            UiRenderUtils.scissor(g, x + 18, y, x + 18 + tw, y + 18);
-            UiRenderUtils.text(g, font, s, x + 18, y + 5, UiTheme.fade(UiTheme.TEXT_SECONDARY, alpha));
+            UiRenderUtils.scissor(g, x + 10, y, x + 10 + tw, y + 18);
+            UiRenderUtils.text(g, font, status, x + 10, y + 5, HoloTheme.argb(HoloToken.TEXT_SECONDARY, alpha));
             g.disableScissor();
         }
     }
 
     private void updateHover(int mouseX, int mouseY, long now) {
         UiNode found = null;
+        int fx = 0;
+        int fy = 0;
         for (int i = chrome.size() - 1; i >= 0 && found == null; i--) {
             UiNode n = chrome.get(i);
             if (chromeVisible(n) && !n.tooltipText().isEmpty() && n.contains(mouseX, mouseY, n.x, n.y)) {
                 found = n;
+                fx = n.x;
+                fy = n.y;
             }
         }
         if (found == null && inList(mouseX, mouseY)) {
@@ -1370,6 +1763,8 @@ public final class SuiteMenuScreen extends Screen {
                 UiNode n = listNodes.get(i);
                 if (!n.tooltipText().isEmpty() && n.contains(mouseX, mouseY, listSx(n), listSy(n))) {
                     found = n;
+                    fx = listSx(n);
+                    fy = listSy(n);
                     break;
                 }
             }
@@ -1379,6 +1774,8 @@ public final class SuiteMenuScreen extends Screen {
                 UiNode n = nodes.get(i);
                 if (!n.tooltipText().isEmpty() && n.contains(mouseX, mouseY, contentSx(n), contentSy(n))) {
                     found = n;
+                    fx = contentSx(n);
+                    fy = contentSy(n);
                     break;
                 }
             }
@@ -1387,10 +1784,17 @@ public final class SuiteMenuScreen extends Screen {
             hoverNode = found;
             hoverSince = now;
         }
+        hoverSx = fx;
+        hoverSy = fy;
     }
 
+    /**
+     * The tooltip: a framed GLASS_RAISED plate after 350 ms with a 90 ms fade, placed below-right of the pointer and
+     * flipped above or beside the control when clipped, so it never covers the control it explains.
+     */
     private void drawTooltip(GuiGraphics g, int mouseX, int mouseY, long now) {
-        if (hoverNode == null || dragNode != null || now - hoverSince < TOOLTIP_DELAY_MS) {
+        long since = now - hoverSince - TOOLTIP_DELAY_MS;
+        if (hoverNode == null || dragNode != null || since < 0L) {
             return;
         }
         String t = hoverNode.tooltipText();
@@ -1402,23 +1806,77 @@ public final class SuiteMenuScreen extends Screen {
                 tipW = Math.max(tipW, font.width(l));
             }
         }
+        float a = HoloTheme.motion == Motion.OFF ? 1f : Math.min(1f, since / TOOLTIP_FADE_MS);
+        if (a < 0.05f) { // vanilla draws near-zero-alpha text fully opaque: skip the first sliver of the fade
+            return;
+        }
         int w = tipW + 16;
         int h = tipLines.size() * 10 + 10;
-        int x = mouseX + 10;
-        int y = mouseY + 12;
-        if (x + w > width - 4) {
-            x = mouseX - w - 6;
-        }
-        if (y + h > height - 4) {
-            y = mouseY - h - 6;
-        }
+        long pos = TooltipPlacement.place(mouseX, hoverSx, hoverSy, hoverNode.w, hoverNode.h, w, h, width, height,
+                4);
+        int x = TooltipPlacement.x(pos);
+        int y = TooltipPlacement.y(pos);
         g.pose().pushPose();
         g.pose().translate(0, 0, 400);
-        UiRenderUtils.panel(g, x, y, w, h, UiTheme.RADIUS_SMALL, 0xF50D0F13, 0xFF30384A);
+        HoloFrames.frame(g, x, y, w, h, FrameLevel.FRAMED, false, HoloToken.GLASS_RAISED, HoloToken.LINE, a);
+        int text = HoloTheme.argb(HoloToken.TEXT_SECONDARY, a);
         for (int i = 0; i < tipLines.size(); i++) {
-            g.drawString(font, tipLines.get(i), x + 8, y + 6 + i * 10, UiTheme.TEXT_SECONDARY, false);
+            g.drawString(font, tipLines.get(i), x + 8, y + 6 + i * 10, text, false);
         }
         g.pose().popPose();
+    }
+
+    /**
+     * Where a tooltip goes, as a pure function: below the anchor with x just right of the pointer; above when it does
+     * not fit below; beside (right, then left) when neither fits; always clamped on screen. Below and above never
+     * overlap the anchor rectangle. Allocation free: the result is packed into a long.
+     */
+    static final class TooltipPlacement {
+        static final int GAP = 4;
+
+        private TooltipPlacement() {
+        }
+
+        static long place(int pointerX, int ax, int ay, int aw, int ah, int tw, int th, int sw, int sh, int margin) {
+            int x = clamp(pointerX + 8, margin, sw - margin - tw);
+            int below = ay + ah + GAP;
+            if (below + th <= sh - margin) {
+                return pack(x, below);
+            }
+            int above = ay - GAP - th;
+            if (above >= margin) {
+                return pack(x, above);
+            }
+            int y = clamp(ay, margin, sh - margin - th);
+            int right = ax + aw + GAP;
+            if (right + tw <= sw - margin) {
+                return pack(right, y);
+            }
+            int left = ax - GAP - tw;
+            if (left >= margin) {
+                return pack(left, y);
+            }
+            return pack(x, clamp(below, margin, sh - margin - th)); // no free side: stay on screen
+        }
+
+        static int clamp(int v, int lo, int hi) {
+            if (hi < lo) {
+                return lo;
+            }
+            return v < lo ? lo : Math.min(v, hi);
+        }
+
+        static long pack(int x, int y) {
+            return ((long) x << 32) | (y & 0xFFFFFFFFL);
+        }
+
+        static int x(long packed) {
+            return (int) (packed >> 32);
+        }
+
+        static int y(long packed) {
+            return (int) packed;
+        }
     }
 
     // ---- sidebar tab button -----------------------------------------------------------------------------------------
@@ -1429,6 +1887,7 @@ public final class SuiteMenuScreen extends Screen {
         private final ItemStack icon;
         private final String label;
         private final String badge;
+        private final int badgeW;
 
         SidebarTab(Font f, Tab t, boolean active, int w, int h, int enabled) {
             super(w, h);
@@ -1436,6 +1895,7 @@ public final class SuiteMenuScreen extends Screen {
             this.active = active;
             this.icon = ItemIcons.stack(t.icon());
             this.badge = enabled > 0 ? Integer.toString(enabled) : "";
+            this.badgeW = badge.isEmpty() ? 0 : smallWidth(f, badge);
             this.label = UiRenderUtils.ellipsize(f, t.label, w - 40 - (badge.isEmpty() ? 0 : 14));
             if (!badge.isEmpty()) {
                 tooltip(enabled + (enabled == 1 ? " module" : " modules") + " on in " + t.label);
@@ -1447,25 +1907,26 @@ public final class SuiteMenuScreen extends Screen {
             return !active;
         }
 
+        /** Quiet rows; the selected one is raised glass with brackets (its accent bar is drawn by the screen). */
         @Override
         public void render(GuiGraphics g, Font font, int sx, int sy, int mouseX, int mouseY) {
             boolean hover = inside(mouseX, mouseY, sx, sy, w, h);
             if (active) {
-                UiRenderUtils.roundedRect(g, sx, sy, w, h, UiTheme.RADIUS_SMALL, UiTheme.CARD);
-                UiRenderUtils.roundedRect(g, sx, sy + 5, 2, h - 10, 1, UiTheme.ACCENT);
+                g.fill(sx, sy, sx + w, sy + h, HoloTheme.argb(HoloToken.GLASS_RAISED));
+                HoloFrames.brackets(g, sx, sy, w, h, HoloTheme.bracketArm(w, h),
+                        HoloTheme.argb(HoloToken.LINE_STRONG));
             } else if (hover) {
-                UiRenderUtils.roundedRect(g, sx, sy, w, h, UiTheme.RADIUS_SMALL, 0x0FFFFFFF);
+                g.fill(sx, sy, sx + w, sy + h, HoloTheme.argb(HoloToken.GLASS_RAISED, 0.5f));
+                HoloFrames.edge(g, sx, sy, w, h, HoloTheme.argb(HoloToken.LINE_FAINT));
             }
             UiRenderUtils.item(g, icon, sx + 10, sy + (h - 12) / 2, 12);
             UiRenderUtils.text(g, font, label, sx + 30, sy + (h - 8) / 2,
-                    active ? UiTheme.TEXT : hover ? UiTheme.TEXT_SECONDARY : UiTheme.TEXT_DIM);
+                    HoloTheme.argb(active || hover ? HoloToken.TEXT : HoloToken.TEXT_SECONDARY));
             if (!badge.isEmpty()) {
-                int bw = Math.max(10, smallWidth(font, badge) + 6);
-                int bx = sx + w - 6 - bw;
+                int bx = sx + w - 6 - Math.max(10, badgeW + 6);
                 int by = sy + (h - 10) / 2;
-                UiRenderUtils.roundedRect(g, bx, by, bw, 10, 2, active ? UiTheme.CONTROL_HOVER : UiTheme.CONTROL);
-                smallText(g, font, badge, bx + (bw - smallWidth(font, badge)) / 2, by + 3,
-                        active ? UiTheme.TEXT : UiTheme.TEXT_DIM);
+                smallText(g, font, badge, bx + (Math.max(10, badgeW + 6) - badgeW) / 2, by + 3,
+                        HoloTheme.argb(active ? HoloToken.ACCENT : HoloToken.TEXT_MUTED));
             }
         }
 
@@ -1481,26 +1942,45 @@ public final class SuiteMenuScreen extends Screen {
 
     // ---- column 2 rows ----------------------------------------------------------------------------------------------
 
-    /** Dim small-caps group caption ("MODULES", a category name in search results). */
-    private static final class CaptionRow extends UiNode {
+    /** A column-2 row with a stable animation key, so search can reflow it from its old place. */
+    private abstract static class ListRow extends UiNode {
+        final long animKey;
+
+        ListRow(int w, int h, long animKey) {
+            super(w, h);
+            this.animKey = animKey;
+        }
+    }
+
+    /** Small-caps group caption ("MODULES", a category name in search results) in accent, with a hairline. */
+    private static final class CaptionRow extends ListRow {
         private final String text;
+        private int textW = -1;
 
         CaptionRow(String text, int w) {
-            super(w, 14);
+            super(w, 14, AnimStore.key(text, 101));
             this.text = text;
         }
 
         @Override
         public void render(GuiGraphics g, Font font, int sx, int sy, int mouseX, int mouseY) {
-            smallText(g, font, text, sx + 6, sy + 5, UiTheme.TEXT_MUTED);
+            if (textW < 0) {
+                textW = smallWidth(font, text);
+            }
+            smallText(g, font, text, sx + 6, sy + 5, HoloTheme.argb(HoloToken.ACCENT, 0.85f));
+            int lx = sx + 6 + textW + 4;
+            if (lx < sx + w - 6) {
+                HoloFrames.hLine(g, lx, sx + w - 6, sy + 8, HoloTheme.argb(HoloToken.LINE_FAINT));
+            }
         }
     }
 
     /**
-     * One entry of the module list: tag chip, name (white when on, grey when off), an optional matched-setting line in
-     * search results and an on/off dot. Left click opens it in column 3; right click turns the module on or off.
+     * One entry of the module list: a 2 px category-hue bar, the name (bright when on, muted when off), an optional
+     * matched-setting line in search results and a state mark at the right edge (accent dot on, dim dot off, SYNC
+     * diamond while the module holds a lease). Left click opens it in column 3; right click turns the module on or off.
      */
-    private final class ModuleRow extends UiNode {
+    private final class ModuleRow extends ListRow {
         private final Tab target;
         private final String moduleId;
         private final String name;
@@ -1508,20 +1988,20 @@ public final class SuiteMenuScreen extends Screen {
         private final boolean enabled;
         private final boolean overview;
         private final boolean isSelected;
-        private final String chip;
+        private boolean leased;
 
         ModuleRow(Font f, Tab target, String moduleId, String name, String sub, boolean enabled, boolean overview,
                   boolean selected, int w) {
-            super(w, sub.isEmpty() ? ROW_H : ROW_H_SUB);
+            super(w, sub.isEmpty() ? ROW_H : ROW_H_SUB, overview ? AnimStore.key("menu.row.overview", target.ordinal())
+                    : AnimStore.key(moduleId, 0));
             this.target = target;
             this.moduleId = moduleId;
             this.overview = overview;
             this.isSelected = selected;
             this.enabled = enabled;
-            this.chip = overview ? "PAGE" : target.chip();
-            int chipW = smallWidth(f, chip) + 8;
-            this.name = UiRenderUtils.ellipsize(f, name, w - 10 - chipW - 6 - 12);
+            this.name = UiRenderUtils.ellipsize(f, name, w - 10 - 14);
             this.sub = sub.isEmpty() ? "" : UiRenderUtils.ellipsize(f, "setting: " + sub, (int) ((w - 16) / 0.75f));
+            this.leased = !overview && holdsLease(moduleId);
             tooltip(overview ? "Quick actions and status for " + target.label
                     : "Click to open · right-click to turn " + (enabled ? "off" : "on"));
         }
@@ -1532,27 +2012,40 @@ public final class SuiteMenuScreen extends Screen {
         }
 
         @Override
+        public void refresh(Font font) {
+            leased = !overview && holdsLease(moduleId);
+        }
+
+        @Override
         public void render(GuiGraphics g, Font font, int sx, int sy, int mouseX, int mouseY) {
             boolean hover = inside(mouseX, mouseY, sx, sy, w, h);
             if (isSelected) {
-                UiRenderUtils.roundedRect(g, sx, sy, w, h, UiTheme.RADIUS_SMALL, UiTheme.CARD_HOVER);
-                UiRenderUtils.roundedRect(g, sx, sy + 4, 2, h - 8, 1, UiTheme.ACCENT);
+                g.fill(sx, sy, sx + w, sy + h, HoloTheme.argb(HoloToken.GLASS_RAISED));
+                HoloFrames.edge(g, sx, sy, w, h, HoloTheme.argb(HoloToken.LINE_FAINT));
             } else if (hover) {
-                UiRenderUtils.roundedRect(g, sx, sy, w, h, UiTheme.RADIUS_SMALL, 0x0FFFFFFF);
+                g.fill(sx, sy, sx + w, sy + h, HoloTheme.argb(HoloToken.GLASS_RAISED, 0.5f));
             }
-            int chipColor = overview ? UiTheme.TEXT_DIM : target.chipColor();
-            int cw = smallWidth(font, chip) + 8;
-            int cy = sy + (ROW_H - 10) / 2;
-            UiRenderUtils.roundedRect(g, sx + 6, cy, cw, 10, 2, UiTheme.fade(chipColor, 0.16f));
-            smallText(g, font, chip, sx + 10, cy + 3, chipColor);
+            if (overview) {
+                HoloFrames.sideBar(g, sx, sy + 3, ROW_H - 6, isSelected ? HoloToken.ACCENT : HoloToken.LINE, 1f);
+            } else {
+                HoloFrames.sideBar(g, sx, sy + 3, ROW_H - 6, target.token(), enabled || isSelected ? 1f : 0.4f);
+            }
             boolean on = overview || enabled;
-            UiRenderUtils.text(g, font, name, sx + 6 + cw + 6, sy + (ROW_H - 8) / 2,
-                    isSelected ? UiTheme.TEXT : on ? UiTheme.TEXT_SECONDARY : UiTheme.TEXT_MUTED);
+            UiRenderUtils.text(g, font, name, sx + 8, sy + (ROW_H - 8) / 2, HoloTheme.argb(isSelected
+                    ? HoloToken.TEXT : on ? HoloToken.TEXT_SECONDARY : HoloToken.TEXT_MUTED));
             if (!overview) {
-                UiRenderUtils.dot(g, sx + w - 9, sy + (ROW_H - 4) / 2, 4, enabled ? UiTheme.RUNNING : UiTheme.TRACK_OFF);
+                int cx = sx + w - 8;
+                int cy = sy + ROW_H / 2 - 1;
+                if (leased) {
+                    diamond(g, cx, cy, HoloTheme.argb(HoloToken.SYNC));
+                } else if (enabled) {
+                    armedDot(g, cx, cy, HoloToken.ACCENT);
+                } else {
+                    g.fill(cx - 1, cy - 1, cx + 2, cy + 2, HoloTheme.argb(HoloToken.TEXT_FAINT));
+                }
             }
             if (!sub.isEmpty()) {
-                smallText(g, font, sub, sx + 8, sy + ROW_H + 1, UiTheme.TEXT_DIM);
+                smallText(g, font, sub, sx + 8, sy + ROW_H + 1, HoloTheme.argb(HoloToken.TEXT_MUTED));
             }
         }
 
@@ -1645,13 +2138,26 @@ public final class SuiteMenuScreen extends Screen {
      * Segmented Legit / Balanced / Relaxed control (column 2). No segment is lit when the knobs are mixed ("custom");
      * re-reads the profile in {@link #refresh} (every few ticks), so hand-tuning a setting shows up.
      */
-    private final class PresetBar extends UiNode {
+    private final class PresetBar extends ListRow {
         private static final com.utilitysuite.core.LegitPresets.Level[] LEVELS =
                 com.utilitysuite.core.LegitPresets.Level.values();
+        private static final String[] LABELS_UC = new String[LEVELS.length];
+
+        static {
+            for (int i = 0; i < LEVELS.length; i++) {
+                LABELS_UC[i] = presetLabel(LEVELS[i]).toUpperCase(Locale.ROOT);
+            }
+        }
+
         private com.utilitysuite.core.LegitPresets.Level current = currentLegitLevel();
+        private final int[] labelW = new int[LEVELS.length];
+        private boolean widthsReady;
+        private com.utilitysuite.core.LegitPresets.Level statusFor;
+        private boolean statusValid;
+        private String statusText = "";
 
         PresetBar(int w) {
-            super(w, 26);
+            super(w, 26, AnimStore.key("menu.row.preset", 0));
             tooltip("Tunes every system at once (speed, rotations, line of sight, bridge disguise). It never turns "
                     + "features on or off. Lit segment: the level all settings match; none lit: custom.");
         }
@@ -1666,29 +2172,57 @@ public final class SuiteMenuScreen extends Screen {
             current = currentLegitLevel();
         }
 
+        /**
+         * One FIELD inset split by hairlines; the lit segment is raised glass with a 2 px accent underline that
+         * travels between segments. Labels, widths and the status line are cached (rebuilt only when the level
+         * changes), so nothing is built per frame.
+         */
         @Override
         public void render(GuiGraphics g, Font font, int sx, int sy, int mouseX, int mouseY) {
+            if (!widthsReady) {
+                widthsReady = true;
+                for (int i = 0; i < LEVELS.length; i++) {
+                    labelW[i] = smallWidth(font, LABELS_UC[i]);
+                }
+            }
+            if (!statusValid || statusFor != current) {
+                statusFor = current;
+                statusValid = true;
+                String s = current == null ? "custom: settings are hand-tuned" : presetTip(current);
+                statusText = UiRenderUtils.ellipsize(font, s, (int) ((w - 12) / 0.75f));
+            }
             int bx = sx + 4, bw = w - 8, bh = 14;
-            UiRenderUtils.panel(g, bx, sy, bw, bh, 3, UiTheme.FIELD, UiTheme.CONTROL_BORDER);
+            g.fill(bx, sy, bx + bw, sy + bh, HoloTheme.argb(HoloToken.FIELD));
+            HoloFrames.edge(g, bx, sy, bw, bh, HoloTheme.argb(HoloToken.LINE_FAINT));
             int segW = bw / LEVELS.length;
+            int litX = -1;
+            int litW = 0;
             for (int i = 0; i < LEVELS.length; i++) {
                 int x0 = bx + i * segW;
                 int segWi = i == LEVELS.length - 1 ? bw - i * segW : segW;
                 boolean on = LEVELS[i] == current;
                 boolean hover = inside(mouseX, mouseY, x0, sy, segWi, bh);
-                if (on) {
-                    UiRenderUtils.roundedRect(g, x0 + 1, sy + 1, segWi - 2, bh - 2, 2, UiTheme.ACCENT_TINT);
-                    UiRenderUtils.roundedOutline(g, x0 + 1, sy + 1, segWi - 2, bh - 2, 2, UiTheme.ACCENT_BORDER);
-                } else if (hover) {
-                    UiRenderUtils.roundedRect(g, x0 + 1, sy + 1, segWi - 2, bh - 2, 2, 0x10FFFFFF);
+                if (i > 0) {
+                    HoloFrames.vLine(g, x0, sy + 3, sy + bh - 3, HoloTheme.argb(HoloToken.LINE_FAINT));
                 }
-                String label = presetLabel(LEVELS[i]).toUpperCase(Locale.ROOT);
-                smallText(g, font, label, x0 + (segWi - smallWidth(font, label)) / 2, sy + 5,
-                        on ? UiTheme.ACCENT : hover ? UiTheme.TEXT_SECONDARY : UiTheme.TEXT_DIM);
+                if (on) {
+                    g.fill(x0 + 1, sy + 1, x0 + segWi - 1, sy + bh - 1, HoloTheme.argb(HoloToken.GLASS_RAISED));
+                    litX = x0;
+                    litW = segWi;
+                } else if (hover) {
+                    g.fill(x0 + 1, sy + 1, x0 + segWi - 1, sy + bh - 1, HoloTheme.argb(HoloToken.GLASS_RAISED, 0.5f));
+                }
+                smallText(g, font, LABELS_UC[i], x0 + (segWi - labelW[i]) / 2, sy + 5, HoloTheme.argb(on
+                        ? HoloToken.ACCENT : hover ? HoloToken.TEXT : HoloToken.TEXT_SECONDARY));
             }
-            String status = current == null ? "custom: settings are hand-tuned" : presetTip(current);
-            smallText(g, font, UiRenderUtils.ellipsize(font, status, (int) ((w - 12) / 0.75f)), sx + 6, sy + bh + 4,
-                    current == null ? UiTheme.WARNING : UiTheme.TEXT_MUTED);
+            if (litX >= 0) { // the underline travels to the newly lit segment (offset from the bar, so a reflow
+                // of the list does not drag it)
+                int ux = bx + Math.round(AnimStore.SHARED.settle(PRESET_BAR_KEY, litX - bx, AnimStore.TAU_NORMAL));
+                g.fill(ux + 1, sy + bh - 1 - HoloTheme.BAR, ux + litW - 1, sy + bh - 1,
+                        HoloTheme.argb(HoloToken.ACCENT));
+            }
+            smallText(g, font, statusText, sx + 6, sy + bh + 4,
+                    HoloTheme.argb(current == null ? HoloToken.WARN : HoloToken.TEXT_MUTED));
         }
 
         @Override
