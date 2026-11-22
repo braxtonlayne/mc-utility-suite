@@ -14,9 +14,16 @@ public final class AimSolver {
 
     /** @param out {@code out[0]} = yaw, {@code out[1]} = pitch */
     public static void solve(CombatSnapshot s, double leadTicks, float[] out) {
-        double ox = s.tvx * leadTicks;
-        double oy = s.tvy * leadTicks;
-        double oz = s.tvz * leadTicks;
+        solve(s, s.tvx * leadTicks, s.tvy * leadTicks, s.tvz * leadTicks, out);
+    }
+
+    /**
+     * Same aim point, with the target's box moved by an explicit world offset (where the target is expected to be,
+     * e.g. from {@code StrafePhaseModel.predictOffset}) instead of velocity times a lead time.
+     *
+     * @param out {@code out[0]} = yaw, {@code out[1]} = pitch
+     */
+    public static void solve(CombatSnapshot s, double ox, double oy, double oz, float[] out) {
         double x = clampInset(s.px, s.minX + ox, s.maxX + ox);
         double y = clampInset(s.eyeY, s.minY + oy, s.maxY + oy);
         double z = clampInset(s.pz, s.minZ + oz, s.maxZ + oz);

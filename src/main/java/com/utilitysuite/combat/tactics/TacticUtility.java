@@ -13,7 +13,13 @@ package com.utilitysuite.combat.tactics;
  */
 public final class TacticUtility {
 
-    public enum Tactic { FIGHT, KITE, RETREAT_HEAL, FLEE }
+    public enum Tactic {
+        FIGHT, KITE, RETREAT_HEAL, FLEE,
+        /** Take a nearby spot above the opponent and fight from there. Scores {@link #highGround}. */
+        HIGH_GROUND,
+        /** Back under a low ceiling so a crit-hopper's hops fail. Scores {@link #ceilingDeny} and the hop rate. */
+        CEILING_DENY
+    }
 
     /** Bonus the current tactic keeps over challengers. */
     public static final double HYSTERESIS = 0.12;
@@ -33,6 +39,10 @@ public final class TacticUtility {
     public double distance = 3;
     /** Opponent take-offs per second ({@link OpponentModel#hopRate}). */
     public double oppHopRate;
+    /** 0..1: a useful higher spot is close ({@code ArenaTactics.highGround}); 0 = none. Not scored yet (stub). */
+    public double highGround;
+    /** 0..1: a low-ceiling spot is close ({@code ArenaTactics.ceilingDeny}); 0 = none. Not scored yet (stub). */
+    public double ceilingDeny;
 
     private final double[] scores = new double[Tactic.values().length];
     private static final Tactic[] TACTICS = Tactic.values();

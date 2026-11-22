@@ -28,6 +28,8 @@ public final class Humanizer implements IHumanizer {
     private final PrimitiveRandom random;
     private final double sessionSkill;
     private double skillOverride = Double.NaN;
+    private double skillRequest = Double.NaN;
+    private String skillRequestOwner;
     private boolean enabled = true;
 
     public Humanizer(PrimitiveRandom random) {
@@ -60,7 +62,32 @@ public final class Humanizer implements IHumanizer {
 
     @Override
     public double skill() {
-        return Double.isNaN(skillOverride) ? sessionSkill : skillOverride;
+        if (!Double.isNaN(skillOverride)) {
+            return skillOverride; // the user's fixed value wins
+        }
+        return Double.isNaN(skillRequest) ? sessionSkill : skillRequest;
+    }
+
+    @Override
+    public void requestSkill(String moduleId, double skill) {
+        if (moduleId == null || Double.isNaN(skill)) {
+            return;
+        }
+        skillRequestOwner = moduleId;
+        skillRequest = skill < 0.0 ? 0.0 : Math.min(skill, 1.0);
+    }
+
+    @Override
+    public void clearSkillRequest(String moduleId) {
+        if (moduleId != null && moduleId.equals(skillRequestOwner)) {
+            skillRequestOwner = null;
+            skillRequest = Double.NaN;
+        }
+    }
+
+    /** The module holding the current skill request, or null. */
+    public String skillRequestOwner() {
+        return skillRequestOwner;
     }
 
     @Override

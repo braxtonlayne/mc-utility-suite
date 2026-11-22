@@ -31,6 +31,19 @@ public interface IHumanizer {
     /** Next uniform double in [0, 1) from the shared primitive generator. */
     double nextUnit();
 
+    /**
+     * Asks for a skill value in [0, 1] in place of the per-session one (the combat rank dial: one notch above the
+     * current opponent). One request at a time, the latest call wins; a fixed skill the user set in the settings
+     * always wins over a request. Call {@link #clearSkillRequest} when the reason ends (disengage, Stop-All).
+     * Allocation free; cheap enough to call every tick.
+     */
+    default void requestSkill(String moduleId, double skill) {
+    }
+
+    /** Drops that module's request; no-op when another module holds it. */
+    default void clearSkillRequest(String moduleId) {
+    }
+
     /** Neutral fallback used before the core registers one: no delay spread, capped-speed turns, center aim. */
     IHumanizer NEUTRAL = new IHumanizer() {
         @Override

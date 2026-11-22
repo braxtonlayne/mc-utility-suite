@@ -50,6 +50,29 @@ public final class StrafePlanner {
         return dir;
     }
 
+    /**
+     * Same as {@link #update(boolean, boolean, int, double)}, with a direction to prefer right now because it moves
+     * WITH the opponent ({@link #mirrorOf}): circling the same way round keeps the opponent near the crosshair, so
+     * the turn rate the aim needs drops. {@code withStrength} 0..1 is how sure the read is; 0 or
+     * {@code withDir == NONE} is the 4-argument behaviour. Hazards still win.
+     * <p>
+     * CONTRACT STUB: the signature is fixed for the volley; the preference is filled in by the anticipatory-aim task
+     * (until then {@code withDir} is ignored).
+     */
+    public int update(boolean hazardLeft, boolean hazardRight, int nextInterval, double opponentBias, int withDir,
+                      double withStrength) {
+        return update(hazardLeft, hazardRight, nextInterval, opponentBias);
+    }
+
+    /**
+     * Our strafe direction that moves with an opponent whose lateral sign is {@code opponentLateralSign}
+     * ({@code OpponentModel} / {@code StrafePhaseModel} convention: + = to its own right while facing us, which is
+     * our left): {@link #LEFT} for +, {@link #RIGHT} for -, {@link #NONE} for 0.
+     */
+    public static int mirrorOf(int opponentLateralSign) {
+        return opponentLateralSign > 0 ? LEFT : (opponentLateralSign < 0 ? RIGHT : NONE);
+    }
+
     static int shaped(int interval, int dir, double bias) {
         double b = Math.max(-1.0, Math.min(1.0, bias));
         if (Math.abs(b) < BIAS_THRESHOLD) {

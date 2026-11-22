@@ -19,7 +19,15 @@ package com.utilitysuite.combat.assistant;
  */
 public final class TacticsPlanner {
 
-    public enum Tactic { NONE, HOLD_GAP, EDGE_KNOCK }
+    public enum Tactic {
+        NONE, HOLD_GAP, EDGE_KNOCK,
+        /**
+         * Knockback vectoring from the arena read ({@link CombatSnapshot#knockValue}): approach from the side that
+         * sends the target toward lava, a drop, a cobweb or a wall. Not planned yet (contract stub; the arena-tactics
+         * task fills it in).
+         */
+        KNOCK_VECTOR
+    }
 
     /** A drop at least this deep counts (fall damage starts past 3 blocks; deeper is a pit). */
     public static final int GAP_DEPTH = 3;

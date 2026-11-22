@@ -72,6 +72,19 @@ public final class CombatSnapshot {
     /** Depth of that drop (0 = none nearby, {@link #DEEP} = lava or the void). */
     public int knockDepth;
 
+    // ---- arena read (filled by the assistant from combat.tactics.ArenaField when knock vectoring is on) ------------
+    /**
+     * 0..1 value of pushing the target along ({@link #knockFieldX}, {@link #knockFieldZ}); 0 = nothing worth steering
+     * toward. Independent of the probe-based {@link #knockDepth} above.
+     */
+    public double knockValue;
+    /** Unit horizontal direction from the target toward the feature (lava, drop, cobweb, wall). */
+    public double knockFieldX, knockFieldZ;
+    /** {@code ArenaField.KNOCK_*} kind of that feature (0 = none). */
+    public int knockKind;
+    /** Open blocks above the player's floor from the arena read (4 = open sky or unknown; 2 = no room to jump). */
+    public int headroom = 4;
+
     /** Depth value used for lava, the void and very deep drops. */
     public static final int DEEP = 64;
 
