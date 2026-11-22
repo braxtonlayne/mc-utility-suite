@@ -221,6 +221,61 @@ class HitPlannerTest {
     }
 
     @Test
+    void heavilyOutGearedHopsForTheCritEvenWhileTheirHitIsCharged() {
+        // arena finding 2026-11-22 (stone sword into full diamond): ground hits dealt less than the opponent
+        // regenerated, and the "no hop while their hit is charged" rule kept every hit on the ground
+        HitPlanner p = afterOpener();
+        p.targetIsPlayer = true;
+        p.oppCharged = true;
+        p.gearRatio = 3.0;
+        p.decide(snap(2.5));
+        assertEquals(HitPlanner.Kind.CRIT, p.kind());
+        assertTrue(p.jump(), "the hop starts although their hit is charged");
+
+        HitPlanner mild = afterOpener();
+        mild.targetIsPlayer = true;
+        mild.oppCharged = true;
+        mild.gearRatio = 2.0;
+        mild.decide(snap(2.5));
+        assertFalse(mild.jump(), "below the crit-or-nothing ratio the charged-hit rule still holds");
+        assertEquals(HitPlanner.Kind.SPRINT_KB, mild.kind());
+    }
+
+    @Test
+    void heavilyOutGearedCritsThroughAComboPlanAndAReEngageButNotTheOpener() {
+        HitPlanner opener = new HitPlanner();
+        opener.targetIsPlayer = true;
+        opener.gearRatio = 3.0;
+        opener.decide(snap(2.5));
+        assertEquals(HitPlanner.Kind.SPRINT_KB, opener.kind(), "the opener stays a sprint-knockback hit");
+
+        HitPlanner combo = afterOpener();
+        combo.targetIsPlayer = true;
+        combo.comboLive = true;
+        combo.gearRatio = 3.0;
+        combo.decide(snap(2.5));
+        assertEquals(HitPlanner.Kind.CRIT, combo.kind(), "a knockback hit into that armour is not worth the combo");
+
+        HitPlanner re = afterOpener();
+        re.targetIsPlayer = true;
+        re.gearRatio = 3.0;
+        CombatSnapshot far = snap(7.0);
+        far.attackStrength = 0.2f;
+        for (int i = 0; i < HitPlanner.REENGAGE_TICKS + 2; i++) {
+            re.decide(far);
+        }
+        re.decide(snap(2.5));
+        assertEquals(HitPlanner.Kind.CRIT, re.kind(), "a re-engage is a crit too");
+
+        HitPlanner mob = afterOpener();
+        mob.targetIsPlayer = false;
+        mob.comboLive = true;
+        mob.gearRatio = 3.0;
+        mob.decide(snap(2.5));
+        assertEquals(HitPlanner.Kind.SPRINT_KB, mob.kind(), "players only");
+    }
+
+    @Test
     void critTimingOffNeverPicksCrit() {
         HitPlanner p = afterOpener();
         p.critTiming = false;

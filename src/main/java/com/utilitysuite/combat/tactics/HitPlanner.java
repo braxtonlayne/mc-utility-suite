@@ -70,6 +70,12 @@ public final class HitPlanner {
     public static final double SWEEP_SLOW_SPEED = 0.15;
     /** Gear ratio from which we count as out-damaged. */
     public static final double OUT_DAMAGED_RATIO = 1.15;
+    /**
+     * Gear ratio from which only crits count against a player: plain and knockback hits on that armour deal less
+     * than the opponent regenerates, so the opener aside every hit is a crit, combo plan or not, and the hop is made
+     * even while the opponent's hit is charged (they out-trade us on the ground just the same).
+     */
+    public static final double CRIT_OR_NOTHING_RATIO = 2.5;
     /** Mob health (points) from which crits are worth more than knockback. */
     public static final float HIGH_HEALTH_MOB = 20f;
     /** Opponent within this horizontal distance counts as in its reach (3 blocks plus its box). */
@@ -151,7 +157,13 @@ public final class HitPlanner {
     /** True when being airborne now costs nothing it should not: every "no hop" rule. */
     public boolean hopAllowed(CombatSnapshot s) {
         return critTiming && !holdGap && !s.hazardBack && s.headroom > LOW_HEADROOM && !s.inWater && !s.climbing
-                && !s.usingItem && !(targetIsPlayer && oppCharged && s.horizontalDistance() <= OPP_REACH);
+                && !s.usingItem
+                && !(targetIsPlayer && oppCharged && !critOrNothing() && s.horizontalDistance() <= OPP_REACH);
+    }
+
+    /** Heavily out-geared by a player ({@link #CRIT_OR_NOTHING_RATIO}): only crits make progress. */
+    public boolean critOrNothing() {
+        return critTiming && targetIsPlayer && gearRatio >= CRIT_OR_NOTHING_RATIO;
     }
 
     /** True when a ground swing now would sweep (sword, ground, no sprint, slow) and something protected is close. */
@@ -175,10 +187,11 @@ public final class HitPlanner {
         if (s.knockValue > 0.0 && (s.knockKind == ArenaField.KNOCK_LAVA || s.knockKind == ArenaField.KNOCK_DROP)) {
             return Kind.SPRINT_KB; // the arena read steers toward lava or a drop: knockback, always
         }
-        if (swingsThisEngagement == 0 || reengage) {
+        boolean critOnly = critOrNothing() && (hopOk || !s.onGround);
+        if (swingsThisEngagement == 0 || (reengage && !critOnly)) {
             return Kind.SPRINT_KB; // opener and re-engage
         }
-        if (comboLive) {
+        if (comboLive && !critOnly) {
             return Kind.SPRINT_KB;
         }
         if (s.sweepWeapon && s.sweepProtected == 0 && s.sweepHostiles >= 1) {

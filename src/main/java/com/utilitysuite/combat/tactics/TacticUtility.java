@@ -65,6 +65,18 @@ public final class TacticUtility {
      */
     public boolean canRegenerate = true;
 
+    /** Health (points) we must miss beyond what the opponent misses for a regeneration reset to pay. */
+    public static final double REGEN_RESET_MARGIN = 2.0;
+
+    /**
+     * A reset on natural regeneration pays: both sides regenerate at the same rate while apart, so it only gains
+     * ground while we miss clearly more health than the opponent does (they top up and stop, we keep healing).
+     * Against a nearly dead opponent it never pays: the reset would hand back the damage already dealt.
+     */
+    public static boolean regenResetPays(double ownMissing, double oppMissing) {
+        return ownMissing > oppMissing + REGEN_RESET_MARGIN;
+    }
+
     private final double[] scores = new double[Tactic.values().length];
     private static final Tactic[] TACTICS = Tactic.values();
     private Tactic current = Tactic.FIGHT;

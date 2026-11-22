@@ -167,6 +167,9 @@ public final class FakeCombatWorld implements CombatWorld {
         out.health = s.health;
         out.maxHealth = s.maxHealth;
         out.absorption = s.absorption;
+        out.foodLevel = s.foodLevel;
+        out.saturation = s.saturation;
+        out.targetHealth = t.health;
         out.onGround = s.onGround;
         out.inWater = s.inWater;
         out.climbing = s.climbing;
