@@ -293,6 +293,13 @@ public final class MovementAssistBrain {
             sneak = true;
             corrected = true;
         }
+        // where the view was when this commitment first asked for a co-steer (the allowance is counted from there)
+        if (!commit.live() && !coSteer) {
+            steerBaseSet = false;
+        } else if (coSteer && !steerBaseSet) {
+            steerBaseSet = true;
+            steerBaseYaw = yaw;
+        }
         prevAssistedJump = jump && !jumpBuffer.fired();
         simTicks = search.tickCount();
     }
@@ -1014,6 +1021,20 @@ public final class MovementAssistBrain {
         hasIdealYaw = idealValid && bestMiss <= 0.0;
     }
 
+    private boolean steerBaseSet;
+    private float steerBaseYaw;
+
+    /**
+     * What is left of the level's co-steer total for this commitment, in whole degrees: the core counts every degree
+     * it has added since the commitment's first request, so a script planned after the view was already turned (a
+     * few ticks of aiming before the line was known to be blocked, an earlier script) may only ask for the rest. A
+     * script that asked for the full total again stopped short of its goal in the client and left its line.
+     */
+    float coSteerLeft(float yaw) {
+        float used = steerBaseSet ? Math.abs(wrap(yaw - steerBaseYaw)) : 0f;
+        return (float) Math.floor(Math.max(0f, coSteerMaxTotalDeg - used));
+    }
+
     private static float wrap(float deg) {
         float d = deg % 360f;
         if (d >= 180f) {
@@ -1225,7 +1246,7 @@ public final class MovementAssistBrain {
                 || commitSimTicks + TechniqueSource.MAX_SIM_TICKS_PER_CALL > MAX_COMMIT_SIM_TICKS) {
             return;
         }
-        techniques.setMaxTurn(coSteerAllowed ? coSteerMaxTotalDeg : 0f);
+        techniques.setMaxTurn(coSteerAllowed ? coSteerLeft(yaw) : 0f);
         techniques.setLineBlocked(techniqueFirst);
         boolean got = techniques.plan(now, yaw, sprintKey, userForward, userStrafe, planRegion, coSteerAllowed,
                 coSteerMaxDegPerTick, safeOnly, holdHealth, w);

@@ -75,6 +75,8 @@ class ParkourLaneReplicaTest {
     static final int REAL = 0;
     static final int FORCED = 1;
     static final int DROPPED_IN_THE_AIR = 2;
+    /** The real estimator, but "blocked" reaches the brain three ticks late (its roll cache can lag the pick). */
+    static final int LATE_BLOCKED = 3;
 
     static final class Run {
         int stayed = -1;
@@ -92,6 +94,8 @@ class ParkourLaneReplicaTest {
         int pressTick = -1;
         int takeoffTick = -1;
         boolean frozenInFlight;
+        double maxTotalTurn;
+        double maxLeftError;
         StringBuilder trace = new StringBuilder();
     }
 
@@ -128,6 +132,7 @@ class ParkourLaneReplicaTest {
         int pressTick = -1;
         int takeoffTick = -1;
         int landedAt = -1;
+        int lateTicks = 0;
         boolean wasGround = true;
         boolean sprint = true;
         for (int t = 0; t < 400; t++) {
@@ -147,11 +152,11 @@ class ParkourLaneReplicaTest {
             if (intentMode == DROPPED_IN_THE_AIR && !p.onGround) {
                 has = false;
                 b.clearIntentTarget();
-            } else if (intentMode != REAL) {
+            } else if (intentMode == FORCED || intentMode == DROPPED_IN_THE_AIR) {
                 has = true;
                 b.setIntentTarget(lane.postX, FLOOR, lane.postZ, 0.9);
             } else if (has) {
-                b.setIntentBlocked(intent.targetBlocked());
+                b.setIntentBlocked(intent.targetBlocked() && (intentMode != LATE_BLOCKED || ++lateTicks > 3));
                 b.setIntentLook(intent.lookConfidence());
                 b.setIntentTarget(intent.targetX(), intent.targetY(), intent.targetZ(), intent.confidence());
                 r.everTarget = true;
@@ -200,6 +205,13 @@ class ParkourLaneReplicaTest {
                 yaw += (float) steer.onFrame(yaw, 0.0, 0.0, 0.05 / FRAMES_PER_TICK, false);
             }
             r.maxYawStep = Math.max(r.maxYawStep, Math.abs(yaw - yawUsed));
+            r.maxTotalTurn = Math.max(r.maxTotalTurn, steer.totalAddedDeg());
+            if (b.commit().live()) {
+                // the brain's own count of what is left of the co-steer total, against what the core has added
+                double left = b.coSteerLeft(yaw);
+                double core = Math.max(0.0, Math.min(steerMax, b.coSteerTotalDeg()) - steer.totalAddedDeg());
+                r.maxLeftError = Math.max(r.maxLeftError, Math.abs(left - Math.min(core, steerMax)));
+            }
             if (wasGround && !p.onGround && Double.isNaN(r.jumpZ)) {
                 r.jumpZ = p.z;
                 takeoffTick = t;
@@ -510,6 +522,43 @@ class ParkourLaneReplicaTest {
         // Corrections has no commitment: there the target follows the estimator on every tick
         Run n = roll(PANE1, JumpCommit.Mode.NUDGE, false, DROPPED_IN_THE_AIR);
         assertFalse(n.frozenInFlight);
+    }
+
+    /**
+     * A script planned after the view was already turned in the same commitment (here: three ticks of aiming at the
+     * post before the line is known to be blocked) may only ask for what is left of the level's co-steer total. The
+     * core stops at the total; a script that asked for all of it again left its line in the client (corner-fence in
+     * Co-pilot, 2026-11-22: view goal 31 degrees from the commitment's start against a total of 25).
+     */
+    @Test
+    void aScriptPlannedAfterAnEarlyAimStaysInsideTheCoSteerTotal() {
+        Assumptions.assumeTrue(shapes(), "needs the shape-physics replica");
+        for (Lane lane : new Lane[] {CORNER_FENCE, CORNER_WALL}) {
+            for (JumpCommit.Mode mode : new JumpCommit.Mode[] {JumpCommit.Mode.GUIDE, JumpCommit.Mode.CARRY}) {
+                Run r = roll(lane, mode, false, LATE_BLOCKED);
+                assertEquals(STAY_TICKS, r.stayed, line(lane, mode, r));
+                assertTrue(r.maxTotalTurn <= (mode == JumpCommit.Mode.CARRY ? 90.0 : 25.0) + 1.0e-3,
+                        lane.name + " " + mode + ": turned " + r.maxTotalTurn);
+            }
+        }
+    }
+
+    /**
+     * The brain's count of what is left of the co-steer total follows the core's own count through a commitment that
+     * turns the view (within the 1-degree rounding and one tick of frames), and starts over with the next one.
+     */
+    @Test
+    void theBrainKnowsWhatIsLeftOfTheCoSteerTotal() {
+        Assumptions.assumeTrue(shapes(), "needs the shape-physics replica");
+        MovementAssistBrain fresh = new MovementAssistBrain();
+        fresh.coSteerMaxTotalDeg = 25f;
+        assertEquals(25f, fresh.coSteerLeft(0f), 0f);
+        assertEquals(25f, fresh.coSteerLeft(-40f), 0f, "no commitment has asked for a co-steer yet");
+        for (Lane lane : new Lane[] {WALL3, CORNER_FENCE}) {
+            Run r = roll(lane, JumpCommit.Mode.GUIDE, false, REAL);
+            assertTrue(r.maxTotalTurn > 2.0, lane.name + ": this lane turns the view (" + r.maxTotalTurn + ")");
+            assertTrue(r.maxLeftError <= 4.0, lane.name + ": the brain's count was off by " + r.maxLeftError);
+        }
     }
 
     /** In Co-pilot the user's press is held back at most 4 ticks for a script's takeoff, never swallowed. */

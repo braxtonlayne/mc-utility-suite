@@ -237,9 +237,10 @@ section.
 ### What was wrong (found in the replica, `ParkourLaneReplicaTest`, real estimator in front of the brain)
 
 1. **A teleport was noted as a jump.** After a fall and the `tp` to the next lane, `IntentEstimator.noteJump` stored a
-   13-block "jump". The line term then cost every later target 0.075 of its score. On the pane lane that put the
-   confidence at about 0.43 to 0.5 at the press: under Co-pilot's 0.5, over Takeover's 0.35. That is why Co-pilot
-   never armed and Takeover did. A checkpoint teleport on a real course does the same.
+   13-block "jump". The line term then cost every later target 0.075 of its score. On the pane lane the fresh
+   replica has 0.51 to 0.57 near the press, so the client would have had about 0.43 to 0.5: under Co-pilot's 0.5,
+   over Takeover's 0.35, which fits Co-pilot never arming while Takeover did (the value was not read in the client).
+   A checkpoint teleport on a real course does the same.
 2. **The look term held a lone target down.** The lane camera (pitch 10) looks past a low post, and so does a player
    sprinting at it. With one top in the movement cone the confidence was the bare score, 0.51 at the press.
 3. **The target was dropped on the takeoff tick.** The estimator has a near limit of 1.2 blocks and a "can I walk
@@ -255,7 +256,7 @@ section.
 7. **Technique scripts that turn the view could not be flown in the client** (found by the first lane run: the
    corner scripts landed in the replica and left their line in game). The roller moved the view at the full co-steer
    rate, 7.5 degrees per tick, from the tick of the request. The core's follower (`YawCoSteer`) is smooth: its speed
-   is 8 x the error left, so a 7.5-degree step moves about 3 degrees in the first tick, and a request only reaches
+   is 8 x the error left, so a 7.5-degree step moves 2 to 3 degrees in the first tick, and a request only reaches
    the physics one tick later. A script drifts off its predicted line (limit 0.08 block) within three ticks and is
    dropped. This applies to every yaw variant of the older families too; none of them had been run in a client.
 
@@ -266,11 +267,8 @@ section.
   feasible (0.54 when blocked). `lookConfidence()` is the value without that floor. A roll stopped by a wall marks
   the top BLOCKED (score x 0.9, `targetBlocked()`), not infeasible. "A wall" is a block beside the body that stands
   more than 0.6 above the target's top; a roll that falls short and runs into the side of the target's own platform
-  stays infeasible. (The first version counted any touch away from the target cell. On the benchmark course that
-  kept out-of-reach pads as targets, the landing hold judged "safe to walk on" against one of them, and the runner
-  stood on segment 12's strip with W latched: 12 of 19 in the first three client runs, 19 of 19 after the fix.
-  `ParkourBenchmarkIntentTest` now runs the course with the real estimator in Co-pilot.) Once BLOCKED, a cached top
-  stays BLOCKED for later stances.
+  stays infeasible. (The first version counted any touch away from the target cell, which kept out-of-reach pads
+  as candidates.) Once BLOCKED, a cached top stays BLOCKED for later stances.
 - `MovementAssistBrain`: while ARMED the estimator's pick is applied in `decide` after the takeoff is known, so the
   armed target is the one frozen at TAKEOFF. A blocked target sends the approach ticks and the budget to the
   technique search from the first ARMED tick, the assist's own jump waits for the last supported tick, and the
@@ -278,11 +276,23 @@ section.
   search). The user's press is held back at most 4 ticks, for a script's takeoff or, while the search is still
   running, as long as the body is still supported on the next tick; a press further ahead of a script's takeoff
   drops the script. The planner is told the level's co-steer total (`coSteerMaxTotalDeg`, set by `MovementAssist`).
-- **Landing-hold rules: unchanged, and one guard added to keep them so.** "The user is going on" (`continuing`) reads
-  `lookConfidence()`, not the floored confidence: with the floor, W toward the only top ahead would have counted as
-  going on, and W alone must never chain a jump.
-- `TechniqueTemplates` / `TechniqueLibrary` / `TechniqueRoller`: new family `corner-cut`, walked first: optional
-  strafe away at the start of the script, a takeoff heading toward the target (the aim angle or half of it), forward
+- **Landing-hold rules: unchanged, with two guards added to keep them so.**
+  - "The user is going on" (`continuing`) reads `lookConfidence()`, not the floored confidence: with the floor, W
+    toward the only top ahead would have counted as going on, and W alone must never chain a jump
+    (`wTowardTheOnlyTopAheadIsNotGoingOn`).
+  - "Safe to carry on" (`carryOnIsSafe`, which decides when a latched W works again) was judged at walking speed,
+    because the hold itself ends the sprint, and against the target frozen for the commitment, which is the block
+    being landed on. It is now judged with the sprint the body landed with (while the latched key is forward) and
+    toward the estimator's latest pick. Why it surfaced now (my reading of the code, not measured): on `main` the
+    estimator usually dropped the target on the takeoff tick, the flight ran unfrozen, and by the touchdown the lock
+    had moved on to the next block, so the benchmark runner flowed on. With the freeze working as designed the hold
+    latched on segment 12's strip (the 3-block run-up to a 3 gap) and never let go: 12 of 19 in four of the five
+    client runs before this change, 19 of 19 on `1f37b19` (run here for comparison) and 19 of 19 after it.
+    `ParkourBenchmarkIntentTest` runs the course with the real estimator, Co-pilot, the hold and the sprint state;
+    it failed 12 of 19 before the change. A person in that spot would have had to release and re-press W, which the
+    owner's rule forbids ("never leave a held key dead until it is pressed again").
+- `TechniqueTemplates` / `TechniqueLibrary` / `TechniqueRoller`: new family `corner-cut`, walked first when the
+  line is blocked and last otherwise (the older families keep their order): optional strafe away at the start of the script, a takeoff heading toward the target (the aim angle or half of it), forward
   only for 0 to 6 air ticks, then forward + strafe in with a view goal of 25, 45 or 70 degrees (capped by the level),
   optionally forward released near the end. 108 keys-only and up to 648 yaw candidates.
 - `CoSteerModel` (new): the planner's copy of the follower. Corner-cut scripts are rolled with it (request on tick
@@ -290,7 +300,7 @@ section.
   per-tick yaw. `CoSteerModelTest` holds it to the real follower: identical at 60 fps, within 1.5 degrees at 40 to
   160 fps. The lane replica uses the real `YawCoSteer` and passes at 40, 60, 100 and 160 fps.
 - A script must touch down at least 0.08 block inside the support region (the replay's own drift limit). Before,
-  a script that predicted a touchdown on the rim was accepted and missed in the client.
+  a touchdown anywhere on the region counted, the rim included.
 - Every view change still goes through the co-steer (rate and total capped in the core, 450 deg/s hard cap). No
   fresh key is replaced (asserted per lane).
 - Tried and reverted: keeping the incumbent target inside the estimator's near limit while airborne. It keeps the
@@ -346,3 +356,31 @@ is an air brake, no slow run-up needed). 2.3 blocks is the figure for releasing 
   made, forward held throughout", plus the fresh-press check when it did land. The unit matrix
   (`ApproachControlTest`) already read it this way.
 - **Lane script:** the press comes once at z >= 10.85 whether or not the body is still on the ground.
+
+### Still open after this run
+
+- `corner-fence-3gap-deep` and `corner-wall-3gap-deep` (the first-built corners) are not landed in any mode. They
+  need a trajectory optimiser that can hold a frame-perfect line along the column, not a template.
+- `corner-wall-3gap` in Co-pilot depends on the tick phase of the run-up. The wall post across 3 is at the end of
+  the reach; when the last takeoff tick falls 0.07 block earlier (run-up started at z 0.71 in the replica) no script
+  is found in Co-pilot. Takeover lands it in every phase tried. Nothing shifts the tick phase on the run-up yet
+  (`theCornersDoNotDependOnTheTiming` pins the limit).
+- The older technique families (corner, neo, headhitter, 45-degree) still roll their yaw variants with a view that
+  moves at the full rate from the same tick. The client cannot fly that. They need `CoSteerModel` like the corner
+  cut, and a client run each.
+- A technique script is open loop in the air: a fresh key of the user's that differs from the script moves the body
+  off the line and the script is dropped (the flight controller takes over). Scripts are not re-planned in the air.
+- Corrections can touch the fence post across 2 inside its own rules (strafe fills on the run-up; margin 0.04 at
+  0.24 block per tick) but does not try. The design does not promise it.
+- The estimator still rolls one straight policy per top (sprint, jump as soon as the coast reaches). From a full
+  sprint at z 9.0 and z 10.6 it calls the fence post across 2 infeasible (confidence 0); the lane arms earlier and
+  the approach has slowed the body by then.
+- `parkour blocks: a gap one block too long` fails in both variants, the player then dies and the HAY clutch fails.
+  All four fail the same way on `1f37b19` (the lane was widened to 5 air in that commit; blocks placed 0, plans 2).
+  Not touched here.
+- In the replica of the benchmark (`ParkourBenchmarkIntentTest`) the landing hold starts on most landings of the
+  runner (W held, camera not yet on the next pad) and lets go a few ticks later. In the client the course takes 724
+  ticks against 726 on `1f37b19`, so the pace did not change. Whether a hold should start on a wide pad at all is a
+  question for the hold's "narrow landing" test, not changed here.
+- Hands-on: the corner cut turns the camera up to 25 degrees in Co-pilot (90 in Takeover) through the co-steer. The
+  owner has not felt it yet.
