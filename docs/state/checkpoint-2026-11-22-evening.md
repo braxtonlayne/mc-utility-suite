@@ -31,7 +31,7 @@
 4. Feel the new corner-cut camera turn in game (up to 25 degrees in Co-pilot).
 5. Font downloads (Rajdhani + JetBrains Mono, SIL OFL): still unapproved.
 
-## Next fix (found this evening, not done)
+## Next fix (found this evening; resolved at 17:19, see the end of this note)
 **Parkour-blocks gap lane** (5 air, "a block extends the far side"): no block is placed and the runner falls.
 Traced in game:
 - The runner presses jump on its last supported tick.
@@ -70,3 +70,18 @@ Also open from the agents:
     - player stays alive (the gap-lane fall)
     - HAY clutch: it steers into the arena's water pool instead of placing hay, unhurt (20 to 20). The test
       position is contaminated by the pool; move the lane or accept water as a safe outcome.
+
+## Gap lane resolved (17:19)
+- My 5-air change was wrong. A far-side block turns a 5-air gap into the 4-air maximum flat sprint jump. The body
+  then reaches the block a hair below its top (in game and in the planner's own sim), so no block can save it, and
+  the planner was right to refuse.
+- Replica sweep with a last-tick press: a far-side block saves only the 4-air sprint jump. A well-timed press clears
+  4 air with no block. Walking, no gap is saved by one block.
+- I also corrected my earlier note: the takeoff kept the sprint-jump boost. The vz of 0.262 was read after the jump
+  tick's ground friction.
+- **Lane now:** 4 air with a sloppy early press. It passes when the body crosses, by a re-timed press or a placed
+  block, and the detail says which. Today the assist crossed by re-timing the press. The planner's far-side block
+  stays covered by `BlockAssistPlannerTest`, and in-game placement by the wall lane.
+- **HAY lane:** an unhurt water landing now counts and is named in the detail. Failing runs had steered off the 5x5
+  platform to sea water about 87 blocks down; this run used hay.
+- **Parkour and Combat playtests: PASS.** The Combat failure was the knock-on of the gap-lane death, as suspected.

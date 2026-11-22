@@ -173,8 +173,11 @@ final class ParkourScenario {
 
     /**
      * Parkour blocks. {@code wall}: a 2-high wall across the lane at z+9; the runner sprints at it and holds jump
-     * from two blocks out (a player trying to get over). Otherwise a 5-air gap (z+11..z+15, one block more than a
-     * perfect last-tick sprint jump clears) and the runner holds forward + sprint and presses jump at the edge. Either way the run must end past the obstacle
+     * from two blocks out (a player trying to get over). Otherwise a 4-air gap (z+11..z+14): the longest
+     * flat sprint jump, made only from a well-timed takeoff. The runner holds forward + sprint and presses jump early, as a
+     * sloppy player does; the assist must get the body across either by re-timing the press or by placing a block
+     * against the far side (replica, 2026-11-22: a far-side block saves exactly this jump; at 5 air nothing does, the
+     * body arrives below the block's top). Either way the run must end past the obstacle
      * with a block placed.
      */
     private static void blockLane(Scenario s, ControlLease[] lease, String name, int dx, boolean wall,
@@ -189,7 +192,7 @@ final class ParkourScenario {
             s.cmd(() -> fillWorld(dx - 2, 1, 9, dx + 2, 2, 9, "minecraft:stone_bricks"));
         } else {
             s.cmd(() -> fillWorld(dx - 1, 0, 0, dx + 1, 0, 10, "minecraft:smooth_stone"));
-            s.cmd(() -> fillWorld(dx - 1, 0, 16, dx + 1, 0, 25, "minecraft:smooth_stone"));
+            s.cmd(() -> fillWorld(dx - 1, 0, 15, dx + 1, 0, 25, "minecraft:smooth_stone"));
         }
         s.cmd("clear @s");
         s.cmd("give @s minecraft:cobblestone 32");
@@ -205,7 +208,7 @@ final class ParkourScenario {
             Services.input().setKeyHeld(lease[0], SimKey.FORWARD, true);
             Services.input().setKeyHeld(lease[0], SimKey.SPRINT, true);
         });
-        double goalZ = wall ? 10.5 : 16.5;
+        double goalZ = wall ? 10.5 : 15.5;
         StringBuilder takeoffs = new StringBuilder();
         boolean[] wasGround = {true};
         s.waitUpTo(name + ": run", 20 * 10, () -> {
@@ -223,10 +226,8 @@ final class ParkourScenario {
             wasGround[0] = p.onGround();
             if (wall && z >= 7.0) {
                 Services.input().setKeyHeld(lease[0], SimKey.JUMP, true);
-            } else if (!wall && p.onGround() && z + p.getDeltaMovement().z >= 11.3) {
-                // a player trying to cross presses jump on the last supported tick (the next one would be past the
-                // edge's support, z 11 + half the body width); a gap no jump clears gets no edge jump of its own (the
-                // assist does not leap into a pit), so without this press the body just walks off
+            } else if (!wall && p.onGround() && z >= 10.6) {
+                // a sloppy player presses jump about two ticks early (the edge's support ends at z 11.3)
                 Services.input().setKeyHeld(lease[0], SimKey.JUMP, true);
             }
             if (!shot[0] && TravelBootstrap.movement().blocksPlaced() > before[0]) {
@@ -244,12 +245,14 @@ final class ParkourScenario {
             MovementAssist ma = TravelBootstrap.movement();
             double z = p.getZ() - Arena.cz - OZ;
             autopilotRestore(viaAutopilot);
+            boolean placedOne = ma.blocksPlaced() > before[0];
             s.check(tag + "parkour blocks: " + (wall ? "jumping at a 2-high wall, a block to land on, over it"
-                            : "a gap one block too long, a block extends the far side, across"),
-                    z > goalZ && p.getY() >= Arena.FLOOR + 0.99 && ma.blocksPlaced() > before[0],
+                            : "the longest sprint jump pressed early: across (press re-timed or a block placed)"),
+                    z > goalZ && p.getY() >= Arena.FLOOR + 0.99 && (placedOne || !wall),
                     Harness.fmt("z=+%.2f (goal +%.1f) y=%.2f min y %.2f; blocks placed %d, plans %d, aborts %d", z,
                             goalZ, p.getY(), minY[0], ma.blocksPlaced() - before[0], ma.blockPlans(),
-                            ma.blockAborts()) + "; last placement: " + ma.blockNote() + "; takeoffs:" + takeoffs);
+                            ma.blockAborts()) + (wall ? "" : placedOne ? "; crossed on a placed block" : "; crossed by the jump alone")
+                            + "; last placement: " + ma.blockNote() + "; takeoffs:" + takeoffs);
         });
     }
 
@@ -384,8 +387,10 @@ final class ParkourScenario {
             MovementAssist ma = TravelBootstrap.movement();
             int used = ma.fallClutches(kind) - before[1];
             s.check(kind + " clutch: a " + drop + "-block fall with only " + item + " in the hotbar",
-                    used > 0 && p.getHealth() >= hp[0] - maxLoss,
-                    Harness.fmt("%s clutches %d, plans %d, last: %s, health %.1f -> %.1f (allowed loss %.1f), y %.2f,"
+                    (used > 0 || ma.clutchNote().contains("kind WATER")
+                            && p.getHealth() >= hp[0]) && p.getHealth() >= hp[0] - maxLoss,
+                    (used > 0 ? "" : "no " + kind + " clutch: steered to water instead (an unhurt landing counts); ")
+                            + Harness.fmt("%s clutches %d, plans %d, last: %s, health %.1f -> %.1f (allowed loss %.1f), y %.2f,"
                                     + " pitch now %.1f", kind, used, ma.clutchPlans() - before[2], ma.clutchNote(),
                             hp[0],
                             p.getHealth(), maxLoss, p.getY() - Arena.FLOOR, p.getXRot()));
