@@ -13,6 +13,9 @@ public final class CombatSnapshot {
     public float health, maxHealth, absorption;
     public boolean onGround, inWater, climbing, usingItem, screenOpen;
     public float fallDistance;
+    /** The local player's velocity (blocks per tick) and sprint state, for forward simulation. */
+    public double pvx, pvy, pvz;
+    public boolean sprinting;
     /** {@code getAttackStrengthScale(0.5f)}. */
     public float attackStrength;
     /** Entity interaction range (3.0 in survival). */
@@ -36,6 +39,14 @@ public final class CombatSnapshot {
     public double tx, ty, tz;
     public double minX, minY, minZ, maxX, maxY, maxZ;
     public double tvx, tvy, tvz;
+    /** The target's body yaw. */
+    public float targetYaw;
+    /** True on the one tick the target's arm swing started (its attack cooldown was reset this tick). */
+    public boolean targetSwingStarted;
+    /** The target's attack speed with its held item, attacks per second (4.0 = bare hand, 1.6 = sword). */
+    public double targetAttackSpeed = 4.0;
+    /** The target's hurt animation ticks left (10 right after a hit, 0 = a new hit deals full damage again). */
+    public int targetHurtTime;
     public boolean targetBlocking, lineOfSight, crosshairOnTarget;
     /** Target health plus absorption. */
     public float targetHealth = 20f;

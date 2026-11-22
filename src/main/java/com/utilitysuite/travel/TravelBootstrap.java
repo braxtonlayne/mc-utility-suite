@@ -47,6 +47,11 @@ public final class TravelBootstrap {
         movement = new com.utilitysuite.travel.movement.MovementAssist();
         Services.modules().register(bridge);
         Services.modules().register(movement);
+        // Shared forward simulation (core.api.BodySim) for modules outside travel, e.g. the combat hit-trade solver.
+        com.utilitysuite.travel.movement.WorldBodySims bodySims = new com.utilitysuite.travel.movement.WorldBodySims();
+        Services.registerBodySims(bodySims);
+        NeoForge.EVENT_BUS.addListener(net.neoforged.neoforge.client.event.ClientTickEvent.Pre.class,
+                event -> bodySims.beginTick());
         onAutopilotKey = autopilot::toggle;
         onBridgeKey = bridge::toggle;
         onBridgeMarkKey = bridge::mark;

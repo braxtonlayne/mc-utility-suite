@@ -21,6 +21,10 @@ public final class Services {
     private static volatile IWaypointService waypoints;
     private static volatile IAutopilot autopilot;
     private static volatile IHumanizer humanizer;
+    private static volatile IBodySimProvider bodySims;
+    private static volatile IRoutePlanner routePlanner;
+    private static volatile IRouteRunner routeRunner;
+    private static volatile IManualLookAssist manualLook;
 
     private Services() {
     }
@@ -51,6 +55,18 @@ public final class Services {
     /** The autopilot's danger model. Never null: {@link IDangerModel#NONE} while there is no autopilot. */
     public static IDangerModel danger() { IAutopilot a = autopilot; return a != null ? a.danger() : IDangerModel.NONE; }
 
+    /** Forward simulation of player bodies against the live level, or null before the movement module is up. */
+    public static IBodySimProvider bodySimsOrNull() { return bodySims; }
+    /** Plan-only pathing, or null when no path backend registered one. */
+    public static IRoutePlanner routePlannerOrNull() { return routePlanner; }
+    /** Pursuit / flee route runner, or null before the movement module is up. */
+    public static IRouteRunner routeRunnerOrNull() { return routeRunner; }
+    /** Turn gain on the user's own mouse. Never null: {@link IManualLookAssist#NONE} until the core registers one. */
+    public static IManualLookAssist manualLook() {
+        IManualLookAssist m = manualLook;
+        return m != null ? m : IManualLookAssist.NONE;
+    }
+
     public static void registerArbiter(IActionArbiter s) { arbiter = s; }
     public static void registerInput(IInputSmoother s) { input = s; }
     public static void registerClicker(IContainerClicker s) { clicker = s; }
@@ -64,11 +80,16 @@ public final class Services {
     public static void registerWaypoints(IWaypointService s) { waypoints = s; }
     public static void registerAutopilot(IAutopilot s) { autopilot = s; }
     public static void registerHumanizer(IHumanizer s) { humanizer = s; }
+    public static void registerBodySims(IBodySimProvider s) { bodySims = s; }
+    public static void registerRoutePlanner(IRoutePlanner s) { routePlanner = s; }
+    public static void registerRouteRunner(IRouteRunner s) { routeRunner = s; }
+    public static void registerManualLook(IManualLookAssist s) { manualLook = s; }
 
     /** Test hook: clears every registration. */
     public static void resetForTests() {
         arbiter = null; input = null; clicker = null; modState = null; modules = null; events = null; goals = null;
         navigator = null; worldKnowledge = null; storage = null; waypoints = null; autopilot = null; humanizer = null;
+        bodySims = null; routePlanner = null; routeRunner = null; manualLook = null;
     }
 
     private static <T> T require(T value, String name) {

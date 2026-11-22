@@ -190,4 +190,32 @@ public final class OpponentModel {
         }
         return sum * 20.0 / DPS_WINDOW;
     }
+
+    // ---- cooldown reading (CONTRACT STUB, volley 2026-11-22: signatures fixed, bodies by the cooldown task) --------
+
+    /**
+     * The opponent started an arm swing on this tick: its attack cooldown restarts.
+     *
+     * @param attackSpeed attacks per second with its held item (4.0 bare hand, 1.6 sword, 1.0 axe)
+     */
+    public void noteSwing(int id, long tick, double attackSpeed) {
+    }
+
+    /**
+     * Ticks until the opponent's next hit would be at full charge; 0 when it is ready now or it was never seen
+     * swinging (an unread opponent counts as ready). Allocation free.
+     */
+    public int attackReadyIn(int id, long now) {
+        return 0;
+    }
+
+    /** The opponent's attack charge 0..1 right now (1 = full, also when unknown). */
+    public float attackCharge(int id, long now) {
+        return 1f;
+    }
+
+    /** Its full cooldown period in ticks (20 / attack speed of the last swing seen; 12.5 when unknown). */
+    public double cooldownTicks(int id) {
+        return 12.5;
+    }
 }
