@@ -65,6 +65,39 @@ final class ReflexChips {
         return n;
     }
 
+    /** How long a chip stays marked as "acted" (SYNC) after its reflex was last seen acting. */
+    static final long ACT_WINDOW_MS = 10_000L;
+
+    /** The index of a reflex in {@link #ORDER}, or -1. */
+    static int indexOf(Reflex r) {
+        if (r == null) {
+            return -1;
+        }
+        for (int i = 0; i < ORDER.length; i++) {
+            if (ORDER[i] == r) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /** Stamps {@code nowMs} into {@code actedAtMs} (indexed like ORDER) for the reflex acting right now; null = none. */
+    static void noteActive(Reflex active, long nowMs, long[] actedAtMs) {
+        int i = indexOf(active);
+        if (i >= 0 && i < actedAtMs.length) {
+            actedAtMs[i] = nowMs;
+        }
+    }
+
+    /** True when a reflex stamped at {@code actedAtMs} (0 = never) acted within {@link #ACT_WINDOW_MS} of now. */
+    static boolean actedRecently(long actedAtMs, long nowMs) {
+        if (actedAtMs <= 0L) {
+            return false;
+        }
+        long age = nowMs - actedAtMs;
+        return age >= 0L && age < ACT_WINDOW_MS;
+    }
+
     /** Fills {@code lit} (indexed like ORDER): lit while the autopilot is on and allows that reflex. */
     static void fillLit(IAutopilot ap, boolean[] lit) {
         boolean on = ap != null && ap.isOn();

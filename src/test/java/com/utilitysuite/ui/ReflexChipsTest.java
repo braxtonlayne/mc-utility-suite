@@ -66,6 +66,24 @@ class ReflexChipsTest {
     }
 
     @Test
+    void actedMarkLastsTenSeconds() {
+        long[] at = new long[ReflexChips.ORDER.length];
+        ReflexChips.noteActive(null, 5_000L, at);
+        for (long v : at) {
+            assertEquals(0L, v);
+        }
+        ReflexChips.noteActive(Reflex.SHIELD, 5_000L, at);
+        int i = ReflexChips.indexOf(Reflex.SHIELD);
+        assertEquals(5_000L, at[i]);
+        assertEquals(true, ReflexChips.actedRecently(at[i], 5_000L));
+        assertEquals(true, ReflexChips.actedRecently(at[i], 5_000L + ReflexChips.ACT_WINDOW_MS - 1));
+        assertEquals(false, ReflexChips.actedRecently(at[i], 5_000L + ReflexChips.ACT_WINDOW_MS));
+        assertEquals(false, ReflexChips.actedRecently(0L, 1_000L));
+        assertEquals(false, ReflexChips.actedRecently(at[i], 4_000L)); // clock went backwards
+        assertEquals(-1, ReflexChips.indexOf(null));
+    }
+
+    @Test
     void litFollowsTheAutopilot() {
         boolean[] lit = new boolean[ReflexChips.ORDER.length];
         ReflexChips.fillLit(null, lit);
