@@ -56,6 +56,53 @@ class TacticUtilityTest {
     }
 
     @Test
+    void zeroArenaInputsScoreZeroForTheNewTactics() {
+        TacticUtility u = new TacticUtility();
+        u.oppHopRate = 1.5;
+        u.scoreAll();
+        assertEquals(0.0, u.score(Tactic.HIGH_GROUND));
+        assertEquals(0.0, u.score(Tactic.CEILING_DENY));
+    }
+
+    @Test
+    void highGroundWinsAnEvenFight() {
+        TacticUtility u = new TacticUtility();
+        u.highGround = 0.9;
+        assertEquals(Tactic.HIGH_GROUND, settle(u));
+        u.highGround = 0.0;
+        assertEquals(Tactic.FIGHT, settle(u), "spot gone: back to fighting");
+    }
+
+    @Test
+    void highGroundNeverBeatsFightWhenClearlyWinningInReach() {
+        TacticUtility u = new TacticUtility();
+        u.ownDps = 12;
+        u.highGround = 1.0;
+        u.distance = 2.5;
+        assertEquals(Tactic.FIGHT, settle(u));
+    }
+
+    @Test
+    void ceilingOnlyAgainstAHopper() {
+        TacticUtility u = new TacticUtility();
+        u.ceilingDeny = 0.9;
+        assertEquals(Tactic.FIGHT, settle(u));
+        u.oppHopRate = 1.5;
+        assertEquals(Tactic.CEILING_DENY, settle(u));
+    }
+
+    @Test
+    void arenaTacticHasHysteresis() {
+        TacticUtility u = new TacticUtility();
+        u.highGround = 0.9;
+        settle(u);
+        for (int i = 0; i < 40; i++) {
+            u.highGround = i % 2 == 0 ? 0.8 : 0.9;
+            assertEquals(Tactic.HIGH_GROUND, u.choose());
+        }
+    }
+
+    @Test
     void dwellDelaysANonUrgentSwitch() {
         TacticUtility u = new TacticUtility();
         u.choose();
