@@ -4,7 +4,9 @@ package com.utilitysuite.combat.assistant;
  * Cooldown and critical-hit timing. A swing is only allowed at full charge
  * ({@code getAttackStrengthScale(0.5f) >= 0.95}). With crit sync on, it hops early (from 60% charge) so the swing can
  * land while falling, and falls back to a plain swing if no fall happens within {@code maxCritWait} ticks.
- * Pure and allocation free; shared by the assistant and the coach.
+ * Pure and allocation free; shared by the assistant and the coach. The assistant's swings and hops now follow
+ * {@code combat.tactics.HitPlanner} (which reuses {@link #READY} and {@link #HURT_HOLD}); {@link #decide} is kept for
+ * its tests and simple callers.
  */
 public final class SwingGate {
 

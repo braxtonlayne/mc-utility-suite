@@ -4,6 +4,8 @@ import com.utilitysuite.combat.allies.AllyRoster;
 import com.utilitysuite.combat.tactics.CombatVoxels;
 import com.utilitysuite.combat.tactics.ComboKeeper;
 import com.utilitysuite.combat.tactics.FeintPlanner;
+import com.utilitysuite.combat.tactics.GearRead;
+import com.utilitysuite.combat.tactics.HitPlanner;
 import com.utilitysuite.combat.tactics.HitTradeSolver;
 import com.utilitysuite.combat.tactics.OpponentModel;
 import com.utilitysuite.combat.tactics.PearlSource;
@@ -112,9 +114,24 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
     // hit-trade solver (built lazily once a body-sim provider is registered; null in plain unit tests)
     /** Distance beyond spacing max inside which the trade solver drives the keys instead of the band. */
     static final double TRADE_RANGE_EXTRA = 2.5;
-    /** Value of a hit taken vs. one landed for the solver; larger while kiting (KITE widens). */
-    static final double BASE_TAKEN_WEIGHT = 1.2;
-    static final double KITE_TAKEN_WEIGHT = 1.8;
+    /**
+     * Value of a hit taken vs. one landed for the solver comes from the gear read ({@link GearRead#takenWeight}: 1.2
+     * at even gear, up to 3.0 against a stronger kit; kiting multiplies it by 1.5).
+     */
+    private final GearRead gear = new GearRead();
+    /** Even-gear weight, still used for the combo keeper's trade input (its plan scores reach, not trades). */
+    static final double BASE_TAKEN_WEIGHT = GearRead.EVEN_BIAS;
+    /** Kind of the next hit; the swing, the hop and the sprint key follow it. */
+    private final HitPlanner hits = new HitPlanner();
+    /** This tick's hit-planner overrides applied in {@link #move}: forward up (crit, sweep), sprint up, sprint down. */
+    private boolean hitRelease;
+    private boolean hitDropSprint;
+    private boolean hitHoldSprint;
+    /** The target's hit event arrived; the next health drop is its damage (expires after a few ticks). */
+    private int targetHitPending;
+    static final int TARGET_HIT_PENDING_TICKS = 5;
+    /** Duel mode reset: back off and eat a golden apple once this far from the opponent. */
+    static final double RESET_EAT_DISTANCE = 6.0;
     private TradeDriver trade;
     private boolean tradeFixed;
     private boolean targetIsPlayer;
@@ -296,6 +313,7 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         rememberOpponent(causeId);
         if (state == CombatState.ENGAGED && causeId == targetId) {
             feel.noteOpponentHit(tacticClock, lastHitDamage); // rank dial: its hit landed
+            targetHitPending = TARGET_HIT_PENDING_TICKS; // the gear read takes the matching health drop
         }
         if (enabled && state != CombatState.ENGAGED) {
             engage(causeId, "defensive: " + typeId);
@@ -390,6 +408,9 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         lastPositional = TacticUtility.Tactic.FIGHT;
         lastFeintNoted = FeintPlanner.Move.NONE;
         feel.engage(entityId, targetIsPlayer); // a target switch ends the combo plan, feints and any pearl run
+        hits.reset(); // the first hit on a new target is an opener
+        gear.reset();
+        targetHitPending = 0;
         wind.reset();
         spacing.reset();
         state = CombatState.ENGAGED;
@@ -474,7 +495,9 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         feel.pearlTick(settings.pearlIntercept && settings.routePursuit && Services.routeRunnerOrNull() != null,
                 tacticClock, s, settings.spacingMax, settings.disengageRadius);
         double r = Math.max(settings.disengageRadius, feel.pearl().radiusNeeded(s.px, s.py, s.pz));
-        if (s.distanceSq() > r * r) {
+        // duel mode: the target is alive and loaded (the sample succeeded), so range and sight never end the fight
+        boolean duel = settings.duelMode;
+        if (!duel && s.distanceSq() > r * r) {
             if (retarget()) {
                 return;
             }
@@ -483,7 +506,7 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         }
         if (s.lineOfSight) {
             losLostTicks = 0;
-        } else if (++losLostTicks > settings.losTimeoutTicks) {
+        } else if (++losLostTicks > settings.losTimeoutTicks && !duel) {
             if (retarget()) {
                 return;
             }
@@ -495,9 +518,18 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         if (lastHealth >= 0f && eff < lastHealth - 0.01f) {
             lastHitDamage = lastHealth - eff;
             opponents.recordHit(targetId, tacticClock, lastHitDamage);
+            if (targetHitPending > 0) {
+                gear.noteTaken(lastHitDamage);
+                targetHitPending = 0;
+            }
+        }
+        if (targetHitPending > 0) {
+            targetHitPending--;
         }
         lastHealth = eff;
         observeOpponent(s);
+        gear.update(eff, s.targetHealth, GearRead.afterArmor(s.ownAttackDamage, s.targetArmor, s.targetToughness),
+                GearRead.afterArmor(s.targetAttackDamage, s.ownArmor, s.ownToughness));
         feel.observe(s, settings, opponents, tacticClock,
                 keyDown[SimKey.LEFT.ordinal()] ? 1 : (keyDown[SimKey.RIGHT.ordinal()] ? -1 : 0), tradeAllowJump(s));
         if (!holdsLease() && !tryAcquire()) {
@@ -536,6 +568,9 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
     }
 
     private void drive(CombatSnapshot s) {
+        hitRelease = false; // the hit planner's key overrides are set again by step 5 when it runs this tick
+        hitDropSprint = false;
+        hitHoldSprint = false;
         if (routeRetry > 0) {
             routeRetry--;
         }
@@ -592,6 +627,23 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         if (broadTactic == TacticUtility.Tactic.FLEE) {
             if (retreatRun(s, true)) {
                 return; // a person turns and runs
+            }
+            aimAtTarget(s);
+            retreatMove(s);
+            return;
+        }
+        if (settings.duelMode && broadTactic == TacticUtility.Tactic.RETREAT_HEAL) {
+            // duel mode never flees: reset instead (make distance, heal, come back once FIGHT wins again)
+            if (settings.sustain && !eating && s.gappleSlot >= 0 && !s.gappleOnCooldown && !s.screenOpen
+                    && s.horizontalDistance() >= RESET_EAT_DISTANCE && s.effectiveHealth() < s.maxHealth) {
+                leaveRoute();
+                startEating(s);
+                aimAtTarget(s);
+                retreatMove(s);
+                return;
+            }
+            if (retreatRun(s, true)) {
+                return;
             }
             aimAtTarget(s);
             retreatMove(s);
@@ -664,21 +716,34 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
                     false);
             return;
         }
-        // no crit hops at the lip of a gap, nor where the arena read sees no room to jump
-        boolean crit = settings.critSync && tac != TacticsPlanner.Tactic.HOLD_GAP
-                && s.headroom > ProFeelLayer.LOW_HEADROOM;
-        SwingGate.Action sw = SwingGate.decide(s, crit, jumpedThisCycle, critWait, MAX_CRIT_WAIT);
-        if (sw == SwingGate.Action.JUMP) {
+        // the hit planner picks the kind of the next hit (sprint knockback, crit, sweep, plain); the swing, the crit
+        // hop and the sprint/forward keys all follow that one decision. No hop at the lip of a gap, under a low roof,
+        // with a drop behind, or while the opponent's charged hit is in reach.
+        HitPlanner hp = hits;
+        hp.policy = settings.hitChoice;
+        hp.critTiming = settings.critSync;
+        hp.targetIsPlayer = targetIsPlayer;
+        hp.comboLive = feel.comboDrives(settings);
+        hp.holdGap = tac == TacticsPlanner.Tactic.HOLD_GAP;
+        hp.oppCharged = settings.cooldownRead
+                && ProFeelLayer.oppReadyIn(settings, opponents, targetId, tacticClock) == 0;
+        hp.gearRatio = gear.ratio();
+        hp.sprintPending = keyDown[SimKey.FORWARD.ordinal()] && keyDown[SimKey.SPRINT.ordinal()] && !s.sprinting;
+        hp.decide(s);
+        if (hp.jump()) {
             input.scheduleKeyTap(lease, SimKey.JUMP, 1, 2);
             jumpedThisCycle = true;
-        } else if (sw == SwingGate.Action.SWING) {
+        }
+        hitRelease = hp.releaseForward();
+        hitDropSprint = hp.dropSprint();
+        hitHoldSprint = hp.holdSprint();
+        if (hp.swing()) {
             if (AerialPlanner.shouldSwapToMace(s, settings.maceSwap)) {
                 input.selectHotbarSlot(lease, s.maceSlot);
                 restoreWeaponNextTick = true;
             }
             tapAttack();
-        }
-        if (sw != SwingGate.Action.SWING && SwingGate.ready(s.attackStrength)) {
+        } else if (SwingGate.ready(s.attackStrength)) {
             critWait++;
         }
 
@@ -734,6 +799,7 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         swings++;
         critWait = 0;
         jumpedThisCycle = false;
+        hits.onSwing(); // every swing (planned, shield break, gap ambush) starts the hit cycle over
         // the combo keeper plans the follow-up of a hit sent in reach (its reset replaces the fixed one)
         boolean planned = feel.onSwingSent(snap, settings, tacticClock);
         if (settings.sprintReset != CombatSettings.SprintReset.OFF) {
@@ -753,7 +819,7 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
     /** allowJump of the trade solver and the combo keeper this tick (crit sync owns hops; none at a gap or low roof). */
     private boolean tradeAllowJump(CombatSnapshot s) {
         return lastTactic != TacticsPlanner.Tactic.HOLD_GAP
-                && !(settings.critSync && (critWait > 0 || jumpedThisCycle || !s.onGround))
+                && !(settings.critSync && (critWait > 0 || jumpedThisCycle || !s.onGround || hits.ownsHop()))
                 && s.headroom > ProFeelLayer.LOW_HEADROOM;
     }
 
@@ -766,6 +832,7 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         }
         if (targetId == lastTargetHealthId && s.targetHealth < lastTargetHealth - 0.01f) {
             dealt.recordHit(targetId, tacticClock, lastTargetHealth - s.targetHealth);
+            gear.noteDealt(lastTargetHealth - s.targetHealth);
             feel.noteOwnHit(tacticClock); // rank dial: a swing in reach landed
         }
         lastTargetHealthId = targetId;
@@ -784,6 +851,8 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         u.oppHopRate = opponents.hopRate(targetId);
         u.highGround = feel.highGround(); // 0 while the arena read is off or idle
         u.ceilingDeny = feel.ceilingDeny();
+        u.gearRatio = gear.ratio(); // the gear read leads the observed DPS, which lags by seconds
+        u.duelMode = settings.duelMode;
         return u.choose();
     }
 
@@ -826,7 +895,7 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
             side = feel.comboSide();
             sprint = feel.comboSprint();
         } else if (t != null && t.decide(s, opponents, targetId, tacticClock, targetIsPlayer, settings.cooldownRead,
-                settings.hitTradeHorizon, kiting ? KITE_TAKEN_WEIGHT : BASE_TAKEN_WEIGHT, allowJump)) {
+                settings.hitTradeHorizon, gear.takenWeight(kiting), allowJump)) {
             tradeTicks++;
             planned = true;
             spacing.reset(); // the band restarts from HOLD when the solver hands back
@@ -1048,6 +1117,20 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
     }
 
     private void move(int forward, int side, boolean sprint) {
+        // the hit planner's overrides for this tick: hold sprint into a knockback hit, drop it (and forward) for a crit
+        // or a sweep. Sprint only ever goes down with forward up, so a crit swing tick never sees sprint.
+        if (hitHoldSprint && forward > 0) {
+            sprint = true;
+        }
+        if (hitRelease) {
+            if (forward > 0) {
+                forward = SpacingController.HOLD;
+            }
+            sprint = false;
+        }
+        if (hitDropSprint) {
+            sprint = false;
+        }
         key(SimKey.FORWARD, forward > 0);
         key(SimKey.BACK, forward < 0);
         key(SimKey.LEFT, side == StrafePlanner.LEFT);
