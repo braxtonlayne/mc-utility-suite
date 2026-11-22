@@ -176,3 +176,5 @@ Also open from the agents:
   1. The parkour playtest on the lane above.
   2. The arena: `node arena.js --setup outgeared --rounds 20` on the hazard arena with Grim on.
   3. A look at the menu in game.
+- 18:21 check on main: the Jobs tab, Combat tab and HUD previews read clean. Still in the pixel font: the search box
+  and goal bar (vanilla `EditBox` text fields) and tooltips. That's a small follow-up.
