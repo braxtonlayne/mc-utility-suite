@@ -30,8 +30,8 @@ Nothing below was checked online; every link and licence must be verified by the
 
 ## What has to ship with the files
 
-- The licence text of each family, unmodified, beside the files: `LICENSE-Rajdhani.txt` and
-  `LICENSE-JetBrainsMono.txt` (the OFL.txt from each source, with its copyright line).
+- The licence text of each family, unmodified, beside the files: `license-rajdhani.txt` and
+  `license-jetbrainsmono.txt` (the OFL.txt from each source, with its copyright line).
 - An entry for each family in a top-level `THIRD-PARTY-NOTICES.md` (family, copyright, licence, source URL, the
   file names above).
 

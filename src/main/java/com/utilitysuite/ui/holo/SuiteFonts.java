@@ -306,20 +306,29 @@ public final class SuiteFonts {
 
         /**
          * A face that failed to load resolves to the vanilla "missing" font set, where every glyph has the same
-         * advance; a real face gives 'i' and 'W' different widths.
+         * advance. A proportional face gives 'i' and 'W' different widths. The monospaced face ({@link #MONO}) gives
+         * every glyph the same width by design, so it must instead differ from the missing set's advance, measured
+         * through a font id that does not exist; should the two ever coincide, the probe fails closed (vanilla font).
          */
         private static boolean probe(Minecraft mc) {
             Run run = new Run(); // once per reload
+            run.set("W", Style.EMPTY.withFont(ResourceLocation.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID,
+                    "probe_missing")));
+            int missing = mc.font.width(run);
             for (int f = 0; f < FONT_IDS.length; f++) {
                 Style s = styleOf(f);
                 run.set("i", s);
                 int narrow = mc.font.width(run);
                 run.set("W", s);
                 int wide = mc.font.width(run);
-                if (narrow <= 0 || narrow == wide) {
+                boolean loaded = f == MONO ? wide > 0 && wide != missing : narrow > 0 && narrow != wide;
+                if (!loaded) {
+                    LOG.warn("Suite font probe: face {} widths i={} W={} (missing set {})", FONT_IDS[f], narrow, wide,
+                            missing);
                     return false;
                 }
             }
+            LOG.info("Suite fonts loaded (probe widths measured against the missing set {})", missing);
             return true;
         }
 
