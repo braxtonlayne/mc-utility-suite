@@ -29,6 +29,9 @@ public final class ManualInputHooks {
     private double mouseThresholdPx = 6.0;
     private double mouseAccum;
     private boolean mouseReported;
+    private ManualLookAssist look;
+    /** Seconds since the previous mouse frame, recorded at the HEAD of {@code turnPlayer}. */
+    private double frameSeconds;
 
     public ManualInputHooks(IActionArbiter arbiter, InputSmoother smoother) {
         this.arbiter = arbiter;
@@ -66,10 +69,59 @@ public final class ManualInputHooks {
         }
     }
 
-    /** ClientTickEvent.Pre: starts a new mouse accumulation window. */
+    /** ClientTickEvent.Pre: starts a new mouse accumulation window (and the turn gain's tick: read-outs, ttl). */
     public void beginTick() {
         mouseAccum = 0.0;
         mouseReported = false;
+        ManualLookAssist a = look;
+        if (a != null) {
+            a.beginTick();
+        }
+    }
+
+    // ---- turn gain (MouseHandlerTurnGainMixin) ----------------------------------------------------------------------
+
+    /** The turn gain the mouse hook feeds (null: the hook passes every delta through untouched). */
+    public void setManualLookAssist(ManualLookAssist assist) {
+        this.look = assist;
+    }
+
+    /** HEAD of {@code MouseHandler.turnPlayer}: the frame time vanilla passes in (seconds, from Blaze3D.getTime). */
+    public static void onTurnFrame(double movementTime) {
+        ManualInputHooks h = instance;
+        if (h != null) {
+            h.frameSeconds = movementTime;
+        }
+    }
+
+    /**
+     * The yaw argument of {@code LocalPlayer.turn} inside {@code turnPlayer}, in turn units (1 unit = 0.15 deg).
+     * Returns it unchanged (the same double) unless a live turn-gain request scales it. Pitch never comes here.
+     * Runs every rendered frame the mouse is grabbed: allocation free, early-out when nothing is live.
+     */
+    public static double onTurnYaw(double yawArg) {
+        ManualInputHooks h = instance;
+        if (h == null || yawArg == 0.0) {
+            return yawArg;
+        }
+        ManualLookAssist a = h.look;
+        return a == null ? yawArg : h.turnYaw(a, yawArg);
+    }
+
+    private double turnYaw(ManualLookAssist a, double yawArg) {
+        double raw = yawArg * ManualLookAssist.DEG_PER_TURN_UNIT;
+        if (!a.hasLiveRequest()) {
+            a.onFrameYaw(0f, raw, frameSeconds, true); // read-outs only
+            return yawArg;
+        }
+        Minecraft mc = Minecraft.getInstance();
+        net.minecraft.client.player.LocalPlayer p = mc.player;
+        if (p == null) {
+            return yawArg;
+        }
+        boolean blocked = mc.screen != null || p.isSpectator() || p.isPassenger();
+        double out = a.onFrameYaw(p.getYRot(), raw, frameSeconds, blocked);
+        return out == raw ? yawArg : out / ManualLookAssist.DEG_PER_TURN_UNIT;
     }
 
     private static boolean inGame(Minecraft mc) {

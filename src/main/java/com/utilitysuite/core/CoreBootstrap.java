@@ -16,6 +16,7 @@ import com.utilitysuite.core.input.InputSmoother;
 import com.utilitysuite.core.input.PrimitiveRandom;
 import com.utilitysuite.core.input.KeybindManager;
 import com.utilitysuite.core.input.ManualInputHooks;
+import com.utilitysuite.core.input.ManualLookAssist;
 import com.utilitysuite.core.input.MinecraftInputBackend;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ServerData;
@@ -87,6 +88,13 @@ public final class CoreBootstrap {
         smoother.setCameraHolderLookup(() -> arbiter.holder(ControlChannel.CAMERA).orElse(null));
 
         manualInput = new ManualInputHooks(arbiter, smoother);
+        // turn gain on the user's own mouse: fed by the turn-gain mouse hook, cleared by Stop-All and world unload
+        // (both reach InputSmoother.releaseAll), ticked from manualInput.beginTick
+        ManualLookAssist manualLook = new ManualLookAssist();
+        manualLook.setSmoother(smoother);
+        smoother.setManualLookAssist(manualLook);
+        manualInput.setManualLookAssist(manualLook);
+        Services.registerManualLook(manualLook);
 
         configStore = new ConfigStore(FMLPaths.CONFIGDIR.get().resolve(UtilitySuiteMod.MOD_ID));
         modState = new ModState(configStore, arbiter, modules);
