@@ -61,6 +61,17 @@ public interface TechniqueSource {
     /** Replica ticks the last call rolled (at most {@link #MAX_SIM_TICKS_PER_CALL}). */
     int lastSimTicks();
 
+    /** The most a script may turn the view from where it starts (degrees; the level's co-steer total). */
+    default void setMaxTurn(float degrees) {
+    }
+
+    /**
+     * The straight line to the target is blocked by a wall (the intent estimator's roll ran into one): the families
+     * made for a way around are walked first.
+     */
+    default void setLineBlocked(boolean blocked) {
+    }
+
     /** Forget the search (target changed, world change). */
     void reset();
 }

@@ -290,6 +290,40 @@ class MovementAssistBrainTest {
         return g;
     }
 
+    /**
+     * W alone is not "going on". The estimator lifts the only top ahead to its commit confidence whatever the camera
+     * shows (sole-candidate floor); the landing hold reads the confidence without that floor, so the same chain with
+     * the same target but no look at it is not flown through: the body holds on the first block first.
+     */
+    @Test
+    void wTowardTheOnlyTopAheadIsNotGoingOn() {
+        for (JumpCommit.Mode mode : JumpCommit.Mode.values()) {
+            int[] stalled = new int[2];
+            for (int look = 0; look < 2; look++) {
+                Grid g = singleBlockChain();
+                MovementAssistBrain b = new MovementAssistBrain();
+                b.mode = mode;
+                b.landingHold = true;
+                MovementPhysics p = new MovementPhysics().set(0.5, 20, -6, 0, -0.0784, 0, true);
+                for (int t = 0; t < 90 && p.y >= 19 && p.z < 6.9; t++) {
+                    int next = (int) Math.floor(p.z) + 2;
+                    // the floored confidence is the same in both runs; only the look confidence differs
+                    b.setIntentLook(look == 1 ? IntentEstimator.SOLE_CONFIDENCE : 0.2);
+                    b.setIntentTarget(0, 19, Math.max(5, Math.min(15, next | 1)), IntentEstimator.SOLE_CONFIDENCE);
+                    b.decide(p, 0f, true, 1, 0, false, 20f, g);
+                    int f = b.forward() == MovementAssistBrain.KEEP ? 1 : b.forward();
+                    int s = b.strafe() == MovementAssistBrain.KEEP ? 0 : b.strafe();
+                    p.tick(f, s, 0f, f > 0, b.jump(), b.sneak(), g);
+                    if (p.onGround && Math.abs(p.vz) < 0.05 && p.z > 4) {
+                        stalled[look]++;
+                    }
+                }
+            }
+            assertTrue(stalled[1] <= 2, mode + ": looking at the next block, no stop: " + stalled[1]);
+            assertTrue(stalled[0] >= 3, mode + ": W alone must hold on the first block, stalled ticks " + stalled[0]);
+        }
+    }
+
     /** Owner, 2026-11-22: never force a series of jumps on someone who meant one. W let go on landing: they stay. */
     @Test
     void lettingGoOfForwardOnLandingNeverChains() {

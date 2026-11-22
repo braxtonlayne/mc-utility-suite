@@ -10,6 +10,11 @@ package com.utilitysuite.travel.movement;
  * {@code safeOnly} and never the player's life; the no-key stop point is on the top or within
  * {@link #HOLD_REACH} of it (the landing hold brakes and guards the rest); every view step stays within the level's
  * rate and the view never moves without {@code yawAllowed}; the takeoff yaw is reached by the takeoff tick.
+ * <p>
+ * The corner-cut family is rolled with {@link CoSteerModel}: the view follows each goal the way the core's smooth
+ * follower does (a request on tick i is in the physics from tick i + 1, and closes the error gradually), so its
+ * takeoff heading is a goal, not a condition. The older families still move the view at the full rate from the same
+ * tick; the client cannot fly that, so their yaw variants need the same treatment before they are relied on.
  */
 final class TechniqueRoller {
 
@@ -23,10 +28,20 @@ final class TechniqueRoller {
     /** Margin score bucket: landings within one bucket compare by their other costs. */
     static final double MARGIN_BUCKET = 0.05;
 
+    /**
+     * A script must touch down at least this far inside the top's support region: the replay follows the predicted
+     * line within {@link FlightScript#DRIFT_LIMIT}, so a touchdown nearer the rim than that is a miss waiting for the
+     * first small difference (seen in the client on the fence corner, 2026-11-22).
+     */
+    static final double TOUCH_MARGIN = FlightScript.DRIFT_LIMIT;
+
     private static final double Y_EPS = 1.0e-6;
     private static final float YAW_EPS = 1.0e-3f;
 
     private final MovementPhysics body = new MovementPhysics();
+    private final CoSteerModel follower = new CoSteerModel();
+    /** The candidates' goals are already capped by the level's total; the model's own allowance is left open. */
+    private static final double FOLLOW_TOTAL = 1.0e6;
 
     /** Replica ticks of the last roll. */
     int ticks;
@@ -56,6 +71,10 @@ final class TechniqueRoller {
         out.name = TechniqueTemplates.name(c.template);
         out.takeoffIndex = jumpAt;
         float yawNow = baseYaw;
+        // the corner cut is rolled with the real view dynamics; the older families still assume a view that moves at
+        // the full rate (their yaw variants are not verified in the client, see the run note of 2026-11-22)
+        boolean follow = c.template == TechniqueTemplates.CUT && rate > 0f;
+        follower.reset();
         float maxStep = 0f;
         double yawTravel = 0.0;
         int departures = 0;
@@ -71,7 +90,8 @@ final class TechniqueRoller {
             float goal;
             boolean jump = false;
             if (i <= jumpAt) {
-                strafe = i > jumpAt - c.groundStrafeTicks ? c.groundStrafe : userStrafe;
+                strafe = i > jumpAt - c.groundStrafeTicks ? c.groundStrafe
+                        : (i < c.earlyEnd - shift ? c.earlyStrafe : userStrafe);
                 goal = c.takeoffYaw;
                 if (i == jumpAt) {
                     if (!body.onGround) {
@@ -91,7 +111,9 @@ final class TechniqueRoller {
                 goal = c.segYaw[k];
             }
             float step = 0f;
-            if (rate > 0f && goal == goal) {
+            if (follow) {
+                step = 0f; // this tick's physics uses the view as it is; the request turns it over the frames after
+            } else if (rate > 0f && goal == goal) {
                 step = goal - yawNow;
                 if (step > rate) {
                     step = rate;
@@ -100,7 +122,7 @@ final class TechniqueRoller {
                 }
             }
             yawNow += step;
-            if (jump && Math.abs(yawNow - c.takeoffYaw) > YAW_EPS) {
+            if (!follow && jump && Math.abs(yawNow - c.takeoffYaw) > YAW_EPS) {
                 return false; // the view cannot reach the takeoff yaw at the co-steer rate in time
             }
             float absStep = Math.abs(step);
@@ -129,6 +151,7 @@ final class TechniqueRoller {
             out.jump[i] = jump;
             out.sprint[i] = sprint;
             out.yaw[i] = yawNow;
+            out.goal[i] = follow ? goal : yawNow;
             double fallBefore = body.fallDistance;
             body.tick(forward, strafe, yawNow, sprint, jump, false, w);
             ticks++;
@@ -136,6 +159,20 @@ final class TechniqueRoller {
             out.y[i] = body.y;
             out.z[i] = body.z;
             out.length = i + 1;
+            if (follow) {
+                // the co-steer follower of the core, modelled: smooth, so the view lags the goal by several ticks
+                float before = yawNow;
+                if (goal == goal) {
+                    yawNow = follower.tick(yawNow, goal, rate * 20.0, FOLLOW_TOTAL);
+                } else {
+                    follower.lapse();
+                }
+                float turned = Math.abs(yawNow - before);
+                if (turned > maxStep) {
+                    maxStep = turned;
+                }
+                yawTravel += turned;
+            }
             if (body.horizontalCollision) {
                 return false;
             }
@@ -143,6 +180,9 @@ final class TechniqueRoller {
                 if (body.onGround) {
                     if (Math.abs(body.y - top) > Y_EPS || !target.contains(body.x, body.z)) {
                         return false;
+                    }
+                    if (target.margin(body.x, body.z) < TOUCH_MARGIN) {
+                        return false; // a touchdown on the very rim: the replay's own tolerance would miss it
                     }
                     float damage = MovementPhysics.fallDamage(Math.max(maxFall, fallBefore));
                     if ((safeOnly && damage > 0f) || damage >= health) {
