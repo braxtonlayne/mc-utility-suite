@@ -56,6 +56,21 @@ class SustainExtrasTest {
     }
 
     @Test
+    void stagedPullAtEngageTimeWhateverTheHealth() {
+        assertTrue(shouldStagePull(true, true, -1, 20, false, false, 0, false, false), "first tick of the fight");
+        assertTrue(shouldStagePull(true, true, -1, 20, false, false, STAGE_WINDOW_TICKS - 1, false, false));
+        assertFalse(shouldStagePull(true, true, -1, 20, false, false, STAGE_WINDOW_TICKS, false, false),
+                "past the staging ticks the low-health pull takes over");
+        assertFalse(shouldStagePull(true, true, -1, 20, false, false, 3, false, true), "already staged");
+        assertFalse(shouldStagePull(true, true, -1, 20, false, false, 3, true, false), "eating");
+        assertFalse(shouldStagePull(true, true, 4, 20, false, false, 3, false, false), "the hotbar has one");
+        assertFalse(shouldStagePull(false, true, -1, 20, false, false, 3, false, false), "setting off");
+        assertFalse(shouldStagePull(true, false, -1, 20, false, false, 3, false, false), "not allowed here");
+        assertFalse(shouldStagePull(true, true, -1, 20, true, false, 3, false, false), "a click in flight");
+        assertFalse(shouldStagePull(true, true, -1, 20, false, true, 3, false, false), "a screen is open");
+    }
+
+    @Test
     void totemReplenishConditions() {
         assertTrue(shouldReplenishTotem(true, true, true, false, 14, false, false, 0));
         assertTrue(shouldReplenishTotem(true, true, true, false, 3, false, false, 0), "hotbar totem too");
