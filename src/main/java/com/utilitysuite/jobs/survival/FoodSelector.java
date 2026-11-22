@@ -8,7 +8,7 @@ public final class FoodSelector {
     /** Foods with harmful side effects that are never auto-eaten. */
     public static final Set<String> UNSAFE = Set.of("minecraft:rotten_flesh", "minecraft:spider_eye",
             "minecraft:poisonous_potato", "minecraft:pufferfish", "minecraft:suspicious_stew",
-            "minecraft:chorus_fruit", "minecraft:raw_chicken", "minecraft:golden_apple",
+            "minecraft:chorus_fruit", "minecraft:chicken", "minecraft:raw_chicken", "minecraft:golden_apple",
             "minecraft:enchanted_golden_apple");
 
     /** Hunger below this triggers a top-up before a long sprint leg (regeneration needs 18). */
@@ -65,8 +65,6 @@ public final class FoodSelector {
      */
     public static int choose(String[] ids, int[] nutrition, float[] saturation, int hunger,
                              boolean preferSaturation) {
-        int missing = 20 - hunger;
-        double satWeight = preferSaturation ? 3.0 : 1.0;
         int best = -1;
         double bestScore = Double.NEGATIVE_INFINITY;
         for (int i = 0; i < ids.length; i++) {
@@ -74,9 +72,7 @@ public final class FoodSelector {
             if (id == null || nutrition[i] <= 0 || UNSAFE.contains(id)) {
                 continue;
             }
-            int waste = Math.max(0, nutrition[i] - missing);
-            int effective = nutrition[i] - waste; // what actually lands in the hunger bar
-            double score = effective * (1.0 + saturation[i] * satWeight) - waste * 2.0
+            double score = score(nutrition[i], saturation[i], hunger, preferSaturation)
                     - (i >= HOTBAR ? PULL_PENALTY : 0.0);
             if (score > bestScore) {
                 bestScore = score;
@@ -84,6 +80,17 @@ public final class FoodSelector {
             }
         }
         return best;
+    }
+
+    /**
+     * Score of one food at the current hunger: what lands in the hunger bar, weighted by saturation ({@code
+     * preferSaturation} weights it three times as much), minus twice the overfill. Shared by {@link #choose} and the
+     * fight's top-up in the combat healing stage.
+     */
+    public static double score(int nutrition, float saturation, int hunger, boolean preferSaturation) {
+        int waste = Math.max(0, nutrition - (20 - hunger));
+        int effective = nutrition - waste; // what actually lands in the hunger bar
+        return effective * (1.0 + saturation * (preferSaturation ? 3.0 : 1.0)) - waste * 2.0;
     }
 
     /**
@@ -111,5 +118,111 @@ public final class FoodSelector {
      */
     public static boolean needsSwapBack(boolean pulled, boolean swapBackSetting) {
         return pulled && swapBackSetting;
+    }
+
+    /**
+     * The pull / eat / swap-back cycle of food taken from the pack, as a small state machine that survives the lease
+     * ending early (preempted, Stop-All, manual input). Once a pull lands it remembers the inventory slot, the hotbar
+     * slot and what each held; when the lease ends before the swap-back, the restore stays owed and is done at the
+     * next safe moment, but only while the slots still hold what the cycle left there. Engine-free (items are opaque
+     * int keys, {@link #EMPTY} for an empty slot), allocation free.
+     */
+    public static final class SwapBack {
+
+        /** Item key of an empty slot. */
+        public static final int EMPTY = -1;
+
+        public enum Step {
+            /** Nothing owed. */
+            NONE,
+            /** Owed but not now (a screen is open, another module holds the container channel, clicks in flight). */
+            WAIT,
+            /** Click the SWAP of {@link #source()} with hotbar button {@link #hotbar()} now. */
+            RESTORE,
+            /** One of the stacks moved since the pull (the user, or the swap-back already landed): forget it. */
+            DROP
+        }
+
+        private int source = -1;
+        private int hotbar = -1;
+        private int foodItem = EMPTY;
+        private int displacedItem = EMPTY;
+        private boolean owed;
+        private boolean deferred;
+
+        /**
+         * The pull landed: {@code foodItem} moved from inventory index {@code source} into hotbar index {@code hotbar},
+         * whose previous item {@code displacedItem} (or {@link #EMPTY}) went to {@code source}.
+         */
+        public void pulled(int source, int hotbar, int foodItem, int displacedItem) {
+            this.source = source;
+            this.hotbar = hotbar;
+            this.foodItem = foodItem;
+            this.displacedItem = displacedItem;
+            owed = true;
+            deferred = false;
+        }
+
+        /** The lease ended before the swap-back finished: keep it owed for the next safe moment. */
+        public void leaseEnded() {
+            if (owed) {
+                deferred = true;
+            }
+        }
+
+        /** Restore done, dropped, swap-back off, or the world unloaded: nothing owed. */
+        public void forget() {
+            owed = false;
+            deferred = false;
+            source = -1;
+            hotbar = -1;
+            foodItem = EMPTY;
+            displacedItem = EMPTY;
+        }
+
+        public boolean owed() {
+            return owed;
+        }
+
+        /** Owed after the lease ended early: the module restores on its own at the next safe moment. */
+        public boolean deferred() {
+            return owed && deferred;
+        }
+
+        public int source() {
+            return source;
+        }
+
+        public int hotbar() {
+            return hotbar;
+        }
+
+        /**
+         * What to do now about the owed restore.
+         *
+         * @param screenOpen  a screen, or a container other than the player inventory, is open
+         * @param channelBusy another module holds the container channel, clicks are in flight, the user is working
+         *                    the hotbar or automation is stopped
+         * @param hotbarItem  item key now in {@link #hotbar()}
+         * @param sourceItem  item key now in {@link #source()}
+         */
+        public Step decide(boolean screenOpen, boolean channelBusy, int hotbarItem, int sourceItem) {
+            if (!owed) {
+                return Step.NONE;
+            }
+            if (screenOpen || channelBusy) {
+                return Step.WAIT;
+            }
+            if (sourceItem != displacedItem) {
+                return Step.DROP;
+            }
+            if (foodItem != EMPTY && hotbarItem == foodItem) {
+                return Step.RESTORE;
+            }
+            if (hotbarItem == EMPTY && displacedItem != EMPTY) {
+                return Step.RESTORE; // the food was eaten up: bring the displaced item home
+            }
+            return Step.DROP; // something else is in the hotbar slot now
+        }
     }
 }

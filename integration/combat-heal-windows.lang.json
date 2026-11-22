@@ -1,0 +1,8 @@
+{
+  "setting.utilitysuite.combat_assistant.heal_windows": "Heal in windows",
+  "setting.utilitysuite.combat_assistant.heal_windows.tooltip": "Heal in hits left and only when the opponent cannot hit for most of the eat; make a window (knockback hit, route around cover) when there is none. Needs Emergency sustain.",
+  "setting.utilitysuite.combat_assistant.heal_hits_left": "Heal at hits left",
+  "setting.utilitysuite.combat_assistant.heal_hits_left.tooltip": "Heal when this many of the opponent's measured hits would take you out.",
+  "setting.utilitysuite.combat_assistant.heal_top_up": "Top up hunger between exchanges",
+  "setting.utilitysuite.combat_assistant.heal_top_up.tooltip": "With the opponent away, eat hotbar food that wastes nothing while hunger is below 18."
+}

@@ -36,6 +36,7 @@ import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.food.FoodProperties;
 import net.minecraft.world.inventory.InventoryMenu;
 import net.minecraft.world.item.ArmorItem;
+import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Tier;
 import net.minecraft.world.item.TieredItem;
@@ -120,6 +121,10 @@ public final class SurvivalAutopilot implements IModule, IConfigurable, LeaseLis
     private int eatSource = -1;
     private boolean eatPulled;
     private EatPhase eatPhase = EatPhase.NONE;
+    /** Item key of what the pull displaced from the hotbar slot (recorded when the pull is queued). */
+    private int eatDisplacedKey = FoodSelector.SwapBack.EMPTY;
+    /** The owed swap-back of pulled food, kept across an early lease end (preemption, Stop-All, manual input). */
+    private final FoodSelector.SwapBack swapBack = new FoodSelector.SwapBack();
     private boolean useInventoryFood = true;
     private boolean swapBackFood = true;
     private long hazardUntil;
@@ -170,6 +175,10 @@ public final class SurvivalAutopilot implements IModule, IConfigurable, LeaseLis
         }
         if (eatLease != null) {
             tickEating(player);
+        } else if (swapBack.deferred()) {
+            if (tick % 5 == 0) {
+                tryDeferredSwapBack(mc, player);
+            }
         } else if (autoEat && tick % 10 == 0) {
             maybeStartEating(mc, player);
         }
@@ -321,6 +330,7 @@ public final class SurvivalAutopilot implements IModule, IConfigurable, LeaseLis
             }
             eatSource = slot;
             eatSlot = FoodSelector.chooseSwapTarget(foodOccupied, eatPrevSlot);
+            eatDisplacedKey = itemKey(inv.items.get(eatSlot));
             // SWAP: the menu slot of a main-inventory index equals the index; button = hotbar index.
             if (!Services.clicker().queueClick(l, slot, eatSlot, IContainerClicker.Click.SWAP)) {
                 closeLease(l);
@@ -345,12 +355,16 @@ public final class SurvivalAutopilot implements IModule, IConfigurable, LeaseLis
     private void tickEating(LocalPlayer player) {
         ControlLease l = eatLease;
         if (!l.isActive()) {
+            if (eatPulled && eatPhase == EatPhase.PULL) {
+                notePullOutcome(player); // the click may have landed before the lease ran out
+            }
+            swapBack.leaseEnded(); // expired before the swap-back: restore at the next safe moment
             endEating(l);
             return;
         }
         if (eatPhase == EatPhase.PULL) {
             if (Services.clicker().pending() == 0 && tick - eatStart > 1) {
-                if (player.getInventory().items.get(eatSlot).has(DataComponents.FOOD)) {
+                if (notePullOutcome(player)) {
                     beginUsing(l);
                 } else {
                     endEating(l); // the swap did not land (screen opened, items moved): give up quietly
@@ -363,6 +377,11 @@ public final class SurvivalAutopilot implements IModule, IConfigurable, LeaseLis
         }
         if (eatPhase == EatPhase.BACK) {
             if ((Services.clicker().pending() == 0 && tick - eatStart > 1) || tick - eatStart > 60) {
+                if (Services.clicker().pending() == 0) {
+                    swapBack.forget(); // the swap-back went out
+                } else {
+                    swapBack.leaseEnded();
+                }
                 endEating(l);
             }
             return;
@@ -376,13 +395,83 @@ public final class SurvivalAutopilot implements IModule, IConfigurable, LeaseLis
         if (eatPrevSlot >= 0) {
             Services.input().selectHotbarSlot(l, eatPrevSlot);
         }
-        if (FoodSelector.needsSwapBack(eatPulled, swapBackFood)
-                && Services.clicker().queueClick(l, eatSource, eatSlot, IContainerClicker.Click.SWAP)) {
-            eatPhase = EatPhase.BACK;
-            eatStart = tick;
-            return;
+        if (FoodSelector.needsSwapBack(eatPulled, swapBackFood) && swapBack.owed()) {
+            if (Services.clicker().queueClick(l, swapBack.source(), swapBack.hotbar(),
+                    IContainerClicker.Click.SWAP)) {
+                eatPhase = EatPhase.BACK;
+                eatStart = tick;
+                return;
+            }
+            swapBack.leaseEnded();
+        } else {
+            swapBack.forget();
         }
         endEating(l);
+    }
+
+    /**
+     * After the pull click: records the owed swap-back when the food landed in the hotbar slot.
+     *
+     * @return true when the pulled food is in the hotbar slot
+     */
+    private boolean notePullOutcome(LocalPlayer player) {
+        Inventory inv = player.getInventory();
+        ItemStack landed = inv.items.get(eatSlot);
+        if (!landed.has(DataComponents.FOOD)) {
+            return false;
+        }
+        if (swapBackFood) {
+            swapBack.pulled(eatSource, eatSlot, itemKey(landed), eatDisplacedKey);
+        }
+        return true;
+    }
+
+    /**
+     * The owed swap-back after an early lease end: at most every 5 ticks while one is owed. Clicks only when no screen
+     * is open, nothing else holds the container channel, the user is not on the hotbar, automation runs, and both
+     * slots still hold what the cycle left there; otherwise waits or forgets the restore without clicking.
+     */
+    private void tryDeferredSwapBack(Minecraft mc, LocalPlayer player) {
+        if (!swapBackFood) {
+            swapBack.forget();
+            return;
+        }
+        var arbiter = Services.arbiter();
+        boolean screenOpen = mc.screen != null || player.containerMenu != player.inventoryMenu;
+        boolean busy = Services.clicker().pending() > 0 || arbiter.isAutomationStopped()
+                || arbiter.isManualOverrideActive(ControlChannel.HOTBAR)
+                || arbiter.holder(ControlChannel.HOTBAR).isPresent();
+        Inventory inv = player.getInventory();
+        int hb = swapBack.hotbar();
+        int src = swapBack.source();
+        FoodSelector.SwapBack.Step step = swapBack.decide(screenOpen, busy, itemKey(inv.items.get(hb)),
+                itemKey(inv.items.get(src)));
+        if (step == FoodSelector.SwapBack.Step.DROP) {
+            swapBack.forget();
+            return;
+        }
+        if (step != FoodSelector.SwapBack.Step.RESTORE) {
+            return;
+        }
+        ControlLease l = arbiter.request(new LeaseRequest(ID, ControlPriority.SURVIVAL,
+                EnumSet.of(ControlChannel.HOTBAR), 40, this)).orElse(null);
+        if (l == null) {
+            return;
+        }
+        if (!Services.clicker().queueClick(l, src, hb, IContainerClicker.Click.SWAP)) {
+            closeLease(l);
+            return;
+        }
+        // the BACK phase closes the lease once the click went out and forgets the restore
+        eatLease = l;
+        eatPulled = true;
+        eatPhase = EatPhase.BACK;
+        eatStart = tick;
+    }
+
+    /** Opaque item key for {@link FoodSelector.SwapBack}: the registry id, {@link FoodSelector.SwapBack#EMPTY} if empty. */
+    private static int itemKey(ItemStack s) {
+        return s.isEmpty() ? FoodSelector.SwapBack.EMPTY : Item.getId(s.getItem());
     }
 
     private void endEating(ControlLease l) {
@@ -549,6 +638,13 @@ public final class SurvivalAutopilot implements IModule, IConfigurable, LeaseLis
     @Override
     public void onPreempted(ControlLease lease, LeaseEndReason reason, String byModuleId) {
         if (lease == eatLease) {
+            if (eatPulled && eatPhase == EatPhase.PULL) {
+                LocalPlayer player = Minecraft.getInstance().player;
+                if (player != null) {
+                    notePullOutcome(player); // the pull may have landed just before the preemption
+                }
+            }
+            swapBack.leaseEnded(); // keep an owed swap-back for the next safe moment
             eatLease = null;
             eatPhase = EatPhase.NONE;
             eatPulled = false;
@@ -611,12 +707,24 @@ public final class SurvivalAutopilot implements IModule, IConfigurable, LeaseLis
     public void setEnabled(boolean enabled) {
         if (!enabled) {
             releaseAll();
+            swapBack.forget(); // a disabled module never clicks
+            eatPhase = EatPhase.NONE;
+            eatPulled = false;
         }
         this.enabled = enabled;
     }
 
     @Override
     public void onStopAll() {
+        if (eatLease != null) {
+            LocalPlayer player = Minecraft.getInstance().player;
+            if (eatPulled && eatPhase == EatPhase.PULL && player != null) {
+                notePullOutcome(player);
+            }
+            swapBack.leaseEnded(); // restored once automation runs again and the slots are unchanged
+        }
+        eatPhase = EatPhase.NONE;
+        eatPulled = false;
         eatLease = null;
         hazardLease = null;
         pressureLease = null;
@@ -625,6 +733,9 @@ public final class SurvivalAutopilot implements IModule, IConfigurable, LeaseLis
     @Override
     public void onWorldUnload() {
         releaseAll();
+        swapBack.forget(); // slot indices mean nothing in the next world
+        eatPhase = EatPhase.NONE;
+        eatPulled = false;
         dead = false;
         interruptedJob = -1;
         holderSource = null;

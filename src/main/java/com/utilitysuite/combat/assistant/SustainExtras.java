@@ -49,6 +49,22 @@ public final class SustainExtras {
                 && inventoryConsumableSlot < 36 && !pullInFlight && !screenOpen;
     }
 
+    /** Ticks after the engagement in which a consumable is staged into the hotbar (pros stage before they need it). */
+    public static final int STAGE_WINDOW_TICKS = 40;
+
+    /**
+     * Staged variant of {@link #shouldPull}: in the first {@value #STAGE_WINDOW_TICKS} ticks of an engagement, pull a
+     * main-inventory consumable whatever the health, so the heal is one hotbar switch away when the window comes.
+     * Not while eating, and only once per engagement ({@code stagedAlready}).
+     */
+    public static boolean shouldStagePull(boolean wholeInventory, boolean allowedHere, int hotbarConsumableSlot,
+                                          int inventoryConsumableSlot, boolean pullInFlight, boolean screenOpen,
+                                          int ticksEngaged, boolean eating, boolean stagedAlready) {
+        return !stagedAlready && !eating && ticksEngaged >= 0 && ticksEngaged < STAGE_WINDOW_TICKS
+                && shouldPull(wholeInventory, allowedHere, hotbarConsumableSlot, inventoryConsumableSlot,
+                pullInFlight, screenOpen);
+    }
+
     /**
      * Whether to move a totem into the offhand now: the module is armed with the setting on, the server is allowed,
      * the offhand lacks a totem, one exists in the inventory (index 0..35), no screen is open, the user is not
