@@ -17,7 +17,11 @@ import com.utilitysuite.core.input.PrimitiveRandom;
 import com.utilitysuite.core.input.KeybindManager;
 import com.utilitysuite.core.input.ManualInputHooks;
 import com.utilitysuite.core.input.ManualLookAssist;
+import com.utilitysuite.core.input.ManualFactsTracker;
 import com.utilitysuite.core.input.MinecraftInputBackend;
+import com.utilitysuite.core.input.SharedInputOverlay;
+import com.utilitysuite.core.input.YawCoSteer;
+import net.neoforged.neoforge.client.event.ScreenEvent;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ServerData;
 import net.minecraft.client.player.Input;
@@ -60,6 +64,7 @@ public final class CoreBootstrap {
     private static ModState modState;
     private static ManualInputHooks manualInput;
     private static Humanizer humanizer;
+    private static SharedInputOverlay sharedControl;
     private static long lastFrameNanos;
 
     private CoreBootstrap() {
@@ -95,6 +100,15 @@ public final class CoreBootstrap {
         smoother.setManualLookAssist(manualLook);
         manualInput.setManualLookAssist(manualLook);
         Services.registerManualLook(manualLook);
+        // control shared with the user: hardware key facts, the one-tick input overlay and the yaw co-steer (fed by
+        // the same turn hook, after the gain). Stop-All, world unload and winning leases end the grant in the arbiter.
+        ManualFactsTracker facts = new ManualFactsTracker();
+        YawCoSteer coSteer = new YawCoSteer();
+        manualInput.setManualFacts(facts);
+        manualInput.setYawCoSteer(coSteer);
+        sharedControl = new SharedInputOverlay(arbiter, facts, coSteer,
+                () -> Minecraft.getInstance().screen != null, CoreBootstrap::legitLevelIsLegit);
+        Services.registerSharedControl(sharedControl);
 
         configStore = new ConfigStore(FMLPaths.CONFIGDIR.get().resolve(UtilitySuiteMod.MOD_ID));
         modState = new ModState(configStore, arbiter, modules);
@@ -118,6 +132,9 @@ public final class CoreBootstrap {
         bus.addListener(CoreBootstrap::onFrame);
         // first, before any module reads the keys or the look: undo foreign turns (see setForeignRotationGuard)
         bus.addListener(EventPriority.HIGHEST, CoreBootstrap::onMovementInput);
+        // shared-control writes: after the module listeners that only read the user's keys (NORMAL)
+        bus.addListener(EventPriority.LOW, sharedControl::onMovementInput);
+        bus.addListener((ScreenEvent.Opening e) -> sharedControl.onScreenOpening());
         bus.addListener(CoreBootstrap::onLogin);
         bus.addListener(CoreBootstrap::onLogout);
         bus.addListener(manualInput::onKey);
@@ -155,6 +172,19 @@ public final class CoreBootstrap {
         }
     }
 
+    /** True when the active profile sits on the LEGIT level (the core then refuses the yaw co-steer). */
+    private static boolean legitLevelIsLegit() {
+        if (modState == null || !modState.hasActiveProfile()) {
+            return false;
+        }
+        return LegitPresets.current(modState.profile(), modState.global()) == LegitPresets.Level.LEGIT;
+    }
+
+    /** Control shared with the user (also in {@link Services#sharedControl()}). */
+    public static SharedInputOverlay sharedControl() {
+        return sharedControl;
+    }
+
     private static void stopAllFromKey() {
         arbiter.stopAll("Stop-All key");
         Minecraft mc = Minecraft.getInstance();
@@ -170,7 +200,9 @@ public final class CoreBootstrap {
         if (mc.player == null || mc.level == null) {
             return;
         }
-        manualInput.beginTick();
+        boolean screenOpen = mc.screen != null;
+        manualInput.beginTick(screenOpen);
+        sharedControl.beginTick(screenOpen);
         smoother.preTick();
     }
 
