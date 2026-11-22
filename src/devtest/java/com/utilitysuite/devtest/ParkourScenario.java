@@ -15,6 +15,8 @@ import com.utilitysuite.travel.movement.MovementAssist;
 import com.utilitysuite.travel.movement.ParkourCourse;
 import com.utilitysuite.travel.movement.ParkourRun;
 import com.utilitysuite.travel.terrain.TerrainAssist;
+import com.utilitysuite.travel.movement.LevelShapes;
+import com.utilitysuite.travel.movement.MovementPhysics;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.item.Items;
 
@@ -131,6 +133,8 @@ final class ParkourScenario {
         blockLane(s, lease, "gap", 58, false, true);
         blockClutch(s, 34, "hay_block", FallClutchPlanner.Kind.HAY, false, 3f);
         blockClutch(s, 42, "cobweb", FallClutchPlanner.Kind.COBWEB, false, 1f);
+        // --- control-model lanes: narrow landings (fence, wall, pane, corner) per control mode, override, parity ---
+        controlModelLanes(s, course);
         // --- escape path from a zombie ---
         s.cmd(() -> "summon minecraft:zombie " + (Arena.cx + 4.5) + " " + (Arena.FLOOR + 1) + " " + (Arena.cz + 0.5)
                 + " {NoAI:1b,PersistenceRequired:1b}");
@@ -373,7 +377,308 @@ final class ParkourScenario {
         s.cmd(() -> fillWorld(dx - 3, 1, -3, dx + 3, drop + 4, 3, "air"));
     }
 
-    private static String fillWorld(int x0, int y0, int z0, int x1, int y1, int z1, String block) {
+    // ==== control-model lanes (2026-11-22 parkour control model, design section 11) ===================================
+    // None of this has been run in game yet. Geometry and tap timings are first guesses; tune them in game.
+
+    /** Control modes of Movement Assist (profile key {@code control_mode}, written by string). */
+    private enum Mode { CORRECTIONS, CO_PILOT, TAKEOVER }
+
+    /** How the override lane presses sneak during the committed jump. */
+    private enum Override { NONE, SCRIPTED, PHYSICAL }
+
+    /**
+     * One narrow-landing lane. The post sits at block y 0 (floor level); {@code top} is the height of its collision
+     * top above the block base (fence and wall 1.5, pane 1.0); {@code limit} is how far the body centre may be from
+     * the post centre on either axis and still be supported (post half width + 0.3).
+     */
+    private record Kind(String name, String landingClass, String block, int gap, double top, double limit,
+                        boolean corner) {
+    }
+
+    private static final Kind FENCE = new Kind("fence-2gap", "fence", "minecraft:oak_fence", 2, 1.5, 0.425, false);
+    private static final Kind WALL = new Kind("wall-3gap", "wall", "minecraft:cobblestone_wall", 3, 1.5, 0.55,
+            false);
+    private static final Kind PANE = new Kind("pane-1gap", "pane", "minecraft:glass_pane", 1, 1.0, 0.3625, false);
+    private static final Kind CORNER_FENCE = new Kind("corner-fence", "corner-fence", "minecraft:oak_fence", 3, 1.5,
+            0.425, true);
+    private static final Kind CORNER_WALL = new Kind("corner-wall", "corner-wall", "minecraft:cobblestone_wall", 3,
+            1.5, 0.55, true);
+
+    /** The corner lane's single strafe tap: LEFT held this many ticks after the jump key, for this many ticks. */
+    private static final int TAP_START = 6;
+    private static final int TAP_LEN = 2;
+    /** The body must still be on the top this many ticks after touchdown. */
+    private static final int HOLD_TICKS = 40;
+    private static final double PARITY_TARGET = 0.001;
+    private static final int LANE_SPACING = 8;
+
+    /** Max replica position error per landing class: [0] over the flight, [1] after touchdown. */
+    private static final java.util.Map<String, double[]> PARITY = new java.util.TreeMap<>();
+
+    /** Mutable state of one lane run (test scaffolding, allocation is fine). */
+    private static final class LaneRun {
+        final MovementPhysics sim = new MovementPhysics();
+        final LevelShapes shapes = new LevelShapes();
+        ControlLease lease;
+        int tick;
+        int jumpTick = -1;
+        int landedTick = -1;
+        boolean fell;
+        boolean simReady;
+        double maxFlight;
+        double maxAfter;
+        boolean standing;
+        String standNote = "never landed";
+        // fresh-press phase
+        boolean leftTop;
+        int leftAt = -1;
+        // override phase
+        int overrideTick = -1;
+        int overrideTicksChecked;
+        int overrideMismatches;
+        String overrideFirst = "";
+    }
+
+    private static void controlModelLanes(Scenario s, ParkourCourse course) {
+        int lz = course.bounds()[5] + 20;
+        Object[] saved = new Object[4];
+        boolean[] terrainWas = new boolean[1];
+        boolean[] moduleWas = new boolean[1];
+        ControlLease[] leaseRef = new ControlLease[1];
+        // lanes: 5 kinds x 3 modes, then two override lanes
+        int laneCount = 5 * Mode.values().length + 2;
+        s.cmd(() -> "forceload add " + (Arena.cx + OX - 6) + " " + (Arena.cz + OZ + lz - 6) + " "
+                + (Arena.cx + OX + LANE_SPACING * laneCount + 6) + " " + (Arena.cz + OZ + lz + 30));
+        s.waitTicks(40);
+        s.run("control lanes: settings", () -> {
+            var profile = Services.modState().profile();
+            saved[0] = profile.getString(MovementAssist.ID, "control_mode", "CO_PILOT");
+            saved[1] = profile.getBool(MovementAssist.ID, "landing_hold", true);
+            saved[2] = profile.getString(MovementAssist.ID, "hold_release", "FRESH_INPUT");
+            saved[3] = profile.getInt(MovementAssist.ID, "hold_limit_ticks", 12);
+            terrainWas[0] = H.module(TerrainAssist.ID).isEnabled();
+            moduleWas[0] = H.module(MovementAssist.ID).isEnabled();
+            PARITY.clear();
+            H.enable(TerrainAssist.ID, false); // SafeWalk would refuse the drops; it is not under test here
+            H.setting(MovementAssist.ID, "landing_hold", true);
+            H.setting(MovementAssist.ID, "hold_release", "FRESH_INPUT");
+            H.enable(MovementAssist.ID, true);
+            Harness.command("gamerule fallDamage false");
+        });
+        int idx = 0;
+        for (Mode mode : Mode.values()) {
+            for (Kind kind : new Kind[] {FENCE, WALL, PANE, CORNER_FENCE, CORNER_WALL}) {
+                landingLane(s, lz, idx++, kind, mode, Override.NONE, leaseRef);
+            }
+        }
+        landingLane(s, lz, idx++, FENCE, Mode.CO_PILOT, Override.SCRIPTED, leaseRef);
+        landingLane(s, lz, idx, FENCE, Mode.CO_PILOT, Override.PHYSICAL, leaseRef);
+        s.run("control lanes: parity report", () -> {
+            StringBuilder above = new StringBuilder();
+            for (var e : PARITY.entrySet()) {
+                double[] v = e.getValue();
+                s.note(Harness.fmt("replica parity, landing class %s: max position error %.5f in flight, %.5f after"
+                        + " touchdown (target %.3f)", e.getKey(), v[0], v[1], PARITY_TARGET));
+                if (v[0] > PARITY_TARGET || v[1] > PARITY_TARGET) {
+                    above.append(above.length() == 0 ? "" : ", ").append(e.getKey());
+                }
+            }
+            s.note(above.length() == 0 ? "replica parity: every recorded landing class is within the target"
+                    : "replica parity ABOVE TARGET (information only, switch to UNMODELLED until fixed): " + above);
+        });
+        s.always("control lanes: restore", () -> {
+            H.physicalKey(org.lwjgl.glfw.GLFW.GLFW_KEY_LEFT_SHIFT, false);
+            if (leaseRef[0] != null && leaseRef[0].isActive()) {
+                Services.input().releaseFor(leaseRef[0]);
+                leaseRef[0].close();
+            }
+            if (saved[0] != null) {
+                H.setting(MovementAssist.ID, "control_mode", saved[0]);
+                H.setting(MovementAssist.ID, "landing_hold", saved[1]);
+                H.setting(MovementAssist.ID, "hold_release", saved[2]);
+                H.setting(MovementAssist.ID, "hold_limit_ticks", saved[3]);
+                H.enable(TerrainAssist.ID, terrainWas[0]);
+                H.enable(MovementAssist.ID, moduleWas[0]);
+            }
+            Harness.command("gamerule fallDamage true");
+        });
+    }
+
+    /**
+     * One lane: platform (z 0..10), gap, a single post. The script holds forward + sprint all the way, presses jump
+     * once at the edge, and (corner kinds) taps LEFT once. 40 ticks after touchdown the body must still be on the
+     * post top; then forward is released for 2 ticks and pressed again, and the body must leave within 10 ticks.
+     */
+    private static void landingLane(Scenario s, int lz, int idx, Kind kind, Mode mode, Override ovr,
+                                    ControlLease[] leaseRef) {
+        int dx = idx * LANE_SPACING + 2;
+        String label = kind.name + " " + mode + (ovr == Override.NONE ? "" : " override-" + ovr);
+        LaneRun r = new LaneRun();
+        int postX = kind.corner ? dx + 1 : dx;
+        int postZ = kind.corner ? 14 : 11 + kind.gap;
+        double postCx = Arena.cx + OX + postX + 0.5;
+        double postCz = Arena.cz + OZ + lz + postZ + 0.5;
+        double topY = Arena.FLOOR + kind.top;
+        s.cmd(() -> laneFill(lz, dx - 3, -1, -1, dx + 4, 6, 24, "air"));
+        s.cmd(() -> laneFill(lz, dx - 1, 0, 0, dx + 1, 0, 10, "minecraft:smooth_stone"));
+        s.cmd(() -> laneFill(lz, postX, 0, postZ, postX, 0, postZ, kind.block));
+        if (kind.corner) {
+            s.cmd(() -> laneFill(lz, dx + 1, 0, 11, dx + 1, 3, 12, "minecraft:stone"));
+        }
+        s.cmd(() -> "tp @s " + (Arena.cx + OX + dx + 0.5) + " " + (Arena.FLOOR + 1) + " "
+                + (Arena.cz + OZ + lz + 0.5) + " 0 10");
+        s.waitTicks(15);
+        s.run(label + ": start", () -> {
+            H.setting(MovementAssist.ID, "control_mode", mode.name());
+            r.lease = Services.arbiter().request(LeaseRequest.of("parkour_lane", ControlPriority.TRAVEL, null,
+                    ControlChannel.MOVEMENT, ControlChannel.CAMERA)).orElseThrow();
+            leaseRef[0] = r.lease;
+            Services.input().setKeyHeld(r.lease, SimKey.FORWARD, true);
+            Services.input().setKeyHeld(r.lease, SimKey.SPRINT, true);
+            Services.input().setRotationTarget(r.lease, new RotationTarget(0f, 10f, RotationMode.VISIBLE, 1f));
+        });
+        s.waitUpTo(label + ": flight and landing", 300, () -> laneTick(s, r, lz, kind, topY, postCx, postCz, ovr));
+        // fresh press: release forward for 2 ticks, press it again, the body must leave the top within 10 ticks
+        s.step(label + ": fresh press", t -> {
+            if (!r.standing || r.fell) {
+                return true;
+            }
+            if (t == 0) {
+                Services.input().setKeyHeld(r.lease, SimKey.FORWARD, false);
+            } else if (t == 2) {
+                Services.input().setKeyHeld(r.lease, SimKey.FORWARD, true);
+            }
+            if (t >= 3 && !r.leftTop && !onTop(H.p(), topY, postCx, postCz, kind.limit)) {
+                r.leftTop = true;
+                r.leftAt = t - 2;
+            }
+            return r.leftTop || t >= 12;
+        });
+        s.run(label + ": result", () -> {
+            Services.input().releaseFor(r.lease);
+            r.lease.close();
+            H.physicalKey(org.lwjgl.glfw.GLFW.GLFW_KEY_LEFT_SHIFT, false);
+            double[] stat = PARITY.computeIfAbsent(kind.landingClass, k -> new double[2]);
+            stat[0] = Math.max(stat[0], r.maxFlight);
+            stat[1] = Math.max(stat[1], r.maxAfter);
+            String parity = Harness.fmt("replica error flight %.5f, after touchdown %.5f", r.maxFlight, r.maxAfter);
+            if (ovr == Override.NONE) {
+                s.check(label + ": still on the " + kind.landingClass + " top " + HOLD_TICKS
+                                + " ticks after landing, forward held throughout",
+                        r.standing && !r.fell, r.standNote + "; " + parity);
+                s.check(label + ": a fresh forward press leaves the top within 10 ticks",
+                        r.standing && r.leftTop, r.standing ? (r.leftTop ? "left after " + r.leftAt + " ticks"
+                                : "still on top 10 ticks after the fresh press") : "did not stay on top first");
+            } else {
+                s.check(label + ": from the tick after sneak the assist writes nothing (effective input = raw keys)",
+                        r.overrideTicksChecked >= 4 && r.overrideMismatches == 0,
+                        Harness.fmt("sneak at flight tick %d, %d ticks compared, %d mismatches %s; %s",
+                                r.overrideTick - r.jumpTick, r.overrideTicksChecked, r.overrideMismatches,
+                                r.overrideFirst, parity));
+            }
+        });
+    }
+
+    /** One tick of a lane. Returns true when the lane run is over (stood 40 ticks, fell or timed out). */
+    private static boolean laneTick(Scenario s, LaneRun r, int lz, Kind kind, double topY, double postCx,
+                                    double postCz, Override ovr) {
+        var p = H.p();
+        var in = p.input;
+        r.tick++;
+        // replica fed the inputs the body actually used this tick
+        r.shapes.begin(p.level());
+        if (!r.simReady) {
+            r.sim.set(p.getX(), p.getY(), p.getZ(), 0, 0, 0, p.onGround());
+            r.simReady = true;
+        } else {
+            int fwd = (in.up ? 1 : 0) - (in.down ? 1 : 0);
+            int str = (in.left ? 1 : 0) - (in.right ? 1 : 0);
+            r.sim.tick(fwd, str, p.getYRot(), p.isSprinting(), in.jumping, in.shiftKeyDown, r.shapes);
+            double err = Math.sqrt(sq(r.sim.x - p.getX()) + sq(r.sim.y - p.getY()) + sq(r.sim.z - p.getZ()));
+            if (r.landedTick < 0) {
+                r.maxFlight = Math.max(r.maxFlight, err);
+            } else {
+                r.maxAfter = Math.max(r.maxAfter, err);
+            }
+        }
+        double z = p.getZ() - Arena.cz - OZ - lz;
+        if (p.getY() < Arena.FLOOR - 2) {
+            r.fell = true;
+            r.standNote = Harness.fmt("fell off, y %.2f at flight tick %d", p.getY() - Arena.FLOOR,
+                    r.tick - Math.max(r.jumpTick, 0));
+            return true;
+        }
+        // override phase: from the tick after sneak went down, effective input must equal the raw keys
+        if (r.overrideTick >= 0 && r.tick > r.overrideTick && r.overrideTicksChecked < 6) {
+            var o = H.mc().options;
+            boolean same = in.up == o.keyUp.isDown() && in.down == o.keyDown.isDown()
+                    && in.left == o.keyLeft.isDown() && in.right == o.keyRight.isDown()
+                    && in.jumping == o.keyJump.isDown() && in.shiftKeyDown == o.keyShift.isDown();
+            r.overrideTicksChecked++;
+            if (!same) {
+                r.overrideMismatches++;
+                if (r.overrideFirst.isEmpty()) {
+                    r.overrideFirst = Harness.fmt("(first at +%d: up %s/%s down %s/%s left %s/%s right %s/%s jump %s/%s"
+                                    + " sneak %s/%s, input/raw)", r.tick - r.overrideTick, in.up, o.keyUp.isDown(),
+                            in.down, o.keyDown.isDown(), in.left, o.keyLeft.isDown(), in.right,
+                            o.keyRight.isDown(), in.jumping, o.keyJump.isDown(), in.shiftKeyDown,
+                            o.keyShift.isDown());
+                }
+            }
+        }
+        // scripted input
+        if (r.jumpTick < 0 && p.onGround() && z >= 10.85) {
+            Services.input().setKeyHeld(r.lease, SimKey.JUMP, true);
+            r.jumpTick = r.tick;
+        } else if (r.jumpTick >= 0 && r.tick == r.jumpTick + 1) {
+            Services.input().setKeyHeld(r.lease, SimKey.JUMP, false);
+        }
+        if (r.jumpTick >= 0) {
+            int k = r.tick - r.jumpTick;
+            if (kind.corner) {
+                Services.input().setKeyHeld(r.lease, SimKey.LEFT, k >= TAP_START && k < TAP_START + TAP_LEN);
+            }
+            if (ovr != Override.NONE && k == 4 && r.overrideTick < 0) {
+                r.overrideTick = r.tick;
+                if (ovr == Override.SCRIPTED) {
+                    Services.input().setKeyHeld(r.lease, SimKey.SNEAK, true);
+                } else {
+                    H.physicalKey(org.lwjgl.glfw.GLFW.GLFW_KEY_LEFT_SHIFT, true);
+                }
+            }
+            if (ovr != Override.NONE && r.overrideTicksChecked >= 6) {
+                Services.input().setKeyHeld(r.lease, SimKey.SNEAK, false);
+                H.physicalKey(org.lwjgl.glfw.GLFW.GLFW_KEY_LEFT_SHIFT, false);
+            }
+        }
+        if (r.landedTick < 0 && r.jumpTick >= 0 && r.tick > r.jumpTick + 2 && p.onGround() && z > 11.0) {
+            r.landedTick = r.tick;
+        }
+        if (r.landedTick >= 0 && r.tick >= r.landedTick + HOLD_TICKS) {
+            r.standing = onTop(p, topY, postCx, postCz, kind.limit);
+            r.standNote = Harness.fmt("%d ticks after landing: feet y %.3f (top %.3f), axis distance to post centre"
+                            + " %.3f (limit %.3f), onGround %s", HOLD_TICKS, p.getY(), topY,
+                    Math.max(Math.abs(p.getX() - postCx), Math.abs(p.getZ() - postCz)), kind.limit, p.onGround());
+            return true;
+        }
+        return false;
+    }
+
+    private static boolean onTop(net.minecraft.world.entity.player.Player p, double topY, double cx, double cz,
+                                 double limit) {
+        return p.onGround() && Math.abs(p.getY() - topY) < 0.01
+                && Math.max(Math.abs(p.getX() - cx), Math.abs(p.getZ() - cz)) < limit;
+    }
+
+    private static double sq(double v) {
+        return v * v;
+    }
+
+    private static String laneFill(int lz, int x0, int y0, int z0, int x1, int y1, int z1, String block) {
+        return fillWorld(x0, y0, lz + z0, x1, y1, lz + z1, block);
+    }
+
+    private static String fillWorld(int x0,int y0, int z0, int x1, int y1, int z1, String block) {
         int bx = Arena.cx + OX;
         int by = Arena.FLOOR;
         int bz = Arena.cz + OZ;
