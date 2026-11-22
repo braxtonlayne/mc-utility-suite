@@ -97,6 +97,23 @@ class SuiteFontsTest {
     }
 
     @Test
+    void variantOversampleMatchesThePixelScale() {
+        // one atlas texel per screen pixel: nearest-sampled minification dropped thin horizontal strokes
+        assertEquals(2, SuiteFonts.variantFor(4.0 * 0.5), "menu at GUI scale 4 draws at 2 px per GUI px");
+        assertEquals(2, SuiteFonts.variantFor(3.0 * (2.0 / 3.0)));
+        assertEquals(1, SuiteFonts.variantFor(0.3));
+        assertEquals(3, SuiteFonts.variantFor(3.0));
+        assertEquals(SuiteFonts.MAX_VARIANT, SuiteFonts.variantFor(40.0));
+        for (int f = 0; f < SuiteFonts.FONT_IDS.length; f++) {
+            for (int k = 1; k <= SuiteFonts.MAX_VARIANT; k++) {
+                JsonObject ttf = JsonParser.parseString(SuiteFonts.definitionJson(f, k)).getAsJsonObject()
+                        .getAsJsonArray("providers").get(0).getAsJsonObject();
+                assertEquals(k, ttf.get("oversample").getAsFloat(), 0.0f);
+            }
+        }
+    }
+
+    @Test
     void resolveAllocatesNothing() {
         Assumptions.assumeTrue(AllocationProbe.supported());
         SuiteFonts.setState(true, true, false);

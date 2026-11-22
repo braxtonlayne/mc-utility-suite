@@ -87,8 +87,16 @@ public final class SuiteFonts {
     public static final String[] FILES = {"rajdhani-medium.ttf", "rajdhani-semibold.ttf", "jetbrainsmono-regular.ttf"};
     /** TTF provider size (pixels per em at GUI scale 1), by face index. Tuned in the playtest. */
     static final float[] SIZES = {9.0f, 7.5f, 8.5f};
-    /** Oversampling: glyphs rasterised at this multiple, so they stay crisp at GUI scale 2 to 4. */
+    /** Oversampling of the base definitions ({@link #FONT_IDS}): only the load probe and the fallback use them. */
     static final float OVERSAMPLE = 4.0f;
+    /**
+     * Text is drawn through per-scale variants ({@link #variantId}) whose oversample equals the effective pixel scale
+     * (window GUI scale x menu pose scale), so one atlas texel lands on exactly one screen pixel. The atlas is sampled
+     * with nearest filtering and no mipmaps, so a bitmap rasterised finer than the screen (e.g. oversample 4 drawn at
+     * 2 px per GUI px) is minified by dropping every other texel row: thin horizontal strokes (the T crossbar, the F
+     * top bar, the top of 'a' and '6') vanished whenever the dropped rows were the ones that carried them.
+     */
+    public static final int MAX_VARIANT = 6;
     /** Vertical shift in pixels (vanilla glyphs sit one pixel down from the line top), by face index. */
     static final float[] SHIFT_Y = {0.5f, 0.5f, 0.5f};
 
@@ -195,12 +203,31 @@ public final class SuiteFonts {
      * {@code FontOption} ("uniform"). Not a hot path (built when the pack opens).
      */
     public static String definitionJson(int face) {
+        return definitionJson(face, OVERSAMPLE);
+    }
+
+    /** The definition of a face rasterised at {@code oversample} texels per GUI px. */
+    public static String definitionJson(int face, float oversample) {
         return "{\"providers\":["
                 + "{\"type\":\"ttf\",\"file\":\"" + UtilitySuiteMod.MOD_ID + ":" + FILES[face] + "\","
-                + "\"size\":" + SIZES[face] + ",\"oversample\":" + OVERSAMPLE + ","
+                + "\"size\":" + SIZES[face] + ",\"oversample\":" + oversample + ","
                 + "\"shift\":[0.0," + SHIFT_Y[face] + "],\"filter\":{\"uniform\":false}},"
                 + "{\"type\":\"reference\",\"id\":\"minecraft:default\"}"
                 + "]}";
+    }
+
+    /** Font id path of a face's variant rasterised at {@code scale} texels per GUI px (1..{@link #MAX_VARIANT}). */
+    public static String variantId(int face, int scale) {
+        return FONT_IDS[face] + "_x" + scale;
+    }
+
+    /**
+     * The variant (oversample) for an effective pixel scale: the nearest integer, clamped to 1..{@link #MAX_VARIANT}.
+     * Allocation free.
+     */
+    public static int variantFor(double pixelScale) {
+        int k = (int) Math.round(pixelScale);
+        return k < 1 ? 1 : Math.min(k, MAX_VARIANT);
     }
 
     // ---- game glue --------------------------------------------------------------------------------------------------
@@ -213,7 +240,34 @@ public final class SuiteFonts {
 
         private static final String PACK_ID = UtilitySuiteMod.MOD_ID + "_suite_font";
         private static final Style[] STYLES = new Style[FONT_IDS.length];
+        /** Per-scale variant styles, [face][scale], created once each. */
+        private static final Style[][] VARIANT_STYLES = new Style[FONT_IDS.length][MAX_VARIANT + 1];
         private static boolean probePending;
+        /** Extra pose scale of the current text pass (the HUD scale); 1 outside it. */
+        private static double poseScale = 1.0;
+
+        /**
+         * Sets the extra pose scale the caller draws under (the HUD scale), so the variant matches the real pixel
+         * size; {@link #resetPoseScale()} when the pass ends. The menu's scale comes from
+         * {@link com.utilitysuite.ui.kit.MenuScale#active()}.
+         */
+        public static void setPoseScale(double scale) {
+            poseScale = scale > 0 ? scale : 1.0;
+        }
+
+        public static void resetPoseScale() {
+            poseScale = 1.0;
+        }
+
+        /**
+         * The variant (oversample, 1..{@link #MAX_VARIANT}) for the current pass: window GUI scale x menu scale x
+         * pose scale. Widths differ slightly between variants (hinted advances), so width caches key on it.
+         */
+        public static int variant() {
+            Minecraft mc = Minecraft.getInstance();
+            double gui = mc.getWindow() != null ? mc.getWindow().getGuiScale() : 1.0;
+            return variantFor(gui * com.utilitysuite.ui.kit.MenuScale.active() * poseScale);
+        }
 
         private Client() {
         }
@@ -346,9 +400,24 @@ public final class SuiteFonts {
             return s;
         }
 
-        /** The style a role draws with right now, or null for the plain vanilla path. */
+        /**
+         * The style a role draws with right now, or null for the plain vanilla path: the face's variant whose
+         * oversample matches the current effective pixel scale (GUI scale x
+         * {@link com.utilitysuite.ui.kit.MenuScale#active()}). Allocation free after the first use of each variant.
+         */
         public static Style style(TextRole role) {
-            return styleOf(resolve(role));
+            int face = resolve(role);
+            if (face < 0) {
+                return null;
+            }
+            int k = variant();
+            Style s = VARIANT_STYLES[face][k];
+            if (s == null) {
+                s = Style.EMPTY.withFont(ResourceLocation.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID,
+                        variantId(face, k)));
+                VARIANT_STYLES[face][k] = s;
+            }
+            return s;
         }
 
         /**
@@ -380,20 +449,30 @@ public final class SuiteFonts {
                 this.location = location;
             }
 
+            /** Encoded as face * (MAX_VARIANT + 1) + scale, where scale 0 is the base definition; -1 when unknown. */
             private static int faceOf(ResourceLocation id) {
                 if (!UtilitySuiteMod.MOD_ID.equals(id.getNamespace())) {
                     return -1;
                 }
                 for (int f = 0; f < FONT_IDS.length; f++) {
-                    if (id.getPath().equals("font/" + FONT_IDS[f] + ".json")) {
-                        return f;
+                    for (int k = 0; k <= MAX_VARIANT; k++) {
+                        if (id.getPath().equals(path(f, k))) {
+                            return f * (MAX_VARIANT + 1) + k;
+                        }
                     }
                 }
                 return -1;
             }
 
-            private static IoSupplier<InputStream> json(int face) {
-                byte[] bytes = definitionJson(face).getBytes(StandardCharsets.UTF_8);
+            private static String path(int face, int scale) {
+                return "font/" + (scale == 0 ? FONT_IDS[face] : variantId(face, scale)) + ".json";
+            }
+
+            private static IoSupplier<InputStream> json(int code) {
+                int face = code / (MAX_VARIANT + 1);
+                int k = code % (MAX_VARIANT + 1);
+                String def = k == 0 ? definitionJson(face) : definitionJson(face, k);
+                byte[] bytes = def.getBytes(StandardCharsets.UTF_8);
                 return () -> new ByteArrayInputStream(bytes);
             }
 
@@ -420,8 +499,10 @@ public final class SuiteFonts {
                     return;
                 }
                 for (int f = 0; f < FONT_IDS.length; f++) {
-                    output.accept(ResourceLocation.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID,
-                            "font/" + FONT_IDS[f] + ".json"), json(f));
+                    for (int k = 0; k <= MAX_VARIANT; k++) {
+                        output.accept(ResourceLocation.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID, path(f, k)),
+                                json(f * (MAX_VARIANT + 1) + k));
+                    }
                 }
             }
 

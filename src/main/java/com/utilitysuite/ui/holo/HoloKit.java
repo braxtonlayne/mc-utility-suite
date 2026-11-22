@@ -54,15 +54,17 @@ public final class HoloKit implements IHoloCanvas {
         g = graphics;
         font = Minecraft.getInstance().font;
         SuiteFonts.Client.frame();
-        int gen = SuiteFonts.generation();
+        scale = HoloTheme.hudScale;
+        scaled = scale < 0.99f || scale > 1.01f;
+        SuiteFonts.Client.setPoseScale(scaled ? scale : 1.0);
+        // widths depend on the face state and on the per-scale variant (hinted advances)
+        int gen = SuiteFonts.generation() * 31 + SuiteFonts.Client.variant();
         if (gen != fontGeneration) {
             fontGeneration = gen;
             digitW[0] = -1;
             digitW[1] = -1;
             digitW[2] = -1;
         }
-        scale = HoloTheme.hudScale;
-        scaled = scale < 0.99f || scale > 1.01f;
         if (scaled) {
             Matrix4f m = graphics.pose().last().pose();
             saved.set(m);
@@ -78,6 +80,7 @@ public final class HoloKit implements IHoloCanvas {
             g.pose().last().pose().set(saved);
         }
         scaled = false;
+        SuiteFonts.Client.resetPoseScale();
         g = null;
         vc = null;
     }
