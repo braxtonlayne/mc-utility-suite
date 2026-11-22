@@ -13,6 +13,8 @@ public final class CombatSnapshot {
     public float health, maxHealth, absorption;
     /** Hunger points 0..20 (natural regeneration needs 18+). */
     public int foodLevel = 20;
+    /** Food saturation (synced by the server with health): above 0 at food level 20, regeneration is the fast one. */
+    public float saturation = 5f;
     public boolean onGround, inWater, climbing, usingItem, screenOpen;
     public float fallDistance;
     /** The local player's velocity (blocks per tick) and sprint state, for forward simulation. */

@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Test;
 import java.util.Random;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -98,6 +99,15 @@ class DuelModeTest {
     }
 
     @Test
+    void aRegenerationResetOnlyPaysWhileWeMissClearlyMoreHealthThanTheOpponent() {
+        assertTrue(TacticUtility.regenResetPays(14, 0), "they are full, we are not: all of it is ours");
+        assertTrue(TacticUtility.regenResetPays(14, 4));
+        assertFalse(TacticUtility.regenResetPays(14, 13), "both hurt alike: the reset gains nothing");
+        assertFalse(TacticUtility.regenResetPays(12, 16), "a nearly dead opponent is finished, not let go");
+        assertFalse(TacticUtility.regenResetPays(0, 0));
+    }
+
+    @Test
     void duelModeSwitchedOnMidFlightTurnsTheFlightIntoAReset() {
         TacticUtility u = new TacticUtility();
         u.ownHealth = 2;
@@ -129,6 +139,7 @@ class DuelModeTest {
     ModuleRegistry registry;
     CombatAssistant assistant;
     long[] now = {50_000L};
+    FakeInputBackend backend;
 
     @BeforeEach
     void setUp() {
@@ -136,7 +147,8 @@ class DuelModeTest {
         world = new FakeCombatWorld();
         world.add(TARGET, "Vindicator", 3, 64, 0);
         arbiter = new ActionArbiter();
-        smoother = new InputSmoother(new FakeInputBackend(), new Random(9));
+        backend = new FakeInputBackend();
+        smoother = new InputSmoother(backend, new Random(9));
         registry = new ModuleRegistry();
         arbiter.bind(smoother, registry, null);
         assistant = new CombatAssistant(world, new AllyRoster(), arbiter, smoother, smoother, () -> now[0]);
@@ -167,6 +179,71 @@ class DuelModeTest {
         world.entities.get(TARGET).alive = false;
         tick(1);
         assertEquals(CombatState.DORMANT, assistant.state(), "a dead or unloaded target still ends it");
+    }
+
+    // ---- end to end: low health ------------------------------------------------------------------------------------
+
+    /** A duel against the target at 2.6 blocks with our health at 6 (under the 8 HP sustain threshold). */
+    void lowHealthDuel(boolean duel, int food, float saturation, float targetHealth) {
+        world.entities.get(TARGET).x = 2.6;
+        world.entities.get(TARGET).player = true;
+        world.entities.get(TARGET).health = targetHealth;
+        assistant.config().duelMode = duel;
+        assistant.onDamageEvent(LOCAL, "minecraft:player_attack", TARGET, TARGET);
+        tick(1);
+        world.self.health = 6f;
+        world.self.foodLevel = food;
+        world.self.saturation = saturation;
+    }
+
+    @Test
+    void lowHealthInADuelWithNoWayToHealKeepsSwinging() {
+        // arena finding 2026-11-22: at 8 HP and food 17 the emergency retreat held S in a corner at full charge and
+        // never swung again; the round timed out
+        lowHealthDuel(true, 16, 0f, 20f);
+        int before = assistant.swings();
+        tick(40);
+        assertEquals(CombatState.ENGAGED, assistant.state());
+        assertNotEquals(TacticUtility.Tactic.RETREAT_HEAL, assistant.broadTactic());
+        assertTrue(assistant.swings() > before, "the fight goes on: swings at low health");
+    }
+
+    @Test
+    void lowHealthOutsideDuelModeStillBacksOff() {
+        lowHealthDuel(false, 16, 0f, 20f);
+        assistant.config().tacticUtility = false; // the emergency retreat alone
+        int before = assistant.swings();
+        tick(40);
+        assertEquals(before, assistant.swings(), "the emergency retreat does not trade");
+        assertTrue(backend.isDown(com.utilitysuite.core.api.SimKey.BACK), "backs off");
+    }
+
+    @Test
+    void slowRegenerationIsNoReasonForADuelReset() {
+        lowHealthDuel(true, 19, 0f, 20f); // food 18-19: 1 HP per 4 seconds, the opponent is back sooner
+        int before = assistant.swings();
+        tick(40);
+        assertNotEquals(TacticUtility.Tactic.RETREAT_HEAL, assistant.broadTactic());
+        assertTrue(assistant.swings() > before);
+    }
+
+    @Test
+    void fastRegenerationAgainstAHealthyOpponentIsADuelReset() {
+        lowHealthDuel(true, 20, 4f, 20f);
+        tick(TacticUtility.MIN_DWELL_TICKS + 5); // the tactic dwell: the reset takes over within a few ticks
+        int before = assistant.swings();
+        tick(40);
+        assertEquals(TacticUtility.Tactic.RETREAT_HEAL, assistant.broadTactic(), "we heal, they have nothing to heal");
+        assertEquals(before, assistant.swings());
+    }
+
+    @Test
+    void noDuelResetWhileTheOpponentIsHurtAsBadly() {
+        lowHealthDuel(true, 20, 4f, 5f); // they would regenerate as much as we would
+        int before = assistant.swings();
+        tick(40);
+        assertNotEquals(TacticUtility.Tactic.RETREAT_HEAL, assistant.broadTactic());
+        assertTrue(assistant.swings() > before, "finish it");
     }
 
     @Test

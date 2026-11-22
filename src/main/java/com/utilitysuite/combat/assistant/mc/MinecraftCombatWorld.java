@@ -206,6 +206,7 @@ public final class MinecraftCombatWorld implements CombatWorld, LineOfSight.Soli
         out.maxHealth = p.getMaxHealth();
         out.absorption = p.getAbsorptionAmount();
         out.foodLevel = p.getFoodData().getFoodLevel();
+        out.saturation = p.getFoodData().getSaturationLevel();
         out.onGround = p.onGround();
         out.inWater = p.isInWater();
         out.climbing = p.onClimbable();

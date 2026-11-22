@@ -660,13 +660,23 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
                     || (a == SustainPlanner.Action.EQUIP_TOTEM && eff <= settings.lowHealth)) {
                 retreating = true;
             }
+            // duel mode: the opponent never lets go, so backing off is only worth it while it heals us more than
+            // it heals them; otherwise low health changes nothing and the fight goes on (arena finding 2026-11-22:
+            // at 8 HP with no food the client held S in a corner, full charge, without a swing, until the round ended)
+            boolean duel = settings.duelMode;
+            if (retreating && duel && !duelResetPays(s)) {
+                retreating = false;
+            }
             if (retreating) {
-                if (retreatRun(s, false)) {
-                    return; // the opponent keeps closing: turn and run along a route
+                if (retreatRun(s, duel)) {
+                    return; // the opponent keeps closing (duel mode: always): turn and run along a route
                 }
-                aimAtTarget(s);
-                retreatMove(s);
-                return;
+                if (!duel) {
+                    aimAtTarget(s);
+                    retreatMove(s);
+                    return;
+                }
+                // duel mode without a route to run: back-pedalling from a sprinting opponent only takes hits
             }
         } else if (eating) {
             stopEating();
@@ -905,8 +915,15 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         lastTargetHealth = s.targetHealth;
     }
 
-    /** Food level from which vanilla natural regeneration heals. */
-    private static final int NATURAL_REGEN_FOOD = 18;
+    /**
+     * Food level of vanilla's fast natural regeneration (1 HP per half second while saturation lasts). The slow one
+     * (food 18+, 1 HP per 4 seconds) is no reason for a duel reset: the opponent closes the distance sooner.
+     */
+    private static final int FAST_REGEN_FOOD = 20;
+
+    private static boolean fastRegen(CombatSnapshot s) {
+        return s.foodLevel >= FAST_REGEN_FOOD && s.saturation > 0f;
+    }
 
     private TacticUtility.Tactic chooseTactic(CombatSnapshot s) {
         TacticUtility u = utility;
@@ -922,8 +939,33 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         u.ceilingDeny = feel.ceilingDeny();
         u.gearRatio = gear.ratio(); // the gear read leads the observed DPS, which lags by seconds
         u.duelMode = settings.duelMode;
-        u.canRegenerate = s.foodLevel >= NATURAL_REGEN_FOOD;
+        // the opponent regenerates too: a reset on natural regeneration counts only while it gives us more back
+        u.canRegenerate = fastRegen(s)
+                && TacticUtility.regenResetPays(missingHealth(s), targetMissingHealth(s));
         return u.choose();
+    }
+
+    private static final double PLAYER_MAX_HEALTH = 20.0;
+
+    private static double missingHealth(CombatSnapshot s) {
+        return Math.max(0.0, (s.maxHealth > 0f ? s.maxHealth : 20f) - s.effectiveHealth());
+    }
+
+    /** The target's missing health; its maximum is taken as a player's 20 (duel mode is about players). */
+    private static double targetMissingHealth(CombatSnapshot s) {
+        return Math.max(0.0, PLAYER_MAX_HEALTH - s.targetHealth);
+    }
+
+    /**
+     * Duel mode: stepping out of the fight heals us more than it heals the opponent. True with a healing item to
+     * use, or with hunger high enough to regenerate while we miss clearly more health than they do.
+     */
+    private boolean duelResetPays(CombatSnapshot s) {
+        if ((settings.gapples && s.gappleSlot >= 0) || s.sustainInvSlot >= 0) {
+            return true;
+        }
+        return fastRegen(s)
+                && TacticUtility.regenResetPays(missingHealth(s), targetMissingHealth(s));
     }
 
     /** Broad tactic of the last engaged tick (FIGHT while the setting is off). */
@@ -1992,6 +2034,16 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         public long lastAttackerAt() {
             return lastAttackerAt;
         }
+    }
+
+    /** The hit planner of this fight (diagnostics, tests): the planned kind of the next hit. */
+    public HitPlanner hitPlanner() {
+        return hits;
+    }
+
+    /** {@link GearRead#ratio()} of this fight (diagnostics, tests). */
+    public double gearRatio() {
+        return gear.ratio();
     }
 
     /** Hit policy the hit planner used on its last decision (a stage's one-tick override included; tests). */
