@@ -19,6 +19,8 @@ public final class TradeInput {
     public int sReadyIn;
     /** Our full cooldown period in ticks (20 / attack speed; 12.5 for a sword). */
     public double sCooldownTicks = 12.5;
+    /** Remaining ticks of our hurt immunity from a hit already taken (0 = can be hit now). */
+    public int sHurtTicks;
 
     // ---- opponent -------------------------------------------------------------------------------------------------
     public double ox, oy, oz, ovx, ovy, ovz;
@@ -34,14 +36,18 @@ public final class TradeInput {
     public boolean oSprinting = true;
     /** False for a mob that does not swing a weapon on a cooldown (it then hits whenever in reach, every 20 ticks). */
     public boolean oUsesCooldown = true;
+    /** Remaining ticks of the opponent's hurt immunity from a hit we already landed (0 = can be hit now). */
+    public int oHurtTicks;
 
     // ---- arena and tuning -----------------------------------------------------------------------------------------
     /** Hazards relative to our direction toward the opponent; a combination that moves into one is rejected. */
     public boolean hazardFront, hazardBack, hazardLeft, hazardRight;
-    /** Ticks simulated ahead (6 to 8). */
+    /** Ticks simulated ahead (6 to 8; clamped to 1..12). */
     public int horizon = 7;
     /** Value of one hit taken, relative to one hit landed (1.0 = even trade; above 1 = more careful). */
     public double takenWeight = 1.2;
     /** Whether a jump may be part of the answer (false at the lip of a gap or under a low ceiling). */
     public boolean allowJump = true;
+    /** Ticks a fighter needs to sprint again after a sprint hit cleared its sprint (a w-tap; 0 = instant). */
+    public int resprintTicks = 2;
 }
