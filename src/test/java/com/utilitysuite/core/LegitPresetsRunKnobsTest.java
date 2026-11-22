@@ -57,6 +57,15 @@ class LegitPresetsRunKnobsTest {
     }
 
     @Test
+    void turnGainIsOffForLegitAndOnForBalancedAndRelaxed() {
+        Knob k = find("movement_assist", "turn_gain");
+        assertEquals(false, k.value(Level.LEGIT));
+        assertEquals(true, k.value(Level.BALANCED));
+        assertEquals(true, k.value(Level.RELAXED));
+        assertFalse(k.global(), "a world-profile knob");
+    }
+
+    @Test
     void applyingRelaxedWritesTheNewCombatAndCraftKnobsToTheProfile() {
         ProfileConfig world = fresh("w");
         ProfileConfig global = fresh("global");

@@ -57,6 +57,8 @@ public final class LegitPresets {
             knob(COMBAT, "los_timeout_ticks", 60, 100, 200),
             knob(COMBAT, "engage_requires_los", true, true, false),
             knob("movement_assist", "look_style", "NATURAL", "NATURAL", "FREE"),
+            // turn gain scales the user's own mouse toward the ideal takeoff yaw: Legit stays keys only
+            knob("movement_assist", "turn_gain", false, true, true),
             knob("combat_reflexes", "shield_turn", false, false, true),
             knob("combat_reflexes", "shield_front_cone", 70.0, 70.0, 90.0),
             knob("auto_torch", "relaxed", false, false, true),
@@ -105,9 +107,20 @@ public final class LegitPresets {
 
     /** The level every knob currently matches, or null when they are mixed ("Custom"). */
     public static Level current(ProfileConfig profile, ProfileConfig global) {
+        return currentIgnoring(profile, global, null, null);
+    }
+
+    /**
+     * Like {@link #current} but ignoring one knob (null module/key: ignore none). Lets a knob added after a profile
+     * was set to a level find out which level the rest of the profile is on.
+     */
+    public static Level currentIgnoring(ProfileConfig profile, ProfileConfig global, String moduleId, String key) {
         for (Level level : Level.values()) {
             boolean all = true;
             for (Knob k : KNOBS) {
+                if (moduleId != null && k.moduleId().equals(moduleId) && k.key().equals(key)) {
+                    continue;
+                }
                 ProfileConfig target = k.global() ? global : profile;
                 Object stored = target == null ? null : stored(target, k);
                 if (!matches(stored == null ? k.balanced() : stored, k.value(level))) {
@@ -120,6 +133,32 @@ public final class LegitPresets {
             }
         }
         return null;
+    }
+
+    /**
+     * A boolean knob's effective value: the stored value when the key is present; when it is absent, the knob's value
+     * for the level the rest of the profile is on (a profile left on LEGIT before the knob existed reads LEGIT's
+     * value, not BALANCED's), or the BALANCED value for a Custom profile.
+     */
+    public static boolean boolKnob(ProfileConfig profile, ProfileConfig global, String moduleId, String key) {
+        Knob knob = null;
+        for (Knob k : KNOBS) {
+            if (k.moduleId().equals(moduleId) && k.key().equals(key)) {
+                knob = k;
+                break;
+            }
+        }
+        if (knob == null) {
+            throw new IllegalArgumentException("no knob " + moduleId + "." + key);
+        }
+        ProfileConfig target = knob.global() ? global : profile;
+        Object stored = target == null ? null : stored(target, knob);
+        if (stored instanceof Boolean b) {
+            return b;
+        }
+        Level level = currentIgnoring(profile, global, moduleId, key);
+        Object v = knob.value(level == null ? Level.BALANCED : level);
+        return v instanceof Boolean b && b;
     }
 
     /** The stored value as Boolean / Double / String, or null when the key is absent. */

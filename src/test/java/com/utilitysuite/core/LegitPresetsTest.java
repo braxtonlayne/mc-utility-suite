@@ -39,6 +39,7 @@ class LegitPresetsTest {
         ProfileConfig world = fresh("w");
         LegitPresets.apply(Level.LEGIT, world, fresh("global"));
         assertTrue(world.getBool(LegitPresets.SCHEMATIC, "requireLineOfSight", false));
+        assertFalse(world.getBool("movement_assist", "turn_gain", true), "Legit stays keys only: no turn gain");
         assertEquals("VISIBLE", world.getString(LegitPresets.BRIDGE, "rotation_mode", ""));
         assertEquals("BRIDGER", world.getString(LegitPresets.BRIDGE, "server_look", ""));
     }
