@@ -17,13 +17,23 @@ const ROUNDS = Number(args.rounds || 10);
 const ENGINE = args.engine || "nxg";
 const PLAYER = args.player || "Dev";
 const BOT = args.bot || "ArenaBot";
-const OUT = args.out || path.join(__dirname, "..", "results", `${SETUP}-${ENGINE}.jsonl`);
+const OUT = args.out || path.join(__dirname, "..", "results", `${SETUP}-${ENGINE}${(args.arena || "hazards") === "flat" ? "" : "-hazards"}.jsonl`);
 const HOST = "127.0.0.1";
 const PORT = 25570;
 const ROUND_TIMEOUT_MS = 90_000;
 
-// Arena: a flat 21x21 stone floor with a glass wall ring, far from spawn. Both start 8 blocks apart.
+// Arena, far from spawn. Both start 8 blocks apart on the x = AX + 0.5 line.
+//   --arena flat     the original 21x21 stone floor with a glass ring (keeps old results comparable)
+//   --arena hazards  (default) 41x41 field on a 10-deep stone base with terrain that punishes bad footing.
+//                    Every hazard is mirror-symmetric in x and z about the field centre (cell c <-> cell -c), so
+//                    neither start has a positional edge:
+//                      lava hole   3x3, 1 deep, dead centre between the starts (knockback into it is a death)
+//                      ravines     3 wide, 8 deep, 25 long on both flanks (x cells +-9..11), stairs out at both ends
+//                      streams     2 wide, 1 deep still water along both side walls (x cells +-15..16): wading slows
+const ARENA = args.arena || "hazards";
 const AX = 1000, AY = 100, AZ = 1000;
+const HALF = ARENA === "flat" ? 10 : 20;
+const RAVINE_DEPTH = 8;
 const START_PLAYER = [AX + 0.5, AY + 1, AZ - 3.5];
 const START_BOT = [AX + 0.5, AY + 1, AZ + 4.5];
 
@@ -35,6 +45,13 @@ const KITS = {
     ours: ["iron_sword", "chainmail_helmet", "iron_chestplate", "leather_leggings", "chainmail_boots"],
     bot: ["iron_sword", "iron_helmet", "iron_chestplate", "chainmail_leggings", "iron_boots", "shield"],
   },
+  // Fable decision 2026-11-22: the pass bar (>= 16/20). One clear gear step down, not a hopeless one.
+  outgeared: {
+    ours: ["iron_sword", "iron_helmet", "iron_chestplate", "iron_leggings", "iron_boots"],
+    bot: ["diamond_sword{Enchantments:[{id:sharpness,lvl:2}]}", "diamond_helmet", "diamond_chestplate",
+      "diamond_leggings", "diamond_boots", "shield"],
+  },
+  // stress case only since 2026-11-22 (one bot hit is worth about six of ours)
   stacked: {
     ours: ["stone_sword", "leather_helmet", "leather_chestplate", "leather_leggings", "leather_boots"],
     bot: ["diamond_sword{Enchantments:[{id:sharpness,lvl:2}]}", "diamond_helmet", "diamond_chestplate",
@@ -77,14 +94,44 @@ function itemArg(item) {
   return `minecraft:${item}`;
 }
 
+// Builds (or rebuilds) the arena; idempotent, so every round starts on unchanged terrain.
+async function buildArena(c) {
+  const H = HALF, x0 = AX - H, x1 = AX + H, z0 = AZ - H, z1 = AZ + H;
+  await c(`forceload add ${x0 - 2} ${z0 - 2} ${x1 + 2} ${z1 + 2}`);
+  // clear anything a bigger previous layout left (flat after hazards, or block litter)
+  await c(`fill ${AX - 21} ${AY + 1} ${AZ - 21} ${AX + 21} ${AY + 6} ${AZ + 21} minecraft:air`);
+  if (ARENA === "flat") {
+    await c(`fill ${x0} ${AY} ${z0} ${x1} ${AY} ${z1} minecraft:stone`);
+  } else {
+    // a solid base so the cuts below have walls and a floor (fill volume 41*41*10 < the 32768 limit)
+    await c(`fill ${x0} ${AY - 9} ${z0} ${x1} ${AY} ${z1} minecraft:stone`);
+  }
+  await c(`fill ${x0 - 1} ${AY + 1} ${z0 - 1} ${x1 + 1} ${AY + 5} ${z1 + 1} minecraft:glass hollow`);
+  await c(`fill ${x0} ${AY + 1} ${z0} ${x1} ${AY + 5} ${z1} minecraft:air`);
+  if (ARENA === "flat") return;
+  // ravines on both flanks, with one-block stairs climbing out at both ends
+  const D = RAVINE_DEPTH, RL = 12;
+  for (const [a, b] of [[9, 11], [-11, -9]]) {
+    await c(`fill ${AX + a} ${AY - D + 1} ${AZ - RL} ${AX + b} ${AY} ${AZ + RL} minecraft:air`);
+    for (let j = 0; j < D - 1; j++) {
+      // step j sits j cells in from each end, its top at AY - 1 - j (a 1-block climb per cell)
+      for (const z of [AZ + RL - j, AZ - RL + j]) {
+        await c(`fill ${AX + a} ${AY - D + 1} ${z} ${AX + b} ${AY - 1 - j} ${z} minecraft:stone`);
+      }
+    }
+  }
+  // lava hole, 1 deep, centre (contained: stone on every side at its level, nothing to flow into)
+  await c(`fill ${AX - 1} ${AY} ${AZ - 1} ${AX + 1} ${AY} ${AZ + 1} minecraft:lava`);
+  // streams along both side walls: 1-deep source water, contained by stone
+  for (const [a, b] of [[15, 16], [-16, -15]]) {
+    await c(`fill ${AX + a} ${AY} ${AZ - 18} ${AX + b} ${AY} ${AZ + 18} minecraft:water`);
+  }
+  await c(`kill @e[type=minecraft:falling_block]`);
+}
+
 async function resetRound(rcon) {
   const c = (cmd) => rcon.send(cmd);
-  // arena floor + wall ring (idempotent)
-  await c(`forceload add ${AX - 12} ${AZ - 12} ${AX + 12} ${AZ + 12}`);
-  await c(`fill ${AX - 10} ${AY} ${AZ - 10} ${AX + 10} ${AY} ${AZ + 10} minecraft:stone`);
-  await c(`fill ${AX - 10} ${AY + 1} ${AZ - 10} ${AX + 10} ${AY + 6} ${AZ + 10} minecraft:air`);
-  await c(`fill ${AX - 11} ${AY + 1} ${AZ - 11} ${AX + 11} ${AY + 4} ${AZ + 11} minecraft:glass hollow`);
-  await c(`fill ${AX - 10} ${AY + 1} ${AZ - 10} ${AX + 10} ${AY + 4} ${AZ + 10} minecraft:air`);
+  await buildArena(c);
   await c(`kill @e[type=item]`);
   await c(`kill @e[type=arrow]`);
   for (const who of [PLAYER, BOT]) {
@@ -92,7 +139,7 @@ async function resetRound(rcon) {
     await c(`clear ${who}`);
     await c(`effect clear ${who}`);
     await c(`effect give ${who} minecraft:instant_health 1 10 true`);
-    await c(`effect give ${who} minecraft:saturation 1 10 true`);
+    // no saturation at round start (Fable decision): hunger is full but the saturation buffer is the vanilla one
   }
   const kit = KITS[SETUP];
   for (const [who, items] of [[PLAYER, kit.ours], [BOT, kit.bot]]) {
@@ -167,8 +214,8 @@ async function runRound(rcon, bot, n) {
   const onMsg = (msg) => {
     const s = msg.toString();
     if (result) return;
-    if (s.startsWith(BOT + " ") && /was slain|died|was killed/.test(s)) result = { winner: "ours", line: s };
-    else if (s.startsWith(PLAYER + " ") && /was slain|died|was killed/.test(s)) result = { winner: "bot", line: s };
+    if (s.startsWith(BOT + " ") && DEATH.test(s)) result = { winner: "ours", line: s, cause: causeOf(s) };
+    else if (s.startsWith(PLAYER + " ") && DEATH.test(s)) result = { winner: "bot", line: s, cause: causeOf(s) };
   };
   bot.on("messagestr", onMsg);
   // go: tell the client (its devtest arena driver listens for this line), then the bot attacks
@@ -208,13 +255,23 @@ async function runRound(rcon, bot, n) {
   bot.removeListener("messagestr", onMsg);
   await rcon.send(`tellraw ${PLAYER} {"text":"[arena] stop"}`);
   const rec = { setup: SETUP, engine: ENGINE, round: n, ms: Date.now() - t0,
-    winner: result ? result.winner : "timeout", line: result ? result.line : null,
+    arena: ARENA, winner: result ? result.winner : "timeout", line: result ? result.line : null,
+    cause: result ? result.cause : null,
     minHp: { ours: Math.min(...hp.ours, 20), bot: Math.min(...hp.bot, 20) },
     lastHp: { ours: hp.ours.at(-1) ?? null, bot: hp.bot.at(-1) ?? null }, hpSeries: hp, distSeries: dist };
   // the dead side respawns via its own auto-respawn (bot) or the client's Auto-Respawn
   if (bot.health <= 0) { try { bot.respawn(); } catch (_) { /* */ } }
   await sleep(2500);
   return rec;
+}
+
+// vanilla death messages a fight here can end in (melee, knocked into lava, a ravine fall, drowning)
+const DEATH = /was slain|died|was killed|lava|burn|went up in flames|hit the ground too hard|fell |drowned|doomed to fall|experienced kinetic/;
+function causeOf(s) {
+  if (/lava|burn|flames/.test(s)) return "lava";
+  if (/hit the ground|fell |doomed to fall/.test(s)) return "fall";
+  if (/drowned/.test(s)) return "drowned";
+  return "melee";
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -227,6 +284,18 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await rcon.send("gamerule showDeathMessages true");
   if (args.dry) {
     console.log("rcon ok:", await rcon.send("list"));
+    if (args.build) {
+      // --dry --build: build the arena and spot-check the hazards over RCON (no client or bot needed)
+      await buildArena((cmd) => rcon.send(cmd));
+      const probe = async (dx, dy, dz, block) => {
+        const r = await rcon.send(`execute if block ${AX + dx} ${AY + dy} ${AZ + dz} minecraft:${block}`);
+        console.log(`  ${dx},${dy},${dz} ${block}: ${/passed/i.test(r) ? "ok" : "NO (" + r + ")"}`);
+      };
+      await probe(0, 0, 0, "lava"); await probe(0, 0, -4, "stone"); await probe(0, 1, -4, "air");
+      await probe(10, 0, 0, "air"); await probe(10, -RAVINE_DEPTH, 0, "stone"); await probe(-10, -7, 0, "air");
+      await probe(10, -1, 12, "stone"); await probe(10, -1, 11, "air"); await probe(10, -2, 11, "stone");
+      await probe(15, 0, 0, "water"); await probe(-16, 0, 18, "water"); await probe(21, 3, 0, "glass");
+    }
     await rcon.end();
     return;
   }

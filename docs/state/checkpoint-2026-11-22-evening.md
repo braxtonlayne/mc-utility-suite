@@ -105,3 +105,26 @@ Also open from the agents:
   - Add a lane-replica test for all four tick phases of this run-up.
 - Every other landing lane passed: Co-pilot and Takeover for fence, wall, pane and corner wall; Takeover corner
   fence. The Corrections lanes pass their "no walk-off" promise.
+
+## Fonts and hazard arena (17:55)
+- **Suite fonts landed (16aa4d8):** Rajdhani Medium/SemiBold and JetBrains Mono, SIL OFL. This is the one approved
+  licence exception: font files only, with their licence texts. Asset names are lowercase, because Minecraft rejects
+  uppercase pack paths. The load probe passes, and HUD text (`HoloKit.drawText`) renders in Rajdhani. **Not done:**
+  the menu widgets still draw through vanilla `drawString`, so the menu is still in the pixel font. Route them
+  through `HoloKit.drawText` / `SuiteFonts.Client.style(role)`.
+- **Hazard arena (owner request):** `tools/bot-arena/bots/arena.js`, copied to docs/research/bot-arena-arena.js.
+  - `--arena hazards` is now the default: a 41x41 field on a 10-deep stone base. Every hazard is mirror-symmetric
+    about the centre, so neither start has an edge:
+    - a 3x3 lava hole dead centre between the starts
+    - 3-wide, 8-deep ravines on both flanks, with one-block stairs out at both ends
+    - 2-wide wading streams along both side walls
+  - `--arena flat` keeps the old 21x21 floor, so earlier results stay comparable. Hazard results go to
+    `<setup>-<engine>-hazards.jsonl`.
+  - New `outgeared` kit (Fable's pass bar, at least 16/20): ours is iron sword and full iron; the bot has full
+    diamond, a Sharpness II sword and a shield. No saturation at round start for any kit.
+  - Deaths now count lava, falls and drowning, and each record carries a `cause`.
+  - Verified: `node arena.js --dry --build` built it on the server, and all 12 block probes pass.
+  - **Not run yet:** no rounds on the new arena. Two things to watch, since neither bot nor client has met lava or
+    ravines yet: does the mineflayer pathfinder route around the lava, and does our client.
+  - To run after work: start the server (`java -Xmx2G -jar paper-1.21.1-133.jar --nogui` in tools/bot-arena/server),
+    then `./gradlew runArena`, then `node arena.js --setup outgeared --rounds 20`. The server is stopped now.
