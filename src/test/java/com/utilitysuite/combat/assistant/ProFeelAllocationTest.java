@@ -112,6 +112,46 @@ class ProFeelAllocationTest {
     }
 
     @Test
+    void theKnockVectorDriveAllocatesNothing() {
+        Assumptions.assumeTrue(AllocationProbe.supported());
+        ProFeelLayer feel = assistant.proFeel();
+        ProFeelLayerTest.ScriptedArena arena = new ProFeelLayerTest.ScriptedArena();
+        arena.knock = true; // value 0.8 toward lava: the planner circles for the knock instead of the solver
+        feel.useArena(arena);
+        ProFeelLayerTest.ScriptedFeints feints = new ProFeelLayerTest.ScriptedFeints();
+        feints.move = FeintPlanner.Move.BREAK_PATTERN;
+        feel.useFeints(feints);
+        Services.registerHumanizer(new ProFeelLayerTest.RecordingHumanizer());
+        world.self.attackStrength = 0.3f;
+        engage();
+        long bytes = measure();
+        assertTrue(arena.scans > 1000, "arena scanned every tick");
+        assertEquals(0, feints.plans, "no feints while the knock vector drives the movement");
+        assertTrue(bytes < LIMIT, "engaged tick (knock vector) allocated " + bytes + " bytes over 50k ticks");
+    }
+
+    @Test
+    void thePositionalDriveAllocatesNothing() {
+        Assumptions.assumeTrue(AllocationProbe.supported());
+        ProFeelLayer feel = assistant.proFeel();
+        ProFeelLayerTest.ScriptedPositional positional = new ProFeelLayerTest.ScriptedPositional();
+        world.addPlayer(DUELIST, "Duelist", 3.6, 64, 0); // past 3 blocks: inside it FIGHT keeps a winning duel
+        positional.highGround = 1.0; // the utility rates the spot: HIGH_GROUND takes the movement over
+        positional.planAnswer = true;
+        feel.usePositional(positional);
+        ProFeelLayerTest.ScriptedFeints feints = new ProFeelLayerTest.ScriptedFeints();
+        feints.move = FeintPlanner.Move.BREAK_PATTERN;
+        feel.useFeints(feints);
+        Services.registerHumanizer(new ProFeelLayerTest.RecordingHumanizer());
+        world.self.attackStrength = 0.3f;
+        engage();
+        long bytes = measure();
+        assertTrue(positional.plans > 1000, "the positional tactic drove the movement");
+        assertTrue(feints.plans < 100, "feints only before the tactic took over (the utility dwell), not while it drives");
+        assertTrue(bytes < LIMIT, "engaged tick (positional drive) allocated " + bytes + " bytes over 50k ticks");
+    }
+
+    @Test
     void busyScriptedUnitsOnTheSolverPathAllocateNothing() {
         Assumptions.assumeTrue(AllocationProbe.supported());
         ProFeelLayer feel = assistant.proFeel();
@@ -126,6 +166,7 @@ class ProFeelAllocationTest {
         feel.usePhase(phase);
         ProFeelLayerTest.ScriptedArena arena = new ProFeelLayerTest.ScriptedArena();
         arena.knock = true;
+        arena.knockValue = 0.3; // read every refresh but below KNOCK_VECTOR_MIN_VALUE: this test stays on the solver
         feel.useArena(arena);
         ProFeelLayerTest.ScriptedPositional positional = new ProFeelLayerTest.ScriptedPositional();
         positional.highGround = 0.3;

@@ -431,3 +431,38 @@ tests pass. **Nothing here has run in a game client yet.**
 - [ ] Lang keys for the 8 new movement settings and 4 new combat settings.
 - [ ] Tune after the playtest: solver dwell and margins, pursuit thresholds (6 / 5 blocks, 10 ticks without line of
       sight), `HURT_HOLD`, intent weights, turn-gain strength.
+
+## Next-layer volley (2026-11-22, run note `docs/state/run-2026-11-22-next-layer.md`)
+
+Combos, opponent reads, arena awareness, pearl chases, two overlays and takeoff shaping. All nine tasks are merged
+on main; 1257 unit tests pass. **Nothing here has run in a game client yet.**
+
+### Done (unit-tested only)
+
+- [x] `ComboKeeper`: plans the sprint reset and follow-up keys on the predicted knockback arc (`combo_keeper`).
+- [x] `StrafePhaseModel` aim lead and strafing with the opponent (`anticipatory_aim`, `strafe_with`).
+- [x] `ArenaField` + `ArenaVoxels`: budgeted column scan, knock vectoring, high ground and low ceiling finds
+      (`arena_read`).
+- [x] `ArenaTactics`, `TacticUtility` HIGH_GROUND / CEILING_DENY, `TacticsPlanner.KNOCK_VECTOR`.
+- [x] `FeintPlanner` (players only) and `SkillEstimator` rank dial (`feints`, `rank_dial` off by default).
+- [x] `PearlLandingSim`, `PearlWatch`, `PearlIntercept` route mode (`pearl_intercept`).
+- [x] `ProFeelLayer` facade and the call sites in `CombatAssistant`; `the_read` ring registered in `CombatBootstrap`.
+- [x] `the_read` ring and `ghost_line` overlays.
+- [x] `TakeoffShaper` in Movement Assist (`takeoff_shaping`).
+
+### Open
+
+- [ ] In game: work through the checklist in the run note (sections 0-10). First: startup, then one feature at a
+      time, then everything on with a Spark profile.
+- [ ] Core "fill-only sprint start" call so takeoff shaping stops calling `LocalPlayer.setSprinting(true)` from
+      `travel/movement/MovementAssist` (a player state change outside `core.input`).
+- [ ] Knock kinds for damaging and slow floors in the contract (they report as LAVA / COBWEB today).
+- [ ] Arena read: partial blocks (slabs, fences) as their real shapes.
+- [ ] `StrafePhaseModel`: per-side hold medians for uneven strafers; a deadband for quantised server yaw in the
+      `FeintPlanner` pre-aim read.
+- [ ] `PearlWatch` has no unit test (client entity sync); ignore a zero first-tick pearl velocity if the playtest
+      shows it.
+- [ ] Assistant-level behaviour test of the positional drive's steering (allocation and precedence are covered).
+- [ ] Lang keys for the 7 new combat settings, `takeoff_shaping`, and the `the_read` / `ghost_line` settings.
+- [ ] Tune after the playtest: combo deviation tolerance under ping, feint cooldowns and bait window, rank-dial
+      step, knock values, high-ground reach cap, pearl start distance, shaping cost against the authorship budget.

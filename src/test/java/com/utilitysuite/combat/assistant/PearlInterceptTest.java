@@ -165,11 +165,12 @@ public class PearlInterceptTest {
     }
 
     @Test
-    void theProductionLandingStubNeverStarts() {
-        PearlIntercept plain = new PearlIntercept();
+    void theProductionLandingSimStartsOnAFarLanding() {
+        PearlIntercept plain = new PearlIntercept(); // the real PearlLandingSim over the flat voxels
         plain.useSource(pearls);
         plain.useVoxels(FLAT);
         pearls.flying = true;
-        assertFalse(plain.update(TARGET, 1, 0, 64, 0, 3, 0, SPACING_MAX, RANGE));
+        assertTrue(plain.update(TARGET, 1, 0, 64, 0, 3, 0, SPACING_MAX, RANGE));
+        assertTrue(plain.active());
     }
 }
