@@ -471,6 +471,9 @@ final class ParkourScenario {
         // commitment phase per flight tick, run-length coded
         final StringBuilder commitPhases = new StringBuilder();
         String lastCommit = "";
+        String scriptInfo = "";
+        double scriptDrift;
+        int scriptDriftTick = -1;
         int commitFrom = -1;
         int touchdownTick = -1;
         double touchdownX = Double.NaN;
@@ -894,6 +897,25 @@ final class ParkourScenario {
             r.lastCommit = ph;
             r.commitFrom = flightTick;
         }
+        if (brain.scriptActive()) {
+            // how far the body is from the script's predicted line (the replay drops the script past 0.08)
+            var sc = brain.activeScript();
+            int i = brain.scriptIndex();
+            var p = H.p();
+            if (r.scriptInfo.isEmpty()) {
+                r.scriptInfo = Harness.fmt("%s, takeoff index %d, land index %d, stop margin %.3f, view at the end"
+                        + " %.1f", sc.name, sc.takeoffIndex, sc.landIndex, sc.margin,
+                        sc.yaw[Math.max(0, Math.min(sc.landIndex, sc.length - 1))]);
+            }
+            if (i >= 0 && i < sc.length) {
+                double d = Math.sqrt(sq(p.getX() - Arena.cx - OX - (sc.x[i] - Arena.cx - OX))
+                        + sq(p.getY() - sc.y[i]) + sq(p.getZ() - sc.z[i]));
+                if (d > r.scriptDrift) {
+                    r.scriptDrift = d;
+                    r.scriptDriftTick = flightTick;
+                }
+            }
+        }
     }
 
     private static void closeCommitRun(LaneRun r, int lastTick) {
@@ -924,7 +946,9 @@ final class ParkourScenario {
                         + " post centre, %.4f block/tick, sprint %s, jump %s; %s; commitment phase per flight tick:"
                         + " %s", r.takeoffTick, r.jumpTick, r.takeoffZ, r.takeoffX, r.takeoffSpeed, r.takeoffSprint,
                 r.takeoffJump, r.touchdownTick >= 0 ? Harness.fmt("touchdown at flight tick %d, z %.3f, x %+.3f from"
-                        + " the post centre", last, r.touchdownZ, r.touchdownX) : "no touchdown", phases);
+                        + " the post centre", last, r.touchdownZ, r.touchdownX) : "no touchdown", phases)
+                + (r.scriptInfo.isEmpty() ? "" : Harness.fmt("; script %s; largest distance from its line in flight"
+                        + " %.3f (flight tick %d)", r.scriptInfo, r.scriptDrift, r.scriptDriftTick));
     }
 
     /** The replica error summary of a lane run. */

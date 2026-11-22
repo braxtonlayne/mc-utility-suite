@@ -182,6 +182,9 @@ public final class MovementAssistBrain {
             sprintIntent = false; // a sprint that stays off longer than any eased or walking run-up was let go
         }
         boolean sprintKey = sprinting || sprintIntent;
+        if (touchedDown) {
+            landedSprinting = sprintKey;
+        }
         int keys = LandingHold.keys(userForward, userStrafe, userJump);
         // landing hold first (every mode): the latch decides which of the user's keys count this tick
         updateHold(now, yaw, sprinting, userForward, userStrafe, keys, health, w);
@@ -304,9 +307,24 @@ public final class MovementAssistBrain {
         // pressed again. A still-held key works again when carrying on with it is safe: at once when the user shows
         // they are going on (looking past this block), otherwise once the hold has run its settle time.
         if (hold.latched() != 0 && now.onGround && (!hold.active() || (holdStable && continuing(now, keys)))
-                && (keys & hold.latched()) != 0 && carryOnIsSafe(now, yaw, sprinting, f, s, health, w)) {
+                && (keys & hold.latched()) != 0 && carryOnIsSafe(now, yaw, sprinting || resumesSprint(), f, s, health,
+                w)) {
             hold.release();
         }
+    }
+
+    /** The body was sprinting (or meant to) when it touched down for the current hold. */
+    private boolean landedSprinting;
+
+    /**
+     * The hold itself ends the sprint: it latches W, and vanilla drops the sprint on a tick without forward. With the
+     * sprint key still down the sprint is back one tick after W works again, so "is it safe to carry on" is judged
+     * with the sprint the body landed with while the latched key is the forward key. Judged at walking speed, a strip
+     * whose next jump needs the sprint never counted as safe and the held W stayed dead for good (a runner that never
+     * lets go of W stood there: the benchmark course, segment 12, 2026-11-22).
+     */
+    private boolean resumesSprint() {
+        return landedSprinting && (hold.latched() & LandingHold.FORWARD) != 0;
     }
 
     private float holdHealth = 20f;
@@ -362,6 +380,17 @@ public final class MovementAssistBrain {
         for (int t = 0; t < edge; t++) {
             carry.tick(f, s, yaw, sprinting, false, w);
             commitSimTicks++;
+        }
+        // The carry-on jump goes where the user is going now: the estimator's latest pick, like continuing(), not the
+        // target frozen for the commitment (during the flight and the settle that is the block being landed on, and a
+        // jump "to" the block under the feet never looks worth taking). Before the freeze held from TAKEOFF as
+        // designed, the estimator often dropped the target on the takeoff tick, the flight ran unfrozen and the lock
+        // had moved on to the next block by the touchdown; this keeps that flow with the freeze in place.
+        // decide() sets the search's target again right after the hold update.
+        if (rawSet && rawConfidence >= intentThreshold) {
+            search.setTarget(rtx, rty, rtz);
+        } else {
+            search.clearTarget();
         }
         // the edge jump must continue the course (a landing no lower than this top, no damage), not drop off it
         double topY = carry.y;
