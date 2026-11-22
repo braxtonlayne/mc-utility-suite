@@ -41,6 +41,28 @@ public final class AimSolver {
         out[1] = (float) -Math.toDegrees(Math.atan2(dy, Math.max(horiz, 1.0e-4)));
     }
 
+    /**
+     * Yaw rate (degrees per tick, magnitude) the aim needs to keep tracking the target given both lateral
+     * velocities: the target's velocity across the line of sight minus our own, over the horizontal distance.
+     *
+     * @param ownLateralPerTick our own strafe velocity across the line of sight in blocks per tick, + = our right
+     *                          while facing the target (so {@code StrafePlanner.RIGHT} moves it positive)
+     */
+    public static double neededYawRateDegPerTick(CombatSnapshot s, double ownLateralPerTick) {
+        double dx = s.tx - s.px;
+        double dz = s.tz - s.pz;
+        double r = Math.sqrt(dx * dx + dz * dz);
+        if (r < 1.0e-3) {
+            return 0.0;
+        }
+        double ux = dx / r;
+        double uz = dz / r;
+        // right of a forward vector (ux, uz) is (-uz, ux) in Minecraft's yaw convention
+        double targetRight = s.tvx * -uz + s.tvz * ux;
+        double relative = targetRight - ownLateralPerTick;
+        return Math.abs(Math.toDegrees(relative / Math.max(r, 0.5)));
+    }
+
     private static double clampInset(double v, double lo, double hi) {
         double a = lo + INSET;
         double b = hi - INSET;

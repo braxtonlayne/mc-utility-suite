@@ -11,8 +11,15 @@ public final class StrafePlanner {
     public static final int NONE = 0;
     public static final int RIGHT = 1;
 
+    /** A move-with read above this strength steers the direction. */
+    public static final double WITH_THRESHOLD = 0.3;
+    /** Minimum ticks in a direction before the move-with preference may switch away from it. */
+    public static final int WITH_MIN_HOLD = 6;
+
     private int dir = RIGHT;
     private int ticksLeft;
+    /** Ticks spent in the current direction (any change resets it). Does not affect the 3/4-argument output. */
+    private int held;
 
     /**
      * @param nextInterval ticks until the next voluntary direction change, used whenever a new interval starts
@@ -35,19 +42,14 @@ public final class StrafePlanner {
         if (hazardLeft && hazardRight) {
             return NONE;
         }
+        held++;
         if (ticksLeft <= 0) {
             dir = -dir;
+            held = 0;
             ticksLeft = Math.max(1, shaped(nextInterval, dir, opponentBias));
         }
         ticksLeft--;
-        if (dir == LEFT && hazardLeft) {
-            dir = RIGHT;
-            ticksLeft = Math.max(1, nextInterval);
-        } else if (dir == RIGHT && hazardRight) {
-            dir = LEFT;
-            ticksLeft = Math.max(1, nextInterval);
-        }
-        return dir;
+        return hazardOverride(hazardLeft, hazardRight, nextInterval);
     }
 
     /**
@@ -56,12 +58,50 @@ public final class StrafePlanner {
      * the turn rate the aim needs drops. {@code withStrength} 0..1 is how sure the read is; 0 or
      * {@code withDir == NONE} is the 4-argument behaviour. Hazards still win.
      * <p>
-     * CONTRACT STUB: the signature is fixed for the volley; the preference is filled in by the anticipatory-aim task
-     * (until then {@code withDir} is ignored).
+     * Above {@link #WITH_THRESHOLD}: already moving with the opponent, an interval boundary extends the run instead of
+     * reversing (intervals stretched up to 1.5x by the strength); moving against it, the planner switches at the next
+     * boundary or as soon as the current direction has been held {@link #WITH_MIN_HOLD} ticks, so the preference never
+     * changes direction faster than that. A hazard on the preferred side disables the preference for that tick.
      */
     public int update(boolean hazardLeft, boolean hazardRight, int nextInterval, double opponentBias, int withDir,
                       double withStrength) {
-        return update(hazardLeft, hazardRight, nextInterval, opponentBias);
+        if (withDir == NONE || !(withStrength > WITH_THRESHOLD)) {
+            return update(hazardLeft, hazardRight, nextInterval, opponentBias);
+        }
+        boolean withBlocked = withDir == LEFT ? hazardLeft : hazardRight;
+        if (withBlocked) {
+            return update(hazardLeft, hazardRight, nextInterval, opponentBias);
+        }
+        held++;
+        if (dir == withDir) {
+            if (ticksLeft <= 0) {
+                ticksLeft = stretched(nextInterval, opponentBias, withStrength); // keep going with it
+            }
+        } else if (ticksLeft <= 0 || held >= WITH_MIN_HOLD) {
+            dir = withDir;
+            held = 0;
+            ticksLeft = stretched(nextInterval, opponentBias, withStrength);
+        }
+        ticksLeft--;
+        return hazardOverride(hazardLeft, hazardRight, nextInterval);
+    }
+
+    private int hazardOverride(boolean hazardLeft, boolean hazardRight, int nextInterval) {
+        if (dir == LEFT && hazardLeft) {
+            dir = RIGHT;
+            held = 0;
+            ticksLeft = Math.max(1, nextInterval);
+        } else if (dir == RIGHT && hazardRight) {
+            dir = LEFT;
+            held = 0;
+            ticksLeft = Math.max(1, nextInterval);
+        }
+        return dir;
+    }
+
+    private int stretched(int nextInterval, double opponentBias, double withStrength) {
+        double k = 1.0 + 0.5 * Math.min(1.0, withStrength);
+        return Math.max(1, (int) Math.round(shaped(nextInterval, dir, opponentBias) * k));
     }
 
     /**
@@ -90,5 +130,6 @@ public final class StrafePlanner {
     public void reset() {
         dir = RIGHT;
         ticksLeft = 0;
+        held = 0;
     }
 }
