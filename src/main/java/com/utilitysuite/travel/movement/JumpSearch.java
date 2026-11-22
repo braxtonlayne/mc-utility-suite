@@ -47,6 +47,8 @@ public final class JumpSearch {
     // optional intent target: the solid block to stand on
     private boolean hasTarget;
     private int tx, ty, tz;
+    /** The target's top: feet height and extent (the cube's unless {@link #setTargetTop} gave the real one). */
+    private double topY, topX0, topZ0, topX1, topZ1;
     /** Simulated ticks since {@link #resetTickCount()} (the per-decision bound is tested on this). */
     private int simTicks;
     private final MovementPhysics walker = new MovementPhysics();
@@ -58,6 +60,28 @@ public final class JumpSearch {
         tx = x;
         ty = y;
         tz = z;
+        topY = y + 1;
+        topX0 = x;
+        topZ0 = z;
+        topX1 = x + 1;
+        topZ1 = z + 1;
+    }
+
+    /**
+     * The target's real top from its collision boxes (a fence post: 1.5 high, 0.25 wide): feet height and the top
+     * face's horizontal extent in world coordinates. Call after {@link #setTarget}; without it the cube top stands.
+     */
+    public void setTargetTop(double top, double x0, double z0, double x1, double z1) {
+        topY = top;
+        topX0 = x0;
+        topZ0 = z0;
+        topX1 = x1;
+        topZ1 = z1;
+    }
+
+    /** Feet height on the target's top. */
+    public double targetTop() {
+        return topY;
     }
 
     public void clearTarget() {
@@ -89,9 +113,9 @@ public final class JumpSearch {
             return 0.0;
         }
         double lo = MovementPhysics.HALF_WIDTH - 1.0e-3;
-        double dx = Math.max(0.0, Math.max((tx - lo) - x, x - (tx + 1 + lo)));
-        double dz = Math.max(0.0, Math.max((tz - lo) - z, z - (tz + 1 + lo)));
-        double dy = Math.abs(y - (ty + 1));
+        double dx = Math.max(0.0, Math.max((topX0 - lo) - x, x - (topX1 + lo)));
+        double dz = Math.max(0.0, Math.max((topZ0 - lo) - z, z - (topZ1 + lo)));
+        double dy = Math.abs(y - topY);
         return Math.sqrt(dx * dx + dz * dz) + (dy < 1.0e-3 ? 0.0 : dy);
     }
 

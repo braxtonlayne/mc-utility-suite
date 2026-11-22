@@ -170,6 +170,101 @@ class MovementAssistBrainTest {
         assertTrue(requests <= 1, "at most one sprint tick: " + requests);
     }
 
+    /** A 1-block pillar at (0, 19, 5) after a 3-block gap, a floor far below. */
+    private static Grid pillarAfterGap() {
+        Grid g = new Grid();
+        g.fill(-3, 19, -30, 3, 19, 1);
+        g.fill(0, 19, 5, 0, 19, 5);
+        g.fill(-40, -40, -40, 79, -40, 79);
+        return g;
+    }
+
+    /** Runs a sloppy player (W + sprint held throughout, never jumps) at the pillar in a mode; returns the brain. */
+    private static MovementPhysics runAtPillar(MovementAssistBrain b, Grid g, int ticks, int[] maxCommitTicks) {
+        MovementPhysics p = new MovementPhysics().set(0.5, 20, -6, 0, -0.0784, 0, true);
+        for (int t = 0; t < ticks; t++) {
+            b.setIntentTarget(0, 19, 5, 0.9);
+            b.decide(p, 0f, true, 1, 0, false, 20f, g);
+            if (maxCommitTicks != null) {
+                maxCommitTicks[0] = Math.max(maxCommitTicks[0], b.lastCommitSimTicks());
+                assertTrue(b.lastSimTicks() <= MovementAssistBrain.MAX_SIM_TICKS, "search bound");
+            }
+            int f = b.forward() == MovementAssistBrain.KEEP ? 1 : b.forward();
+            int s = b.strafe() == MovementAssistBrain.KEEP ? 0 : b.strafe();
+            p.tick(f, s, 0f, f > 0, b.jump(), b.sneak(), g);
+        }
+        return p;
+    }
+
+    @Test
+    void everyModeLandsThePillarHoldingWAndStaysOnIt() {
+        for (JumpCommit.Mode mode : JumpCommit.Mode.values()) {
+            MovementAssistBrain b = new MovementAssistBrain();
+            b.mode = mode;
+            b.landingHold = true;
+            int[] commitTicks = new int[1];
+            MovementPhysics p = runAtPillar(b, pillarAfterGap(), 120, commitTicks);
+            System.out.println("commit sim ticks per decision, " + mode + ": max " + commitTicks[0]);
+            assertTrue(p.onGround && Math.abs(p.y - 20.0) < 1e-6 && Math.abs(p.z - 5.5) <= 0.8 + 1e-9 && Math.abs(p.x - 0.5) <= 0.8,
+                    mode + ": still on the pillar after 120 ticks of W: (" + p.x + ", " + p.y + ", " + p.z + ")");
+            assertTrue(commitTicks[0] <= MovementAssistBrain.MAX_COMMIT_SIM_TICKS,
+                    mode + ": commitment simulated " + commitTicks[0] + " ticks in one decision");
+        }
+    }
+
+    @Test
+    void guideNeverReplacesAFreshKey() {
+        Grid g = pillarAfterGap();
+        MovementAssistBrain b = new MovementAssistBrain();
+        b.mode = JumpCommit.Mode.GUIDE;
+        b.landingHold = true;
+        MovementPhysics p = new MovementPhysics().set(0.5, 20, -6, 0, -0.0784, 0, true);
+        boolean sawAir = false;
+        for (int t = 0; t < 80; t++) {
+            b.setIntentTarget(0, 19, 5, 0.9);
+            // the user taps strafe left mid-flight: a fresh key
+            int us = !p.onGround && sawAir ? 1 : 0;
+            b.decide(p, 0f, true, 1, us, false, 20f, g);
+            if (us != 0 && b.commit().driving()) {
+                assertEquals(MovementAssistBrain.KEEP, b.strafe(), "tick " + t + ": the fresh left key stands");
+            }
+            sawAir |= !p.onGround;
+            int f = b.forward() == MovementAssistBrain.KEEP ? 1 : b.forward();
+            int s = b.strafe() == MovementAssistBrain.KEEP ? us : b.strafe();
+            p.tick(f, s, 0f, f > 0, b.jump(), b.sneak(), g);
+        }
+    }
+
+    @Test
+    void decideAllocatesNothingInEveryMode() {
+        Assumptions.assumeTrue(AllocationProbe.supported());
+        Grid g = pillarAfterGap();
+        for (JumpCommit.Mode mode : JumpCommit.Mode.values()) {
+            MovementAssistBrain b = new MovementAssistBrain();
+            b.mode = mode;
+            b.landingHold = true;
+            MovementPhysics[] states = new MovementPhysics[160];
+            MovementPhysics p = new MovementPhysics().set(0.5, 20, -6, 0, -0.0784, 0, true);
+            MovementAssistBrain driver = new MovementAssistBrain();
+            driver.mode = mode;
+            driver.landingHold = true;
+            for (int t = 0; t < states.length; t++) {
+                states[t] = new MovementPhysics().copyFrom(p);
+                driver.setIntentTarget(0, 19, 5, 0.9);
+                driver.decide(p, 0f, true, 1, 0, false, 20f, g);
+                int f = driver.forward() == MovementAssistBrain.KEEP ? 1 : driver.forward();
+                p.tick(f, 0, 0f, f > 0, driver.jump(), driver.sneak(), g);
+            }
+            int[] i = new int[1];
+            long bytes = AllocationProbe.measure(300, () -> {
+                MovementPhysics s = states[i[0]++ % states.length];
+                b.setIntentTarget(0, 19, 5, 0.9);
+                b.decide(s, 0f, true, (i[0] & 8) == 0 ? 1 : 0, 0, false, 20f, g);
+            });
+            assertTrue(bytes < 1_024, mode + ": decide allocated " + bytes + " bytes");
+        }
+    }
+
     @Test
     void airborneDecisionAllocatesNothing() {
         Assumptions.assumeTrue(AllocationProbe.supported());

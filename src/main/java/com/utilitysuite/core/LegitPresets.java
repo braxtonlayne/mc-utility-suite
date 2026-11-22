@@ -40,6 +40,10 @@ public final class LegitPresets {
     public static final String SCHEMATIC = "schematic_toolkit";
     public static final String BRIDGE = "bridge_assist";
     public static final String COMBAT = "combat_assistant";
+    /** BALANCED values of the movement assist's key-change knobs (also the module's defaults). */
+    public static final int KEY_CHANGES_BALANCED = 6;
+    public static final int KEY_HOLD_BALANCED = 2;
+    public static final int REACTION_BALANCED = 0;
 
     public static final List<Knob> KNOBS = List.of(
             core("camera_speed_deg_per_sec", 160.0, 240.0, 450.0),
@@ -59,6 +63,11 @@ public final class LegitPresets {
             knob("movement_assist", "look_style", "NATURAL", "NATURAL", "FREE"),
             // turn gain scales the user's own mouse toward the ideal takeoff yaw: Legit stays keys only
             knob("movement_assist", "turn_gain", false, true, true),
+            // parkour commitment key changes per jump (design 2026-11-22, 3.1): at most N changes (0 = unlimited),
+            // each held at least M ticks, the first after a reaction delay (LEGIT: 2 to 4 ticks around 3)
+            knob("movement_assist", "assist_key_changes", 3, KEY_CHANGES_BALANCED, 0),
+            knob("movement_assist", "assist_key_hold_ticks", 3, KEY_HOLD_BALANCED, 1),
+            knob("movement_assist", "assist_reaction_ticks", 3, REACTION_BALANCED, 0),
             knob("combat_reflexes", "shield_turn", false, false, true),
             knob("combat_reflexes", "shield_front_cone", 70.0, 70.0, 90.0),
             knob("auto_torch", "relaxed", false, false, true),

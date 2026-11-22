@@ -200,6 +200,7 @@ class ParkourIntentAssistTest {
     /** One airborne decision, then the touchdown tick on the block at z = 5 moving +Z at sprint-landing speed. */
     private static MovementAssistBrain touchdown(Grid g, boolean userJump) {
         MovementAssistBrain b = new MovementAssistBrain();
+        b.landingHold = true;
         b.decide(new MovementPhysics().set(0.5, 20.3, 4.9, 0, -0.3, 0.25, false), 0f, true, 1, 0, false, 20f, g);
         b.decide(new MovementPhysics().set(0.5, 20, 5.3, 0, -0.0784, 0.25, true), 0f, true, 1, 0, userJump, 20f, g);
         return b;
@@ -209,10 +210,13 @@ class ParkourIntentAssistTest {
     void sneaksOnAOneBlockLandingThatWouldSlideOffButNotOnALongPlatform() {
         MovementAssistBrain one = touchdown(landing(1), false);
         assertTrue(one.touchedDown());
-        assertTrue(one.sneak(), "1-block target, forward still held: tap sneak");
-        assertFalse(touchdown(landing(8), false).sneak(), "long platform: nothing to stick");
+        assertTrue(one.sneak(), "1-block target, forward still held: the landing hold");
+        assertEquals(0, one.forward(), "the W held through the flight is latched off");
+        MovementAssistBrain wide = touchdown(landing(8), false);
+        assertFalse(wide.sneak(), "long platform: nothing to hold");
+        assertEquals(MovementAssistBrain.KEEP, wide.forward());
         MovementAssistBrain off = new MovementAssistBrain();
-        off.stickLanding = false;
+        off.landingHold = false;
         off.decide(new MovementPhysics().set(0.5, 20.3, 4.9, 0, -0.3, 0.25, false), 0f, true, 1, 0, false, 20f,
                 landing(1));
         off.decide(new MovementPhysics().set(0.5, 20, 5.3, 0, -0.0784, 0.25, true), 0f, true, 1, 0, false, 20f,
@@ -226,15 +230,21 @@ class ParkourIntentAssistTest {
     }
 
     @Test
-    void releasesTheSneakOnceStableOrWhenTheKeysChange() {
+    void holdsUntilStableAndAFreshPressAndTheKeysChange() {
         Grid g = landing(1);
         MovementAssistBrain b = touchdown(g, false);
         assertTrue(b.sneak());
-        b.decide(new MovementPhysics().set(0.5, 20, 5.5, 0, -0.0784, 0.01, true), 0f, true, 1, 0, false, 20f, g);
-        assertFalse(b.sneak(), "stopped on the block: released");
+        MovementPhysics still = new MovementPhysics().set(0.5, 20, 5.5, 0, -0.0784, 0.01, true);
+        b.decide(still, 0f, true, 1, 0, false, 20f, g);
+        assertTrue(b.sneak(), "stopped on the block, W still held from the flight: still held");
+        assertEquals(0, b.forward(), "and W still withheld (no timer on the latch)");
+        b.decide(still, 0f, true, 0, 0, false, 20f, g);
+        b.decide(still, 0f, true, 1, 0, false, 20f, g);
+        assertFalse(b.sneak(), "released and pressed again: the user's move");
+        assertEquals(MovementAssistBrain.KEEP, b.forward());
         MovementAssistBrain c = touchdown(g, false);
         c.decide(new MovementPhysics().set(0.5, 20, 5.5, 0, -0.0784, 0.2, true), 0f, true, 0, 1, false, 20f, g);
-        assertFalse(c.sneak(), "the user changed keys: their move");
+        assertFalse(c.sneak(), "the user changed keys and the slide stays on the block: their move");
     }
 
     // ---- SafeWalk ---------------------------------------------------------------------------------------------------
