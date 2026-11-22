@@ -57,6 +57,18 @@ public final class MovementAssistBrain {
     public boolean stickLanding = true;
     /** Tick-phase check before the edge. */
     public boolean tickPhase = true;
+    /** Shape short takeoffs ({@link TakeoffShaper}): strafe key, sprint timing, a turn-gain yaw. Needs a target. */
+    public boolean takeoffShaping = true;
+    /**
+     * Shapes that need the view turned may be offered (as a turn-gain ideal yaw only). The module sets it from the
+     * turn-gain setting and the legit level (off on Legit and under automation); off by default.
+     */
+    public boolean shapeYawAllowed;
+    /**
+     * Sprint may be engaged for the user when they are not sprinting (the module clears it when vanilla could not
+     * start a sprint: hunger, an item in use, blindness, sneaking).
+     */
+    public boolean sprintFillAllowed = true;
     /**
      * SafeWalk is on: an assisted jump is valid only if it lands without costing health (otherwise SafeWalk holds the
      * edge). The user pressing jump themselves always goes through: that is their call.
@@ -70,6 +82,7 @@ public final class MovementAssistBrain {
     private final MovementPhysics b = new MovementPhysics();
     private final MovementPhysics cont = new MovementPhysics();
     private final TakeoffTiming timing = new TakeoffTiming();
+    private final TakeoffShaper shaper = new TakeoffShaper();
     private final AuthorshipBudget budget = new AuthorshipBudget();
     private final JumpBuffer jumpBuffer = new JumpBuffer();
 
@@ -104,6 +117,8 @@ public final class MovementAssistBrain {
     private boolean corrected;
     private boolean sneak;
     private boolean withholdJump;
+    private boolean sprint;
+    private boolean shaped;
     private boolean hasLanding;
     private double landX, landY, landZ;
     private float landDamage;
@@ -125,6 +140,8 @@ public final class MovementAssistBrain {
         edgeNoLanding = false;
         sneak = false;
         withholdJump = false;
+        sprint = false;
+        shaped = false;
         trackJump(now);
         boolean targetOn = intentActive();
         if (targetOn) {
@@ -162,7 +179,10 @@ public final class MovementAssistBrain {
 
     private void decideGround(MovementPhysics now, float yaw, boolean sprinting, int userForward, int userStrafe,
                               boolean jumpIn, float health, MovementPhysics.Voxels w) {
-        if (edgeJump && !jumpIn && userForward > 0 && search.shouldEdgeJump(now, yaw, sprinting, health, w)
+        shapeTakeoff(now, yaw, sprinting, userForward, userStrafe, jumpIn, health, w);
+        if (shaped) {
+            jump = shaper.jumpNow(); // the shape takes off on its own last supported tick
+        } else if (edgeJump && !jumpIn && userForward > 0 && search.shouldEdgeJump(now, yaw, sprinting, health, w)
                 && (!safeOnly || search.landDamage() <= 0f)) {
             jump = budget.allowance(AuthorshipBudget.FULL_HELP_MISS) > 0;
         } else if (edgeJump && !jumpIn && userForward > 0 && tickPhase && (intentActive()
@@ -176,9 +196,9 @@ public final class MovementAssistBrain {
         } else if (sprintHop && !jumpIn && sprinting && userForward > 0 && hopGains(now, yaw, w)) {
             jump = true;
         }
-        edgeNoLanding = !jump && edgeJump && !jumpIn && userForward > 0
+        edgeNoLanding = !jump && !shaped && edgeJump && !jumpIn && userForward > 0
                 && search.lastWalkScore() <= JumpSearch.NO_LANDING && search.lastJumpScore() <= JumpSearch.NO_LANDING;
-        if (!jump) {
+        if (!jump && !shaped) {
             sneak = stickLanding && !jumpIn && shouldStick(now, yaw, sprinting, userForward, userStrafe, w)
                     && budget.tryUse(AuthorshipBudget.FULL_HELP_MISS);
             if (sneak) {
@@ -188,6 +208,51 @@ public final class MovementAssistBrain {
         // predicted landing of a jump from here (the overlay's "if you jump now")
         double sc = search.evaluate(now, Math.max(userForward, 0), userStrafe, yaw, sprinting, true, health, w);
         capture(sc);
+    }
+
+    /**
+     * Takeoff shaping ({@link TakeoffShaper}): with a target, forward held, the assist's own edge jump on and an edge
+     * within {@link TakeoffShaper#WINDOW_TICKS}, when the user's run-up misses, fill the strafe key or engage sprint
+     * (one corrected tick each tick it acts, all of the shape's ticks must fit the budget before it starts), or offer
+     * a yaw shape as the turn-gain ideal yaw. Sets {@link #shaped} when keys were filled this tick.
+     */
+    private void shapeTakeoff(MovementPhysics now, float yaw, boolean sprinting, int userForward, int userStrafe,
+                              boolean jumpIn, float health, MovementPhysics.Voxels w) {
+        if (!takeoffShaping || !edgeJump || jumpIn || userForward <= 0 || budget.cap() <= 0 || !intentActive()
+                || search.ticksToEdge(now, userForward, userStrafe, yaw, sprinting, TakeoffShaper.WINDOW_TICKS, w) < 0) {
+            return;
+        }
+        shaper.evaluate(now, yaw, sprinting, userForward, userStrafe, yawRate, shapeYawAllowed,
+                sprintFillAllowed && !sprinting, safeOnly, health, search, w);
+        search.addTicks(shaper.lastTicks());
+        if (!shaper.found()) {
+            return;
+        }
+        double miss = shapeMiss();
+        if (budget.remaining(miss) < shaper.cost()) {
+            return; // the whole shape must fit: a shape cut off halfway is worse than the user's own run
+        }
+        if (shaper.yawShape()) {
+            // turn gain only: the keys stay the user's until their own view gets there
+            idealYaw = shaper.idealYaw();
+            hasIdealYaw = true;
+            missNow = Math.max(missNow, shaper.plainMiss());
+            return;
+        }
+        if (!(shaper.strafeNow() || shaper.sprintNow()) || !budget.tryUse(miss)) {
+            return; // sprint engages on a later tick: nothing to do yet
+        }
+        if (shaper.strafeNow()) {
+            strafe = shaper.strafe();
+        }
+        sprint = shaper.sprintNow();
+        shaped = true;
+        corrected = true;
+    }
+
+    /** The miss the budget scales a shape by: the plain miss, or the margin still wanted on a narrow landing. */
+    private double shapeMiss() {
+        return shaper.plainMargin() >= 0.0 ? TakeoffShaper.SAFE_MARGIN - shaper.plainMargin() : shaper.plainMiss();
     }
 
     private void decideAir(MovementPhysics now, float yaw, boolean sprinting, int userForward, int userStrafe,
@@ -501,6 +566,24 @@ public final class MovementAssistBrain {
     /** Sneak this tick (stick the landing). Never set while the user holds jump. */
     public boolean sneak() {
         return sneak;
+    }
+
+    /**
+     * Engage sprint this tick (takeoff shaping's sprint timing). Only ever set while the user is not sprinting: the
+     * module turns sprint on, never off.
+     */
+    public boolean sprint() {
+        return sprint;
+    }
+
+    /** Takeoff shaping filled keys this tick (strafe and/or sprint; the jump, if any, is the shape's). */
+    public boolean takeoffShaped() {
+        return shaped;
+    }
+
+    /** The takeoff shaper: the last evaluation's shape, predicted gain and whether it was needed. */
+    public TakeoffShaper shaper() {
+        return shaper;
     }
 
     /** The jump buffer is holding the user's jump key back this tick (clear the jump input). */

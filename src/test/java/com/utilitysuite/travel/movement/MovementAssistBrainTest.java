@@ -141,6 +141,36 @@ class MovementAssistBrainTest {
     }
 
     @Test
+    void sprintOutputOnlyWithATargetAndNeverWhileSprinting() {
+        // no target: the edge-jump states never ask for sprint or shape a takeoff, sprinting or not
+        MovementAssistBrain b = new MovementAssistBrain();
+        for (boolean sprinting : new boolean[]{true, false}) {
+            b.decide(atEdge(), 0f, sprinting, 1, 0, false, 20f, gap(3));
+            assertFalse(b.sprint());
+            assertFalse(b.takeoffShaped());
+            assertFalse(b.shaper().found());
+        }
+        // a walking run-up to a target 3 air blocks out: sprint is requested once, and never again while sprinting
+        Grid g = gap(3);
+        MovementAssistBrain t = new MovementAssistBrain();
+        t.setIntentTarget(0, 19, 4, 0.9);
+        MovementPhysics p = new MovementPhysics().set(0.5, 20, -1.7, 0, -0.0784, 0, true);
+        boolean sprinting = false;
+        int requests = 0;
+        for (int i = 0; i < 30 && p.onGround; i++) {
+            t.decide(p, 0f, sprinting, 1, 0, false, 20f, g);
+            if (t.sprint()) {
+                assertFalse(sprinting, "sprint is only requested while not sprinting");
+                sprinting = true;
+                requests++;
+            }
+            assertEquals(MovementAssistBrain.KEEP, t.forward(), "forward stays the user's");
+            p.tick(1, t.strafe() == MovementAssistBrain.KEEP ? 0 : t.strafe(), 0f, sprinting, t.jump(), g);
+        }
+        assertTrue(requests <= 1, "at most one sprint tick: " + requests);
+    }
+
+    @Test
     void airborneDecisionAllocatesNothing() {
         Assumptions.assumeTrue(AllocationProbe.supported());
         Grid g = new Grid();

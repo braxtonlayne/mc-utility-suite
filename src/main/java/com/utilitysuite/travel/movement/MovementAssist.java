@@ -20,6 +20,7 @@ import net.minecraft.client.renderer.LevelRenderer;
 import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.RenderType;
 import net.minecraft.core.BlockPos;
+import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.phys.Vec3;
 import net.neoforged.neoforge.client.event.MovementInputUpdateEvent;
@@ -66,6 +67,7 @@ public final class MovementAssist implements IModule, IConfigurable {
     static final String K_TURN_GAIN_STRENGTH = "turn_gain_strength";
     static final String K_STICK = "stick_landing";
     static final String K_TICK_PHASE = "tick_phase";
+    static final String K_TAKEOFF_SHAPING = "takeoff_shaping";
     static final String K_BUDGET = "authorship_budget";
     static final String K_JUMP_BUFFER = "jump_buffer";
     static final String K_JUMP_BUFFER_TICKS = "jump_buffer_ticks";
@@ -237,18 +239,25 @@ public final class MovementAssist implements IModule, IConfigurable {
         } else {
             brain.clearIntentTarget();
         }
+        // takeoff shaping: a yaw shape only as a turn-gain yaw (same gate as turn gain), sprint only when vanilla could
+        brain.shapeYawAllowed = !auto && turnGain && turnGainLevelOk;
+        boolean canSprint = !sprinting && canStartSprint(p, in);
+        brain.sprintFillAllowed = canSprint;
         if (auto) {
             // the autopilot's parkour reflex is edge jumps and air steering, whatever this module's own toggles say
             boolean e = brain.edgeJump;
             boolean s = brain.airSteer;
             boolean h = brain.sprintHop;
+            boolean ts = brain.takeoffShaping;
             brain.edgeJump = useParkour;
             brain.airSteer = useParkour;
             brain.sprintHop = false;
+            brain.takeoffShaping = false;
             brain.decide(now, p.getYRot(), sprinting, userF, userS, in.jumping, health, voxels);
             brain.edgeJump = e;
             brain.airSteer = s;
             brain.sprintHop = h;
+            brain.takeoffShaping = ts;
             status = userF > 0 ? "autopilot" : "autopilot: no forward key";
         } else {
             brain.decide(now, p.getYRot(), sprinting, userF, userS, in.jumping, health, voxels);
@@ -275,6 +284,12 @@ public final class MovementAssist implements IModule, IConfigurable {
             in.leftImpulse = brain.strafe();
             in.left = brain.strafe() > 0;
             in.right = brain.strafe() < 0;
+        }
+        if (brain.sprint() && canSprint) {
+            // takeoff shaping's sprint timing: the same state change vanilla makes for a sprint key press later in
+            // this aiStep (the user's own sprint key was not down, or they would already be sprinting). Only ever on:
+            // vanilla's own rules end it (forward released, hunger, a wall).
+            p.setSprinting(true);
         }
         if (brain.withholdJump()) {
             in.jumping = false; // opt-in jump buffer: the press fires on the last ground tick instead
@@ -429,6 +444,18 @@ public final class MovementAssist implements IModule, IConfigurable {
         BlockPos below = p.getBlockPosBelowThatAffectsMyMovement();
         now.slipperiness = mc.level.getBlockState(below).getBlock().getFriction();
         voxels.begin(mc.level);
+    }
+
+    /**
+     * Vanilla's conditions for starting a sprint ({@code LocalPlayer.canStartSprinting} plus the forward impulse), from
+     * public state: on foot, forward held hard enough, food above 6 (or may fly), no item in use, not blind, not
+     * gliding, not sneaking or crawling.
+     */
+    private static boolean canStartSprint(LocalPlayer p, Input in) {
+        return in.forwardImpulse >= 0.8f && !in.shiftKeyDown && p.onGround()
+                && (p.getFoodData().getFoodLevel() > 6 || p.mayFly())
+                && !p.isUsingItem() && !p.hasEffect(MobEffects.BLINDNESS) && !p.isFallFlying() && !p.isMovingSlowly()
+                && !p.isPassenger() && !p.isInWater();
     }
 
     private static int sign(float f) {
@@ -642,6 +669,7 @@ public final class MovementAssist implements IModule, IConfigurable {
         }
         brain.stickLanding = p.getBool(ID, K_STICK, true);
         brain.tickPhase = p.getBool(ID, K_TICK_PHASE, true);
+        brain.takeoffShaping = p.getBool(ID, K_TAKEOFF_SHAPING, true);
         brain.budget().setCap(Math.max(0, Math.min(20, p.getInt(ID, K_BUDGET, AuthorshipBudget.DEFAULT_CAP))));
         brain.jumpBuffer().setEnabled(p.getBool(ID, K_JUMP_BUFFER, false));
         brain.jumpBuffer().setMaxTicks(p.getInt(ID, K_JUMP_BUFFER_TICKS, JumpBuffer.DEFAULT_TICKS));
@@ -681,6 +709,10 @@ public final class MovementAssist implements IModule, IConfigurable {
                 SettingSpec.bool(K_TICK_PHASE, "Tick-perfect takeoff", true, "",
                         "One tick before an edge, jump a tick early when that lands better than the usual last-tick"
                                 + " jump (for example while you are turning away). Never waits past the edge."),
+                SettingSpec.bool(K_TAKEOFF_SHAPING, "Shape short takeoffs", true, "",
+                        "When your run-up would miss the block you are going for, take off like a strafe jumper: press"
+                                + " the free strafe key for a tick or two, or start your sprint at the tick that lands it."
+                                + " Never changes a key you hold. Counts against corrections per jump."),
                 SettingSpec.integer(K_BUDGET, "Corrections per jump", AuthorshipBudget.DEFAULT_CAP, 0, 20, "",
                         "Most ticks per jump the assist may correct (jump, keys, sneak, turn gain). Help shrinks as"
                                 + " you land more jumps on your own. 0 = no corrections."),

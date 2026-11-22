@@ -124,6 +124,21 @@ class ParkourIntentAssistTest {
         assertEquals(old.landY(), now.landY(), 1e-12, where + " landY");
         assertEquals(old.landZ(), now.landZ(), 1e-12, where + " landZ");
         assertEquals(old.edgeNoLanding(), now.edgeNoLanding(), where + " edgeNoLanding");
+        assertFalse(now.sprint(), where + " no sprint request without a target");
+        assertFalse(now.takeoffShaped(), where + " no takeoff shaping without a target");
+    }
+
+    @Test
+    void thePillarRunLandsWithTakeoffShapingOnOrOff() {
+        Grid g = pillarCourse(1, 4);
+        MovementAssistBrain off = new MovementAssistBrain();
+        off.takeoffShaping = false;
+        off.setIntentTarget(1, 19, 4, 0.9);
+        assertTrue(onBlock(runJump(off, g, 0.5), 1, 19, 4), "the pre-shaping path still lands it");
+        MovementAssistBrain on = new MovementAssistBrain();
+        on.setIntentTarget(1, 19, 4, 0.9);
+        assertTrue(onBlock(runJump(on, g, 0.5), 1, 19, 4), "with shaping too");
+        assertTrue(on.budget().usedThisJump() <= on.budget().cap());
     }
 
     @Test
