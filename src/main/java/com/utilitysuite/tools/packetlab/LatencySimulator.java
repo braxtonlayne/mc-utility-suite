@@ -66,7 +66,8 @@ public final class LatencySimulator implements IModule, IConfigurable {
                 lastStatus = why;
                 Minecraft mc = Minecraft.getInstance();
                 if (mc.player != null) {
-                    mc.player.displayClientMessage(Component.literal("Latency simulator: " + why), true);
+                    com.utilitysuite.core.api.Services.visuals().notices().post(
+                            com.utilitysuite.core.api.visual.NoticeKind.WARN, "Latency simulator: " + why, null);
                 }
                 return;
             }

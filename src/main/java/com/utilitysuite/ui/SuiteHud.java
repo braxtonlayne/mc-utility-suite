@@ -14,6 +14,7 @@ import com.utilitysuite.core.api.visual.HudSlot;
 import com.utilitysuite.jobs.schematic.SchematicBootstrap;
 import com.utilitysuite.jobs.schematic.SchematicJobCard;
 import com.utilitysuite.jobs.schematic.SchematicToolkit;
+import com.utilitysuite.ui.holo.AutopilotHud;
 import com.utilitysuite.ui.holo.HoloKit;
 import com.utilitysuite.ui.holo.HudHost;
 import com.utilitysuite.ui.holo.Visuals;
@@ -71,6 +72,7 @@ public final class SuiteHud implements IModule, IConfigurable, LayeredDraw.Layer
     private final ModuleListHud moduleList = new ModuleListHud();
     private final HudHost host = new HudHost();
     private final Visuals visuals = new Visuals(host);
+    private final AutopilotHud autopilotHud = new AutopilotHud(System::currentTimeMillis, visuals::notices);
     private HoloKit kit;
     private boolean frameClean;
     private final Runnable frameTask = this::drawFrame;
@@ -106,7 +108,9 @@ public final class SuiteHud implements IModule, IConfigurable, LayeredDraw.Layer
         host.register(clean);
         host.register(infoStrip);
         host.register(moduleList);
+        host.register(autopilotHud);
         host.setInstant(stopped, true);
+        host.setInstant(autopilotHud, true); // it times itself; a takeover never waits on a fade
         host.allowInCleanScreen(clean, true);
     }
 
@@ -147,7 +151,9 @@ public final class SuiteHud implements IModule, IConfigurable, LayeredDraw.Layer
         moduleList.tick();
         // the autopilot's acting reflex is short-lived: check it every tick (two field reads, no allocation)
         IAutopilot ap = Services.autopilotOrNull();
-        IAutopilot.Reflex reflex = ap != null && ap.isOn() ? ap.activeReflex() : null;
+        boolean apOn = ap != null && ap.isOn();
+        IAutopilot.Reflex reflex = apOn ? ap.activeReflex() : null;
+        autopilotHud.update(apOn, reflex); // engage / takeover / release edges: overlay and notices
         if (reflex != lastReflex) {
             lastReflex = reflex;
             pollNow = true;
@@ -168,7 +174,7 @@ public final class SuiteHud implements IModule, IConfigurable, LayeredDraw.Layer
         }
         if (reflex != null) {
             // what is acting right now outranks the job line; one line only
-            line.updateAutopilot(ReflexChips.statusLine(reflex));
+            line.updateAutopilot(AutopilotHud.stemLine(reflex)); // "STEM - FALL CLUTCH", a constant per reflex
             return;
         }
         if (parkour != null) {
@@ -193,6 +199,7 @@ public final class SuiteHud implements IModule, IConfigurable, LayeredDraw.Layer
     @Override
     public void onWorldUnload() {
         line.clear();
+        autopilotHud.reset();
         visuals.onWorldUnload();
     }
 

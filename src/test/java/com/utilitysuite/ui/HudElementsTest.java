@@ -225,6 +225,31 @@ class HudElementsTest {
     }
 
     @Test
+    void worstCaseFrameWithThreeToastsAndATakeoverStaysInBudget() {
+        everythingOn();
+        // the module list is left out: with 33 rows it already spends 33 of the 40 text runs, so three toasts with
+        // details (6 runs) on top of it do not fit; the notes tell the integrator
+        list.enabled = false;
+        long[] clock = {50_000L};
+        com.utilitysuite.ui.holo.NoticeBoard board = new com.utilitysuite.ui.holo.NoticeBoard(() -> clock[0], () -> false);
+        host.register(new com.utilitysuite.ui.holo.NoticeLayer(board));
+        com.utilitysuite.ui.holo.AutopilotHud ap = new com.utilitysuite.ui.holo.AutopilotHud(() -> clock[0], () -> board);
+        host.register(ap);
+        ap.update(true, null);
+        ap.update(true, com.utilitysuite.core.api.IAutopilot.Reflex.FALL_CLUTCH);
+        board.post(com.utilitysuite.core.api.visual.NoticeKind.ERROR, "Died", "1 64 2 (minecraft:overworld)");
+        board.post(com.utilitysuite.core.api.visual.NoticeKind.WARN, "Auto-Fish stopped", "no rod");
+        board.post(com.utilitysuite.core.api.visual.NoticeKind.DONE, "Queued job #4", "gather 32 iron_ingot");
+        for (int i = 0; i < 30; i++) {
+            frame(16, false);
+        }
+        canvas.reset();
+        frame(16, false);
+        assertTrue(canvas.quads < 600, "quads " + canvas.quads);
+        assertTrue(canvas.textRuns < 40, "text runs " + canvas.textRuns);
+    }
+
+    @Test
     void worstCaseFrameStaysInBudget() {
         everythingOn();
         for (int i = 0; i < 30; i++) {

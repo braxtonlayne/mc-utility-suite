@@ -207,7 +207,7 @@ public final class AutoFish implements IModule, IConfigurable, LeaseListener, Fi
     private static void say(String text) {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player != null && !Services.modState().isCleanScreen()) {
-            mc.player.displayClientMessage(Component.literal(text), true);
+            Services.visuals().notices().post(com.utilitysuite.core.api.visual.NoticeKind.WARN, text, null);
         }
     }
 

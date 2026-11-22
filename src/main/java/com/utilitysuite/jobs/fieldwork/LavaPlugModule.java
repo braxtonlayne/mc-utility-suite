@@ -111,8 +111,9 @@ public final class LavaPlugModule extends FieldModule {
             if (plugId == null) {
                 if (!warnedNoBlocks && !Services.modState().isCleanScreen()) {
                     warnedNoBlocks = true;
-                    player.displayClientMessage(net.minecraft.network.chat.Component.translatable(
-                            "message.utilitysuite.lava_plug_no_blocks"), true);
+                    Services.visuals().notices().post(com.utilitysuite.core.api.visual.NoticeKind.WARN,
+                            net.minecraft.network.chat.Component.translatable(
+                                    "message.utilitysuite.lava_plug_no_blocks").getString(), null);
                 }
                 return;
             }

@@ -1,0 +1,5 @@
+{
+  "hud.utilitysuite.notice.autopilot_online": "AUTOPILOT ONLINE",
+  "hud.utilitysuite.notice.autopilot_offline": "AUTOPILOT OFFLINE",
+  "hud.utilitysuite.autopilot.stem_prefix": "STEM - "
+}

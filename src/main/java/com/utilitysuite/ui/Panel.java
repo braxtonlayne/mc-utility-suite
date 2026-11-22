@@ -429,7 +429,11 @@ public final class Panel {
         screen.requestRebuild();
     }
 
-    /** Shows a short status message at the bottom of the menu. */
+    /**
+     * Shows a short status message at the bottom of the menu. The menu screen is drawn over the HUD layer, so a toast
+     * on the notice board would be hidden while the menu is open: the in-menu line is the display for this case and
+     * the message is not forwarded to the board (it would only appear after the menu closes, stale).
+     */
     public void toast(String message) {
         screen.setStatus(message);
     }

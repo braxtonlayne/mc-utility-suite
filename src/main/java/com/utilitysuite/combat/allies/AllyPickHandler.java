@@ -33,8 +33,11 @@ public final class AllyPickHandler {
         event.setCanceled(true);
         event.setSwingHand(false);
         if (!Services.modState().isCleanScreen()) {
-            mc.player.displayClientMessage(Component.translatable(
-                    added ? "message.utilitysuite.ally_added" : "message.utilitysuite.ally_removed", name), true);
+            Services.visuals().notices().post(
+                    added ? com.utilitysuite.core.api.visual.NoticeKind.DONE
+                            : com.utilitysuite.core.api.visual.NoticeKind.INFO,
+                    Component.translatable(added ? "message.utilitysuite.ally_added"
+                            : "message.utilitysuite.ally_removed", name).getString(), null);
         }
     }
 }

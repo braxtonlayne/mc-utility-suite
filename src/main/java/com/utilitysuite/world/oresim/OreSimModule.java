@@ -431,7 +431,7 @@ public final class OreSimModule extends WorldModule {
         }
         Minecraft mc = Minecraft.getInstance();
         if (mc.player != null && !cleanScreen()) {
-            mc.player.displayClientMessage(Component.literal(line), true);
+            Services.visuals().notices().post(com.utilitysuite.core.api.visual.NoticeKind.INFO, line, null);
         }
     }
 

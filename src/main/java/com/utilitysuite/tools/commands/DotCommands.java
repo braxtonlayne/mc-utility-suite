@@ -9,6 +9,7 @@ import com.utilitysuite.core.api.ParseResult;
 import com.utilitysuite.core.api.ProfileConfig;
 import com.utilitysuite.core.api.Services;
 import com.utilitysuite.core.api.SettingSpec;
+import com.utilitysuite.core.api.visual.NoticeKind;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
@@ -89,7 +90,7 @@ public final class DotCommands implements IModule, IConfigurable {
         try {
             execute(cmd);
         } catch (RuntimeException e) {
-            reply("Command failed: " + e.getMessage(), true);
+            notice("Command failed: " + e.getMessage(), NoticeKind.ERROR);
         }
     }
 
@@ -99,12 +100,14 @@ public final class DotCommands implements IModule, IConfigurable {
             case LIST -> list();
             case STOP -> {
                 Services.arbiter().stopAll("dot-command");
-                reply("Stop-All: every automation stopped.", false);
+                notice("Stop-All: every automation stopped.", NoticeKind.WARN);
             }
             case TOGGLE -> toggle(cmd.arg());
             case GOAL -> goal(cmd.arg());
-            case UNKNOWN -> reply("Unknown command '" + cmd.name() + "' (not sent). " + DotCommandParser.helpText(prefix),
-                    true);
+            case UNKNOWN -> {
+                notice("Unknown command '" + cmd.name() + "' (not sent)", NoticeKind.ERROR);
+                reply(DotCommandParser.helpText(prefix), false); // the list of commands is output the user reads
+            }
         }
     }
 
@@ -124,7 +127,7 @@ public final class DotCommands implements IModule, IConfigurable {
 
     private void toggle(String query) {
         if (query.isEmpty()) {
-            reply("Usage: " + prefix + "t <module id or name>", true);
+            notice("Usage: " + prefix + "t <module id or name>", NoticeKind.ERROR);
             return;
         }
         List<IModule> all = Services.modules().all();
@@ -136,7 +139,7 @@ public final class DotCommands implements IModule, IConfigurable {
         }
         int i = DotCommandParser.matchModule(query, ids, names);
         if (i < 0) {
-            reply("No single module matches '" + query + "'. " + prefix + "list shows them.", true);
+            notice("No single module matches '" + query + "'. " + prefix + "list shows them.", NoticeKind.ERROR);
             return;
         }
         IModule m = all.get(i);
@@ -147,27 +150,35 @@ public final class DotCommands implements IModule, IConfigurable {
             Services.modState().profile().set(m.id(), "enabled", m.isEnabled());
             Services.modState().markDirty();
         }
-        reply(names.get(i) + (m.isEnabled() ? " on" : " off") + (on != m.isEnabled() ? " (refused)" : ""), false);
+        boolean refused = on != m.isEnabled();
+        notice(names.get(i) + (m.isEnabled() ? " on" : " off") + (refused ? " (refused)" : ""),
+                refused ? NoticeKind.WARN : NoticeKind.INFO);
     }
 
     /** Same path as the menu's goal box: parse, then submit. */
     private void goal(String text) {
         IGoalEngine goals = Services.goalsOrNull();
         if (goals == null) {
-            reply("The goal engine is not loaded.", true);
+            notice("The goal engine is not loaded.", NoticeKind.ERROR);
             return;
         }
         if (text.isBlank()) {
-            reply("Usage: " + prefix + "goal <text>, e.g. " + prefix + "goal gather 32 iron_ingot", true);
+            notice("Usage: " + prefix + "goal <text>, e.g. " + prefix + "goal gather 32 iron_ingot", NoticeKind.ERROR);
             return;
         }
         ParseResult r = goals.parse(text.trim());
         if (!r.isOk()) {
-            reply(r.error() + (r.suggestions().isEmpty() ? "" : "  Try: " + String.join(", ", r.suggestions())), true);
+            Services.visuals().notices().post(NoticeKind.ERROR, r.error(),
+                    r.suggestions().isEmpty() ? null : "Try: " + String.join(", ", r.suggestions()));
             return;
         }
         long id = goals.submit(r.request());
-        reply("Queued job #" + id + ": " + r.request().label(), false);
+        notice("Queued job #" + id + ": " + r.request().label(), NoticeKind.DONE);
+    }
+
+    /** Command feedback (what the command did) as a toast; lists and help stay in chat through {@link #reply}. */
+    private static void notice(String title, NoticeKind kind) {
+        Services.visuals().notices().post(kind, title, null);
     }
 
     private static void reply(String text, boolean error) {

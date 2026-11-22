@@ -72,9 +72,11 @@ public final class AutoRespawn implements IModule, IConfigurable {
         }
         BlockPos p = player.blockPosition();
         String dim = mc.level.dimension().location().toString();
+        String where = p.getX() + " " + p.getY() + " " + p.getZ() + " (" + dim + ")";
+        Services.visuals().notices().post(com.utilitysuite.core.api.visual.NoticeKind.ERROR, "Died", where);
+        // the coordinates stay in chat as well: a toast is gone in 4 s and the user copies these from the chat line
         player.displayClientMessage(Component.literal("[Suite] ").withStyle(ChatFormatting.DARK_AQUA)
-                .append(Component.literal("Died at " + p.getX() + " " + p.getY() + " " + p.getZ() + " (" + dim + ")")
-                        .withStyle(ChatFormatting.GRAY)), false);
+                .append(Component.literal("Died at " + where).withStyle(ChatFormatting.GRAY)), false);
         if (!otherReporterActive()) {
             ISuiteEventBus events = Services.eventsOrNull();
             if (events != null) {

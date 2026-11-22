@@ -180,7 +180,8 @@ public final class WaypointsModule extends WorldModule {
 
     private void message(LocalPlayer player, String text) {
         if (!cleanScreen()) {
-            player.displayClientMessage(Component.literal(text), true);
+            com.utilitysuite.core.api.Services.visuals().notices().post(
+                    com.utilitysuite.core.api.visual.NoticeKind.INFO, text, null);
         }
     }
 
