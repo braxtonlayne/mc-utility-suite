@@ -4,6 +4,11 @@ import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import com.utilitysuite.core.LegitPresets;
 import com.utilitysuite.core.api.ControlChannel;
+import com.utilitysuite.core.api.ControlPriority;
+import com.utilitysuite.core.api.visual.AuthorityReason;
+import com.utilitysuite.core.api.visual.AuthorityState;
+import com.utilitysuite.core.api.visual.MarkKind;
+import com.utilitysuite.world.render.WorldRenderKit;
 import com.utilitysuite.core.api.IManualLookAssist;
 import com.utilitysuite.core.api.IConfigurable;
 import com.utilitysuite.core.api.IModule;
@@ -43,7 +48,44 @@ public final class MovementAssist implements IModule, IConfigurable {
     /** NATURAL: automated looks stay along the way you move. FREE: look wherever the job needs (less legit). */
     public enum LookStyle { NATURAL, FREE }
 
+    /** Control mode (design 2026-11-22, section 3): Corrections = NUDGE, Co-pilot = GUIDE, Takeover = CARRY. */
+    public enum ControlMode {
+        CORRECTIONS(JumpCommit.Mode.NUDGE), CO_PILOT(JumpCommit.Mode.GUIDE), TAKEOVER(JumpCommit.Mode.CARRY);
+
+        public final JumpCommit.Mode mode;
+
+        ControlMode(JumpCommit.Mode mode) {
+            this.mode = mode;
+        }
+
+        /** Profile value to mode; an absent or unknown value reads CO_PILOT. */
+        public static ControlMode parse(String s) {
+            for (ControlMode m : values()) {
+                if (m.name().equals(s)) {
+                    return m;
+                }
+            }
+            return CO_PILOT;
+        }
+    }
+
     public static final String ID = "movement_assist";
+    static final String K_CONTROL_MODE = "control_mode";
+    static final String K_SENSITIVITY = "override_sensitivity";
+    static final String K_LANDING_HOLD = "landing_hold";
+    static final String K_HOLD_RELEASE = "hold_release";
+    static final String K_HOLD_LIMIT = "hold_limit_ticks";
+    /** Per-level key-change limits (LegitPresets knobs). */
+    public static final String K_KEY_CHANGES = "assist_key_changes";
+    public static final String K_KEY_HOLD = "assist_key_hold_ticks";
+    public static final String K_REACTION = "assist_reaction_ticks";
+    /** Status line strings (constant: nothing built per tick). */
+    public static final String STATUS_LOCKED = "Parkour: locked";
+    public static final String STATUS_HOLD = "Parkour: hold (release W to move)";
+    public static final String STATUS_YOURS = "Parkour: yours";
+    static final String REASON_PARKOUR = "parkour";
+    static final String MARK_LABEL = "LANDING";
+    static final int OVERRIDE_FLASH_TICKS = 6;
     static final String K_EDGE = "edge_jump";
     static final String K_STEER = "air_steer";
     static final String K_HOP = "sprint_hop";
@@ -83,6 +125,16 @@ public final class MovementAssist implements IModule, IConfigurable {
     static final int REACH_EVERY_TICKS = 5;
 
     private final MovementAssistBrain brain = new MovementAssistBrain();
+    private ControlMode controlMode = ControlMode.CO_PILOT;
+    /** IWorldMarks slot for the locked target top: -2 = not claimed yet, -1 = the table was full. */
+    private int markSlot = -2;
+    private boolean markShown;
+    private boolean authorityShown;
+    private boolean autopilotActing;
+    /** One of the STATUS_* constants while a commitment or a hold is live, else null. */
+    private String parkourStatus;
+    private final SupportRegion landingTop = new SupportRegion();
+    private double topX0, topZ0, topX1, topZ1;
     private final IntentEstimator intent = new IntentEstimator();
     private boolean turnGain = true;
     private double turnGainStrength = 0.25;
@@ -96,7 +148,7 @@ public final class MovementAssist implements IModule, IConfigurable {
     private double groundX, groundZ;
     private final JumpReach reach = new JumpReach();
     private final MovementPhysics now = new MovementPhysics();
-    private final LevelVoxels voxels = new LevelVoxels();
+    private final LevelShapes voxels = new LevelShapes();
     private final EscapePlanner escape = new EscapePlanner();
     private final ParkourBlocks blocks = new ParkourBlocks();
     private boolean blocksOn;
@@ -200,7 +252,13 @@ public final class MovementAssist implements IModule, IConfigurable {
             return;
         }
         String skipped = skip(p);
+        if (skipped == null && (mc.screen != null || emergencyMovementLease())) {
+            skipped = "control taken";
+        }
         if (skipped != null) {
+            // Stop-All, a screen, a higher lease, not on foot: the commitment and the hold end at once
+            brain.abortCommitment();
+            endCommitView(ap);
             blocks.release();
             status = skipped;
             showLanding = false;
@@ -215,6 +273,9 @@ public final class MovementAssist implements IModule, IConfigurable {
         }
         wasOnGround = p.onGround();
         if (in.shiftKeyDown) {
+            // sneak is the documented "let go" key: the commitment and the landing hold hand everything back now
+            brain.noteUserSneak();
+            endCommitView(ap);
             status = "sneaking";
             blocks.release();
             showLanding = false;
@@ -253,6 +314,8 @@ public final class MovementAssist implements IModule, IConfigurable {
             brain.airSteer = useParkour;
             brain.sprintHop = false;
             brain.takeoffShaping = false;
+            // the autopilot's parkour reflex runs the selected mode, at least Co-pilot
+            brain.mode = controlMode.mode == JumpCommit.Mode.NUDGE ? JumpCommit.Mode.GUIDE : controlMode.mode;
             brain.decide(now, p.getYRot(), sprinting, userF, userS, in.jumping, health, voxels);
             brain.edgeJump = e;
             brain.airSteer = s;
@@ -260,9 +323,11 @@ public final class MovementAssist implements IModule, IConfigurable {
             brain.takeoffShaping = ts;
             status = userF > 0 ? "autopilot" : "autopilot: no forward key";
         } else {
+            brain.mode = controlMode.mode;
             brain.decide(now, p.getYRot(), sprinting, userF, userS, in.jumping, health, voxels);
             status = userF > 0 ? "assisting" : "no forward key";
         }
+        publishCommit(ap, auto);
 
         if (brain.jump()) {
             in.jumping = true;
@@ -295,7 +360,7 @@ public final class MovementAssist implements IModule, IConfigurable {
             in.jumping = false; // opt-in jump buffer: the press fires on the last ground tick instead
         }
         if (brain.sneak()) {
-            in.shiftKeyDown = true; // stick the landing (the user is not sneaking: that returned above)
+            in.shiftKeyDown = true; // the landing hold's sneak guard (the user is not sneaking: that returned above)
         }
         if (brain.tookOff()) {
             haveTakeoff = true;
@@ -349,6 +414,18 @@ public final class MovementAssist implements IModule, IConfigurable {
         landX = brain.landX();
         landY = brain.landY();
         landZ = brain.landZ();
+        if (showLanding && brain.hasLanding() && landingTopUnder(landX, landY, landZ)) {
+            // the real top under the predicted landing (a fence post gets a small bracket at 1.5 high)
+            topX0 = landingTop.cellTopBound(0);
+            topZ0 = landingTop.cellTopBound(1);
+            topX1 = landingTop.cellTopBound(2);
+            topZ1 = landingTop.cellTopBound(3);
+        } else {
+            topX0 = Math.floor(landX);
+            topZ0 = Math.floor(landZ);
+            topX1 = topX0 + 1;
+            topZ1 = topZ0 + 1;
+        }
         if (overlay && escapeOverlay && ++escapeClock >= ESCAPE_EVERY_TICKS) {
             escapeClock = 0;
             planEscape(mc, p);
@@ -488,10 +565,10 @@ public final class MovementAssist implements IModule, IConfigurable {
         if (showLanding) {
             float r = landingLethal ? 1.0f : (landingDamage > 0 ? 1.0f : 0.2f);
             float g = landingLethal ? 0.15f : (landingDamage > 0 ? 0.8f : 1.0f);
-            double x = Math.floor(landX) - cam.x;
             double y = landY - cam.y;
-            double z = Math.floor(landZ) - cam.z;
-            LevelRenderer.renderLineBox(pose, lines, x, y + 0.01, z, x + 1, y + 0.06, z + 1, r, g, 0.15f, 1.0f);
+            int argb = 0xFF000000 | ((int) (r * 255) << 16) | ((int) (g * 255) << 8) | (int) (0.15f * 255);
+            brackets(lines, pose.last(), (float) (topX0 - cam.x), (float) (y + 0.02), (float) (topZ0 - cam.z),
+                    (float) (topX1 - cam.x), (float) (topZ1 - cam.z), argb);
             double px = landX - cam.x;
             double pz = landZ - cam.z;
             LevelRenderer.renderLineBox(pose, lines, px - 0.3, y + 0.01, pz - 0.3, px + 0.3, y + 1.8, pz + 0.3,
@@ -499,6 +576,113 @@ public final class MovementAssist implements IModule, IConfigurable {
         }
         renderEscape(pose, lines, cam);
         buffers.endBatch(RenderType.lines());
+    }
+
+    /**
+     * Four corner brackets on a landing top (replacing the full box): each corner gets two short arms along the edges,
+     * a quarter of the shorter side long, so a fence post reads as a small bracket and a platform as a large one.
+     */
+    static void brackets(VertexConsumer lines, PoseStack.Pose pose, float x0, float y, float z0, float x1, float z1,
+                         int argb) {
+        float arm = Math.max(0.04f, Math.min(x1 - x0, z1 - z0) * 0.25f);
+        WorldRenderKit.line(lines, pose, x0, y, z0, x0 + arm, y, z0, argb);
+        WorldRenderKit.line(lines, pose, x0, y, z0, x0, y, z0 + arm, argb);
+        WorldRenderKit.line(lines, pose, x1, y, z0, x1 - arm, y, z0, argb);
+        WorldRenderKit.line(lines, pose, x1, y, z0, x1, y, z0 + arm, argb);
+        WorldRenderKit.line(lines, pose, x0, y, z1, x0 + arm, y, z1, argb);
+        WorldRenderKit.line(lines, pose, x0, y, z1, x0, y, z1 - arm, argb);
+        WorldRenderKit.line(lines, pose, x1, y, z1, x1 - arm, y, z1, argb);
+        WorldRenderKit.line(lines, pose, x1, y, z1, x1, y, z1 - arm, argb);
+    }
+
+    // ---- commitment view (authority bar, landing mark, status line, autopilot) ------------------------------------
+
+    /** The block whose top the feet land on (its own cell or, for 1.5-high fences and walls, the one below). */
+    private boolean landingTopUnder(double x, double feetY, double z) {
+        int bx = MovementPhysics.floor(x);
+        int bz = MovementPhysics.floor(z);
+        int by = MovementPhysics.floor(feetY - 0.01);
+        for (int y = by; y >= by - 1; y--) {
+            double t = landingTop.topOf(voxels, bx, y, bz);
+            if (!Double.isNaN(t) && Math.abs(t - feetY) < 1.0e-3) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** A lease at EMERGENCY or above holds MOVEMENT (fall clutch): the commitment yields at once. */
+    private static boolean emergencyMovementLease() {
+        var h = Services.arbiter().holder(ControlChannel.MOVEMENT);
+        return h.isPresent() && h.get().priority().level() >= ControlPriority.EMERGENCY.level();
+    }
+
+    /**
+     * Publishes the commitment of this tick: the authority share and hand-back for the HUD bar, an override flash, the
+     * locked target top as a LANDING mark, one constant status string, and the autopilot's acted/done notes.
+     */
+    private void publishCommit(IAutopilot ap, boolean auto) {
+        JumpCommit c = brain.commit();
+        LandingHold h = brain.hold();
+        boolean live = c.live() || h.active() || h.latched() != 0;
+        if (auto && ap != null) {
+            if (c.phase() == JumpCommit.Phase.TAKEOFF && !autopilotActing) {
+                ap.noteActed(IAutopilot.Reflex.PARKOUR, REASON_PARKOUR);
+                autopilotActing = true;
+            } else if (autopilotActing && c.phase() == JumpCommit.Phase.IDLE) {
+                ap.noteDone(IAutopilot.Reflex.PARKOUR);
+                autopilotActing = false;
+            }
+        }
+        if (!live) {
+            endCommitView(null);
+            return;
+        }
+        AuthorityState a = Services.visuals().authority();
+        AuthorityReason why = h.active() ? AuthorityReason.LANDING
+                : h.latched() != 0 ? AuthorityReason.EDGE_HOLD : AuthorityReason.JUMP;
+        float share = Math.max(c.authority(), h.active() ? 0.6f : (h.latched() != 0 ? 0.3f : 0f));
+        a.publish(ID, share, c.mode == JumpCommit.Mode.CARRY && c.driving(), why, c.releaseLeft(), c.releaseTotal(),
+                h.latched());
+        authorityShown = true;
+        if (c.overrideThisTick()) {
+            a.noteOverride(OVERRIDE_FLASH_TICKS, c.hardOverrideThisTick() && !c.driving());
+        }
+        parkourStatus = h.latched() != 0 ? STATUS_HOLD
+                : c.phase() == JumpCommit.Phase.RELEASE || c.phase() == JumpCommit.Phase.ABORT ? STATUS_YOURS
+                : STATUS_LOCKED;
+        status = parkourStatus;
+        boolean locked = c.live() && brain.targetRegionValid() && !auto;
+        if (locked && markSlot == -2) {
+            markSlot = Services.visuals().marks().claim(ID);
+        }
+        if (locked && markSlot >= 0) {
+            SupportRegion t = brain.targetRegion();
+            Services.visuals().marks().setBox(markSlot, MarkKind.LANDING, t.cellTopBound(0), t.top(),
+                    t.cellTopBound(1),
+                    t.cellTopBound(2), t.top() + 0.02, t.cellTopBound(3), MARK_LABEL, 0);
+            markShown = true;
+        } else if (markShown) {
+            Services.visuals().marks().clear(markSlot);
+            markShown = false;
+        }
+    }
+
+    /** Idle: nothing published, nothing marked, no status. */
+    private void endCommitView(IAutopilot ap) {
+        if (authorityShown) {
+            Services.visuals().authority().clear(ID);
+            authorityShown = false;
+        }
+        if (markShown && markSlot >= 0) {
+            Services.visuals().marks().clear(markSlot);
+        }
+        markShown = false;
+        parkourStatus = null;
+        if (ap != null && autopilotActing) {
+            ap.noteDone(IAutopilot.Reflex.PARKOUR);
+            autopilotActing = false;
+        }
     }
 
     /** Escape path: orange steps along the ground, magenta for sprint jumps, a taller marker at the end. */
@@ -577,6 +761,8 @@ public final class MovementAssist implements IModule, IConfigurable {
         this.enabled = enabled;
         if (!enabled) {
             releaseTurnGain();
+            brain.abortCommitment();
+            endCommitView(null);
             clutch.release();
             blocks.release();
             showLanding = false;
@@ -594,6 +780,7 @@ public final class MovementAssist implements IModule, IConfigurable {
     public void onWorldUnload() {
         releaseTurnGain();
         forgetJumps();
+        endCommitView(Services.autopilotOrNull());
         havePrevPos = false;
         blocks.release();
         clutch.releaseAll();
@@ -635,6 +822,29 @@ public final class MovementAssist implements IModule, IConfigurable {
         return on;
     }
 
+    private static OverrideClassifier.Sensitivity sensitivity(String s) {
+        for (OverrideClassifier.Sensitivity v : OverrideClassifier.Sensitivity.values()) {
+            if (v.name().equals(s)) {
+                return v;
+            }
+        }
+        return OverrideClassifier.Sensitivity.NORMAL;
+    }
+
+    /** Key-change limits of the legit level (LegitPresets knobs; absent keys read as BALANCED). */
+    private void readKeyChangeLimits(ProfileConfig p) {
+        ProfileConfig global = null;
+        try {
+            global = Services.modState().global();
+        } catch (RuntimeException e) {
+            // early load: the world profile alone decides
+        }
+        brain.setKeyChangeLimits(p.getInt(ID, K_KEY_CHANGES, LegitPresets.KEY_CHANGES_BALANCED),
+                p.getInt(ID, K_KEY_HOLD, LegitPresets.KEY_HOLD_BALANCED),
+                p.getInt(ID, K_REACTION, LegitPresets.REACTION_BALANCED));
+        brain.commit().classifier.relaxed = LegitPresets.current(p, global) == LegitPresets.Level.RELAXED;
+    }
+
     private void read(ProfileConfig p) {
         brain.edgeJump = p.getBool(ID, K_EDGE, true);
         brain.airSteer = p.getBool(ID, K_STEER, true);
@@ -667,7 +877,19 @@ public final class MovementAssist implements IModule, IConfigurable {
         if (!turnGain || !turnGainLevelOk) {
             releaseTurnGain();
         }
-        brain.stickLanding = p.getBool(ID, K_STICK, true);
+        controlMode = ControlMode.parse(p.getString(ID, K_CONTROL_MODE, ControlMode.CO_PILOT.name()));
+        brain.mode = controlMode.mode;
+        brain.commit().classifier.sensitivity = sensitivity(p.getString(ID, K_SENSITIVITY, "NORMAL"));
+        // migration: a profile that had "Stick the landing" off reads the landing hold off
+        brain.landingHold = p.getBool(ID, K_LANDING_HOLD, p.getBool(ID, K_STICK, true));
+        brain.hold().release = "TIMER".equals(p.getString(ID, K_HOLD_RELEASE, "FRESH_INPUT"))
+                ? LandingHold.Release.TIMER : LandingHold.Release.FRESH_INPUT;
+        brain.hold().holdLimitTicks = Math.max(2, Math.min(40, p.getInt(ID, K_HOLD_LIMIT,
+                LandingHold.DEFAULT_HOLD_LIMIT)));
+        if (!brain.landingHold) {
+            brain.hold().reset();
+        }
+        readKeyChangeLimits(p);
         brain.tickPhase = p.getBool(ID, K_TICK_PHASE, true);
         brain.takeoffShaping = p.getBool(ID, K_TAKEOFF_SHAPING, true);
         brain.budget().setCap(Math.max(0, Math.min(20, p.getInt(ID, K_BUDGET, AuthorshipBudget.DEFAULT_CAP))));
@@ -688,6 +910,15 @@ public final class MovementAssist implements IModule, IConfigurable {
     @Override
     public List<SettingSpec> settings() {
         return List.of(
+                SettingSpec.choice(K_CONTROL_MODE, "Control", ControlMode.CO_PILOT, "",
+                        "CORRECTIONS: small per-tick corrections, your keys always stand. CO_PILOT (default): a jump"
+                                + " at a locked block is held from takeoff to a stable landing; it fills keys you are"
+                                + " not using and lets go of a key you held since before the jump, never one you"
+                                + " just pressed. TAKEOVER: hold a movement key toward the block and it flies the"
+                                + " jump."),
+                SettingSpec.choice(K_SENSITIVITY, "Override sensitivity", OverrideClassifier.Sensitivity.NORMAL, "",
+                        "How quickly your own input takes a jump back. HIGH: sooner. LOW: the assist holds on longer."
+                                + " Sneak always hands everything back at once."),
                 SettingSpec.bool(K_EDGE, "Edge jump", true, "",
                         "While you run forward, jump on the last tick before an edge when the jump lands better than"
                                 + " dropping (parkour timing)."),
@@ -703,9 +934,16 @@ public final class MovementAssist implements IModule, IConfigurable {
                                 + " mouse nothing moves. Off on the Legit level."),
                 SettingSpec.decimal(K_TURN_GAIN_STRENGTH, "Turn gain strength", 0.25, 0.0, 0.5, "",
                         "How much turn gain scales your mouse (0.25 = up to 25% faster toward, 25% slower away)."),
-                SettingSpec.bool(K_STICK, "Stick the landing", true, "",
-                        "Landing on a 1-block target with keys that would carry you off the far edge: tap sneak until"
-                                + " you stop. Never while you hold jump."),
+                SettingSpec.bool(K_LANDING_HOLD, "Landing hold", true, "",
+                        "On a narrow landing (a fence post, a wall, a pane, a 1-block pillar) sneak from the last air"
+                                + " tick, and every key you held through the jump stays off until you release it. Press"
+                                + " a key again, jump or sneak and it is yours at once. Never while you hold jump."),
+                SettingSpec.choice(K_HOLD_RELEASE, "Release hold on", LandingHold.Release.FRESH_INPUT, "",
+                        "FRESH_INPUT: the sneak lifts once you stand still and press something new. TIMER: it lifts"
+                                + " after the limit below. Either way a key held through the jump stays off until"
+                                + " you release it."),
+                SettingSpec.integer(K_HOLD_LIMIT, "Hold limit ticks", LandingHold.DEFAULT_HOLD_LIMIT, 2, 40, "",
+                        "Ticks (50 ms each) the sneak stays on after you are stable before it lifts by itself."),
                 SettingSpec.bool(K_TICK_PHASE, "Tick-perfect takeoff", true, "",
                         "One tick before an edge, jump a tick early when that lands better than the usual last-tick"
                                 + " jump (for example while you are turning away). Never waits past the edge."),
@@ -772,6 +1010,18 @@ public final class MovementAssist implements IModule, IConfigurable {
     }
 
     // ---- accessors (status, playtest) ----------------------------------------------------------------------------
+
+    /**
+     * The one HUD status line of a parkour commitment or landing hold: {@link #STATUS_LOCKED}, {@link #STATUS_HOLD},
+     * {@link #STATUS_YOURS}; null when idle (HUD rule 6: nothing when idle). Constant strings.
+     */
+    public String parkourStatus() {
+        return enabled ? parkourStatus : null;
+    }
+
+    public ControlMode controlMode() {
+        return controlMode;
+    }
 
     /** Why the assist did or did not act on the last movement tick (status, playtest). */
     public String status() {

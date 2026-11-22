@@ -17,8 +17,11 @@ package com.utilitysuite.travel.movement;
  *   <li><b>Intent target</b> ({@link #setIntentTarget}): when the intent estimator names a block, the search aims the
  *       landing at its top instead of at progress along the heading, and the brain searches the ideal takeoff yaw
  *       (a few candidates per tick) for the turn gain. Without a target nothing changes.</li>
- *   <li><b>Stick the landing</b> ({@link #sneak()}): on the touchdown ticks of a 1-block landing that the user's keys
- *       would carry off the far edge, sneak until the body stops (vanilla's edge guard does the rest).</li>
+ *   <li><b>Landing hold</b> ({@link LandingHold}, {@link #sneak()}, every control mode): on a narrow landing sneak goes
+ *       down from the last air tick and every key held through the flight is latched off until released.</li>
+ *   <li><b>Jump commitment</b> ({@link JumpCommit}, {@link #mode}): in GUIDE ("Co-pilot") and CARRY ("Takeover") a
+ *       jump with a locked target is one commitment: free axes filled with no tick cap, stale keys withheld for the
+ *       air brake ({@link FlightController}), a gradual hand-back. NUDGE ("Corrections") is the per-tick path.</li>
  *   <li><b>Jump buffer</b> ({@link JumpBuffer}, opt-in): a jump pressed a tick or two before the edge fires on the last
  *       ground tick.</li>
  * </ul>
@@ -34,12 +37,10 @@ public final class MovementAssistBrain {
     public static final int KEEP = Integer.MIN_VALUE;
     /** Upper bound on physics ticks one {@link #decide} simulates (tested). */
     public static final int MAX_SIM_TICKS = 1800;
-    /** Ticks after touchdown the landing may be stuck with a sneak tap. */
-    public static final int STICK_TICKS = 4;
-    /** Ticks of the un-sneaked continuation checked for walking off the landing block. */
-    public static final int STICK_LOOKAHEAD = 6;
     /** Horizontal speed (blocks/tick) below which the body counts as stable on its landing. */
-    public static final double STABLE_SPEED = 0.03;
+    public static final double STABLE_SPEED = SupportRegion.STABLE_SPEED;
+    /** Bound on the commitment's own simulated ticks per decision, on top of {@link #MAX_SIM_TICKS} (tested). */
+    public static final int MAX_COMMIT_SIM_TICKS = FlightController.MAX_SIM_TICKS;
     /** Mouse yaw rate (deg/tick) below which the tick-phase check is skipped when there is no target. */
     public static final double PHASE_MIN_RATE = 0.5;
     /** Predicted miss (blocks) below which no turn gain is asked for. */
@@ -53,8 +54,14 @@ public final class MovementAssistBrain {
     public boolean sprintHop = false;
     /** Follow the intent target when one is set (setting "Follow my intent"). */
     public boolean intentAssist = true;
-    /** Sneak tap on 1-block landings. */
-    public boolean stickLanding = true;
+    /**
+     * Landing hold (setting {@code landing_hold}, on by default in the module). Off in a bare brain so the scripted
+     * always-forward drivers (benchmark, parity with the earlier brain) keep their meaning: a driver that never
+     * releases W would be held on the first narrow top, which is exactly what the hold is for.
+     */
+    public boolean landingHold;
+    /** Control mode; NUDGE in a bare brain (the per-tick path the parity tests pin), CO_PILOT from the module. */
+    public JumpCommit.Mode mode = JumpCommit.Mode.NUDGE;
     /** Tick-phase check before the edge. */
     public boolean tickPhase = true;
     /** Shape short takeoffs ({@link TakeoffShaper}): strafe key, sprint timing, a turn-gain yaw. Needs a target. */
@@ -85,6 +92,22 @@ public final class MovementAssistBrain {
     private final TakeoffShaper shaper = new TakeoffShaper();
     private final AuthorshipBudget budget = new AuthorshipBudget();
     private final JumpBuffer jumpBuffer = new JumpBuffer();
+    private final LandingHold hold = new LandingHold();
+    private final JumpCommit commit = new JumpCommit();
+    private final FlightController flight = new FlightController();
+    /** Region of the top the body landed on (the hold's stability check). */
+    private final SupportRegion landRegion = new SupportRegion();
+    /** Region of the locked target's real top (flight plan, mark). */
+    private final SupportRegion targetRegion = new SupportRegion();
+    private boolean targetRegionValid;
+    private boolean targetSafe;
+    private boolean userSneak;
+    private boolean externalAbort;
+    private boolean lastPlanLands;
+    private int lastPlanForward = KEEP;
+    private int commitSimTicks;
+    private int jumpsSeen;
+    private int baseReactionTicks;
 
     // intent target (from the estimator or a test)
     private boolean intentSet;
@@ -101,12 +124,10 @@ public final class MovementAssistBrain {
     private boolean hasIdealYaw;
     private double missNow;
 
-    // jump tracking (authorship, sticking)
+    // jump tracking (authorship, landing hold, commitment)
     private boolean prevOnGround = true;
     private boolean prevAssistedJump;
     private double prevFall;
-    private int stickWindow;
-    private int stickF, stickS;
     private boolean tookOff, touchedDown;
 
     // outputs
@@ -142,12 +163,36 @@ public final class MovementAssistBrain {
         withholdJump = false;
         sprint = false;
         shaped = false;
+        commitSimTicks = 0;
         trackJump(now);
+        int keys = LandingHold.keys(userForward, userStrafe, userJump);
+        // landing hold first (every mode): the latch decides which of the user's keys count this tick
+        updateHold(now, yaw, sprinting, userForward, userStrafe, keys, w);
+        int rawForward = userForward;
+        int rawStrafe = userStrafe;
+        if (hold.latched() != 0) {
+            userForward = hold.forwardAxis(keys);
+            userStrafe = hold.strafeAxis(keys);
+        }
         boolean targetOn = intentActive();
         if (targetOn) {
             search.setTarget(itx, ity, itz);
+            updateTargetTop(w);
         } else {
             search.clearTarget();
+            targetRegionValid = false;
+            targetSafe = false;
+        }
+        commit.mode = mode;
+        commit.reactionTicks = baseReactionTicks <= 0 ? 0 : baseReactionTicks - 1 + jumpsSeen % 3;
+        boolean planOnGround = now.onGround && targetOn && targetSafe;
+        commit.tick(now.onGround, tookOff, touchedDown, keys, userSneak, yaw, yawRate,
+                now.onGround ? planOnGround : lastPlanLands && targetSafe, hold.startedThisTick(), hold.active(),
+                lastPlanForward, externalAbort);
+        userSneak = false;
+        externalAbort = false;
+        if (commit.phase() == JumpCommit.Phase.TAKEOFF) {
+            jumpsSeen++;
         }
         // jump buffer (opt-in): a press just before the edge is held back to the last ground tick
         boolean jumpIn = userJump;
@@ -169,12 +214,234 @@ public final class MovementAssistBrain {
         }
         if (now.onGround) {
             decideGround(now, yaw, sprinting, userForward, userStrafe, jumpIn, health, w);
+            lastPlanLands = planOnGround;
+            lastPlanForward = KEEP;
+            releaseEdgeGuard(now, yaw, sprinting, rawForward, rawStrafe, w);
+        } else if (mode != JumpCommit.Mode.NUDGE && commit.driving()) {
+            decideAirCommitted(now, yaw, sprinting, userForward, userStrafe, health, w);
         } else {
-            stickWindow = 0;
             decideAir(now, yaw, sprinting, userForward, userStrafe, health, w);
+        }
+        // the latch outranks every fill: a key held through the flight never moves the body off a narrow top
+        if (hold.latched() != 0) {
+            int lf = hold.latched() & (LandingHold.FORWARD | LandingHold.BACK);
+            int ls = hold.latched() & (LandingHold.LEFT | LandingHold.RIGHT);
+            if (lf != 0) {
+                forward = userForward;
+            }
+            if (ls != 0) {
+                strafe = userStrafe;
+            }
+            corrected = true;
+        }
+        if (hold.sneak()) {
+            sneak = true;
+            corrected = true;
         }
         prevAssistedJump = jump && !jumpBuffer.fired();
         simTicks = search.tickCount();
+    }
+
+    // ---- landing hold -------------------------------------------------------------------------------------------------
+
+    private void updateHold(MovementPhysics now, float yaw, boolean sprinting, int f, int s, int keys,
+                            MovementPhysics.Voxels w) {
+        hold.enabled = landingHold;
+        boolean narrowAhead = false;
+        boolean narrowHere = false;
+        boolean stable = false;
+        boolean jumpHeld = (keys & LandingHold.JUMP) != 0;
+        if (landingHold && !jumpHeld) {
+            if (!now.onGround) {
+                // does the user's own flight touch down next tick, and is that landing narrow?
+                cont.copyFrom(now);
+                cont.tick(f, s, yaw, sprinting, false, w);
+                commitSimTicks++;
+                if (cont.onGround) {
+                    narrowAhead = narrowLanding(cont, f, s, yaw, sprinting, w);
+                }
+            } else {
+                if (touchedDown) {
+                    narrowHere = narrowLanding(now, f, s, yaw, sprinting, w);
+                }
+                if (landRegion.count() > 0 && (hold.active() || narrowHere)) {
+                    boolean freshHeld = (keys & LandingHold.MOVE_MASK & ~hold.latched()) != 0;
+                    // with a fresh key down, that key's motion is the user's: stable once the landing slide is spent
+                    stable = freshHeld
+                            ? landRegion.momentumSpent(now.x, now.z, now.vx, now.vz, now.slipperiness)
+                            : landRegion.stable(now.x, now.z, now.vx, now.vz, now.slipperiness);
+                }
+            }
+        }
+        hold.update(now.onGround, keys, false, narrowAhead, narrowHere, stable);
+    }
+
+    /**
+     * A touchdown state is narrow: the stop point of the user's keys (from the touchdown speed and the friction)
+     * does not have a wide top around it. Leaves {@link #landRegion} over the landing and the stop point.
+     */
+    private boolean narrowLanding(MovementPhysics b, int f, int s, float yaw, boolean sprinting,
+                                  MovementPhysics.Voxels w) {
+        landRegion.computeStop(b.x, b.z, b.vx, b.vz, f, s, yaw, sprinting, b.speed, b.slipperiness, false);
+        double sx = landRegion.stopX();
+        double sz = landRegion.stopZ();
+        if (!landRegion.build(w, b.x, b.z, sx, sz, b.y)) {
+            return false; // no top under the body at this height (a step, water): nothing the hold can hold
+        }
+        return !landRegion.wide(sx, sz);
+    }
+
+    /**
+     * RELEASE of a commitment on the ground (design 5.3): fill has ended; a stale key is withheld only while the
+     * user's raw keys would step off within the shrinking edge-guard horizon of {@code 2 + 4a} ticks.
+     */
+    private void releaseEdgeGuard(MovementPhysics now, float yaw, boolean sprinting, int rawF, int rawS,
+                                  MovementPhysics.Voxels w) {
+        int h = commit.edgeGuardHorizon();
+        if (h <= 0 || (rawF == 0 && rawS == 0) || jump) {
+            return;
+        }
+        int stale = commit.staleMask();
+        int staleF = rawF > 0 ? stale & LandingHold.FORWARD : rawF < 0 ? stale & LandingHold.BACK : 0;
+        int staleS = rawS > 0 ? stale & LandingHold.LEFT : rawS < 0 ? stale & LandingHold.RIGHT : 0;
+        if (staleF == 0 && staleS == 0) {
+            return;
+        }
+        cont.copyFrom(now);
+        for (int t = 0; t < h; t++) {
+            cont.tick(rawF, rawS, yaw, sprinting, false, w);
+            commitSimTicks++;
+            if (!cont.supported(w)) {
+                if (staleF != 0) {
+                    forward = 0;
+                }
+                if (staleS != 0) {
+                    strafe = 0;
+                }
+                corrected = true;
+                return;
+            }
+        }
+    }
+
+    // ---- commitment (GUIDE / CARRY) -------------------------------------------------------------------------------------
+
+    /** The locked target's real top from its boxes: search target height and extent, region, fail-safe surfaces. */
+    private void updateTargetTop(MovementPhysics.Voxels w) {
+        double top = targetRegion.topOf(w, itx, ity, itz);
+        if (Double.isNaN(top)) {
+            targetRegionValid = false;
+            targetSafe = false;
+            return;
+        }
+        targetRegionValid = targetRegion.build(w, itx + 0.5, top, itz + 0.5);
+        if (targetRegionValid) {
+            search.setTargetTop(top, targetRegion.cellTopBound(0), targetRegion.cellTopBound(1),
+                    targetRegion.cellTopBound(2),
+                    targetRegion.cellTopBound(3));
+        }
+        byte sf = w.surface(itx, ity, itz);
+        // fail-safe (design 7.2): never commit onto physics the replica does not model, or onto a top that hurts
+        targetSafe = targetRegionValid && sf != MovementPhysics.SURFACE_HARM && sf != MovementPhysics.SURFACE_STUCK
+                && sf != MovementPhysics.SURFACE_UNMODELLED;
+    }
+
+    private void decideAirCommitted(MovementPhysics now, float yaw, boolean sprinting, int userForward,
+                                    int userStrafe, float health, MovementPhysics.Voxels w) {
+        double mine = search.evaluate(now, userForward, userStrafe, yaw, sprinting, false, health, w);
+        double myMiss = search.lastMiss();
+        boolean myBad = mine <= JumpSearch.NO_LANDING || search.landDamage() > 0;
+        capture(mine);
+        int planF = KEEP;
+        int planS = KEEP;
+        boolean lands = false;
+        if (airSteer && targetRegionValid) {
+            boolean allowBack = mode == JumpCommit.Mode.CARRY || userForward == 0;
+            if (flight.plan(now, userForward, userStrafe, yaw, sprinting, allowBack, targetRegion, w)) {
+                lands = true;
+                boolean alreadyFine = flight.userLands() && flight.userMargin() >= SupportRegion.STABLE_MARGIN;
+                if (!(mode == JumpCommit.Mode.GUIDE && alreadyFine) && flight.brakeNow()) {
+                    planF = flight.brakeForward(); // minimum intervention: nothing while the user's keys land it
+                }
+            }
+            commitSimTicks += flight.simTicks();
+        }
+        if (airSteer && !lands && (myMiss > 0.0 || myBad) && search.steer(now, yaw, sprinting, health, w)) {
+            // nothing in the brake family lands: the existing nine-combination search
+            if (search.lastMiss() <= 0.0 || (myBad && search.score() > mine)) {
+                planF = search.forward();
+                planS = search.strafe();
+                lands = search.lastMiss() <= 0.0;
+            }
+        } else if (airSteer && !lands && myMiss <= 0.0 && !myBad) {
+            lands = true; // the user's own keys land on the target (no region to brake for)
+        }
+        lastPlanLands = lands || myMiss <= 0.0;
+        lastPlanForward = planF == KEEP ? userForward : planF;
+        int f = commit.resolveAxis(0, userForward, planF);
+        int s = commit.resolveAxis(1, userStrafe, planS);
+        commit.limit(f, s, userForward, userStrafe);
+        forward = commit.limitedForward();
+        strafe = commit.limitedStrafe();
+        if (forward != KEEP || strafe != KEEP) {
+            int af = forward != KEEP ? forward : userForward;
+            int as = strafe != KEEP ? strafe : userStrafe;
+            capture(search.evaluate(now, af, as, yaw, sprinting, false, health, w));
+            corrected = true;
+        } else {
+            search.evaluate(now, userForward, userStrafe, yaw, sprinting, false, health, w);
+            capture(mine);
+        }
+    }
+
+    /** The user pressed sneak: the documented "let go" key. Ends the commitment and the landing hold at once. */
+    public void noteUserSneak() {
+        userSneak = true;
+        commit.abort();
+        hold.reset();
+    }
+
+    /**
+     * An outside abort: Stop-All, a screen, the module or mode off, an EMERGENCY or higher MOVEMENT lease. Ends the
+     * commitment (fast hand-back) and the landing hold; the next {@link #decide} sees it.
+     */
+    public void abortCommitment() {
+        externalAbort = true;
+        commit.abort();
+        hold.reset();
+    }
+
+    /** Per-level key-change limits (LegitPresets): changes per jump (0 = unlimited), hold ticks, reaction ticks. */
+    public void setKeyChangeLimits(int maxChanges, int holdTicks, int reactionTicks) {
+        commit.maxKeyChanges = Math.max(0, maxChanges);
+        commit.minChangeHoldTicks = Math.max(1, holdTicks);
+        baseReactionTicks = Math.max(0, reactionTicks);
+    }
+
+    public JumpCommit commit() {
+        return commit;
+    }
+
+    public LandingHold hold() {
+        return hold;
+    }
+
+    public FlightController flight() {
+        return flight;
+    }
+
+    /** The locked target's top region (valid while {@link #targetRegionValid()}). */
+    public SupportRegion targetRegion() {
+        return targetRegion;
+    }
+
+    public boolean targetRegionValid() {
+        return targetRegionValid;
+    }
+
+    /** Simulated ticks the commitment and the hold used in the last decision (bounded by {@link #MAX_COMMIT_SIM_TICKS}). */
+    public int lastCommitSimTicks() {
+        return commitSimTicks;
     }
 
     private void decideGround(MovementPhysics now, float yaw, boolean sprinting, int userForward, int userStrafe,
@@ -184,7 +451,8 @@ public final class MovementAssistBrain {
             jump = shaper.jumpNow(); // the shape takes off on its own last supported tick
         } else if (edgeJump && !jumpIn && userForward > 0 && search.shouldEdgeJump(now, yaw, sprinting, health, w)
                 && (!safeOnly || search.landDamage() <= 0f)) {
-            jump = budget.allowance(AuthorshipBudget.FULL_HELP_MISS) > 0;
+            // a committed mode's takeoff is not budgeted (design 3: only the skill fade survives there)
+            jump = mode != JumpCommit.Mode.NUDGE || budget.allowance(AuthorshipBudget.FULL_HELP_MISS) > 0;
         } else if (edgeJump && !jumpIn && userForward > 0 && tickPhase && (intentActive()
                 || Math.abs(yawRate) >= PHASE_MIN_RATE)
                 && search.ticksToEdge(now, 1, 0, yaw, sprinting, 1, w) == 1
@@ -198,13 +466,6 @@ public final class MovementAssistBrain {
         }
         edgeNoLanding = !jump && !shaped && edgeJump && !jumpIn && userForward > 0
                 && search.lastWalkScore() <= JumpSearch.NO_LANDING && search.lastJumpScore() <= JumpSearch.NO_LANDING;
-        if (!jump && !shaped) {
-            sneak = stickLanding && !jumpIn && shouldStick(now, yaw, sprinting, userForward, userStrafe, w)
-                    && budget.tryUse(AuthorshipBudget.FULL_HELP_MISS);
-            if (sneak) {
-                corrected = true;
-            }
-        }
         // predicted landing of a jump from here (the overlay's "if you jump now")
         double sc = search.evaluate(now, Math.max(userForward, 0), userStrafe, yaw, sprinting, true, health, w);
         capture(sc);
@@ -314,67 +575,9 @@ public final class MovementAssistBrain {
                     ? search.missDistance(now.x, now.y, now.z) <= 0.0
                     : MovementPhysics.fallDamage(prevFall) <= 0f;
             budget.onTouchdown(clean);
-            stickWindow = STICK_TICKS;
         }
         prevOnGround = now.onGround;
         prevFall = now.fallDistance;
-    }
-
-    // ---- stick the landing ----------------------------------------------------------------------------------------
-
-    private boolean shouldStick(MovementPhysics now, float yaw, boolean sprinting, int f, int s,
-                                MovementPhysics.Voxels w) {
-        if (stickWindow <= 0) {
-            return false;
-        }
-        if (touchedDown) {
-            stickF = f;
-            stickS = s;
-        } else if (f != stickF || s != stickS) {
-            stickWindow = 0; // the user changed keys: their move now
-            return false;
-        }
-        stickWindow--;
-        double speed2 = now.vx * now.vx + now.vz * now.vz;
-        if (speed2 < STABLE_SPEED * STABLE_SPEED) {
-            stickWindow = 0;
-            return false;
-        }
-        if (!smallLanding(now, w)) {
-            return false;
-        }
-        cont.copyFrom(now);
-        for (int t = 0; t < STICK_LOOKAHEAD; t++) {
-            cont.tick(f, s, yaw, sprinting, false, w);
-            if (!cont.supported(w)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /** The block under the feet has no standable neighbour in the direction of travel (a 1-block target). */
-    private static boolean smallLanding(MovementPhysics now, MovementPhysics.Voxels w) {
-        int cx = MovementPhysics.floor(now.x);
-        int cy = MovementPhysics.floor(now.y - 0.01);
-        int cz = MovementPhysics.floor(now.z);
-        if (!w.solid(cx, cy, cz)) {
-            return true; // hanging over the edge already
-        }
-        double speed = Math.sqrt(now.vx * now.vx + now.vz * now.vz);
-        int sx = Math.abs(now.vx) >= 0.3 * speed ? (now.vx > 0 ? 1 : -1) : 0;
-        int sz = Math.abs(now.vz) >= 0.3 * speed ? (now.vz > 0 ? 1 : -1) : 0;
-        if (sx != 0 && standable(cx + sx, cy, cz, w)) {
-            return false;
-        }
-        if (sz != 0 && standable(cx, cy, cz + sz, w)) {
-            return false;
-        }
-        return !(sx != 0 && sz != 0 && standable(cx + sx, cy, cz + sz, w));
-    }
-
-    private static boolean standable(int x, int y, int z, MovementPhysics.Voxels w) {
-        return w.solid(x, y, z) && !w.solid(x, y + 1, z) && !w.solid(x, y + 2, z);
     }
 
     // ---- intent target / ideal takeoff yaw --------------------------------------------------------------------------
@@ -496,7 +699,10 @@ public final class MovementAssistBrain {
         clearIntentTarget();
         budget.reset();
         jumpBuffer.reset();
-        stickWindow = 0;
+        hold.reset();
+        commit.reset();
+        lastPlanLands = false;
+        lastPlanForward = KEEP;
         prevOnGround = true;
         prevAssistedJump = false;
         yawRate = 0.0;
@@ -563,7 +769,7 @@ public final class MovementAssistBrain {
         return strafe;
     }
 
-    /** Sneak this tick (stick the landing). Never set while the user holds jump. */
+    /** Sneak this tick (the landing hold's guard). Never set while the user holds jump. */
     public boolean sneak() {
         return sneak;
     }
