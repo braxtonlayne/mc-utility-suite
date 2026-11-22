@@ -2,7 +2,9 @@ package com.utilitysuite.travel.movement;
 
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
+import com.utilitysuite.core.LegitPresets;
 import com.utilitysuite.core.api.ControlChannel;
+import com.utilitysuite.core.api.IManualLookAssist;
 import com.utilitysuite.core.api.IConfigurable;
 import com.utilitysuite.core.api.IModule;
 import com.utilitysuite.core.api.IAutopilot;
@@ -59,6 +61,18 @@ public final class MovementAssist implements IModule, IConfigurable {
     static final String K_CLUTCH_ELYTRA = "clutch_elytra";
     static final String K_GLIDE_GUARD = "glide_guard";
     static final String K_WATER_STEER = "clutch_water_steer";
+    static final String K_INTENT = "intent_assist";
+    static final String K_TURN_GAIN = "turn_gain";
+    static final String K_TURN_GAIN_STRENGTH = "turn_gain_strength";
+    static final String K_STICK = "stick_landing";
+    static final String K_TICK_PHASE = "tick_phase";
+    static final String K_BUDGET = "authorship_budget";
+    static final String K_JUMP_BUFFER = "jump_buffer";
+    static final String K_JUMP_BUFFER_TICKS = "jump_buffer_ticks";
+    /** Turn-gain requests lapse after this many ticks unless renewed. */
+    static final int TURN_GAIN_TTL = 2;
+    /** A position change larger than this in one tick is a teleport: the jump history is forgotten. */
+    static final double TELEPORT_DIST = 8.0;
     static final int ESCAPE_EVERY_TICKS = 10;
     static final double MOB_RANGE = 16.0;
     static final double PLAYER_RANGE = 32.0;
@@ -67,6 +81,17 @@ public final class MovementAssist implements IModule, IConfigurable {
     static final int REACH_EVERY_TICKS = 5;
 
     private final MovementAssistBrain brain = new MovementAssistBrain();
+    private final IntentEstimator intent = new IntentEstimator();
+    private boolean turnGain = true;
+    private double turnGainStrength = 0.25;
+    /** Turn gain is allowed by the legit level (never on Legit, also for a Legit profile without the key). */
+    private boolean turnGainLevelOk = true;
+    private boolean turnGainRequested;
+    private boolean haveTakeoff;
+    private double takeoffX, takeoffZ;
+    private boolean havePrevPos;
+    private double prevX, prevY, prevZ;
+    private double groundX, groundZ;
     private final JumpReach reach = new JumpReach();
     private final MovementPhysics now = new MovementPhysics();
     private final LevelVoxels voxels = new LevelVoxels();
@@ -142,6 +167,18 @@ public final class MovementAssist implements IModule, IConfigurable {
         }
         Input in = event.getInput();
         fillNow(mc, p);
+        if (havePrevPos) {
+            double dx = now.x - prevX;
+            double dy = now.y - prevY;
+            double dz = now.z - prevZ;
+            if (dx * dx + dy * dy + dz * dz > TELEPORT_DIST * TELEPORT_DIST) {
+                forgetJumps(); // teleport: the line of recent jumps means nothing here
+            }
+        }
+        havePrevPos = true;
+        prevX = now.x;
+        prevY = now.y;
+        prevZ = now.z;
         if (useClutch) {
             // before the skip checks: it runs while sneaking, in water (scooping it back up) and under automation
             clutch.tick(mc, p, now, sign(in.forwardImpulse), sign(in.leftImpulse), voxels);
@@ -186,6 +223,20 @@ public final class MovementAssist implements IModule, IConfigurable {
         int userS = sign(in.leftImpulse);
         float health = p.getHealth() + p.getAbsorptionAmount();
         brain.safeOnly = safeWalk.getAsBoolean();
+        float yaw = p.getYRot();
+        IManualLookAssist look = Services.manualLook();
+        brain.setYawRate(look.manualYawRateDegPerTick());
+        brain.noteTurnGain(look.assistedYawDegLastTick()); // last tick's turn gain was a corrected tick
+        if (now.onGround) {
+            groundX = now.x;
+            groundZ = now.z;
+        }
+        if (brain.intentAssist && (userF != 0 || userS != 0 || !now.onGround)
+                && intent.estimate(now, yaw, p.getXRot(), userF, userS, sprinting, voxels) && intent.hasTarget()) {
+            brain.setIntentTarget(intent.targetX(), intent.targetY(), intent.targetZ(), intent.confidence());
+        } else {
+            brain.clearIntentTarget();
+        }
         if (auto) {
             // the autopilot's parkour reflex is edge jumps and air steering, whatever this module's own toggles say
             boolean e = brain.edgeJump;
@@ -225,6 +276,29 @@ public final class MovementAssist implements IModule, IConfigurable {
             in.left = brain.strafe() > 0;
             in.right = brain.strafe() < 0;
         }
+        if (brain.withholdJump()) {
+            in.jumping = false; // opt-in jump buffer: the press fires on the last ground tick instead
+        }
+        if (brain.sneak()) {
+            in.shiftKeyDown = true; // stick the landing (the user is not sneaking: that returned above)
+        }
+        if (brain.tookOff()) {
+            haveTakeoff = true;
+            takeoffX = groundX;
+            takeoffZ = groundZ;
+        } else if (brain.touchedDown() && haveTakeoff) {
+            intent.noteJump(takeoffX, takeoffZ, now.x, now.z);
+            haveTakeoff = false;
+        }
+        if (!auto && turnGain && turnGainLevelOk) {
+            double help = brain.turnGainHelp(now);
+            if (help > 0.0) {
+                // scales only the user's own mouse motion toward the ideal takeoff yaw; nothing with a still mouse
+                look.setYawGain(ID, brain.idealTakeoffYaw(), 1.0 + turnGainStrength * help,
+                        1.0 - turnGainStrength * help, TURN_GAIN_TTL);
+                turnGainRequested = true;
+            }
+        }
         if (useBlocks && brain.edgeNoLanding() && !blocks.active() && now.onGround
                 && ParkourBlocks.blockSlot(p.getInventory(), mc.level) >= 0) {
             // an edge nothing clears: jump anyway when the jump plus one block keeps the run going
@@ -234,6 +308,7 @@ public final class MovementAssist implements IModule, IConfigurable {
                 in.jumping = true;
                 jumpingThisTick = true;
                 edgeJumps++;
+                brain.noteApplied(true);
             }
         }
         if (useBlocks && !clutch.active()) {
@@ -474,6 +549,7 @@ public final class MovementAssist implements IModule, IConfigurable {
     public void setEnabled(boolean enabled) {
         this.enabled = enabled;
         if (!enabled) {
+            releaseTurnGain();
             clutch.release();
             blocks.release();
             showLanding = false;
@@ -489,6 +565,9 @@ public final class MovementAssist implements IModule, IConfigurable {
 
     @Override
     public void onWorldUnload() {
+        releaseTurnGain();
+        forgetJumps();
+        havePrevPos = false;
         blocks.release();
         clutch.releaseAll();
         showLanding = false;
@@ -499,6 +578,34 @@ public final class MovementAssist implements IModule, IConfigurable {
     @Override
     public void onProfileLoaded(ProfileConfig profile) {
         read(profile);
+    }
+
+    private void releaseTurnGain() {
+        if (turnGainRequested) {
+            Services.manualLook().clearYawGain(ID);
+            turnGainRequested = false;
+        }
+    }
+
+    /** World change or teleport: forget the line of recent jumps and the authorship history. */
+    private void forgetJumps() {
+        intent.reset();
+        brain.reset();
+        haveTakeoff = false;
+    }
+
+    /** Turn gain per the legit level; an absent key on a profile left on Legit reads as off. */
+    private boolean turnGainFromProfile(ProfileConfig p) {
+        ProfileConfig global = null;
+        try {
+            global = Services.modState().global();
+        } catch (RuntimeException e) {
+            // no mod state yet (early load): the world profile alone decides
+        }
+        boolean on = LegitPresets.boolKnob(p, global, ID, K_TURN_GAIN);
+        turnGainLevelOk = LegitPresets.current(p, global) != LegitPresets.Level.LEGIT
+                && LegitPresets.currentIgnoring(p, global, ID, K_TURN_GAIN) != LegitPresets.Level.LEGIT;
+        return on;
     }
 
     private void read(ProfileConfig p) {
@@ -524,6 +631,20 @@ public final class MovementAssist implements IModule, IConfigurable {
         if (!clutchOn) {
             clutch.releaseAll();
         }
+        brain.intentAssist = p.getBool(ID, K_INTENT, true);
+        if (!brain.intentAssist) {
+            brain.clearIntentTarget();
+        }
+        turnGain = turnGainFromProfile(p);
+        turnGainStrength = Math.max(0.0, Math.min(0.5, p.getDouble(ID, K_TURN_GAIN_STRENGTH, 0.25)));
+        if (!turnGain || !turnGainLevelOk) {
+            releaseTurnGain();
+        }
+        brain.stickLanding = p.getBool(ID, K_STICK, true);
+        brain.tickPhase = p.getBool(ID, K_TICK_PHASE, true);
+        brain.budget().setCap(Math.max(0, Math.min(20, p.getInt(ID, K_BUDGET, AuthorshipBudget.DEFAULT_CAP))));
+        brain.jumpBuffer().setEnabled(p.getBool(ID, K_JUMP_BUFFER, false));
+        brain.jumpBuffer().setMaxTicks(p.getInt(ID, K_JUMP_BUFFER_TICKS, JumpBuffer.DEFAULT_TICKS));
         escapeOverlay = p.getBool(ID, K_ESCAPE, true);
         escapePlayers = p.getBool(ID, K_ESCAPE_PLAYERS, true);
         if (!escapeOverlay) {
@@ -545,6 +666,30 @@ public final class MovementAssist implements IModule, IConfigurable {
                 SettingSpec.bool(K_STEER, "Air steering", true, "",
                         "In the air, if your keys would miss the landing, take fall damage or land much lower, press"
                                 + " the strafe or forward key that makes it. Never overrides a key you hold."),
+                SettingSpec.bool(K_INTENT, "Follow my intent", true, "",
+                        "Work out which block you are going for (where you look, your keys, your line of jumps) and"
+                                + " aim the jump timing and air steering at landing on it, not just at going far."),
+                SettingSpec.bool(K_TURN_GAIN, "Turn gain", true, "",
+                        "While you turn your mouse toward the best takeoff direction for that block, it turns a little"
+                                + " faster; turning away, a little slower. It only scales your own mouse: with a still"
+                                + " mouse nothing moves. Off on the Legit level."),
+                SettingSpec.decimal(K_TURN_GAIN_STRENGTH, "Turn gain strength", 0.25, 0.0, 0.5, "",
+                        "How much turn gain scales your mouse (0.25 = up to 25% faster toward, 25% slower away)."),
+                SettingSpec.bool(K_STICK, "Stick the landing", true, "",
+                        "Landing on a 1-block target with keys that would carry you off the far edge: tap sneak until"
+                                + " you stop. Never while you hold jump."),
+                SettingSpec.bool(K_TICK_PHASE, "Tick-perfect takeoff", true, "",
+                        "One tick before an edge, jump a tick early when that lands better than the usual last-tick"
+                                + " jump (for example while you are turning away). Never waits past the edge."),
+                SettingSpec.integer(K_BUDGET, "Corrections per jump", AuthorshipBudget.DEFAULT_CAP, 0, 20, "",
+                        "Most ticks per jump the assist may correct (jump, keys, sneak, turn gain). Help shrinks as"
+                                + " you land more jumps on your own. 0 = no corrections."),
+                SettingSpec.bool(K_JUMP_BUFFER, "Jump buffer", false, "",
+                        "A jump pressed a tick or two before an edge is held and fired on the last ground tick. This"
+                                + " can delay your jump key by up to 150 ms."),
+                SettingSpec.integer(K_JUMP_BUFFER_TICKS, "Jump buffer ticks", JumpBuffer.DEFAULT_TICKS, 1,
+                        JumpBuffer.MAX_TICKS, "",
+                        "How early (in ticks, 50 ms each) a jump press may be buffered."),
                 SettingSpec.bool(K_HOP, "Sprint hop", false, "",
                         "On open flat ground, jump whenever a sprint jump outruns sprinting (faster travel)."),
                 SettingSpec.bool(K_OVERLAY, "Landing overlay", true, "Overlay",

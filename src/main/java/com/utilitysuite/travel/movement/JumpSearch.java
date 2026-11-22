@@ -11,12 +11,22 @@ package com.utilitysuite.travel.movement;
  * A landing scores {@code progress along the heading - FALL_WEIGHT * fall damage}; never landing within the horizon
  * (the void, a very deep drop) scores {@link #NO_LANDING}. Damage at or above the player's health is treated as no
  * landing at all.
+ * <p>
+ * With an intent target ({@link #setTarget}) the progress term is replaced by how close the landing gets to the target
+ * block's top: {@code -TARGET_MISS_WEIGHT * miss - centre distance / 4}, where {@code miss} is 0 when the player's
+ * footprint stands on the target block ({@link #missDistance}). Without a target nothing changes.
  */
 public final class JumpSearch {
 
     public static final int HORIZON_TICKS = 60;
     public static final double FALL_WEIGHT = 4.0;
     public static final double NO_LANDING = -1.0e9;
+    /** Score per block of target miss (a landing beside the target loses this much per block). */
+    public static final double TARGET_MISS_WEIGHT = 3.0;
+    /** Miss reported when nothing lands at all. */
+    public static final double MISS_NO_LANDING = 4.0;
+    /** Walk ticks an edge run ({@link #edgeRun}) may take to reach the edge before it gives up. */
+    public static final int EDGE_WALK_MAX = 20;
 
     /** The nine forward/strafe combinations, forward first. */
     private static final int[] FWD = {1, 1, 1, 0, 0, 0, -1, -1, -1};
@@ -33,6 +43,140 @@ public final class JumpSearch {
     private int landTicks;
     private double lastWalk = NO_LANDING;
     private double lastJump = NO_LANDING;
+
+    // optional intent target: the solid block to stand on
+    private boolean hasTarget;
+    private int tx, ty, tz;
+    /** Simulated ticks since {@link #resetTickCount()} (the per-decision bound is tested on this). */
+    private int simTicks;
+    private final MovementPhysics walker = new MovementPhysics();
+    private final MovementPhysics probe = new MovementPhysics();
+
+    /** Aim landings at the top of this solid block instead of progress along the heading. */
+    public void setTarget(int x, int y, int z) {
+        hasTarget = true;
+        tx = x;
+        ty = y;
+        tz = z;
+    }
+
+    public void clearTarget() {
+        hasTarget = false;
+    }
+
+    public boolean hasTarget() {
+        return hasTarget;
+    }
+
+    public int targetX() {
+        return tx;
+    }
+
+    public int targetY() {
+        return ty;
+    }
+
+    public int targetZ() {
+        return tz;
+    }
+
+    /**
+     * Horizontal distance from a feet position to the nearest position whose footprint still stands on the target
+     * block, plus the height difference to the target top. 0 = standing on it. Without a target: 0.
+     */
+    public double missDistance(double x, double y, double z) {
+        if (!hasTarget) {
+            return 0.0;
+        }
+        double lo = MovementPhysics.HALF_WIDTH - 1.0e-3;
+        double dx = Math.max(0.0, Math.max((tx - lo) - x, x - (tx + 1 + lo)));
+        double dz = Math.max(0.0, Math.max((tz - lo) - z, z - (tz + 1 + lo)));
+        double dy = Math.abs(y - (ty + 1));
+        return Math.sqrt(dx * dx + dz * dz) + (dy < 1.0e-3 ? 0.0 : dy);
+    }
+
+    /** Miss of the last stored landing ({@link #MISS_NO_LANDING} when it landed nowhere; 0 without a target). */
+    public double lastMiss() {
+        if (!hasTarget) {
+            return 0.0;
+        }
+        return score <= NO_LANDING ? MISS_NO_LANDING : missDistance(landX, landY, landZ);
+    }
+
+    /** Target-aware landing score of a feet position (no damage term). */
+    private double targetScore(double x, double y, double z) {
+        double cx = x - (tx + 0.5);
+        double cz = z - (tz + 0.5);
+        return -TARGET_MISS_WEIGHT * missDistance(x, y, z) - 0.25 * Math.sqrt(cx * cx + cz * cz);
+    }
+
+    public void resetTickCount() {
+        simTicks = 0;
+    }
+
+    /** Physics ticks simulated since {@link #resetTickCount()}. */
+    public int tickCount() {
+        return simTicks;
+    }
+
+    /**
+     * Runs forward at {@code yawDeg} to the last supported tick (at most {@link #EDGE_WALK_MAX} walk ticks) and jumps
+     * there, like the edge jump would; scores the landing (target-aware). Airborne starts hold the given keys instead.
+     * Used for the ideal takeoff yaw: "if I faced this way, would the jump from the edge land?".
+     *
+     * @return the landing score, {@link #NO_LANDING} when it lands nowhere or no edge is within reach
+     */
+    public double edgeRun(MovementPhysics now, int f, int s, float yawDeg, boolean sprint, float health,
+                          MovementPhysics.Voxels w) {
+        if (!now.onGround) {
+            return evaluate(now, f, s, yawDeg, sprint, false, health, w);
+        }
+        walker.copyFrom(now);
+        for (int t = 0; t < EDGE_WALK_MAX; t++) {
+            probe.copyFrom(walker).tick(1, 0, yawDeg, sprint, false, w);
+            simTicks++;
+            if (!probe.supported(w)) {
+                return evaluate(walker, 1, 0, yawDeg, sprint, true, health, w);
+            }
+            walker.copyFrom(probe);
+        }
+        store(1, 0, NO_LANDING, walker.x, walker.y, walker.z, 0f, 0);
+        return NO_LANDING;
+    }
+
+    /**
+     * Ticks until the last supported tick when walking on with these keys: 0 = this is the last tick before walking
+     * off, k = k more supported ticks first, -1 = no edge within {@code maxTicks + 1} ticks (or airborne, or no keys).
+     */
+    public int ticksToEdge(MovementPhysics now, int f, int s, float yawDeg, boolean sprint, int maxTicks,
+                           MovementPhysics.Voxels w) {
+        if (!now.onGround || (f == 0 && s == 0)) {
+            return -1;
+        }
+        walker.copyFrom(now);
+        for (int t = 0; t <= maxTicks; t++) {
+            walker.tick(f, s, yawDeg, sprint, false, w);
+            simTicks++;
+            if (!walker.supported(w)) {
+                return t;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * Jumps on the first tick holding forward at {@code yawDeg}, scored against a fixed reference heading
+     * {@code refYawDeg} so takeoffs at different yaws compare on one yardstick. Target-aware like the rest.
+     */
+    public double jumpScore(MovementPhysics now, float yawDeg, float refYawDeg, boolean sprint, float health,
+                            MovementPhysics.Voxels w) {
+        double hx = -Math.sin(Math.toRadians(refYawDeg));
+        double hz = Math.cos(Math.toRadians(refYawDeg));
+        double sc = simulate(now, 1, 0, yawDeg, sprint, true, health, hx, hz, w);
+        store(1, 0, sc, sim.x, sim.y, sim.z, sc <= NO_LANDING ? 0f : MovementPhysics.fallDamage(sim.fallDistance),
+                lastTicks);
+        return sc;
+    }
 
     /**
      * Mid-air steering.
@@ -84,6 +228,7 @@ public final class JumpSearch {
         // only at an edge: walking on for one more tick must leave the ground. On the ground vy is about -0.078, so the
         // Y-first collision keeps onGround true for the step-off tick itself: check what is under the feet after it.
         sim.copyFrom(now).tick(1, 0, yawDeg, sprint, false, w);
+        simTicks++;
         if (sim.supported(w)) {
             return false;
         }
@@ -127,6 +272,7 @@ public final class JumpSearch {
         for (int t = 1; t <= HORIZON_TICKS; t++) {
             double fallBefore = sim.fallDistance;
             sim.tick(f, s, yaw, sprint, jumpFirst && t == 1, w);
+            simTicks++;
             maxFall = Math.max(maxFall, fallBefore);
             if (!sim.onGround) {
                 wasAirborne = true;
@@ -138,11 +284,17 @@ public final class JumpSearch {
                 if (dmg >= health) {
                     return NO_LANDING;
                 }
+                if (hasTarget) {
+                    return targetScore(sim.x, sim.y, sim.z) - FALL_WEIGHT * dmg;
+                }
                 double progress = (sim.x - ox) * hx + (sim.z - oz) * hz;
                 return progress - FALL_WEIGHT * dmg;
             } else if (t > 3) {
                 // never left the ground (blocked or walking on): progress only, no landing bonus
                 lastTicks = t;
+                if (hasTarget) {
+                    return targetScore(sim.x, sim.y, sim.z) - 0.5;
+                }
                 return (sim.x - ox) * hx + (sim.z - oz) * hz - 0.5;
             }
         }
