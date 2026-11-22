@@ -26,8 +26,16 @@ package com.utilitysuite.travel.movement;
  *       hitbox one tick after the key (vanilla reads the crouch state before it reads the key);</li>
  *   <li>sprint loss on a wall contact that is not minor, back on the next tick while the sprint input stays on;</li>
  *   <li>slipperiness of the block under the feet, read every tick from {@link Voxels#slipperiness};</li>
- *   <li>jump delay: a held jump re-jumps only 10 ticks after the last jump, a fresh press at once.</li>
+ *   <li>jump delay: a held jump re-jumps only 10 ticks after the last jump, a fresh press at once;</li>
+ *   <li>vanilla arithmetic (replica parity, 2026-11-22): the 0.003 velocity floor of {@code LivingEntity.aiStep},
+ *       float jump power 0.42F, float speed ({@code Player.getSpeed}: (float) of 0.1F x (1 + 0.3F) sprinting),
+ *       float ground/air acceleration and drag ({@code f2 * 0.91F}, {@code 0.98F}), the 0.98F input scale and
+ *       {@code Mth} table sin/cos of the float yaw ({@link #mthSin}). Checked against hand-derived vanilla numbers
+ *       in {@code VanillaParityTest} to 1e-12.</li>
  * </ul>
+ * The cube path keeps its double arithmetic (within 1e-5 block of vanilla over a 60-tick run, no 0.003 floor and no
+ * held-jump delay): planners and benchmarks pin its numbers. In game, Movement Assist uses {@link LevelShapes}, which
+ * is shaped, so the assist always runs the full path.
  * Not modelled: slime bounce, honey and soul sand factors, climbables, water, cobwebs, effects other than the speed and
  * jump-boost parameters.
  */
@@ -132,6 +140,32 @@ public final class MovementPhysics {
     /** {@code LocalPlayer.isHorizontalCollisionMinor}: angle under which a wall contact keeps the sprint. */
     private static final double MINOR_ANGLE = 0.13962634F;
     private static final int MAX_STEP_CANDIDATES = 16;
+    /** {@code LivingEntity.aiStep}: velocity components smaller than this are zeroed at the start of the tick. */
+    public static final double MIN_VELOCITY = 0.003;
+    /** The float the full path uses for the jump velocity ({@code (float)} of the 0.42 JUMP_STRENGTH attribute). */
+    private static final float JUMP_VELOCITY_F = 0.42F;
+    /** {@code LivingEntity.SPEED_MODIFIER_SPRINTING}: 0.3F, ADD_MULTIPLIED_TOTAL. */
+    private static final float SPRINT_MODIFIER_F = 0.3F;
+    /** {@code (float)} of the SNEAKING_SPEED attribute (0.3). */
+    private static final float SNEAK_INPUT_SCALE_F = 0.3F;
+    /** {@code Mth.SIN}: 65536 float samples of one turn (built once, 256 KB). */
+    private static final float[] SIN_TABLE = new float[65536];
+
+    static {
+        for (int i = 0; i < SIN_TABLE.length; i++) {
+            SIN_TABLE[i] = (float) Math.sin((double) i * Math.PI * 2.0 / 65536.0);
+        }
+    }
+
+    /** {@code Mth.sin}: the table entry of the float angle in radians. */
+    public static float mthSin(float rad) {
+        return SIN_TABLE[(int) (rad * 10430.378F) & 65535];
+    }
+
+    /** {@code Mth.cos}: the table entry a quarter turn on. */
+    public static float mthCos(float rad) {
+        return SIN_TABLE[(int) (rad * 10430.378F + 16384.0F) & 65535];
+    }
 
     public double x, y, z;
     public double vx, vy, vz;
@@ -311,21 +345,34 @@ public final class MovementPhysics {
     private void tickFull(int forward, int strafe, float yawDeg, boolean sprint, boolean jump, boolean sneak,
                           Voxels w) {
         height = crouching ? CROUCH_HEIGHT : HEIGHT;
-        double yaw = Math.toRadians(yawDeg);
-        double sin = Math.sin(yaw);
-        double cos = Math.cos(yaw);
+        // Entity.getInputVector / LivingEntity.jumpFromGround: the yaw in radians as a float, sin and cos from the
+        // Mth lookup table (floats), widened to double where vanilla widens them
+        float yawRad = yawDeg * (float) (Math.PI / 180.0);
+        double sin = mthSin(yawRad);
+        double cos = mthCos(yawRad);
         // LivingEntity.aiStep: the jump delay counts down first
         if (jumpDelay > 0) {
             jumpDelay--;
+        }
+        // LivingEntity.aiStep: velocity components under 0.003 are zeroed before the jump and travel
+        if (Math.abs(vx) < MIN_VELOCITY) {
+            vx = 0.0;
+        }
+        if (Math.abs(vy) < MIN_VELOCITY) {
+            vy = 0.0;
+        }
+        if (Math.abs(vz) < MIN_VELOCITY) {
+            vz = 0.0;
         }
         // LocalPlayer.aiStep: a wall hit of the last move stops the sprint; restarting it needs a forward impulse of
         // at least 0.8, which a crouched body (0.3) does not have
         boolean sprintingNow = sprint && forward > 0 && !sprintBlocked && (sprinting || !crouching);
         if (jump) {
             if (onGround && jumpDelay == 0) {
-                vy = JUMP_VELOCITY + jumpBoost;
+                // getJumpPower: (float) JUMP_STRENGTH (0.42) + the jump-boost power, all float
+                vy = (double) (JUMP_VELOCITY_F + (float) jumpBoost);
                 if (sprintingNow) {
-                    vx -= sin * SPRINT_JUMP_BOOST;
+                    vx += -sin * SPRINT_JUMP_BOOST;
                     vz += cos * SPRINT_JUMP_BOOST;
                 }
                 jumpDelay = JUMP_DELAY_TICKS;
@@ -336,25 +383,34 @@ public final class MovementPhysics {
         if (onGround) {
             slipperiness = readSlipperiness(w);
         }
-        double friction = onGround ? slipperiness * AIR_FRICTION : AIR_FRICTION;
-        double accel;
+        // LivingEntity.travel: block friction f2 and the drag f3 are floats
+        float f2 = (float) slipperiness;
+        float f3 = onGround ? f2 * 0.91F : 0.91F;
+        float accel;
         if (onGround) {
-            double s = sprintingNow ? speed * 1.3 : speed;
-            accel = s * (0.21600002 / (slipperiness * slipperiness * slipperiness));
+            // Player.getSpeed: (float) of the MOVEMENT_SPEED attribute (sprint: ADD_MULTIPLIED_TOTAL 0.3F)
+            float s = sprintingNow ? (float) ((double) (float) speed * (1.0 + (double) SPRINT_MODIFIER_F))
+                    : (float) speed;
+            accel = s * (0.21600002F / (f2 * f2 * f2));
         } else {
-            accel = sprintingNow ? 0.025999999 : 0.02;
+            // Player.getFlyingSpeed
+            accel = sprintingNow ? 0.025999999F : 0.02F;
         }
-        double scale = crouching ? SNEAK_INPUT_SCALE * INPUT_SCALE : INPUT_SCALE;
-        double xxa = strafe * scale;
-        double zza = forward * scale;
+        // KeyboardInput.tick (impulse * sneaking speed when moving slowly), then LivingEntity.aiStep xxa/zza *= 0.98F
+        float impulse = crouching ? SNEAK_INPUT_SCALE_F : 1.0F;
+        float xxaF = (strafe * impulse) * 0.98F;
+        float zzaF = (forward * impulse) * 0.98F;
+        double xxa = xxaF;
+        double zza = zzaF;
         double ix = xxa;
         double iz = zza;
         double len2 = ix * ix + iz * iz;
-        if (len2 > EPS) {
+        if (len2 >= EPS) {
             if (len2 > 1.0) {
-                double inv = 1.0 / Math.sqrt(len2);
-                ix *= inv;
-                iz *= inv;
+                // Vec3.normalize divides by the length
+                double len = Math.sqrt(len2);
+                ix = ix / len;
+                iz = iz / len;
             }
             ix *= accel;
             iz *= accel;
@@ -364,9 +420,9 @@ public final class MovementPhysics {
         moveFull(sneak, w);
         sprintBlocked = horizontalCollision && !minorCollision(xxa, zza, sin, cos);
         sprinting = sprintingNow;
-        vy = (vy - GRAVITY) * DRAG;
-        vx *= friction;
-        vz *= friction;
+        vy = (vy - GRAVITY) * (double) 0.98F;
+        vx *= f3;
+        vz *= f3;
         // Player.updatePlayerPose (after aiStep): crouch on the key, or stay crouched where standing does not fit
         if (sneak) {
             crouching = true;
