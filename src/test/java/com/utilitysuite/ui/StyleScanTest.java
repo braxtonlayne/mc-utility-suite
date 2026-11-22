@@ -55,8 +55,8 @@ class StyleScanTest {
         // Backlog: files outside this task that still draw directly.
         allow("ui/SuiteMenuScreen.java", DRAW, "the menu window itself draws with g.fill on top of the kit (backlog)");
         allow("ui/AutopilotBar.java", DRAW, "legacy GuiGraphics bar (backlog: port to a HudElement)");
-        allow("ui/UiPreview.java", COLOUR, "WIP-REMOVE");
-        allow("ui/UiPreview.java", DRAW, "WIP-REMOVE");
+        allow("ui/UiPreview.java", COLOUR, "dev-only preview backdrop: a fake bright sky and terrain for HUD legibility");
+        allow("ui/UiPreview.java", DRAW, "dev-only preview backdrop (g.fillGradient/g.fill of the fake world)");
         allow("ui/TabGui.java", DRAW, "tab GUI rows use g.fill (backlog: port to the canvas)");
     }
 

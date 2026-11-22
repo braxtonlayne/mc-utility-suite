@@ -1,0 +1,15 @@
+{
+  "ui.utilitysuite.timeline.title": "Packet Lab timeline",
+  "ui.utilitysuite.timeline.live": "Live",
+  "ui.utilitysuite.timeline.frozen": "Frozen",
+  "ui.utilitysuite.timeline.range": "Last %s s",
+  "ui.utilitysuite.timeline.recent_events": "Recent events",
+  "ui.utilitysuite.timeline.no_events": "No events recorded yet.",
+  "ui.utilitysuite.goal.preview_caption": "Dry-run preview",
+  "ui.utilitysuite.goal.no_steps": "No steps needed.",
+  "ui.utilitysuite.goal.more_steps": "+ %s more steps",
+  "ui.utilitysuite.goal.missing": "Missing: %s",
+  "ui.utilitysuite.minimap.layout_hint": "Drag to move, corner to resize. ESC or Done to save.",
+  "ui.utilitysuite.minimap.layout_off": "Minimap is off (turn it on in the World tab).",
+  "ui.utilitysuite.minimap.done": "Done"
+}
