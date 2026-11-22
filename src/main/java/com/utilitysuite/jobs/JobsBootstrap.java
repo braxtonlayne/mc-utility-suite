@@ -27,7 +27,10 @@ import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.item.crafting.RecipeManager;
 import net.neoforged.bus.api.IEventBus;
+import net.neoforged.fml.ModList;
+import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
+import net.neoforged.neoforge.event.level.LevelEvent;
 import net.neoforged.neoforge.client.event.RecipesUpdatedEvent;
 import net.neoforged.neoforge.client.event.ScreenEvent;
 import net.neoforged.neoforge.common.NeoForge;
@@ -37,7 +40,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Wires the jobs feature: dependency planner, goal engine (IGoalEngine), Baritone navigator (INavigator), storage
+ * Wires the jobs feature: dependency planner, goal engine (IGoalEngine), Baritone navigator (INavigator) and plan-only
+ * route planner (IRoutePlanner, only when Baritone is installed), storage
  * memory (IStorageIndex) and the survival autopilot. Called once from {@code UtilitySuiteMod} after the core.
  */
 public final class JobsBootstrap {
@@ -61,8 +65,12 @@ public final class JobsBootstrap {
         ProtectedAreas protectedAreas = new ProtectedAreas();
         adapter = new BaritoneAdapter(protectedAreas::isProtected);
         Services.registerNavigator(adapter.navigator());
-        // Stop-All cancels every Baritone process unconditionally, leased or not.
+        // Stop-All cancels every Baritone process unconditionally, leased or not (and drops any plan-only route).
         adapter.subscribeStopAll(Services.eventsOrNull());
+        // Plan-only routes (Baritone computes, the suite drives): offered only when Baritone is installed.
+        if (ModList.get() != null && ModList.get().isLoaded(BaritoneAdapter.BARITONE_MOD_ID)) {
+            Services.registerRoutePlanner(adapter.routePlanner());
+        }
 
         MinecraftInventoryView inventory = new MinecraftInventoryView();
         MinecraftWorldActions actions = new MinecraftWorldActions(() -> adapter, inventory);
@@ -111,6 +119,15 @@ public final class JobsBootstrap {
         bus.addListener((ClientTickEvent.Post e) -> {
             ticks++;
             adapter.tick();
+        });
+        // A planned route belongs to the level it was computed in: drop it on respawn/dimension change, level unload
+        // and logout.
+        bus.addListener((ClientPlayerNetworkEvent.Clone e) -> adapter.cancelPlan());
+        bus.addListener((ClientPlayerNetworkEvent.LoggingOut e) -> adapter.cancelPlan());
+        bus.addListener((LevelEvent.Unload e) -> {
+            if (e.getLevel().isClientSide()) {
+                adapter.cancelPlan();
+            }
         });
         bus.addListener((RecipesUpdatedEvent e) -> rebuildPlanner(e.getRecipeManager()));
         bus.addListener(storageModule::onRightClickBlock);

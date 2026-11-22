@@ -1,5 +1,7 @@
 package com.utilitysuite.jobs.baritone;
 
+import com.utilitysuite.core.api.IRoutePlanner.PlanState;
+
 import java.util.List;
 import java.util.function.LongPredicate;
 
@@ -50,4 +52,40 @@ interface PathBackend {
 
     /** Applies suite-wide Baritone settings (quiet chat, auto-tool on). */
     void configure();
+
+    // ---- plan-only routes (the library plans, the suite drives) ----------------------------------------------------
+    // The defaults describe a backend without plan support (never READY), so test fakes override only what they use.
+
+    /**
+     * Starts computing a route to within {@code range} blocks (0 = exact block) without executing it: the library
+     * never moves, turns, breaks or places for a plan. Replaces a plan that is still running.
+     */
+    default void planTo(int x, int y, int z, int range) {
+    }
+
+    /** Starts computing a route that ends at least {@code distance} blocks away from the position (fleeing). */
+    default void planAway(int x, int y, int z, int distance) {
+    }
+
+    default PlanState planState() {
+        return PlanState.NONE;
+    }
+
+    /** Bumped every time a new route becomes READY. */
+    default int planSerial() {
+        return 0;
+    }
+
+    /**
+     * Copies the READY route as packed feet positions ({@code BlockPos.asLong}), start first. Allocation free.
+     *
+     * @return positions written (at most {@code out.length}); 0 when no route is READY
+     */
+    default int copyPlannedPath(long[] out) {
+        return 0;
+    }
+
+    /** Drops the plan request and the route. Never cancels a path the library is executing for a job. */
+    default void cancelPlan() {
+    }
 }
