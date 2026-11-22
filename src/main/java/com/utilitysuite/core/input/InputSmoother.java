@@ -80,6 +80,7 @@ public final class InputSmoother implements IInputSmoother, IContainerClicker {
     private Humanizer humanizer;
     private final MomentumRelease momentum = new MomentumRelease();
     private boolean momentumEnabled = true;
+    private ManualLookAssist manualLook;
     /** Set while the arbiter ends leases for a manual mouse look, so the lease-end path can hand over momentum. */
     private boolean manualLookPreempting;
     private int userYawSign;
@@ -267,6 +268,19 @@ public final class InputSmoother implements IInputSmoother, IContainerClicker {
     /** True while a VISIBLE rotation is still moving the camera. */
     public boolean isVisibleRotationMoving() {
         return hasTarget && rotationMode == RotationMode.VISIBLE && (curve.isActive() || lagging);
+    }
+
+    /**
+     * True while anything automated drives a look angle: a VISIBLE rotation is moving, a SILENT rotation is active or
+     * released camera momentum is still decaying. The turn gain stays off then ({@link ManualLookAssist}).
+     */
+    boolean isAutomatedLookRunning() {
+        return silentActive || momentum.isActive() || isVisibleRotationMoving();
+    }
+
+    /** Turn gain to end on Stop-All and world unload (both run {@link #releaseAll}). */
+    public void setManualLookAssist(ManualLookAssist assist) {
+        this.manualLook = assist;
     }
 
     /** Per rendered frame: advances a VISIBLE rotation and writes it to the player. */
@@ -555,6 +569,9 @@ public final class InputSmoother implements IInputSmoother, IContainerClicker {
         }
         clearRotationInternal();
         momentum.cancel(); // Stop-All and world unload stop the camera at once
+        if (manualLook != null) {
+            manualLook.clearAll(); // turn gain requests end with every other automation
+        }
         lastVelYaw = 0.0;
         lastVelPitch = 0.0;
         clearClicks();
