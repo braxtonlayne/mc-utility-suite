@@ -18,6 +18,11 @@ public final class PlaytestMod {
     public static final Logger LOG = LogUtils.getLogger();
 
     public PlaytestMod(IEventBus modBus) {
+        if (Boolean.getBoolean("utilitysuite.arena")) {
+            LOG.info("Arena client ACTIVE");
+            new ArenaClient().register(NeoForge.EVENT_BUS);
+            return;
+        }
         if (!Boolean.getBoolean("utilitysuite.playtest")) {
             LOG.info("Playtest harness present but inactive (-Dutilitysuite.playtest not set)");
             return;

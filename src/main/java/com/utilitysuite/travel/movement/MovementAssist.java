@@ -443,7 +443,14 @@ public final class MovementAssist implements IModule, IConfigurable {
         }
         SharedGrant g = applyWrites(jumpW, fwdW, strW, sprintW, withholdW, sneakW, steerW, steerOk, steerRate,
                 steerMax);
-        if (g != null) {
+        boolean wrote = g != null;
+        if (g == null && assistAutomation && foreignMovementLease()) {
+            // "Assist automation": a job holds MOVEMENT, so there is no shared grant to take (the job's keys stand).
+            // Layer the assist's jump, sneak and free-axis fills onto this same event's input, as before the grant
+            // existed: the job drives, the assist makes its jumps. Never yaw, never sprint changes here.
+            wrote = writeOntoAutomation(in, jumpW, fwdW, strW, sneakW);
+        }
+        if (wrote) {
             if (jumpW == SharedGrant.ON) {
                 jumpingThisTick = true;
             }
@@ -680,6 +687,35 @@ public final class MovementAssist implements IModule, IConfigurable {
      * public state: on foot, forward held hard enough, food above 6 (or may fly), no item in use, not blind, not
      * gliding, not sneaking or crawling.
      */
+    /**
+     * Writes this tick's decisions straight onto the event's input while a job's MOVEMENT lease drives and "Assist
+     * automation" is on. Returns true when anything was written. Allocation free.
+     */
+    private static boolean writeOntoAutomation(Input in, int jumpW, int fwdW, int strW, boolean sneakW) {
+        boolean any = false;
+        if (jumpW != SharedGrant.KEEP) {
+            in.jumping = jumpW == SharedGrant.ON;
+            any = true;
+        }
+        if (fwdW != SharedGrant.KEEP) {
+            in.forwardImpulse = fwdW;
+            in.up = fwdW > 0;
+            in.down = fwdW < 0;
+            any = true;
+        }
+        if (strW != SharedGrant.KEEP) {
+            in.leftImpulse = strW;
+            in.left = strW > 0;
+            in.right = strW < 0;
+            any = true;
+        }
+        if (sneakW) {
+            in.shiftKeyDown = true;
+            any = true;
+        }
+        return any;
+    }
+
     private static boolean canStartSprint(LocalPlayer p, Input in) {
         return in.forwardImpulse >= 0.8f && !in.shiftKeyDown && p.onGround()
                 && (p.getFoodData().getFoodLevel() > 6 || p.mayFly())

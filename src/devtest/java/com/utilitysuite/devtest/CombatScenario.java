@@ -77,8 +77,11 @@ final class CombatScenario {
                 + " target=" + ca.targetId()));
         s.step("fight", t -> {
             if (!coachDrew[0] && t % 5 == 0) {
-                CountingGraphics g = CountingGraphics.render(new FightCoachHud(CombatBootstrap.coach()));
-                coachDrew[0] = g.calls() > 0;
+                // the coach draws through the STEM HUD host (HudElement.draw), not GuiGraphics: run its logic half and
+                // ask whether it wants to draw (or, if it still drew directly, count that)
+                FightCoachHud hud = new FightCoachHud(CombatBootstrap.coach());
+                CountingGraphics g = CountingGraphics.render(hud);
+                coachDrew[0] = g.calls() > 0 || hud.wantsDraw();
             }
             if (t == 1) {
                 Shots.clearChat();

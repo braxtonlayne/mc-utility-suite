@@ -79,6 +79,16 @@ neoForge {
                 jvmArguments.add("-XX:StartFlightRecording=filename=${file('run/playtest/playtest.jfr')},settings=profile,dumponexit=true")
             }
         }
+        // `./gradlew runArena`: dev client that quick-plays into the local bot benchmark arena server
+        // (Desktop/Minecraft/tools/bot-arena, 127.0.0.1:25570) and arms the combat assistant for it (devtest ArenaClient).
+        arena {
+            client()
+            sourceSet = sourceSets.devtest
+            loadedMods = [mods.utilitysuite, mods.utilitysuite_devtest]
+            systemProperty 'utilitysuite.mixinAudit', 'true'
+            systemProperty 'utilitysuite.arena', 'true'
+            programArguments.addAll('--quickPlayMultiplayer', '127.0.0.1:25570', '--username', 'Dev')
+        }
         // Dev only: opens the menu at the title screen, saves every tab to run/ui-preview/*.png, then quits
         // (com.utilitysuite.ui.UiPreview). ./gradlew runUiPreview
         uiPreview {

@@ -65,7 +65,9 @@ final class MenuScenario {
         s.run("close menu", () -> {
             menu().onClose();
         });
-        s.waitTicks(3);
+        // the autopilot bar step above posts ONLINE/OFFLINE toasts; those are transient notices (at most
+        // NoticeBoard.LIFE_LONG_MS plus the fade), so idle is measured once they have run out
+        s.waitTicks(110);
         s.run("menu closed + HUD idle", () -> {
             s.check("closing returns to the game", H.mc().screen == null, "screen=" + name(H.mc().screen));
             String text = UiBootstrap.hud().text();
