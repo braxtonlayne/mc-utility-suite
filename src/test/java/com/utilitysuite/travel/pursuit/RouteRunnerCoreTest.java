@@ -448,4 +448,42 @@ class RouteRunnerCoreTest {
         assertTrue(bytes < 4096, "allocated " + bytes + " bytes in 100k ticks");
         assertTrue(core.isRunning(lease));
     }
+
+    @Test
+    void followRunsTheCallersRouteWithoutAPlannerAndArrivesAtItsEnd() {
+        long[] route = {com.utilitysuite.travel.Packed.pack(0, 56, 0), com.utilitysuite.travel.Packed.pack(0, 57, 1),
+                com.utilitysuite.travel.Packed.pack(0, 64, 9)};
+        assertFalse(core.follow(lease, route, 1, true), "a one-cell route is no route");
+        assertTrue(core.follow(lease, route, 3, true));
+        assertEquals(IRouteRunner.State.RUNNING, core.state());
+        assertEquals(1, steer.setRouteCalls);
+        // the end cell is horizontally close: a pursuit would "arrive" at once; a follow runs until the route ends
+        body.x = 0.5;
+        body.z = 8.5;
+        core.tick();
+        assertEquals(IRouteRunner.State.RUNNING, core.state());
+        assertTrue(input.down[SimKey.FORWARD.ordinal()]);
+        assertTrue(input.rotCalls > 0, "looks along the route");
+        assertEquals(0, planner.planToCalls, "never asks the planner");
+        steer.finished = true;
+        core.tick();
+        assertEquals(IRouteRunner.State.ARRIVED, core.state());
+        assertFalse(input.anyDown());
+        assertFalse(input.wrongLease);
+    }
+
+    @Test
+    void followFailsOffRouteAndAReplacementKeepsTheKeys() {
+        long[] route = {com.utilitysuite.travel.Packed.pack(0, 64, 0), com.utilitysuite.travel.Packed.pack(5, 64, 0)};
+        assertTrue(core.follow(lease, route, 2, false));
+        core.tick();
+        int keyCalls = input.keyCalls;
+        assertTrue(core.follow(lease, route, 2, false)); // replaced while running
+        assertEquals(keyCalls, input.keyCalls, "no key released on a replacement");
+        assertEquals(IRouteRunner.State.RUNNING, core.state());
+        steer.offRoute = true;
+        core.tick();
+        assertEquals(IRouteRunner.State.FAILED, core.state());
+        assertFalse(input.anyDown());
+    }
 }

@@ -32,6 +32,8 @@ public final class RouteRunnerCore {
     private static final double RESUME_HYSTERESIS = 0.5;
     private static final int MODE_PURSUE = 1;
     private static final int MODE_FLEE = 2;
+    /** A route the caller planned ({@link #follow}): no planner, ARRIVED at its end. */
+    private static final int MODE_FOLLOW = 3;
     private static final SimKey[] KEYS = SimKey.all();
 
     private final BodySource body;
@@ -100,6 +102,38 @@ public final class RouteRunnerCore {
 
     public boolean flee(ControlLease l, double x, double y, double z, double minDistance, boolean lookAlong) {
         return start(MODE_FLEE, l, x, y, z, minDistance, lookAlong);
+    }
+
+    /**
+     * Runs a route the caller planned (see {@code IRouteRunner#follow}): no planner, no replans; ARRIVED when the
+     * steering finished the route, FAILED when it went off route. A new call replaces the route of a running follow
+     * without releasing the keys.
+     */
+    public boolean follow(ControlLease l, long[] cells, int count, boolean lookAlong) {
+        if (l == null || !l.isActive() || !l.covers(ControlChannel.MOVEMENT) || input == null || !body.available()
+                || cells == null || count < 2) {
+            return false;
+        }
+        if (!idle() && (mode != MODE_FOLLOW || !sameLease(l))) {
+            endRun();
+        }
+        if (idle()) {
+            lease = l;
+            lookSent = false;
+        }
+        cancelPlan();
+        mode = MODE_FOLLOW;
+        look = lookAlong && l.covers(ControlChannel.CAMERA);
+        int n = Math.min(count, buf.length);
+        long end = cells[n - 1];
+        tx = Packed.x(end) + 0.5;
+        ty = Packed.y(end);
+        tz = Packed.z(end) + 0.5;
+        range = 0.0;
+        steer.setRoute(cells, n);
+        havePlan = true;
+        state = IRouteRunner.State.RUNNING;
+        return true;
     }
 
     private boolean start(int m, ControlLease l, double x, double y, double z, double r, boolean lookAlong) {
@@ -219,6 +253,25 @@ public final class RouteRunnerCore {
             return;
         }
         now++;
+        if (mode == MODE_FOLLOW) {
+            if (steer.finished()) {
+                arrive();
+                return;
+            }
+            if (steer.offRoute()) {
+                fail();
+                return;
+            }
+            steer.update(body.yaw(), body.health());
+            if (!applyKeys()) {
+                fail();
+                return;
+            }
+            if (look) {
+                applyLook();
+            }
+            return;
+        }
         double bx = body.x();
         double by = body.y();
         double bz = body.z();

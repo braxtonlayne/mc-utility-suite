@@ -38,6 +38,20 @@ public interface IRouteRunner {
     boolean flee(ControlLease lease, double fromX, double fromY, double fromZ, double minDistance,
                  boolean lookAlongRoute);
 
+    /**
+     * Starts or replaces a run along a route the caller planned itself (packed feet cells, {@code BlockPos.asLong}
+     * layout, start first; copied). The runner walks it like a planned route (corners cut, steps jumped, edge guard)
+     * without asking a planner; ARRIVED once the last cell is reached, FAILED when the body leaves the route. Used by
+     * combat's stalemate breaker, whose own walking search knows the cells (e.g. up a ravine's stairs).
+     * Allocation free.
+     *
+     * @return false when the run could not start (unavailable, an empty route, or the lease does not cover MOVEMENT);
+     * the default implementation supports no caller routes
+     */
+    default boolean follow(ControlLease lease, long[] cells, int count, boolean lookAlongRoute) {
+        return false;
+    }
+
     /** Ends the run and releases the keys the runner holds for this lease. No-op for another lease. */
     void stop(ControlLease lease);
 
