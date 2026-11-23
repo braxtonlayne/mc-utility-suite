@@ -1,0 +1,7 @@
+{
+  "required": true,
+  "package": "com.arenatweaks.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "mixins": ["NoRetreatMixin"],
+  "injectors": { "defaultRequire": 1 }
+}

@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "id": "arenatweaks",
+  "version": "1.0.0",
+  "name": "Bot arena tweaks (local)",
+  "description": "Local benchmark only: the pvpbot opponent never retreats.",
+  "environment": "server",
+  "mixins": ["arenatweaks.mixins.json"],
+  "depends": { "fabricloader": ">=0.15.0", "pvpbot": "*" }
+}
