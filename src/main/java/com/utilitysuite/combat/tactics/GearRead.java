@@ -108,7 +108,9 @@ public final class GearRead {
 
     /** {@link #takenWeight(boolean)} with the "Trade caution" multiplier applied before the clamp. */
     public double takenWeight(boolean kiting, double caution) {
-        double w = Math.max(MIN_WEIGHT, Math.min(MAX_WEIGHT, EVEN_BIAS * ratio * caution));
+        // the cap grows with the gear gap: out-geared 4:1, a hit taken costs about four landed, and a cap of 3.0 kept
+        // the solver trading as if it were nearly even (arena 2026-11-23: 0/10, landing more hits than it took)
+        double w = Math.max(MIN_WEIGHT, Math.min(MAX_WEIGHT * Math.max(1.0, ratio), EVEN_BIAS * ratio * caution));
         return kiting ? w * KITE_FACTOR : w;
     }
 

@@ -93,4 +93,14 @@ class GearReadTest {
         assertEquals(3.0, g.takenWeight(false, 3.0), 1e-9, "never above the cap");
         assertEquals(3.0 * GearRead.KITE_FACTOR, g.takenWeight(true, 2.5), 1e-9);
     }
+
+    @Test
+    void theCautionCapGrowsWithTheGearGap() {
+        GearRead g = new GearRead();
+        g.update(20, 20, 1.56, 5.08); // iron vs diamond + Sharpness II
+        assertEquals(GearRead.MAX_RATIO, g.ratio(), 1e-9, "3.3:1 per hit, clamped at 4");
+        assertEquals(12.0, g.takenWeight(false, 2.5), 1e-9, "1.2 x 4 x 2.5 = 12, under the 3.0 x 4 cap");
+        assertEquals(12.0, g.takenWeight(false, 3.0), 1e-9, "never above 3.0 x ratio");
+        assertEquals(GearRead.MAX_WEIGHT, g.takenWeight(false), 1e-9, "the plain read keeps its fixed cap");
+    }
 }
