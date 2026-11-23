@@ -1136,6 +1136,18 @@ public final class MovementAssistBrain {
         return lastPlanLands;
     }
 
+    /**
+     * A commitment in the air whose plan lands on its frozen target: the jump is the brain's (brake, trim, co-steer),
+     * so the block assist must not start a placement on top of it. Its planner runs the user's raw keys and would
+     * see an overshoot the brain is already braking out of (live trace 2026-11-23, J19 reverse: the placement turned
+     * the camera down, its key rotation dropped the brake and the body sailed over the fence post).
+     */
+    public boolean commitOwnsLanding() {
+        JumpCommit.Phase ph = commit.phase();
+        return lastPlanLands && (ph == JumpCommit.Phase.TAKEOFF || ph == JumpCommit.Phase.FLIGHT
+                || ph == JumpCommit.Phase.TOUCHDOWN);
+    }
+
     /** The locked target is frozen for the running commitment. */
     public boolean targetFrozen() {
         return targetFrozen;

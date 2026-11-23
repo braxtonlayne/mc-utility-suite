@@ -13,6 +13,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class FencePostLoopTest {
     /** Prints a tick line per loop tick (set it in a debugger or a one-off test). */
     static boolean debug;
+    /** Flight ticks of the last {@link #loop} where the commitment did not own the landing (block assist could start). */
+    static int flightNotOwned;
 
     /** The takeoff strip (z -8..0), 2 air, a fence post at z 3 (top 20.5), 4 air, a pad at z 8..10. */
     static ShapeGrid scene() {
@@ -47,6 +49,7 @@ class FencePostLoopTest {
         int airborne = -1;
         int onPost = 0;
         boolean aborted = false;
+        flightNotOwned = 0;
         for (int t = 0; t < 90; t++) {
             boolean uj = !pressed && p.onGround && p.z >= 0.75;
             pressed |= uj;
@@ -71,6 +74,9 @@ class FencePostLoopTest {
             }
             b.decide(p, yaw, sprint, 1, 0, uj, 20f, g);
             aborted |= b.commit().phase() == JumpCommit.Phase.ABORT;
+            if (b.commit().phase() == JumpCommit.Phase.FLIGHT && !b.commitOwnsLanding()) {
+                flightNotOwned++;
+            }
             if (debug) {
                 System.out.printf("FDBG %d x%.2f y%.2f z%.2f yaw%.1f p%.0f %s tgt%s lands%s narrow%s f%s s%s%n", t, p.x, p.y, p.z, yaw, pitch,
                         b.commit().phase(), b.intentActive() ? b.targetZ() : "-", b.planLands(), b.commit().narrowTarget, b.forward(), b.strafe());
@@ -129,5 +135,24 @@ class FencePostLoopTest {
                 assertTrue(held * 10 >= tried * 9, mode + (glance != 0 ? " glance " + glance + ": " : ": ") + held + " of " + tried + out);
             }
         }
+    }
+
+    /**
+     * Live trace of 2026-11-23, J19 reverse: the block assist's planner (the user's raw W) saw an overshoot and turned
+     * the camera down to place a block, and its key rotation dropped the brain's brake. A landing commitment owns
+     * every flight tick, so no placement starts on top of it.
+     */
+    @Test
+    void aLandingCommitmentOwnsEveryFlightTickSoNoBlockPlacementStarts() {
+        StringBuilder out = new StringBuilder();
+        for (JumpCommit.Mode mode : new JumpCommit.Mode[] {JumpCommit.Mode.GUIDE, JumpCommit.Mode.CARRY}) {
+            for (double z = -6.0; z <= -4.9; z += 0.5) {
+                String r = loop(mode, 0.5, z, 21f, 0);
+                if (r.equals("held") && flightNotOwned > 0) {
+                    out.append(String.format(" [%s z%.1f: %d ticks]", mode, z, flightNotOwned));
+                }
+            }
+        }
+        assertTrue(out.length() == 0, "flight ticks not owned:" + out);
     }
 }

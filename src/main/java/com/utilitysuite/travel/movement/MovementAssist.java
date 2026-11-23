@@ -480,7 +480,8 @@ public final class MovementAssist implements IModule, IConfigurable {
                 jumpW = SharedGrant.ON;
             }
         }
-        if (useBlocks && !clutch.active()) {
+        // a commitment that lands owns the jump: no placement starts on top of it (one already running goes on)
+        if (useBlocks && !clutch.active() && (blocks.active() || !brain.commitOwnsLanding())) {
             blocks.tick(mc, p, now, sprinting, userF, userS, health, jumpAir, voxels);
             if (blocks.active()) {
                 // mid placement the camera is turned away and the user's keys are rotated back onto the heading:
