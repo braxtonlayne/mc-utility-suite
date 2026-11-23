@@ -64,6 +64,12 @@ final class ArenaClient {
         H.setting(CombatAssistant.ID, CombatSettings.ENGAGE_RANGE, 60.0);
         H.setting(CombatAssistant.ID, CombatSettings.JUMP_RESET, true);
         H.setting(CombatAssistant.ID, CombatSettings.DUEL_MODE, true);
+        // experiments only: -Dutilitysuite.arena.aimSpeed=1.875 (240 deg/s x 1.875 = the 450 deg/s hard cap)
+        String aimSpeed = System.getProperty("utilitysuite.arena.aimSpeed");
+        if (aimSpeed != null) {
+            H.setting(CombatAssistant.ID, CombatSettings.AIM_SPEED, Double.parseDouble(aimSpeed));
+            PlaytestMod.LOG.info("[arena-client] experiment: aim speed x{}", aimSpeed);
+        }
         H.enable(AutoRespawn.ID, true);
         configured = true;
         PlaytestMod.LOG.info("[arena-client] configured: combat assistant proactive on players, duel mode, auto"

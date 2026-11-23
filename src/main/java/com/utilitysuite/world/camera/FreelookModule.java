@@ -67,6 +67,21 @@ public final class FreelookModule extends WorldModule {
         orbit.reset();
     }
 
+    /**
+     * Game bus, every client tick: the hold key works even while the module is off (it switches the module on, the
+     * way the Scout Camera key does for freecam). Before this the key showed in Controls but did nothing until the
+     * Freelook card was switched on (owner report, 2026-11-23). One field read and a key check: no allocation.
+     */
+    public void pollKey() {
+        if (isEnabled() || key == null || !key.isDown()) {
+            return;
+        }
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.screen == null && mc.player != null) {
+            toggleFromKey();
+        }
+    }
+
     @Override
     public void onTick() {
         Minecraft mc = Minecraft.getInstance();

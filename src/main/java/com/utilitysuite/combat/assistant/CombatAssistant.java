@@ -1163,6 +1163,9 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         } else {
             feel.endFeint();
         }
+        // never crowd: inside 1.6 blocks the bearing swings faster than the camera may turn (the retreat chase above
+        // returns before this; it never gets that close to a runner anyway)
+        fwd = SpacingController.uncrowd(fwd, d, s.hazardBack);
         // the hazard flags veto a step whatever the keeper, the solver or a feint says
         if ((fwd > 0 && s.hazardFront) || (fwd < 0 && s.hazardBack)) {
             fwd = SpacingController.HOLD;

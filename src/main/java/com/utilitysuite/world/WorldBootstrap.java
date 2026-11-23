@@ -119,6 +119,7 @@ public final class WorldBootstrap {
 
         IEventBus bus = NeoForge.EVENT_BUS;
         bus.addListener(runtime::onTick);
+        bus.addListener((net.neoforged.neoforge.client.event.ClientTickEvent.Post e) -> freelook.pollKey());
         bus.addListener(runtime::onRender);
         bus.addListener((ChunkEvent.Load e) -> {
             runtime.onChunkLoad(e);
