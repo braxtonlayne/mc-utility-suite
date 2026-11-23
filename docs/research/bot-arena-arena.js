@@ -3,12 +3,21 @@
 // client player, and scores each round from the death that ends it. The opposing bot never
 // disengages: if its attack loop stops while both are alive, a watchdog restarts it at once.
 //
-// usage: node arena.js --setup fists|mixed|stacked [--rounds 10] [--engine nxg|basic] [--player Dev]
+// usage: node arena.js --setup fists|mixed|outgeared|stacked [--rounds 10] [--engine nxg|basic] [--player Dev]
 //        [--bot ArenaBot] [--out results.jsonl] [--dry]
+//        --opponent pvpbot [--difficulty hard] [--mode adaptive]
+//            Vulgar's PvP Bot (Fabric, a Carpet fake player: a real ServerPlayer with vanilla physics) on the Fabric
+//            arena server (../server-fabric). Spawned, armed and pointed at us over RCON; rounds are scored from the
+//            server log. "ultrahard" gives the bot Strength III (a stat buff, not skill), so "hard" is the default.
 "use strict";
 const fs = require("fs");
 const path = require("path");
-const mineflayer = require("mineflayer");
+const OPPONENT = parseArgs(process.argv.slice(2)).opponent || "mineflayer";
+const PVPBOT = OPPONENT === "pvpbot";
+const mineflayer = PVPBOT ? null : require("mineflayer");
+const SERVER_DIR = path.join(__dirname, "..", PVPBOT ? "server-fabric" : "server");
+const BOT_DIFFICULTY = parseArgs(process.argv.slice(2)).difficulty || "hard";
+const BOT_MODE = parseArgs(process.argv.slice(2)).mode || "adaptive";
 const { Rcon } = require("rcon-client");
 
 const args = parseArgs(process.argv.slice(2));
@@ -16,8 +25,9 @@ const SETUP = args.setup || "fists";
 const ROUNDS = Number(args.rounds || 10);
 const ENGINE = args.engine || "nxg";
 const PLAYER = args.player || "Dev";
-const BOT = args.bot || "ArenaBot";
-const OUT = args.out || path.join(__dirname, "..", "results", `${SETUP}-${ENGINE}${(args.arena || "hazards") === "flat" ? "" : "-hazards"}.jsonl`);
+// the fake player's name is lower case on the server (pvpbot registers it that way)
+const BOT = args.bot || (PVPBOT ? "arenabot" : "ArenaBot");
+const OUT = args.out || path.join(__dirname, "..", "results", `${SETUP}-${PVPBOT ? "pvpbot-" + BOT_DIFFICULTY : ENGINE}${(args.arena || "hazards") === "flat" ? "" : "-hazards"}.jsonl`);
 const HOST = "127.0.0.1";
 const PORT = 25570;
 // long enough for a fight that runs, kites and resets around the box (the client is unrestricted in the arena)
@@ -71,7 +81,7 @@ function parseArgs(a) {
 }
 
 function rconPassword() {
-  const props = fs.readFileSync(path.join(__dirname, "..", "server", "server.properties"), "utf8");
+  const props = fs.readFileSync(path.join(SERVER_DIR, "server.properties"), "utf8");
   const m = props.match(/^rcon\.password=(.*)$/m);
   if (!m) throw new Error("rcon.password missing in server.properties");
   return m[1].trim();
@@ -152,8 +162,22 @@ async function kitMissing(rcon, who, items) {
   return items.map((it) => it.split("{")[0]).filter((n) => !inv.includes(`minecraft:${n}`));
 }
 
+// pvpbot: the bot leaves the game when it dies (its leaveOnDeath), so each round spawns it if it is missing.
+async function ensurePvpBot(rcon) {
+  const c = (cmd) => rcon.send(cmd);
+  if (!/State:/.test(await c(`pb status ${BOT}`))) {
+    await c(`pb spawn ${BOT}`);
+    const t0 = Date.now();
+    while (Date.now() - t0 < 15000 && !/State:/.test(await c(`pb status ${BOT}`))) await sleep(500);
+  }
+  await c(`pb stop ${BOT}`);
+  await c(`pb diff ${BOT} ${BOT_DIFFICULTY}`);
+  await c(`pb mode ${BOT} ${BOT_MODE}`);
+}
+
 async function resetRound(rcon) {
   const c = (cmd) => rcon.send(cmd);
+  if (PVPBOT) await ensurePvpBot(rcon);
   await waitAlive(rcon, PLAYER);
   await waitAlive(rcon, BOT);
   await buildArena(c);
@@ -234,6 +258,68 @@ async function equipKit(bot) {
   try { bot.setQuickBarSlot(0); } catch (_) { /* fine */ }
 }
 
+// Death lines in the server log written after byte offset `from`.
+function deathsSince(from) {
+  let text = "";
+  try {
+    const fd = fs.openSync(SERVER_LOG, "r");
+    const n = Math.max(0, fs.fstatSync(fd).size - from);
+    const buf = Buffer.alloc(n);
+    fs.readSync(fd, buf, 0, n, from);
+    fs.closeSync(fd);
+    text = buf.toString("utf8");
+  } catch (_) { return null; }
+  for (const raw of text.split(String.fromCharCode(10))) {
+    const m = raw.replace(/\r$/, "").match(/\]: (.*)$/); // the Fabric log mixes CRLF and LF
+    if (!m) continue;
+    const s = m[1].trim();
+    if (s.startsWith(BOT + " ") && DEATH.test(s) && !/lost connection|left the game/.test(s)) return { winner: "ours", line: s, cause: causeOf(s) };
+    if (s.startsWith(PLAYER + " ") && DEATH.test(s) && !/lost connection|left the game/.test(s)) return { winner: "bot", line: s, cause: causeOf(s) };
+  }
+  return null;
+}
+
+async function runPvpBotRound(rcon, n) {
+  await resetRound(rcon);
+  await sleep(1500);
+  const t0 = Date.now();
+  const logAt = serverLogSize();
+  let result = null;
+  await rcon.send(`tellraw ${PLAYER} {"text":"[arena] go ${BOT} round ${n}"}`);
+  // both start full: the bot can land hits while the round settles, so stop it and heal both right before "go"
+  await rcon.send(`pb stop ${BOT}`);
+  for (const who of [PLAYER, BOT]) await rcon.send(`effect give ${who} minecraft:instant_health 1 10 true`);
+  await rcon.send(`pb attack ${BOT} ${PLAYER}`);
+  const hp = { ours: [], bot: [] };
+  let lastSample = 0;
+  while (!result && Date.now() - t0 < ROUND_TIMEOUT_MS) {
+    await sleep(250);
+    result = deathsSince(logAt);
+    if (result || Date.now() - lastSample < 2000) continue;
+    lastSample = Date.now();
+    try {
+      for (const [k, who] of [["ours", PLAYER], ["bot", BOT]]) {
+        const r = await rcon.send(`data get entity ${who} Health`);
+        const m = r.match(/([0-9.]+)f/);
+        if (m) hp[k].push(Number(m[1]));
+      }
+      // never disengage: re-point the bot at us whenever it has dropped back to IDLE
+      const st = await rcon.send(`pb status ${BOT}`);
+      if (/State:\s*IDLE/.test(st.replace(/§./g, ""))) await rcon.send(`pb attack ${BOT} ${PLAYER}`);
+      if (args.trace) console.log(`  t+${((Date.now() - t0) / 1000).toFixed(0)}s hp ${hp.ours.at(-1)}/${hp.bot.at(-1)} ${(st.replace(/§./g, "").match(/State:\s*\S+/) || [""])[0]}`);
+    } catch (_) { /* best effort */ }
+  }
+  await rcon.send(`pb stop ${BOT}`).catch(() => {});
+  await rcon.send(`tellraw ${PLAYER} {"text":"[arena] stop"}`);
+  const rec = { setup: SETUP, engine: "pvpbot-" + BOT_DIFFICULTY + "-" + BOT_MODE, round: n, ms: Date.now() - t0,
+    arena: ARENA, grim: grimFlags(logAt), winner: result ? result.winner : "timeout", line: result ? result.line : null,
+    cause: result ? result.cause : null,
+    minHp: { ours: Math.min(...hp.ours, 20), bot: Math.min(...hp.bot, 20) },
+    lastHp: { ours: hp.ours.at(-1) ?? null, bot: hp.bot.at(-1) ?? null }, hpSeries: hp };
+  await sleep(2500);
+  return rec;
+}
+
 async function runRound(rcon, bot, n) {
   await resetRound(rcon);
   await sleep(1500); // let both bodies settle and the client see the kit
@@ -307,7 +393,7 @@ function causeOf(s) {
 }
 
 // Grim alerts land in the server log; count the ones against our client during the round.
-const SERVER_LOG = path.join(__dirname, "..", "server", "logs", "latest.log");
+const SERVER_LOG = path.join(SERVER_DIR, "logs", "latest.log");
 function serverLogSize() {
   try { return fs.statSync(SERVER_LOG).size; } catch (_) { return 0; }
 }
@@ -345,7 +431,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await rcon.send("gamerule showDeathMessages true");
   // Grim runs during fights: only the opponent bot is op (permissions.yml gives ops grim.exempt), never our client
   await rcon.send(`deop ${PLAYER}`);
-  await rcon.send(`op ${BOT}`);
+  // the pvpbot fake player has no network connection, so Grim never sees it: no op needed
+  if (!PVPBOT) await rcon.send(`op ${BOT}`);
   if (args.dry) {
     console.log("rcon ok:", await rcon.send("list"));
     if (args.build) {
@@ -369,6 +456,14 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   fs.mkdirSync(path.dirname(OUT), { recursive: true });
   let wins = 0, losses = 0, timeouts = 0;
   for (let n = 1; n <= ROUNDS; n++) {
+    if (PVPBOT) {
+      const rec = await runPvpBotRound(rcon, n);
+      fs.appendFileSync(OUT, JSON.stringify(rec) + String.fromCharCode(10));
+      if (rec.winner === "ours") wins++; else if (rec.winner === "bot") losses++; else timeouts++;
+      console.log(`round ${n}: ${rec.winner}${rec.cause ? " (" + rec.cause + ")" : ""}, grim ${rec.grim ? rec.grim.total : "?"} in ${(rec.ms / 1000).toFixed(1)} s  (${wins}-${losses}, ${timeouts} timeouts)` +
+        `  min hp ours ${rec.minHp.ours} bot ${rec.minHp.bot}, last ours ${rec.lastHp.ours} bot ${rec.lastHp.bot}`);
+      continue;
+    }
     if (bot) { bot.quit(); await sleep(1500); }
     bot = createArenaBot();
     await new Promise((r) => bot.once("spawn", r));
@@ -379,8 +474,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     console.log(`round ${n}: ${rec.winner}${rec.cause ? " (" + rec.cause + ")" : ""}, grim ${rec.grim ? rec.grim.total : "?"} in ${(rec.ms / 1000).toFixed(1)} s  (${wins}-${losses}, ${timeouts} timeouts)` +
       `  min hp ours ${rec.minHp.ours} bot ${rec.minHp.bot}, last ours ${rec.lastHp.ours} bot ${rec.lastHp.bot}`);
   }
-  console.log(`RESULT ${SETUP} vs ${ENGINE}: ours ${wins}/${ROUNDS}, bot ${losses}, timeouts ${timeouts}, ` +
+  console.log(`RESULT ${SETUP} vs ${PVPBOT ? "pvpbot " + BOT_DIFFICULTY + "/" + BOT_MODE : ENGINE}: ours ${wins}/${ROUNDS}, bot ${losses}, timeouts ${timeouts}, ` +
     `pass ${wins >= Math.ceil(ROUNDS * 0.8) ? "YES" : "NO"} (bar ${Math.ceil(ROUNDS * 0.8)}/${ROUNDS})`);
-  bot.quit();
+  if (bot) bot.quit();
   await rcon.end();
 })().catch((e) => { console.error(e); process.exit(1); });

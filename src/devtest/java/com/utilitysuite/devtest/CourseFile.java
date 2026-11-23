@@ -17,7 +17,11 @@ import java.util.List;
  *   start x y z yaw                   finish x1 y1 z1 x2 y2 z2
  *   checkpoint n x y z yaw name...    route x y z
  *   jump id section technique difficulty note...
- *   # comment
+ *   clear x1 y1 z1 x2 y2 z2           (air; sliced under the /fill volume limit)
+ *   fail y block                      (the fail floor: standing on it is a fall)
+ *   kit slot item count               (given at the start of a run)
+ *   alt id x y z tag                  (an optional shortcut line's route points)
+ *   # comment                         (route lines may end in a tag: start, run, takeoff, land, ...)
  * </pre>
  * Plain Java (no game classes) so the parser and the timer are unit tested.
  */
@@ -36,8 +40,14 @@ final class CourseFile {
     }
 
     /** A route point; {@code jump} is the metadata of the jump it belongs to (or null on the run-up). */
-    record RoutePoint(double x, double y, double z, Jump jump) {
+    record RoutePoint(double x, double y, double z, Jump jump, String tag) {
     }
+
+    record Kit(int slot, String item, int count) {
+    }
+
+    /** /fill refuses more than this many blocks at once. */
+    static final int FILL_LIMIT = 32768;
 
     record Jump(String id, String section, String technique, int difficulty, String note) {
     }
@@ -46,6 +56,10 @@ final class CourseFile {
     final List<Checkpoint> checkpoints = new ArrayList<>();
     final List<RoutePoint> route = new ArrayList<>();
     final List<Jump> jumps = new ArrayList<>();
+    final List<Kit> kits = new ArrayList<>();
+    final java.util.Map<String, List<RoutePoint>> alts = new java.util.LinkedHashMap<>();
+    /** The fail floor's level (relative), or {@code Integer.MIN_VALUE} when the course has none. */
+    int failY = Integer.MIN_VALUE;
     double startX, startY, startZ;
     float startYaw;
     int[] finish; // x1 y1 z1 x2 y2 z2, normalised min/max
@@ -89,7 +103,15 @@ final class CourseFile {
                             Math.max(i(t[3]), i(t[6]))};
                     case "checkpoint" -> c.checkpoints.add(new Checkpoint(i(t[1]), d(t[2]), d(t[3]), d(t[4]),
                             (float) d(t[5]), rest(t, 6)));
-                    case "route" -> c.route.add(new RoutePoint(d(t[1]), d(t[2]), d(t[3]), pending));
+                    case "route" -> c.route.add(new RoutePoint(d(t[1]), d(t[2]), d(t[3]), pending, rest(t, 4)));
+                    case "alt" -> c.alts.computeIfAbsent(t[1], k -> new ArrayList<>())
+                            .add(new RoutePoint(d(t[2]), d(t[3]), d(t[4]), null, rest(t, 5)));
+                    case "kit" -> c.kits.add(new Kit(i(t[1]), t[2], t.length > 3 ? i(t[3]) : 1));
+                    case "fail" -> {
+                        c.failY = i(t[1]);
+                        c.failBlock = t[2];
+                    }
+                    case "clear" -> c.clear(i(t[1]), i(t[2]), i(t[3]), i(t[4]), i(t[5]), i(t[6]));
                     case "jump" -> {
                         pending = new Jump(t[1], t[2], t[3], i(t[4]), rest(t, 5));
                         c.jumps.add(pending);
@@ -107,7 +129,37 @@ final class CourseFile {
             throw new IllegalArgumentException("course has no finish line");
         }
         c.checkpoints.sort((a, b) -> Integer.compare(a.n(), b.n()));
+        if (c.failY != Integer.MIN_VALUE) {
+            // the fail floor spans the course's whole footprint (built after everything else is placed)
+            c.add(new Build(c.minX, c.failY, c.minZ, c.maxX, c.failY, c.maxZ, c.failBlock));
+        }
         return c;
+    }
+
+    String failBlock;
+
+    /** An air volume, sliced along y into fills that each stay under {@link #FILL_LIMIT}. */
+    private void clear(int x1, int y1, int z1, int x2, int y2, int z2) {
+        int ax = Math.min(x1, x2), bx = Math.max(x1, x2), ay = Math.min(y1, y2), by = Math.max(y1, y2);
+        int az = Math.min(z1, z2), bz = Math.max(z1, z2);
+        long layer = (long) (bx - ax + 1) * (bz - az + 1);
+        if (layer > FILL_LIMIT) {
+            // also slice along x when one layer alone is too big
+            int step = (int) Math.max(1, FILL_LIMIT / (bz - az + 1));
+            for (int x = ax; x <= bx; x += step) {
+                clear(x, ay, az, Math.min(bx, x + step - 1), by, bz);
+            }
+            return;
+        }
+        int rows = (int) Math.max(1, FILL_LIMIT / layer);
+        for (int y = ay; y <= by; y += rows) {
+            add(new Build(ax, y, az, bx, Math.min(by, y + rows - 1), bz, "minecraft:air"));
+        }
+    }
+
+    /** True when the feet are on (or below) the fail floor; without one, well below the lowest built block. */
+    boolean fell(double y) {
+        return failY != Integer.MIN_VALUE ? y < failY + 1.5 : y < minY - 4;
     }
 
     private void add(Build b) {

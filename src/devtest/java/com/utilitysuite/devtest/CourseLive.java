@@ -141,7 +141,7 @@ final class CourseLive {
     }
 
     private void setup() {
-        for (String g : new String[] {"fallDamage false", "doDaylightCycle false", "doWeatherCycle false",
+        for (String g : new String[] {"randomTickSpeed 0", "fallDamage false", "doDaylightCycle false", "doWeatherCycle false",
                 "doMobSpawning false", "keepInventory true", "doImmediateRespawn true", "announceAdvancements false"}) {
             command("gamerule " + g);
         }
@@ -183,7 +183,9 @@ final class CourseLive {
                 runMode = modeNow;
                 modeChanged = false;
                 command("clear @s");
-                command("give @s minecraft:cobblestone 64");
+                for (CourseFile.Kit k : course.kits) {
+                    command("item replace entity @s hotbar." + (k.slot() - 1) + " with " + k.item() + " " + k.count());
+                }
             }
             case CHECKPOINT -> {
                 CourseFile.Checkpoint cp = course.checkpoints.get(timer.lastCheckpoint);
