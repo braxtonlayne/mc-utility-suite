@@ -23,6 +23,11 @@ public final class PlaytestMod {
             new ArenaClient().register(NeoForge.EVENT_BUS);
             return;
         }
+        if (Boolean.getBoolean("utilitysuite.course")) {
+            LOG.info("Course client ACTIVE");
+            new CourseLive().register(NeoForge.EVENT_BUS);
+            return;
+        }
         if (!Boolean.getBoolean("utilitysuite.playtest")) {
             LOG.info("Playtest harness present but inactive (-Dutilitysuite.playtest not set)");
             return;

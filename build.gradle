@@ -89,6 +89,14 @@ neoForge {
             systemProperty 'utilitysuite.arena', 'true'
             programArguments.addAll('--quickPlayMultiplayer', '127.0.0.1:25570', '--username', 'Dev')
         }
+        // `./gradlew runCourse`: dev client that builds the parkour benchmark course in a fresh world and times the
+        // owner's runs per assist mode (devtest CourseLive; results in run/course/results.jsonl).
+        course {
+            client()
+            sourceSet = sourceSets.devtest
+            loadedMods = [mods.utilitysuite, mods.utilitysuite_devtest]
+            systemProperty 'utilitysuite.course', 'true'
+        }
         // Dev only: opens the menu at the title screen, saves every tab to run/ui-preview/*.png, then quits
         // (com.utilitysuite.ui.UiPreview). ./gradlew runUiPreview
         uiPreview {
