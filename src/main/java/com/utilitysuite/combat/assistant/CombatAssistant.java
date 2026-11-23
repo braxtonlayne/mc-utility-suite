@@ -66,7 +66,8 @@ import java.util.function.LongSupplier;
  * override pause and takes over again. All key, camera, hotbar and container actions go through the lease.
  * <p>
  * Pure Java: the game is reached only through {@link CombatWorld}. {@link #onTick()} allocates nothing in steady state
- * (a new {@link RotationTarget} only when the aim point moved by more than {@value #AIM_RETARGET_DEG} degrees).
+ * (a new {@link RotationTarget} only when the aim point moved by more than {@value #AIM_RETARGET_DEG} degrees, or
+ * {@value #AIM_TRACK_RETARGET_DEG} degrees for the tracked target aim).
  */
 public final class CombatAssistant implements IModule, IConfigurable, LeaseListener {
 
@@ -78,6 +79,11 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
     static final int DISENGAGE_MAX_TICKS = 10;
     static final int MAX_EAT_TICKS = 45;
     static final float AIM_RETARGET_DEG = 0.5f;
+    /**
+     * Target aim is a tracking stream (the smoother follows it velocity-continuously and estimates the target's angular
+     * rate from successive samples), so it is re-sent at a much finer dead band: skipped samples would read as stops.
+     */
+    static final float AIM_TRACK_RETARGET_DEG = 0.05f;
     /** Vanilla SWAP button for the offhand slot ({@code Inventory.SLOT_OFFHAND}). */
     static final int OFFHAND_BUTTON = 40;
 
@@ -235,6 +241,7 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
     private boolean restoreWeaponNextTick;
     private float lastAimYaw = Float.NaN;
     private float lastAimPitch = Float.NaN;
+    private boolean lastAimTracking;
 
     // proactive engagement
     public static final int SCAN_INTERVAL_TICKS = 5;
@@ -1295,15 +1302,23 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         } else {
             AimSolver.solve(s, settings.velocityLead ? settings.leadTicks : 0.0, aim);
         }
-        aimAt(aim[0], aim[1], settings.aimSpeed);
+        // a moving opponent: tracked with continuous angular velocity, not a chain of start-stop turns
+        aimAt(aim[0], aim[1], settings.aimSpeed, true);
     }
 
     private void aimAt(float yaw, float pitch, float speed) {
-        if (Float.isNaN(lastAimYaw) || Math.abs(AimSolver.yawDelta(yaw, lastAimYaw)) > AIM_RETARGET_DEG
-                || Math.abs(pitch - lastAimPitch) > AIM_RETARGET_DEG) {
-            if (input.setRotationTarget(lease, new RotationTarget(yaw, pitch, RotationMode.VISIBLE, speed))) {
+        aimAt(yaw, pitch, speed, false);
+    }
+
+    private void aimAt(float yaw, float pitch, float speed, boolean tracking) {
+        float deadBand = tracking ? AIM_TRACK_RETARGET_DEG : AIM_RETARGET_DEG;
+        if (Float.isNaN(lastAimYaw) || tracking != lastAimTracking
+                || Math.abs(AimSolver.yawDelta(yaw, lastAimYaw)) > deadBand
+                || Math.abs(pitch - lastAimPitch) > deadBand) {
+            if (input.setRotationTarget(lease, new RotationTarget(yaw, pitch, RotationMode.VISIBLE, speed, tracking))) {
                 lastAimYaw = yaw;
                 lastAimPitch = pitch;
+                lastAimTracking = tracking;
             }
         }
     }

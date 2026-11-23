@@ -46,12 +46,18 @@ public final class InputSmoother implements IInputSmoother, IContainerClicker {
     private static final double TICK_SECONDS = 0.05;
     /** A retarget closer than this to the running target bends the running curve instead of restarting it. */
     private static final double RETARGET_BLEND_DEG = 15.0;
+    /**
+     * A fresh tracking target further than this from the camera is approached with the eased curve first; tracking
+     * takes over (at the camera's current angular velocity) once the camera is within it.
+     */
+    static final double TRACK_ENGAGE_DEG = 30.0;
     private static final int CLICK_CAPACITY = 64;
     private static final Click[] CLICKS = Click.values();
 
     private final InputBackend backend;
     private final RandomGenerator random;
     private final RotationCurve curve;
+    private final RotationTracker tracker;
 
     // ---- keys -------------------------------------------------------------------------------------------------------
     private final ControlLease[] keyOwner = new ControlLease[KEYS.length];
@@ -71,6 +77,12 @@ public final class InputSmoother implements IInputSmoother, IContainerClicker {
     /** The no-snap limiter is behind the curve: keep stepping after the curve itself has finished. */
     private boolean lagging;
     private final float[] limited = new float[2];
+    /** The rotation stream is a tracking stream ({@link RotationTarget#tracking()}, VISIBLE only). */
+    private boolean trackRequested;
+    /** The tracker (not the approach curve) is driving the camera. */
+    private boolean tracking;
+    /** Smoother tick of the newest tracking sample (rate estimates use tick time, the game's sampling clock). */
+    private long trackSampleTick;
     private float requestedYaw;
     private float requestedPitch;
 
@@ -107,6 +119,17 @@ public final class InputSmoother implements IInputSmoother, IContainerClicker {
         this.backend = backend;
         this.random = random;
         this.curve = new RotationCurve(random);
+        this.tracker = new RotationTracker(random);
+    }
+
+    /** The pursuit controller tracking targets use (for tests and diagnostics). */
+    public RotationTracker tracker() {
+        return tracker;
+    }
+
+    /** True while the velocity-continuous tracker (not a curve) drives the camera. */
+    public boolean isTracking() {
+        return hasTarget && tracking;
     }
 
     /** The curve, for configuration (speed, overshoot, drift). */
@@ -188,7 +211,10 @@ public final class InputSmoother implements IInputSmoother, IContainerClicker {
             return false;
         }
         RotationMode mode = target.mode();
-        boolean sameStream = hasTarget && rotationOwner == lease && rotationMode == mode;
+        if (target.tracking() && mode == RotationMode.VISIBLE) {
+            return setTrackingTarget(lease, target);
+        }
+        boolean sameStream = hasTarget && rotationOwner == lease && rotationMode == mode && !trackRequested;
         if (sameStream) {
             double dYaw = RotationCurve.wrapDegrees((double) target.yaw() - requestedYaw);
             double dPitch = (double) target.pitch() - requestedPitch;
@@ -218,6 +244,8 @@ public final class InputSmoother implements IInputSmoother, IContainerClicker {
             silentReturning = true; // the server angle eases back to the camera instead of jumping
         }
         lagging = false;
+        trackRequested = false;
+        tracking = false;
         momentum.cancel(); // automation owns the camera again
         curve.start(fromYaw, fromPitch, target.yaw(), target.pitch(), target.speed(),
                 humanTurnSeconds(lease, target, fromYaw, fromPitch));
@@ -233,6 +261,71 @@ public final class InputSmoother implements IInputSmoother, IContainerClicker {
         return true;
     }
 
+    /**
+     * A tracking sample: the first one of a stream engages the tracker at the camera's current angular velocity (or,
+     * when the target is more than {@link #TRACK_ENGAGE_DEG} away, approaches it with the curve first); later ones
+     * only update the tracker's target estimate, so the camera's angular velocity stays continuous.
+     */
+    private boolean setTrackingTarget(ControlLease lease, RotationTarget target) {
+        tracker.setMaxSpeed(curve.baseSpeed() * target.speed());
+        boolean sameStream = hasTarget && rotationOwner == lease && rotationMode == RotationMode.VISIBLE
+                && trackRequested;
+        if (sameStream) {
+            tracker.sample(target.yaw(), target.pitch(), (tick - trackSampleTick) * TICK_SECONDS);
+            trackSampleTick = tick;
+            requestedYaw = target.yaw();
+            requestedPitch = target.pitch();
+            if (!tracking && curve.isActive()) {
+                double dYaw = RotationCurve.wrapDegrees((double) target.yaw() - curve.targetYaw());
+                double dPitch = (double) target.pitch() - curve.targetPitch();
+                if (Math.abs(dYaw) < RETARGET_BLEND_DEG && Math.abs(dPitch) < RETARGET_BLEND_DEG) {
+                    curve.retarget(target.yaw(), target.pitch()); // the approach bends toward the moving target
+                } else {
+                    engageTracker(); // the target ran away from the approach: pursue it continuously
+                }
+            }
+            return true;
+        }
+        float fromYaw = backend.yaw();
+        float fromPitch = backend.pitch();
+        if (silentActive) {
+            silentActive = false;
+            silentReturning = true; // the server angle eases back to the camera instead of jumping
+        }
+        // a VISIBLE motion already running (another stream, or a curve) hands over its velocity; from rest it is 0
+        boolean moving = hasTarget && rotationMode == RotationMode.VISIBLE && (curve.isActive() || lagging
+                || tracking);
+        double velYaw = moving ? lastVelYaw : 0.0;
+        double velPitch = moving ? lastVelPitch : 0.0;
+        lagging = false;
+        momentum.cancel(); // automation owns the camera again
+        tracker.setDriftAmplitude(Math.min(curve.driftAmplitude(), RotationTracker.DEFAULT_DRIFT_DEG));
+        tracker.reset(target.yaw(), target.pitch());
+        trackSampleTick = tick;
+        rotationOwner = lease;
+        rotationMode = RotationMode.VISIBLE;
+        hasTarget = true;
+        trackRequested = true;
+        requestedYaw = target.yaw();
+        requestedPitch = target.pitch();
+        if (!moving && RotationCurve.turnDistance(fromYaw, fromPitch, target.yaw(), target.pitch())
+                > TRACK_ENGAGE_DEG) {
+            tracking = false;
+            curve.start(fromYaw, fromPitch, target.yaw(), target.pitch(), target.speed(),
+                    humanTurnSeconds(lease, target, fromYaw, fromPitch));
+        } else {
+            tracking = true;
+            tracker.engage(velYaw, velPitch);
+        }
+        return true;
+    }
+
+    /** Hands the camera from the approach curve to the tracker at the camera's current angular velocity. */
+    private void engageTracker() {
+        tracking = true;
+        tracker.engage(lastVelYaw, lastVelPitch);
+    }
+
     @Override
     public void clearRotation(ControlLease lease) {
         if (lease != null && lease == rotationOwner) {
@@ -244,6 +337,8 @@ public final class InputSmoother implements IInputSmoother, IContainerClicker {
         hasTarget = false;
         rotationOwner = null;
         lagging = false;
+        trackRequested = false;
+        tracking = false;
         if (silentActive) {
             silentActive = false;
             silentReturning = true; // eased back in postTick: no server-side snap on release or Stop-All
@@ -252,6 +347,9 @@ public final class InputSmoother implements IInputSmoother, IContainerClicker {
 
     @Override
     public boolean isRotationSettled(float toleranceDeg) {
+        if (hasTarget && tracking) {
+            return !lagging && tracker.lastError() <= toleranceDeg;
+        }
         return !hasTarget || (!lagging && curve.remainingError() <= toleranceDeg);
     }
 
@@ -267,7 +365,7 @@ public final class InputSmoother implements IInputSmoother, IContainerClicker {
 
     /** True while a VISIBLE rotation is still moving the camera. */
     public boolean isVisibleRotationMoving() {
-        return hasTarget && rotationMode == RotationMode.VISIBLE && (curve.isActive() || lagging);
+        return hasTarget && rotationMode == RotationMode.VISIBLE && (curve.isActive() || lagging || trackRequested);
     }
 
     /**
@@ -288,7 +386,7 @@ public final class InputSmoother implements IInputSmoother, IContainerClicker {
         if (momentum.isActive()) {
             advanceMomentum(dtSeconds);
         }
-        if (!hasTarget || rotationMode != RotationMode.VISIBLE || (!curve.isActive() && !lagging)) {
+        if (!hasTarget || rotationMode != RotationMode.VISIBLE || (!curve.isActive() && !lagging && !trackRequested)) {
             lastVelYaw = 0.0;
             lastVelPitch = 0.0;
             return;
@@ -301,13 +399,30 @@ public final class InputSmoother implements IInputSmoother, IContainerClicker {
             return;
         }
         double dt = Math.min(Math.max(dtSeconds, 0.0), 0.1);
-        curve.advance(dt);
-        // no-snap rule: whatever the curve asks for, the camera moves at most the hard cap from where it is now
-        // (measured from the live camera, so the user's own mouse is never limited or fought)
         float fromYaw = backend.yaw();
         float fromPitch = backend.pitch();
-        lagging = !RotationLimits.step(fromYaw, fromPitch, curve.yaw(), curve.pitch(),
+        float wantYaw;
+        float wantPitch;
+        if (trackRequested && !tracking && (!curve.isActive()
+                || tracker.errorFrom(fromYaw, fromPitch) <= TRACK_ENGAGE_DEG)) {
+            engageTracker(); // the approach is close enough (or done): continue at the camera's current velocity
+        }
+        if (tracking) {
+            tracker.advance(dt, fromYaw, fromPitch);
+            wantYaw = tracker.yaw();
+            wantPitch = tracker.pitch();
+        } else {
+            curve.advance(dt);
+            wantYaw = curve.yaw();
+            wantPitch = curve.pitch();
+        }
+        // no-snap rule: whatever the curve or tracker asks for, the camera moves at most the hard cap from where it
+        // is now (measured from the live camera, so the user's own mouse is never limited or fought)
+        lagging = !RotationLimits.step(fromYaw, fromPitch, wantYaw, wantPitch,
                 RotationLimits.MAX_DEG_PER_SEC * dt, limited);
+        if (tracking) {
+            lagging = false; // the tracker plans within the cap and runs until cleared; it never trails a finished plan
+        }
         backend.setRotation(limited[0], limited[1]);
         if (dt > 0.0) {
             lastVelYaw = ((double) limited[0] - fromYaw) / dt;
@@ -546,7 +661,7 @@ public final class InputSmoother implements IInputSmoother, IContainerClicker {
         }
         if (rotationOwner == lease) {
             boolean handOver = manualLookPreempting && momentumEnabled && rotationMode == RotationMode.VISIBLE
-                    && (curve.isActive() || lagging);
+                    && (curve.isActive() || lagging || trackRequested);
             clearRotationInternal();
             if (handOver) {
                 momentum.start(lastVelYaw, lastVelPitch, backend.invertMouseY()); // A10: ease out instead of stopping dead
