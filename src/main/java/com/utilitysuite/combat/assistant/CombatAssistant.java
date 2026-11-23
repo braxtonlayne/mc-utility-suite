@@ -1014,7 +1014,8 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
 
     /** The target is read as retreating and the "Chase a retreating opponent" setting is on. */
     private boolean oppRetreating() {
-        return settings.chaseRetreat && opponents.retreating(targetId);
+        // players only: a mob wandering off is not a fleeing duellist, and must not switch off the low-health back-off
+        return settings.chaseRetreat && targetIsPlayer && opponents.retreating(targetId);
     }
 
     private static final double PLAYER_MAX_HEALTH = 20.0;
