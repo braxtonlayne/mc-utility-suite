@@ -70,6 +70,22 @@ final class ArenaClient {
             H.setting(CombatAssistant.ID, CombatSettings.AIM_SPEED, Double.parseDouble(aimSpeed));
             PlaytestMod.LOG.info("[arena-client] experiment: aim speed x{}", aimSpeed);
         }
+        // experiments only: -Dutilitysuite.arena.settings=velocity_lead=false,lead_ticks=1 (combat assistant keys)
+        String extra = System.getProperty("utilitysuite.arena.settings");
+        if (extra != null && !extra.isBlank()) {
+            for (String kv : extra.split(",")) {
+                int eq = kv.indexOf('=');
+                if (eq <= 0) {
+                    continue;
+                }
+                String k = kv.substring(0, eq).trim();
+                String v = kv.substring(eq + 1).trim();
+                Object val = v.equals("true") || v.equals("false") ? (Object) Boolean.parseBoolean(v)
+                        : v.matches("-?[0-9.]+") ? (Object) Double.parseDouble(v) : v;
+                H.setting(CombatAssistant.ID, k, val);
+                PlaytestMod.LOG.info("[arena-client] experiment: {} = {}", k, val);
+            }
+        }
         H.enable(AutoRespawn.ID, true);
         configured = true;
         PlaytestMod.LOG.info("[arena-client] configured: combat assistant proactive on players, duel mode, auto"

@@ -85,7 +85,7 @@ public final class CombatSettings {
     public double allyDefenseRange = 12.0;
     public int losTimeoutTicks = 100;
     public float aimSpeed = 1.0f;
-    public boolean velocityLead = true;
+    public boolean velocityLead = false;
     public double leadTicks = 2.0;
     public boolean critSync = true;
     public double spacingMin = 2.7;
@@ -157,7 +157,7 @@ public final class CombatSettings {
         allyDefenseRange = p.getDouble(id, ALLY_DEFENSE_RANGE, 12.0);
         losTimeoutTicks = p.getInt(id, LOS_TIMEOUT_TICKS, 100);
         aimSpeed = (float) p.getDouble(id, AIM_SPEED, 1.0);
-        velocityLead = p.getBool(id, VELOCITY_LEAD, true);
+        velocityLead = p.getBool(id, VELOCITY_LEAD, false);
         leadTicks = p.getDouble(id, LEAD_TICKS, 2.0);
         critSync = p.getBool(id, CRIT_SYNC, true);
         spacingMin = p.getDouble(id, SPACING_MIN, 2.7);
@@ -281,8 +281,10 @@ public final class CombatSettings {
                         "Disengage after the target has been out of sight this long.").asAdvanced(),
                 SettingSpec.decimal(AIM_SPEED, "Aim speed", 1.0, 0.25, 3.0, "Aim",
                         "Multiplier on the smoother's camera speed.").asAdvanced(),
-                SettingSpec.bool(VELOCITY_LEAD, "Lead moving targets", true, "Aim",
-                        "Aim slightly ahead of a moving target.").asAdvanced(),
+                SettingSpec.bool(VELOCITY_LEAD, "Lead moving targets", false, "Aim",
+                        "Aim slightly ahead of a moving target. Off by default: a melee hit lands where the crosshair"
+                                + " meets the box as your screen shows it, so leading it only aims past it (arena benchmark,"
+                                + " 2026-11-23: the lead put two thirds of ready swings off the box).").asAdvanced(),
                 SettingSpec.decimal(LEAD_TICKS, "Lead (ticks)", 2.0, 0.0, 6.0, "Aim",
                         "How far ahead to lead, in ticks of target movement.").asAdvanced(),
                 SettingSpec.bool(CRIT_SYNC, "Critical-hit timing", true, "Cooldown",

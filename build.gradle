@@ -87,6 +87,14 @@ neoForge {
             loadedMods = [mods.utilitysuite, mods.utilitysuite_devtest]
             systemProperty 'utilitysuite.mixinAudit', 'true'
             systemProperty 'utilitysuite.arena', 'true'
+            // experiments only: ./gradlew runArena -ParenaAimSpeed=1.875 (aim speed multiplier; the hard cap still applies)
+            if (project.hasProperty('arenaAimSpeed')) {
+                systemProperty 'utilitysuite.arena.aimSpeed', project.property('arenaAimSpeed').toString()
+            }
+            // experiments only: ./gradlew runArena -ParenaSettings=velocity_lead=false,anticipatory_aim=false
+            if (project.hasProperty('arenaSettings')) {
+                systemProperty 'utilitysuite.arena.settings', project.property('arenaSettings').toString()
+            }
             programArguments.addAll('--quickPlayMultiplayer', '127.0.0.1:25570', '--username', 'Dev')
         }
         // `./gradlew runCourse`: dev client that builds the parkour benchmark course in a fresh world and times the

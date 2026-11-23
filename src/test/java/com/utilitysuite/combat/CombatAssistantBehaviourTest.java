@@ -769,6 +769,7 @@ class CombatAssistantBehaviourTest {
         world.self.attackStrength = 0.2f;
         world.entities.get(TARGET).x = 3.0;
         engage();
+        assistant.config().velocityLead = true; // off by default since 2026-11-23; the feature needs it on
         tickWithFrames(40);
         assertEquals(-57.4f, backend.yaw, 3f, "aims where the strafe phase puts the target");
 
