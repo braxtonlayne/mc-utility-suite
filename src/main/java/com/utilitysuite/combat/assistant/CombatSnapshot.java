@@ -43,6 +43,11 @@ public final class CombatSnapshot {
     public double tx, ty, tz;
     public double minX, minY, minZ, maxX, maxY, maxZ;
     public double tvx, tvy, tvz;
+    /**
+     * The target's actual horizontal motion over the last tick (position minus last tick's position). On the client a
+     * remote player's {@link #tvx} is the last motion packet (knockback) and can stay stale; this cannot.
+     */
+    public double tdx, tdz;
     /** The target's body yaw. */
     public float targetYaw;
     /** True on the one tick the target's arm swing started (its attack cooldown was reset this tick). */

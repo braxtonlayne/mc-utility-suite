@@ -233,13 +233,14 @@ public final class MinecraftCombatWorld implements CombatWorld, LineOfSight.Soli
         out.maxX = b.maxX;
         out.maxY = b.maxY;
         out.maxZ = b.maxZ;
-        // the target's motion over the last tick from its positions, not getDeltaMovement(): on the client a remote
-        // player's delta movement is only what the last motion packet said (knockback), so it goes stale and reads
-        // as "walking in" while it stands still (arena, 2026-11-23: a 3-minute ravine stand-off never counted as a
-        // stall). Position deltas follow what the client actually shows.
-        out.tvx = t.getX() - t.xo;
-        out.tvy = t.getY() - t.yo;
-        out.tvz = t.getZ() - t.zo;
+        Vec3 v = t.getDeltaMovement();
+        out.tvx = v.x;
+        out.tvy = v.y;
+        out.tvz = v.z;
+        // its real motion from positions: a remote player's delta movement is the last motion packet and goes stale
+        // (arena, 2026-11-23: a still opponent read as walking in, so a 3-minute stand-off never counted as a stall)
+        out.tdx = t.getX() - t.xo;
+        out.tdz = t.getZ() - t.zo;
         out.targetBlocking = t.isBlocking();
         out.targetYaw = t.yBodyRot;
         out.targetHurtTime = t.hurtTime;

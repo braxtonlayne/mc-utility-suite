@@ -32,8 +32,8 @@ class StalemateDetectorTest {
         for (int t = 0; t < 120; t++) {
             double pace = Math.sin(t * 0.15) * 2.0;
             place(10.5, 56, 0.5, 7.5, 64, 0.5 + pace);
-            s.tvz = Math.cos(t * 0.15) * 0.3;
-            s.tvx = 0.0;
+            s.tdz = Math.cos(t * 0.15) * 0.3;
+            s.tdx = 0.0;
             d.observe(s, false);
         }
         assertTrue(d.unreachableNow());
@@ -45,7 +45,7 @@ class StalemateDetectorTest {
         for (int t = 0; t < 100; t++) {
             double sway = Math.sin(t * 0.2) * 0.8; // both sway in and out a little: the distance oscillates
             place(0.5 + sway, 64, 0.5, 7.5, 64, 0.5);
-            s.tvx = Math.cos(t * 0.3) * 0.2;
+            s.tdx = Math.cos(t * 0.3) * 0.2;
             d.observe(s, false);
         }
         assertFalse(d.unreachableNow());
@@ -58,8 +58,8 @@ class StalemateDetectorTest {
             double r = 3.0 + Math.sin(t * 0.25) * 0.4; // hovering at the edge of reach, strafing round
             double a = t * 0.05;
             place(r * Math.cos(a), 64, r * Math.sin(a), 0, 64, 0);
-            s.tvx = 0.1 * Math.sin(t * 0.7);
-            s.tvz = 0.1 * Math.cos(t * 0.7);
+            s.tdx = 0.1 * Math.sin(t * 0.7);
+            s.tdz = 0.1 * Math.cos(t * 0.7);
             d.observe(s, false);
             assertEquals(0, d.stallTicks(), "tick " + t);
         }
@@ -101,12 +101,12 @@ class StalemateDetectorTest {
     void aTargetWalkingInOrAChaseThatGainsIsNoStall() {
         for (int t = 0; t < 120; t++) {
             place(0.5, 64, 0.5, 20.5 - t * 0.15, 64, 0.5);
-            s.tvx = -0.15; // it walks in
+            s.tdx = -0.15; // it walks in
             d.observe(s, false);
         }
         assertEquals(0, d.stallTicks());
         StalemateDetector d2 = new StalemateDetector();
-        s.tvx = 0.0;
+        s.tdx = 0.0;
         for (int t = 0; t < 120; t++) {
             place(t * 0.1, 64, 0.5, 20.5, 64, 0.5); // we close in on a still target
             d2.observe(s, false);
@@ -138,7 +138,7 @@ class StalemateDetectorTest {
         Runnable body = () -> {
             t[0]++;
             place(10.5, 56, 0.5, 7.5, 64, 0.5 + (t[0] & 7) * 0.25);
-            s.tvz = (t[0] & 1) == 0 ? 0.2 : -0.2;
+            s.tdz = (t[0] & 1) == 0 ? 0.2 : -0.2;
             d.observe(s, (t[0] & 1023) == 0);
         };
         long bytes = AllocationProbe.measure(100_000, body);

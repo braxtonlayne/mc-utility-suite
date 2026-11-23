@@ -77,7 +77,7 @@ public final class StalemateDetector {
         double dz = s.pz - s.tz;
         double dy = s.ty - s.py;
         double h = Math.sqrt(dx * dx + dz * dz);
-        double toward = h > 0.5 ? (s.tvx * dx + s.tvz * dz) / h : 0.0; // + = the target closes in
+        double toward = h > 0.5 ? (s.tdx * dx + s.tdz * dz) / h : 0.0; // + = the target closes in (real motion)
         radial += (toward - radial) * RADIAL_ALPHA;
         distance = Math.sqrt(h * h + dy * dy);
         unreachableNow = unreachable(dy);

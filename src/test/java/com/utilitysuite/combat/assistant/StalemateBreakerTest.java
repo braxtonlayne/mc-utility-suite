@@ -200,7 +200,7 @@ class StalemateBreakerTest {
         for (int t = 0; t < 60 && b.phase() == StalemateBreaker.Phase.MEET; t++) {
             s.tx += 0.1; // it comes down and walks in
             s.ty = 64;
-            s.tvx = 0.2;
+            s.tdx = 0.2;
             tick(w);
         }
         assertEquals(StalemateBreaker.Phase.IDLE, b.phase());
