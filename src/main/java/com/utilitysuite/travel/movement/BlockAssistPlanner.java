@@ -8,7 +8,8 @@ import com.utilitysuite.travel.Packed;
  * <p>
  * The value of a future is a rollout in the physics replica: the player's own keys until they land, then what a
  * runner does next (hold forward, sprint, jump on every landing) for the rest of {@link #ROLLOUT_TICKS}; the value is
- * the progress along the heading minus {@link JumpSearch#FALL_WEIGHT} per point of fall damage, or
+ * the progress along the heading minus {@link JumpSearch#FALL_WEIGHT} per point of fall damage and
+ * {@link #DROP_WEIGHT} per block the lowest landing lies below the takeoff ground beyond the allowed drop, or
  * {@link JumpSearch#NO_LANDING} when a landing would kill or never comes. The baseline is that rollout as things
  * stand; each candidate adds one block under a point of the current trajectory, solid from the tick it can really be
  * placed:
@@ -19,6 +20,9 @@ import com.utilitysuite.travel.Packed;
  *   <li>the head turn from the current look to that face fits in time at the given turn speed (the no-snap cap), plus
  *       a tick to switch the hotbar slot when needed.</li>
  * </ul>
+ * Blocks are a last resort: no block is planned when the baseline's first landing already makes the jump (on the
+ * route's height band, and the runner then gets at least {@link #MADE_PROGRESS} further within {@link #MADE_WINDOW}
+ * ticks: not stopped by a wall), and a candidate whose first landing is itself a drop below that band is no save.
  * The best candidate is kept when it beats the baseline by {@link #MARGIN} blocks (or lands where the baseline does
  * not). Covers the wall jump (a block under the player near the top of the jump: land on it, jump the wall) and the
  * gap that is one block too long (a block mid-gap).
@@ -36,6 +40,33 @@ public final class BlockAssistPlanner {
 
     /** NATURAL look style: favour faces along the run. 0 (FREE): any face, whatever is quickest. */
     public double headingWeight = NATURAL_HEADING_WEIGHT;
+
+    /**
+     * Drop the run may take below the ground it jumped from without a penalty: a fall-damage-free step-down (the
+     * course's designed drops are 1 to 3). A deeper first-or-later landing costs {@link #DROP_WEIGHT} per block, so
+     * a future that leaves the route for the floor far below never wins on the flat runway it finds there (owner,
+     * 2026-11-23: "the drop needs to be penalized heavily unless that's what the player wants").
+     */
+    public static final double FREE_DROP = 3.0;
+    public static final double DROP_WEIGHT = 8.0;
+    /** After the first landing the run must carry on this far along the heading for the jump to count as made. */
+    public static final double MADE_PROGRESS = 1.0;
+    /** Ticks after the first landing in which the run must carry on by {@link #MADE_PROGRESS} (a wall stops it). */
+    public static final int MADE_WINDOW = 15;
+
+    /** Feet height of the ground the jump left from (NaN: the start state's height). Set by the caller. */
+    public double groundY = Double.NaN;
+    /**
+     * Drop wanted by the player (the intent target lies that far below the ground), never less than
+     * {@link #FREE_DROP}. Set by the caller each plan; {@link #FREE_DROP} when nothing lower is aimed at.
+     */
+    public double dropAllowance = FREE_DROP;
+
+    // first landing of the last rollout (baseline read-out)
+    private double rollFirstY;
+    private double rollFirstProgress;
+    private double baselineFirstY;
+    private double baselineFirstProgress;
 
     /** Direction ids in {@code net.minecraft.core.Direction#get3DDataValue} order. */
     public static final int DOWN = 0, UP = 1, NORTH = 2, SOUTH = 3, WEST = 4, EAST = 5;
@@ -78,6 +109,13 @@ public final class BlockAssistPlanner {
             return false;
         }
         baseline = rollout(now, heading, sprint, forward, strafe, health, w, Long.MIN_VALUE, 0);
+        baselineFirstY = rollFirstY;
+        baselineFirstProgress = rollFirstProgress;
+        if (baseline > JumpSearch.NO_LANDING && made(refY(now), rollFirstY, rollFirstProgress)) {
+            // blocks only when the jump cannot be made otherwise (owner, 2026-11-23): this one lands without help
+            value = baseline;
+            return false;
+        }
         traceTrajectory(now, heading, sprint, forward, strafe, w);
         collectCandidates(w);
         double best = Double.NEGATIVE_INFINITY;
@@ -88,6 +126,9 @@ public final class BlockAssistPlanner {
                 continue;
             }
             double v = rollout(now, heading, sprint, forward, strafe, health, w, c, t + 1);
+            if (rollFirstY < refY(now) - allowance() - 1.0e-3) {
+                continue; // a block that only changes where on the floor below the run lands is no save
+            }
             if (v > best) {
                 best = v;
                 cell = c;
@@ -261,6 +302,12 @@ public final class BlockAssistPlanner {
         boolean landed = false;
         boolean airborne = !now.onGround;
         double damage = 0;
+        double minLandY = Double.POSITIVE_INFINITY;
+        rollFirstY = Double.NEGATIVE_INFINITY;
+        rollFirstProgress = 0;
+        int firstTick = -1;
+        double firstAlong = 0;
+        boolean carried = false;
         for (int t = 1; t <= ROLLOUT_TICKS; t++) {
             plus.tick = t;
             double fallBefore = sim.fallDistance;
@@ -276,16 +323,60 @@ public final class BlockAssistPlanner {
                     return JumpSearch.NO_LANDING;
                 }
                 damage += dmg;
+                if (!landed) {
+                    rollFirstY = sim.y;
+                    firstTick = t;
+                    firstAlong = (sim.x - now.x) * hx + (sim.z - now.z) * hz;
+                }
+                minLandY = Math.min(minLandY, sim.y);
                 landed = true;
+            }
+            if (landed && t == firstTick + MADE_WINDOW) {
+                rollFirstProgress = (sim.x - now.x) * hx + (sim.z - now.z) * hz - firstAlong;
+                carried = true;
             }
             if (sim.y < now.y - 64) {
                 return JumpSearch.NO_LANDING;
             }
         }
+        if (landed && !carried) {
+            rollFirstProgress = (sim.x - now.x) * hx + (sim.z - now.z) * hz - firstAlong;
+        }
         if (!landed) {
             return JumpSearch.NO_LANDING;
         }
-        return (sim.x - now.x) * hx + (sim.z - now.z) * hz - JumpSearch.FALL_WEIGHT * damage;
+        return (sim.x - now.x) * hx + (sim.z - now.z) * hz - JumpSearch.FALL_WEIGHT * damage
+                - dropPenalty(refY(now) - minLandY, allowance());
+    }
+
+    /** Height the run is measured against: the ground the jump left from, or the start state's height. */
+    private double refY(MovementPhysics now) {
+        return Double.isNaN(groundY) ? now.y : groundY;
+    }
+
+    /** True when a first landing counts as the jump made: on the route's height band and carried forward. */
+    private boolean made(double ref, double firstY, double firstProgress) {
+        return firstY >= ref - allowance() - 1.0e-3
+                && firstProgress >= MADE_PROGRESS;
+    }
+
+    /** The drop allowed without a penalty this plan: what the player aims at, never less than {@link #FREE_DROP}. */
+    private double allowance() {
+        return Math.max(FREE_DROP, dropAllowance);
+    }
+
+    /** {@link #DROP_WEIGHT} per block of {@code drop} beyond {@code allowance} (never less than FREE_DROP). */
+    public static double dropPenalty(double drop, double allowance) {
+        return DROP_WEIGHT * Math.max(0.0, drop - Math.max(FREE_DROP, allowance));
+    }
+
+    /** First landing height of the no-block baseline of the last {@link #plan}. */
+    public double baselineFirstY() {
+        return baselineFirstY;
+    }
+
+    public double baselineFirstProgress() {
+        return baselineFirstProgress;
     }
 
     /** The world plus one block that exists from a given tick (the planned placement). */

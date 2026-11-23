@@ -86,6 +86,76 @@ class BlockAssistPlannerTest {
         assertTrue(Math.abs(b.aimYaw()) < 60f, "aims ahead (yaw " + b.aimYaw() + "), not behind or aside");
     }
 
+    /** As {@link #gap} but over a wide flat floor 9 below (feet at 1): survivable, and a gap-free runway. */
+    static Grid gapOverFloor(int air) {
+        Grid g = new Grid();
+        g.fill(-3, 9, -10, 3, 9, 0);
+        g.fill(-3, 9, 1 + air, 3, 9, 30);
+        g.fill(-20, 0, -20, 20, 0, 60);
+        return g;
+    }
+
+    @Test
+    void theDropPenaltyIsHeavyBeyondTheAllowance() {
+        assertEquals(0.0, BlockAssistPlanner.dropPenalty(2.0, 0.0), 1e-9, "a step-down inside FREE_DROP is free");
+        assertEquals(0.0, BlockAssistPlanner.dropPenalty(3.0, 0.0), 1e-9);
+        assertEquals(6 * BlockAssistPlanner.DROP_WEIGHT, BlockAssistPlanner.dropPenalty(9.0, 0.0), 1e-9,
+                "the course's glass floor 9 below: 6 blocks past the free drop");
+        assertEquals(0.0, BlockAssistPlanner.dropPenalty(9.0, 9.5), 1e-9, "a drop the player aims at is free");
+    }
+
+    @Test
+    void aJumpThatLandsWithoutHelpGetsNoBlockEvenOverAFloor() {
+        // owner, 2026-11-23: blocks only when the jump could not be made otherwise
+        for (int air = 1; air <= 3; air++) {
+            Grid g = gapOverFloor(air);
+            MovementPhysics p = new MovementPhysics().set(0.5, 10, 1.28, 0, -0.0784, 0.153, true);
+            p.tick(1, 0, 0f, true, true, g);
+            BlockAssistPlanner b = new BlockAssistPlanner();
+            b.groundY = 10;
+            assertFalse(b.plan(p, 0f, true, 1, 0, 20f, 0f, 20f, TURN, 0, g), air + " air clears on its own");
+            assertEquals(10.0, b.baselineFirstY(), 1e-6, air + " air: the baseline lands on the far side");
+        }
+    }
+
+    @Test
+    void aGapTooLongOverAFloorStillGetsTheMidGapBlockNotTheFloor() {
+        Grid g = gapOverFloor(4);
+        MovementPhysics p = new MovementPhysics().set(0.5, 10, 1.28, 0, -0.0784, 0.153, true);
+        p.tick(1, 0, 0f, true, true, g);
+        BlockAssistPlanner b = new BlockAssistPlanner();
+        b.groundY = 10;
+        assertTrue(b.plan(p, 0f, true, 1, 0, 20f, 0f, 20f, TURN, 0, g),
+                "baseline " + b.baseline() + " best " + b.value());
+        assertTrue(b.baselineFirstY() < 2.0, "without a block the run lands on the floor");
+        assertEquals(9, Packed.y(b.cell()), "the save keeps the run on its height");
+        assertTrue(b.value() > b.baseline() + BlockAssistPlanner.MARGIN);
+    }
+
+    @Test
+    void theFloorRunwayNeverOutscoresTheRoute() {
+        // the baseline drops 9 and then sprints along a flat floor: its value carries the heavy drop penalty
+        Grid g = gapOverFloor(4);
+        MovementPhysics p = new MovementPhysics().set(0.5, 10, 1.28, 0, -0.0784, 0.153, true);
+        p.tick(1, 0, 0f, true, true, g);
+        BlockAssistPlanner b = new BlockAssistPlanner();
+        b.groundY = 10;
+        b.plan(p, 0f, true, 1, 0, 20f, 0f, 20f, TURN, 0, g);
+        assertTrue(b.baseline() < -BlockAssistPlanner.DROP_WEIGHT * 5, "baseline " + b.baseline());
+    }
+
+    @Test
+    void aDropThePlayerAimsAtIsAJumpMade() {
+        // the same floor, but the player's intent target is the floor itself: dropping there is what they want
+        Grid g = gapOverFloor(6);
+        MovementPhysics p = new MovementPhysics().set(0.5, 10, 1.28, 0, -0.0784, 0.153, true);
+        p.tick(1, 0, 0f, true, true, g);
+        BlockAssistPlanner b = new BlockAssistPlanner();
+        b.groundY = 10;
+        b.dropAllowance = 9.5;
+        assertFalse(b.plan(p, 0f, true, 1, 0, 20f, 0f, 20f, TURN, 0, g), "no block against the player's own drop");
+    }
+
     @Test
     void theBrainFlagsAnEdgeNothingClears() {
         MovementPhysics run = new MovementPhysics().set(0.5, 10, 1.27, 0, -0.0784, 0.153, true);

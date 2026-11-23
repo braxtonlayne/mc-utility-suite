@@ -172,6 +172,8 @@ public final class MovementAssist implements IModule, IConfigurable {
     private final SupportRegion landingTop = new SupportRegion();
     private double topX0, topZ0, topX1, topZ1;
     private final IntentEstimator intent = new IntentEstimator();
+    /** Feet height of the last ground the body stood on (the takeoff of the current jump). */
+    private double jumpGroundY = Double.NaN;
     private boolean turnGain = true;
     private double turnGainStrength = 0.25;
     /** Turn gain is allowed by the legit level (never on Legit, also for a Legit profile without the key). */
@@ -438,6 +440,13 @@ public final class MovementAssist implements IModule, IConfigurable {
                 turnGainRequested = true;
             }
         }
+        // the block planner measures drops from the ground the jump left from; a lower intent target is a wanted drop
+        if (now.onGround) {
+            jumpGroundY = now.y;
+        }
+        blocks.planner.groundY = jumpGroundY;
+        blocks.planner.dropAllowance = intent.hasTarget() && intent.targetTopY() < jumpGroundY
+                ? jumpGroundY - intent.targetTopY() + 0.5 : BlockAssistPlanner.FREE_DROP;
         boolean blockJump = false;
         if (useBlocks && brain.edgeNoLanding() && !blocks.active() && now.onGround
                 && ParkourBlocks.blockSlot(p.getInventory(), mc.level) >= 0) {
