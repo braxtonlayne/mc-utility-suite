@@ -120,6 +120,44 @@ public final class ShieldDuel {
         return want;
     }
 
+    // ---- circling probe: does the holder turn with us? ------------------------------------------------------------
+
+    /** Circling ticks after which a holder that never let us off its axis counts as turning with us. */
+    public static final int TRACK_PROBE_TICKS = 10;
+    /** Largest angle off its view (degrees) we may reach in the probe and still count it as turning with us. */
+    public static final double TRACK_DEG = 20.0;
+
+    private int circleTicks;
+    private double circleMaxOff;
+    private boolean tracks;
+
+    /**
+     * One tick of circling its raised shield, at {@code offAxisDeg} off its view. After {@value #TRACK_PROBE_TICKS}
+     * ticks without ever getting {@value #TRACK_DEG} degrees round, it turns as fast as we circle: circling gains
+     * nothing against it for the rest of the fight.
+     *
+     * @return {@link #tracksUs()}
+     */
+    public boolean noteCircling(double offAxisDeg) {
+        circleTicks++;
+        circleMaxOff = Math.max(circleMaxOff, offAxisDeg);
+        if (circleTicks >= TRACK_PROBE_TICKS && circleMaxOff < TRACK_DEG) {
+            tracks = true;
+        }
+        return tracks;
+    }
+
+    /** Its shield came down: the next raise starts a new probe (a verdict already reached stays). */
+    public void endCircling() {
+        circleTicks = 0;
+        circleMaxOff = 0.0;
+    }
+
+    /** The holder turns with us (see {@link #noteCircling}). */
+    public boolean tracksUs() {
+        return tracks;
+    }
+
     /** Our own front cone (legit rule): the opponent is within {@code coneDeg} of our view. */
     public static boolean inFrontCone(float ownYaw, double px, double pz, double tx, double tz, double coneDeg) {
         return offAxisDeg(ownYaw, px, pz, tx, tz) <= coneDeg;
@@ -157,6 +195,9 @@ public final class ShieldDuel {
         heldTicks = 0;
         sinceLower = 1 << 20;
         rest = 0;
+        circleTicks = 0;
+        circleMaxOff = 0.0;
+        tracks = false;
     }
 
     /**

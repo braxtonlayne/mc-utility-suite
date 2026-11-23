@@ -1,5 +1,6 @@
 package com.utilitysuite.combat.assistant;
 
+import com.utilitysuite.combat.tactics.GearRead;
 import com.utilitysuite.combat.tactics.HitTradeSolver;
 import com.utilitysuite.combat.tactics.OpponentModel;
 import com.utilitysuite.combat.tactics.TradeInput;
@@ -48,8 +49,21 @@ public final class TradeDriver {
     /** Opponent horizontal speed (blocks per tick) above which it is assumed to sprint. */
     static final double SPRINT_SPEED = 0.22;
 
+    /** Opponent reach (eye to box) assumed until its hits taught us better: vanilla's 3.0. */
+    public static final double DEFAULT_REACH = 3.0;
+
     private final Step step;
     private final TradeInput in = new TradeInput();
+    /** Use the learned reach and post-hit stun of the opponent (off: reach 3.0, no stun). */
+    private boolean learnThreat;
+    /** A retreating opponent is no immediate threat (off: it is read like any other). */
+    private boolean chaseRetreat;
+
+    /** Which opponent reads feed the solver (set from the settings by the assistant; both off by default). */
+    public void useReads(boolean learnThreat, boolean chaseRetreat) {
+        this.learnThreat = learnThreat;
+        this.chaseRetreat = chaseRetreat;
+    }
 
     // own cooldown estimate
     private float lastStrength = -1f;
@@ -149,7 +163,7 @@ public final class TradeDriver {
         t.ovy = s.tvy;
         t.ovz = s.tvz;
         t.oOnGround = s.targetOnGround;
-        t.oReach = 3.0;
+
         t.oUsesCooldown = opponentPlayer;
         t.oCooldownTicks = opponents.cooldownTicks(targetId);
         t.oReadyIn = readCooldown ? Math.max(0, opponents.attackReadyIn(targetId, now)) : 0;
@@ -187,6 +201,18 @@ public final class TradeDriver {
         t.horizon = Math.max(6, Math.min(8, horizon));
         t.takenWeight = takenWeight;
         t.allowJump = allowJump;
+
+        // threat reads from the opponent model (settings "Learn their reach and recovery", "Chase a retreating
+        // opponent"); both off = the plain model above
+        boolean learned = learnThreat && opponentPlayer && opponents.reachLearned(targetId);
+        t.oReach = learned ? opponents.learnedReach(targetId, DEFAULT_REACH) : DEFAULT_REACH;
+        t.hoverRelative = learned;
+        t.oHitStun = learnThreat && opponentPlayer ? opponents.hitStun(targetId) : 0;
+        if (chaseRetreat && opponents.retreating(targetId)) {
+            // facing away and running: no immediate threat, so a hit landed is worth the step in
+            t.oReadyIn = t.horizon + 1;
+            t.takenWeight = GearRead.MIN_WEIGHT;
+        }
 
         // shield state from the shield duel stage: used only when written on this fight tick (never stale)
         ShieldFeed f = SHIELD_FEED;

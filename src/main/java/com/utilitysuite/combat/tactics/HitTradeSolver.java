@@ -54,6 +54,8 @@ public final class HitTradeSolver {
     static final double POSITION_WEIGHT = 0.15;
     /** Width of the "just outside reach" band. */
     static final double SPACING_BAND = 0.6;
+    /** Width of the band past a learned reach ({@link TradeInput#hoverRelative}) when ours is not longer. */
+    static final double LEARNED_BAND = 0.25;
     /** "Nearly charged" at the end of the horizon: at most this many ticks until ready. */
     static final double NEARLY_READY = 2.0;
     /** Sprint closing speed (blocks per tick, rounded down) used to judge how far away our window still is. */
@@ -225,6 +227,9 @@ public final class HitTradeSolver {
                 }
                 sCharge = sPeriod;
                 oHurt = HURT_IMMUNITY;
+                if (!oSprint && in.oHitStun > 0 && oCharge < in.oHitStun) {
+                    oCharge = in.oHitStun; // its learned recovery: no answer for a few ticks, step in after the hit
+                }
                 // a simultaneous opponent swing stays charged and is re-checked next tick, after our knockback
                 oCan = false;
             }
@@ -275,7 +280,10 @@ public final class HitTradeSolver {
         if (oDist <= in.oReach) {
             return oReady ? -1.0 : -0.25;
         }
-        double over = oDist - in.oReach - SPACING_BAND;
+        // learned reach: the band ends at our own reach when theirs is shorter (we sit where only we can hit), and
+        // LEARNED_BAND past theirs otherwise (the edge, one step from a hit)
+        double band = in.hoverRelative ? Math.max(LEARNED_BAND, in.sReach - in.oReach) : SPACING_BAND;
+        double over = oDist - in.oReach - band;
         return over <= 0.0 ? 1.0 : 1.0 - Math.min(2.0, over);
     }
 
@@ -304,7 +312,7 @@ public final class HitTradeSolver {
     }
 
     /** Squared distance from the attacker's eye to the nearest point of the victim's box. */
-    static double reachSq(double ax, double ay, double az, double vx, double vy, double vz) {
+    public static double reachSq(double ax, double ay, double az, double vx, double vy, double vz) {
         double eyeY = ay + EYE;
         double ddx = Math.max(vx - HALF_WIDTH - ax, Math.max(0.0, ax - (vx + HALF_WIDTH)));
         double ddy = Math.max(vy - eyeY, Math.max(0.0, eyeY - (vy + HEIGHT)));

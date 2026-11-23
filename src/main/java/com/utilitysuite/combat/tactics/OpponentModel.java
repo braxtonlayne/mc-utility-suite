@@ -35,6 +35,62 @@ public final class OpponentModel {
     /** Fight-clock tick until which the opponent's shield is disabled by our axe hit (Long.MIN_VALUE = not known). */
     private final long[] shieldDisabledUntil = new long[MAX_OPPONENTS];
 
+    // ---- threat reads (reach, post-hit stun, healing, pace, retreat) -------------------------------------------------
+    /** Eye-to-box distance (its eye to our box) at its hits on us, ring per slot. */
+    private final float[] reachSample = new float[MAX_OPPONENTS * REACH_RING];
+    private final int[] reachHead = new int[MAX_OPPONENTS];
+    private final int[] reachCount = new int[MAX_OPPONENTS];
+    /** Tick of our last landed hit (Long.MIN_VALUE = none) and whether a stun sample is still open for it. */
+    private final long[] ownHitTick = new long[MAX_OPPONENTS];
+    private final boolean[] stunOpen = new boolean[MAX_OPPONENTS];
+    /** Ticks from our landed hit (it was charged) to its next swing, ring per slot. */
+    private final byte[] stunSample = new byte[MAX_OPPONENTS * STUN_RING];
+    private final int[] stunHead = new int[MAX_OPPONENTS];
+    private final int[] stunCount = new int[MAX_OPPONENTS];
+    /** Health seen last tick (NaN = none) and its rises (tick, points) for the heal-rate read. */
+    private final float[] lastHealth = new float[MAX_OPPONENTS];
+    private final long[] healTick = new long[MAX_OPPONENTS * HEAL_RING];
+    private final float[] healAmount = new float[MAX_OPPONENTS * HEAL_RING];
+    private final int[] healHead = new int[MAX_OPPONENTS];
+    /** Average closing speed on ticks it ran at us (NaN = never seen). */
+    private final double[] chaseSpeed = new double[MAX_OPPONENTS];
+    /** Retreat read: consecutive qualifying ticks, and the read itself. */
+    private final int[] retreatRun = new int[MAX_OPPONENTS];
+    private final boolean[] retreating = new boolean[MAX_OPPONENTS];
+
+    /** Reach samples kept per opponent, and the number needed before the learned reach replaces the default. */
+    public static final int REACH_RING = 8;
+    public static final int MIN_REACH_SAMPLES = 3;
+    /**
+     * Bounds of the learned reach (eye to box). The floor keeps a few close-range hits from claiming a short reach:
+     * we never plan inside 2.7 of an opponent on its hits alone.
+     */
+    public static final double MIN_LEARNED_REACH = 2.7;
+    public static final double MAX_LEARNED_REACH = 4.5;
+    /** Stun samples kept, the number needed, the cap of one sample and of the learned stun (ticks). */
+    public static final int STUN_RING = 4;
+    public static final int MIN_STUN_SAMPLES = 2;
+    public static final int STUN_SAMPLE_CAP = 20;
+    public static final int MAX_STUN = 5;
+    /** Heal rises kept, and the window of the heal-rate read (ticks). */
+    public static final int HEAL_RING = 32;
+    public static final int HEAL_WINDOW = 200;
+    /** A take-off this soon after our landed hit is knockback lift or a combo-break hop, not crit pressure. */
+    public static final int COMBO_BREAK_WINDOW = 20;
+    /** Closing speed (blocks per tick) from which a tick counts as running at us, and the average's smoothing. */
+    public static final double CHASE_MIN = 0.15;
+    public static final double CHASE_ALPHA = 0.15;
+    /** Retreat read: speed away from us, facing within this angle of straight away, for this many ticks. */
+    public static final double RETREAT_SPEED = 0.2;
+    public static final double RETREAT_FACING_DEG = 45.0;
+    /** Once read, the retreat holds while it faces within this angle of straight away (it slows at a wall). */
+    public static final double RETREAT_HOLD_DEG = 70.0;
+    public static final int RETREAT_TICKS = 5;
+    /** No swing seen for this many ticks before a retreat can be read. */
+    public static final int RETREAT_QUIET = 10;
+    private static final double COS_RETREAT_FACING = Math.cos(Math.toRadians(RETREAT_FACING_DEG));
+    private static final double COS_RETREAT_HOLD = Math.cos(Math.toRadians(RETREAT_HOLD_DEG));
+
     /** Attack speed clamp (attacks per second) and the period used when nothing is known (sword, 1.6/s). */
     public static final double MIN_ATTACK_SPEED = 0.25;
     public static final double MAX_ATTACK_SPEED = 16.0;
@@ -55,11 +111,30 @@ public final class OpponentModel {
             swingTick[i] = Long.MIN_VALUE;
             swingPeriod[i] = DEFAULT_COOLDOWN_TICKS;
             shieldDisabledUntil[i] = Long.MIN_VALUE;
+            clearReads(i);
         }
         for (int i = 0; i < hitTick.length; i++) {
             hitTick[i] = Long.MIN_VALUE;
             hitDamage[i] = 0f;
         }
+    }
+
+    private void clearReads(int s) {
+        reachHead[s] = 0;
+        reachCount[s] = 0;
+        ownHitTick[s] = Long.MIN_VALUE;
+        stunOpen[s] = false;
+        stunHead[s] = 0;
+        stunCount[s] = 0;
+        lastHealth[s] = Float.NaN;
+        healHead[s] = 0;
+        for (int k = 0; k < HEAL_RING; k++) {
+            healTick[s * HEAL_RING + k] = Long.MIN_VALUE;
+            healAmount[s * HEAL_RING + k] = 0f;
+        }
+        chaseSpeed[s] = Double.NaN;
+        retreatRun[s] = 0;
+        retreating[s] = false;
     }
 
     /** Slot of {@code id}, or -1. */
@@ -95,6 +170,7 @@ public final class OpponentModel {
         swingTick[oldest] = Long.MIN_VALUE;
         swingPeriod[oldest] = DEFAULT_COOLDOWN_TICKS;
         shieldDisabledUntil[oldest] = Long.MIN_VALUE;
+        clearReads(oldest);
         for (int k = 0; k < HIT_RING; k++) {
             hitTick[oldest * HIT_RING + k] = Long.MIN_VALUE;
             hitDamage[oldest * HIT_RING + k] = 0f;
@@ -123,9 +199,21 @@ public final class OpponentModel {
             // right of a forward vector (fx, fz) is (-fz, fx)
             lat = (float) (ovx * -fz + ovz * fx);
         }
+        if (len > 1.0e-3) {
+            double closing = ovx * fx + ovz * fz;
+            if (closing >= CHASE_MIN) {
+                double c = chaseSpeed[s];
+                chaseSpeed[s] = c != c ? closing : c + CHASE_ALPHA * (closing - c);
+            }
+        }
+        if (stunOpen[s] && tick - ownHitTick[s] >= STUN_SAMPLE_CAP) {
+            addStun(s, STUN_SAMPLE_CAP); // no swing for a second after our hit
+        }
         int i = s * RING + head[s];
         lateral[i] = lat;
-        takeoff[i] = (byte) (wasGround[s] && !onGround ? 1 : 0);
+        boolean took = wasGround[s] && !onGround;
+        boolean afterOurHit = ownHitTick[s] != Long.MIN_VALUE && tick - ownHitTick[s] <= COMBO_BREAK_WINDOW;
+        takeoff[i] = (byte) (took ? (afterOurHit ? 2 : 1) : 0);
         blocking[i] = (byte) (isBlocking ? 1 : 0);
         wasGround[s] = onGround;
         head[s] = (head[s] + 1) % RING;
@@ -173,7 +261,28 @@ public final class OpponentModel {
         }
         int hops = 0;
         for (int k = 0; k < count[s]; k++) {
-            hops += takeoff[s * RING + k];
+            if (takeoff[s * RING + k] != 0) {
+                hops++;
+            }
+        }
+        return hops * 20.0 / count[s];
+    }
+
+    /**
+     * Take-offs per second that are its own choice: {@link #hopRate} without the ones within
+     * {@value #COMBO_BREAK_WINDOW} ticks of our landed hit (the knockback's own lift and the hop it answers it with).
+     * Those are reactions to our hits, not crit pressure, and keeping distance from them only gives up tempo.
+     */
+    public double pressureHopRate(int id) {
+        int s = slotOf(id);
+        if (s < 0 || count[s] == 0) {
+            return 0.0;
+        }
+        int hops = 0;
+        for (int k = 0; k < count[s]; k++) {
+            if (takeoff[s * RING + k] == 1) {
+                hops++;
+            }
         }
         return hops * 20.0 / count[s];
     }
@@ -217,6 +326,11 @@ public final class OpponentModel {
     public void noteSwing(int id, long tick, double attackSpeed) {
         int s = slotFor(id, tick);
         lastSeen[s] = tick;
+        if (stunOpen[s] && tick > ownHitTick[s]) {
+            addStun(s, (int) Math.min(STUN_SAMPLE_CAP, tick - ownHitTick[s]));
+        }
+        retreatRun[s] = 0;
+        retreating[s] = false; // a swing ends any retreat read
         swingTick[s] = tick;
         if (attackSpeed != attackSpeed) {
             swingPeriod[s] = DEFAULT_COOLDOWN_TICKS; // NaN
@@ -289,5 +403,192 @@ public final class OpponentModel {
             return 0;
         }
         return (int) Math.min(Integer.MAX_VALUE, shieldDisabledUntil[s] - now);
+    }
+
+    // ---- reach learned from its hits -------------------------------------------------------------------------------
+
+    /**
+     * One of its hits landed on us while its eye was {@code eyeToBox} from the nearest point of our box (measured on
+     * the tick before the hit was seen, before our knockback moved us).
+     */
+    public void noteHitDistance(int id, long tick, double eyeToBox) {
+        if (!(eyeToBox >= 0.0) || eyeToBox > 16.0) {
+            return; // NaN or nonsense (a teleport between ticks)
+        }
+        int s = slotFor(id, tick);
+        lastSeen[s] = tick;
+        reachSample[s * REACH_RING + reachHead[s]] = (float) eyeToBox;
+        reachHead[s] = (reachHead[s] + 1) % REACH_RING;
+        if (reachCount[s] < REACH_RING) {
+            reachCount[s]++;
+        }
+    }
+
+    /** Hit distances recorded for this opponent (at most {@value #REACH_RING}). */
+    public int reachSamples(int id) {
+        int s = slotOf(id);
+        return s < 0 ? 0 : reachCount[s];
+    }
+
+    /** True once {@value #MIN_REACH_SAMPLES} hit distances were seen. */
+    public boolean reachLearned(int id) {
+        return reachSamples(id) >= MIN_REACH_SAMPLES;
+    }
+
+    /**
+     * Its effective reach (eye to box) from its hits on us: the second-longest hit seen (the longest with fewer than
+     * four samples, so one lag outlier does not stretch it), clamped to [{@value #MIN_LEARNED_REACH},
+     * {@value #MAX_LEARNED_REACH}]. {@code fallback} until {@value #MIN_REACH_SAMPLES} hits were seen. Allocation free.
+     */
+    public double learnedReach(int id, double fallback) {
+        int s = slotOf(id);
+        if (s < 0 || reachCount[s] < MIN_REACH_SAMPLES) {
+            return fallback;
+        }
+        float first = -1f;
+        float second = -1f;
+        for (int k = 0; k < reachCount[s]; k++) {
+            float v = reachSample[s * REACH_RING + k];
+            if (v > first) {
+                second = first;
+                first = v;
+            } else if (v > second) {
+                second = v;
+            }
+        }
+        double r = reachCount[s] >= 4 ? second : first;
+        return Math.max(MIN_LEARNED_REACH, Math.min(MAX_LEARNED_REACH, r));
+    }
+
+    // ---- recovery after our hit ----------------------------------------------------------------------------------
+
+    /**
+     * Our hit landed on it this tick. Opens a stun sample when its attack was charged (then the time to its next swing
+     * is its recovery, not its cooldown) and marks the window in which its take-offs are reactions, not pressure.
+     */
+    public void noteOwnHit(int id, long tick) {
+        int s = slotFor(id, tick);
+        lastSeen[s] = tick;
+        boolean charged = attackReadyIn(id, tick) == 0;
+        ownHitTick[s] = tick;
+        stunOpen[s] = charged;
+        retreatRun[s] = 0;
+    }
+
+    private void addStun(int s, int ticks) {
+        stunOpen[s] = false;
+        stunSample[s * STUN_RING + stunHead[s]] = (byte) Math.max(0, Math.min(STUN_SAMPLE_CAP, ticks));
+        stunHead[s] = (stunHead[s] + 1) % STUN_RING;
+        if (stunCount[s] < STUN_RING) {
+            stunCount[s]++;
+        }
+    }
+
+    /**
+     * Ticks after our landed hit in which it does not swing back although charged: the shortest recovery seen over
+     * the last {@value #STUN_RING} samples minus one (the swing tick itself), capped at {@value #MAX_STUN}; 0 until
+     * {@value #MIN_STUN_SAMPLES} samples (an unknown opponent can answer at once). The minimum keeps a fast answer from
+     * ever being forgotten behind slow ones.
+     */
+    public int hitStun(int id) {
+        int s = slotOf(id);
+        if (s < 0 || stunCount[s] < MIN_STUN_SAMPLES) {
+            return 0;
+        }
+        int min = Integer.MAX_VALUE;
+        for (int k = 0; k < stunCount[s]; k++) {
+            min = Math.min(min, stunSample[s * STUN_RING + k]);
+        }
+        return Math.max(0, Math.min(MAX_STUN, min - 1));
+    }
+
+    // ---- healing ---------------------------------------------------------------------------------------------------
+
+    /** Its health this tick; every rise is recorded as healing (regeneration, food, potions). */
+    public void noteHealth(int id, long tick, float health) {
+        int s = slotFor(id, tick);
+        lastSeen[s] = tick;
+        float last = lastHealth[s];
+        lastHealth[s] = health;
+        if (last == last && health > last + 0.01f) {
+            int i = s * HEAL_RING + healHead[s];
+            healTick[i] = tick;
+            healAmount[i] = health - last;
+            healHead[s] = (healHead[s] + 1) % HEAL_RING;
+        }
+    }
+
+    /** Health points it healed per second over the last {@value #HEAL_WINDOW} ticks. */
+    public double healRate(int id, long now) {
+        int s = slotOf(id);
+        if (s < 0) {
+            return 0.0;
+        }
+        double sum = 0;
+        for (int k = 0; k < HEAL_RING; k++) {
+            long t = healTick[s * HEAL_RING + k];
+            if (t != Long.MIN_VALUE && now >= t && now - t <= HEAL_WINDOW) {
+                sum += healAmount[s * HEAL_RING + k];
+            }
+        }
+        return sum * 20.0 / HEAL_WINDOW;
+    }
+
+    // ---- pace ------------------------------------------------------------------------------------------------------
+
+    /** Its average speed (blocks per tick) on ticks it ran at us; NaN when it never did. */
+    public double chaseSpeed(int id) {
+        int s = slotOf(id);
+        return s < 0 ? Double.NaN : chaseSpeed[s];
+    }
+
+    // ---- retreat ---------------------------------------------------------------------------------------------------
+
+    /**
+     * Retreat read, once per tick after {@link #observe}: it faces away from us (within {@value #RETREAT_FACING_DEG}
+     * degrees) and moves away at {@value #RETREAT_SPEED}+ blocks per tick for {@value #RETREAT_TICKS} ticks, with no
+     * swing for {@value #RETREAT_QUIET} ticks. Once read it holds while it keeps facing away (within
+     * {@value #RETREAT_HOLD_DEG} degrees, so slowing at a wall does not end it) and does not swing. A person facing
+     * away cannot hit us. Allocation free.
+     *
+     * @param yaw its body yaw (Minecraft convention: view vector (-sin, cos))
+     */
+    public void observeRetreat(int id, long tick, float yaw, double ox, double oz, double ovx, double ovz, double px,
+                               double pz) {
+        int s = slotFor(id, tick);
+        double ax = ox - px;
+        double az = oz - pz;
+        double len = Math.sqrt(ax * ax + az * az);
+        if (len < 1.0e-3) {
+            retreatRun[s] = 0;
+            retreating[s] = false;
+            return;
+        }
+        ax /= len;
+        az /= len;
+        double yr = Math.toRadians(yaw);
+        double facing = -Math.sin(yr) * ax + Math.cos(yr) * az; // cosine of its view off "straight away from us"
+        double away = ovx * ax + ovz * az;
+        boolean quiet = swingTick[s] == Long.MIN_VALUE || tick - swingTick[s] >= RETREAT_QUIET;
+        if (retreating[s]) {
+            retreating[s] = facing >= COS_RETREAT_HOLD;
+            if (!retreating[s]) {
+                retreatRun[s] = 0;
+            }
+            return;
+        }
+        if (quiet && facing >= COS_RETREAT_FACING && away >= RETREAT_SPEED) {
+            if (++retreatRun[s] >= RETREAT_TICKS) {
+                retreating[s] = true;
+            }
+        } else {
+            retreatRun[s] = 0;
+        }
+    }
+
+    /** The opponent is read as retreating (see {@link #observeRetreat}). */
+    public boolean retreating(int id) {
+        int s = slotOf(id);
+        return s >= 0 && retreating[s];
     }
 }
