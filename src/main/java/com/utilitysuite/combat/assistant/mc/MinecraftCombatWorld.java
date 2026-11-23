@@ -546,8 +546,8 @@ public final class MinecraftCombatWorld implements CombatWorld, LineOfSight.Soli
     private static final double GAP_STEP = 0.5;
     private static final double GAP_MAX = 8.0;
     private static final double[] KNOCK_DIST = {1.0, 2.0};
-    /** Probes behind us along a hit's push: a sprint hit carries a player about 2-3 blocks. */
-    private static final double[] SELF_KNOCK_DIST = {1.0, 2.0, 3.0};
+    /** Probes behind us along a hit's push: a sprint hit carries a player 3-4 blocks (arena: knocked 3.5 into a ravine). */
+    private static final double[] SELF_KNOCK_DIST = {1.0, 2.0, 3.0, 4.0};
 
     /** Gap on the line to the target, open blocks under the target, deepest drop around the target. */
     private void sampleTerrain(CombatSnapshot out, double fx, double fz, double len) {

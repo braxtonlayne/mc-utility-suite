@@ -112,7 +112,7 @@ public final class CombatSnapshot {
     /** Depth of that drop (0 = none nearby, {@link #DEEP} = lava or the void). */
     public int knockDepth;
     /**
-     * Our own edge danger: depth of the first drop within three blocks along the push a hit from the target gives us
+     * Our own edge danger: depth of the first drop within four blocks along the push a hit from the target gives us
      * (from the target through us; 0 = none, {@link #DEEP} = lava or the void), and the unit direction to it.
      */
     public int selfKnockDepth;
