@@ -1044,11 +1044,21 @@ public final class MovementAssistBrain {
      */
     private int rawMissTicks;
     static final int ARMED_MISS_GRACE = 6;
+    /** The same for an open line while the approach owns the takeoff (only the last ground ticks need it). */
+    static final int ARMED_OPEN_MISS_GRACE = 3;
 
     private void lockFromRaw() {
         if (!rawSet) {
             if (intentSet && mode != JumpCommit.Mode.NUDGE && commit.phase() == JumpCommit.Phase.ARMED
                     && lineBlocked && rawMissTicks <= ARMED_MISS_GRACE) {
+                return;
+            }
+            // an open line keeps the target a few ticks while the approach owns its takeoff: close to a post one gap
+            // out the estimator drops it on the last ground ticks (under its minimum range, the look fading), which
+            // reset the approach and its planned takeoff, and the body walked off the edge (course J23 pane post,
+            // 2026-11-23)
+            if (intentSet && mode != JumpCommit.Mode.NUDGE && commit.phase() == JumpCommit.Phase.ARMED
+                    && !lineBlocked && approach.owns() && rawMissTicks <= ARMED_OPEN_MISS_GRACE) {
                 return;
             }
             if (intentSet) {
@@ -1074,6 +1084,11 @@ public final class MovementAssistBrain {
 
     private void targetChanged() {
         lineBlocked = false;
+        if (approach.holdsPress()) {
+            // the approach held the user's press for its takeoff: the press goes on the next ground decision
+            // (pressHeldBack), never swallowed with the plan
+            heldPress = Math.max(heldPress, 1);
+        }
         approach.reset();
         techniques.reset();
         scriptOn = false;

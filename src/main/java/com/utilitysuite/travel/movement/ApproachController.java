@@ -395,6 +395,11 @@ public final class ApproachController {
     }
 
     /** Hold the user's jump key back this tick (the planned takeoff is later). */
+    /** The user's press is pending here (held back for the planned takeoff, or not yet placed). */
+    public boolean holdsPress() {
+        return pressTick >= 0;
+    }
+
     public boolean withholdJump() {
         return withholdOut;
     }
