@@ -258,6 +258,19 @@ final class CourseLive {
     }
 
     /** Teleports to a course-relative position facing {@code yaw}, pitch level. */
+    /** The course origin in world blocks (route points are relative to it). */
+    int originX() {
+        return ox;
+    }
+
+    int originY() {
+        return oy;
+    }
+
+    int originZ() {
+        return oz;
+    }
+
     void tpRel(double x, double y, double z, float yaw) {
         tpX = x;
         tpY = y;
@@ -330,6 +343,7 @@ final class CourseLive {
         String a = arg.toLowerCase(Locale.ROOT);
         switch (a) {
             case "off", "baseline" -> H.enable(MovementAssist.ID, false);
+            case "baritone" -> H.enable(MovementAssist.ID, false); // the bot drives (CourseAuto); the assist stays out
             case "corrections", "nudge" -> on(MovementAssist.ControlMode.CORRECTIONS);
             case "copilot", "co-pilot", "guide" -> on(MovementAssist.ControlMode.CO_PILOT);
             case "takeover", "carry" -> on(MovementAssist.ControlMode.TAKEOVER);

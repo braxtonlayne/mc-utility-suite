@@ -105,6 +105,7 @@ neoForge {
             loadedMods = [mods.utilitysuite, mods.utilitysuite_devtest]
             systemProperty 'utilitysuite.course', 'true'
             // automated runner: ./gradlew runCourse -PcourseAuto=off,corrections,copilot+alt -PcourseAutoSeeds=3
+            // (baritone = Baritone as the pathfinding-bot benchmark: -PcourseAuto=baritone,copilot)
             if (project.hasProperty('courseAuto')) {
                 systemProperty 'utilitysuite.courseAuto', project.property('courseAuto').toString()
                 systemProperty 'utilitysuite.courseAutoSeeds', (project.findProperty('courseAutoSeeds') ?: '1').toString()

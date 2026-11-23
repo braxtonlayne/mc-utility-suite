@@ -29,7 +29,7 @@ import java.util.Set;
 /**
  * The automated course runner (docs/design/parkour-benchmark-course.md, "What the automated runner needs"), driven
  * from {@link CourseLive} when {@code -Dutilitysuite.courseAuto=<configs>} is set: a comma list of
- * {@code mode[+alt]} (mode = off|corrections|copilot|takeover; {@code +alt} takes every shortcut), each run once per
+ * {@code mode[+alt]} (mode = off|corrections|copilot|takeover, or baritone: Baritone runs it as the pathfinding-bot benchmark, see {@link BaritoneBench}; {@code +alt} takes every shortcut), each run once per
  * seed 1..{@code utilitysuite.courseAutoSeeds} (default 1). When the list is done it writes
  * {@code run/course/auto-summary.txt} and quits the game.
  * <p>
@@ -124,6 +124,10 @@ final class CourseAuto {
                 }
                 cfg = queue.get(next++);
                 live.setMode(cfg.mode());
+                if (bot()) {
+                    BaritoneBench.configure();
+                }
+                stopNav();
                 live.toStart();
                 line = course.line(cfg.alt() ? course.altAt.keySet() : Set.of());
                 stats.clear();
@@ -140,7 +144,13 @@ final class CourseAuto {
                     go(State.RUN);
                 }
             }
-            case RUN -> run(mc, timer, x, y, z);
+            case RUN -> {
+                if (bot()) {
+                    runBot(mc, timer, x, y, z);
+                } else {
+                    run(mc, timer, x, y, z);
+                }
+            }
             default -> {
             }
         }
@@ -176,10 +186,11 @@ final class CourseAuto {
 
     /** Ends the current run unfinished (recorded) and moves on to the next one. */
     private void abortRun(CourseTimer timer, String why) {
+        stopNav();
         JsonObject o = new JsonObject();
         o.addProperty("at", LocalDateTime.now().toString());
         o.addProperty("runner", "auto");
-        o.addProperty("mode", live.runModeNow());
+        o.addProperty("mode", bot() ? "BARITONE" : live.runModeNow());
         o.addProperty("line", cfg.alt() ? "alt" : "main");
         o.addProperty("seed", cfg.seed());
         o.addProperty("finished", false);
@@ -199,7 +210,11 @@ final class CourseAuto {
         if (state != State.RUN || cfg == null) {
             return;
         }
+        stopNav();
         o.addProperty("runner", "auto");
+        if (bot()) {
+            o.addProperty("mode", "BARITONE");
+        }
         o.addProperty("line", cfg.alt() ? "alt" : "main");
         o.addProperty("seed", cfg.seed());
         o.addProperty("finished", true);
@@ -348,6 +363,7 @@ final class CourseAuto {
 
     /** After a fall or a stuck reset: target the point after the checkpoint (or the start); maybe give up a jump. */
     private void respawnAt(int k, String blamed, CourseTimer timer) {
+        stopNav();
         JumpStat s = stat(blamed);
         if (s.skipped && s.falls + s.stuck >= 2 * MAX_FALLS) {
             abortRun(timer, "still falling on " + blamed + " after skipping it");
@@ -388,6 +404,103 @@ final class CourseAuto {
         idx = Math.min(land + 1, line.size() - 1);
         resetTarget();
     }
+    // ---- the Baritone benchmark (mode "baritone") -----------------------------------------------------------------
+
+    static final String BOT_ID = "course_bench";
+    /** Ticks a Baritone leg may take before it counts as stuck (it may walk around and recompute). */
+    static final int BOT_STUCK_TICKS = 400;
+
+    private com.utilitysuite.core.api.NavigationRun nav;
+    /** Route index the current navigator goal is for (-1 = none issued). */
+    private int navIdx = -1;
+
+    private boolean bot() {
+        return cfg != null && "baritone".equals(cfg.mode());
+    }
+
+    private void stopNav() {
+        if (nav != null) {
+            nav.cancel();
+            nav = null;
+        }
+        navIdx = -1;
+    }
+
+    private static boolean botGoal(String tag) {
+        return "land".equals(tag) || "checkpoint".equals(tag) || "finish".equals(tag);
+    }
+
+    /**
+     * Baritone runs the course leg by leg: each landing, checkpoint and the finish is a GoalBlock handed to the leased
+     * navigator. The physical keys stay up and the view is Baritone's. A leg Baritone finds no path for, or does not
+     * reach in {@link #BOT_STUCK_TICKS}, counts as stuck; after {@link #MAX_FALLS} the jump is teleported over, as for
+     * the scripted runner.
+     */
+    private void runBot(Minecraft mc, CourseTimer timer, double x, double y, double z) {
+        LocalPlayer p = mc.player;
+        if (++runTicks > MAX_RUN_TICKS) {
+            abortRun(timer, "timed out");
+            return;
+        }
+        keys(false);
+        while (idx < line.size() - 1 && !botGoal(line.get(idx).tag())) {
+            idx++;
+        }
+        CourseFile.RoutePoint t = line.get(idx);
+        String j = t.jump() == null ? null : t.jump().id();
+        if ("land".equals(t.tag()) && j != null && stat(j).skipped) {
+            stopNav();
+            CourseFile.RoutePoint after = line.get(Math.min(idx + 1, line.size() - 1));
+            live.tpRel(t.x(), t.y(), t.z(), yawTo(after.x() - t.x(), after.z() - t.z()));
+            lastJump = j;
+            idx = Math.min(idx + 1, line.size() - 1);
+            sinceAdvance = 0;
+            return;
+        }
+        double dist = Math.hypot(t.x() - x, t.z() - z);
+        if (dist < REACH && p.onGround() && Math.abs(y - t.y()) < 0.3 && idx < line.size() - 1) {
+            if (j != null) {
+                lastJump = j;
+            }
+            idx++;
+            sinceAdvance = 0;
+            return; // the next leg is issued next tick
+        }
+        if (navIdx != idx || nav == null || !nav.isActive()) {
+            boolean failed = nav != null && navIdx == idx && !nav.isActive()
+                    && nav.status() == com.utilitysuite.core.api.NavigationStatus.FAILED;
+            if (failed) {
+                botStuck(timer, "no path");
+                return;
+            }
+            if (navIdx != idx && "land".equals(t.tag()) && j != null) {
+                stat(j).tries++;
+            }
+            int bx = live.originX() + Mth.floor(t.x());
+            int by = live.originY() + Mth.floor(t.y() + 0.01);
+            int bz = live.originZ() + Mth.floor(t.z());
+            nav = Services.navigator().goToLeased(BOT_ID, com.utilitysuite.core.api.ControlPriority.GOAL, bx, by, bz, 0)
+                    .orElse(null);
+            navIdx = idx;
+            if (nav == null) {
+                PlaytestMod.LOG.warn("[course-auto] baritone refused the leg to {} {} {}", bx, by, bz);
+            }
+        }
+        if (++sinceAdvance > BOT_STUCK_TICKS) {
+            botStuck(timer, "stuck");
+        }
+    }
+
+    private void botStuck(CourseTimer timer, String why) {
+        String j = blame();
+        stat(j).stuck++;
+        PlaytestMod.LOG.info("[course-auto] baritone {} before route point {} ({} {}), back to the checkpoint", why, idx,
+                line.get(idx).tag(), j);
+        int k = timer.respawnIndex();
+        live.respawn(k);
+        respawnAt(k, j, timer);
+    }
+
 
     // ---- the hand-like mouse --------------------------------------------------------------------------------------
 
