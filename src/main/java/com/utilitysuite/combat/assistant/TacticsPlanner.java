@@ -24,6 +24,11 @@ public final class TacticsPlanner {
     public enum Tactic {
         NONE, HOLD_GAP, EDGE_KNOCK,
         /**
+         * Our back is to a drop: a hit from the target would push us into it ({@link CombatSnapshot#selfKnockDepth}).
+         * Circle until the target stands between us and the drop, never stepping back toward it.
+         */
+        EDGE_GUARD,
+        /**
          * Knockback vectoring from the arena read ({@link CombatSnapshot#knockValue}): approach from the side that
          * sends the target toward lava, a drop, a cobweb or a wall. Generalises {@link #EDGE_KNOCK} (which keeps
          * priority): used when edge knock is on, the old probe found nothing and the arena read scores at least
@@ -43,6 +48,10 @@ public final class TacticsPlanner {
     public static final double KNOCK_ALIGNED_DEG = 25.0;
     /** Minimum {@link CombatSnapshot#knockValue} that is worth circling for. */
     public static final double KNOCK_VECTOR_MIN_VALUE = 0.35;
+    /** Edge guard: a drop behind us at least this deep (fall damage starts past 3 blocks). */
+    public static final int SELF_GUARD_DEPTH = 4;
+    /** Edge guard only while the target is about to be able to hit us (horizontal blocks). */
+    public static final double SELF_GUARD_RANGE = 5.0;
     /** Knock tactics only while the target stands within this height of us (blocks). */
     public static final double KNOCK_LEVEL_DY = 1.5;
     /** Minimum attack charge for a forced swing (a weaker hit still knocks back, but this keeps it human). */
@@ -70,6 +79,15 @@ public final class TacticsPlanner {
                 && s.crosshairOnTarget && s.attackStrength >= FORCED_SWING_CHARGE;
 
         double dist = s.horizontalDistance();
+        if (s.selfKnockDepth >= SELF_GUARD_DEPTH && dist <= SELF_GUARD_RANGE) {
+            // arena, 2026-11-23: rounds lost while ahead to one hit that knocked us 8 blocks into a ravine
+            tactic = Tactic.EDGE_GUARD;
+            circleAndCloseIn(s, s.selfKnockX, s.selfKnockZ, dist, false);
+            if (forward == SpacingController.BACK) {
+                forward = SpacingController.HOLD;
+            }
+            return tactic;
+        }
         if (holdGap && s.gapNear >= 0 && s.gapFar > s.gapNear && s.gapNear < dist) {
             tactic = Tactic.HOLD_GAP;
             if (s.gapNear > EDGE_STANDOFF_MAX && !s.hazardFront) {

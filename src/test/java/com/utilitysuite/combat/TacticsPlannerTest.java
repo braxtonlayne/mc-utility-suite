@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class TacticsPlannerTest {
@@ -172,6 +173,23 @@ class TacticsPlannerTest {
         t.plan(s, true, true);
         assertEquals(SpacingController.HOLD, t.forward());
         assertFalse(t.sprint());
+    }
+
+    @Test
+    void edgeGuardCirclesAwayFromADropBehindUsAndNeverBacksUp() {
+        TacticsPlanner t = new TacticsPlanner();
+        CombatSnapshot s = snap(2);
+        s.selfKnockDepth = 8; // a ravine behind us
+        s.selfKnockX = -1;
+        s.selfKnockZ = 0;
+        s.knockDepth = 10; // the target is near an edge too: our own safety comes first
+        s.knockX = 0;
+        s.knockZ = -1;
+        assertEquals(Tactic.EDGE_GUARD, t.plan(s, true, true));
+        assertNotEquals(SpacingController.BACK, t.forward());
+        assertNotEquals(StrafePlanner.NONE, t.side());
+        s.selfKnockDepth = 2; // a step down is no danger
+        assertEquals(Tactic.EDGE_KNOCK, t.plan(s, true, true));
     }
 
     @Test

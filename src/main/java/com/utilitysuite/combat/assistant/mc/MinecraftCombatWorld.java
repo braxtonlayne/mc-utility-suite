@@ -543,6 +543,8 @@ public final class MinecraftCombatWorld implements CombatWorld, LineOfSight.Soli
     private static final double GAP_STEP = 0.5;
     private static final double GAP_MAX = 8.0;
     private static final double[] KNOCK_DIST = {1.0, 2.0};
+    /** Probes behind us along a hit's push: a sprint hit carries a player about 2-3 blocks. */
+    private static final double[] SELF_KNOCK_DIST = {1.0, 2.0, 3.0};
 
     /** Gap on the line to the target, open blocks under the target, deepest drop around the target. */
     private void sampleTerrain(CombatSnapshot out, double fx, double fz, double len) {
@@ -591,6 +593,29 @@ public final class MinecraftCombatWorld implements CombatWorld, LineOfSight.Soli
                 }
                 if (depth > 0) {
                     break; // the nearest drop in this direction is what a hit pushes it into
+                }
+            }
+        }
+        // our own edge danger: the drop a hit from the target would push us toward (fixed probes, no allocation)
+        out.selfKnockDepth = 0;
+        out.selfKnockX = 0;
+        out.selfKnockZ = 0;
+        double ux = out.px - out.tx;
+        double uz = out.pz - out.tz;
+        double ul = Math.sqrt(ux * ux + uz * uz);
+        if (ul > 1.0e-3) {
+            ux /= ul;
+            uz /= ul;
+            for (double r : SELF_KNOCK_DIST) {
+                int depth = dropBelow(out.px + ux * r, out.py, out.pz + uz * r);
+                if (depth < 0) {
+                    break; // a wall behind us stops the push
+                }
+                if (depth > 0) {
+                    out.selfKnockDepth = depth;
+                    out.selfKnockX = ux;
+                    out.selfKnockZ = uz;
+                    break;
                 }
             }
         }

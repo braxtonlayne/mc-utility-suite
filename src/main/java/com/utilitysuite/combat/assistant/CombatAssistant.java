@@ -1696,6 +1696,8 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
             lastNote = switch (tac) {
                 case HOLD_GAP -> "Holding the gap: waiting at the edge for " + world.describe(targetId) + " to jump";
                 case EDGE_KNOCK -> "Edge knock: circling to knock " + world.describe(targetId) + " off the edge";
+                case EDGE_GUARD -> "Edge guard: circling so a hit from " + world.describe(targetId)
+                        + " cannot knock us off the edge";
                 case KNOCK_VECTOR -> "Knock vector: lining up to knock " + world.describe(targetId)
                         + " toward the hazard";
                 default -> lastNote;

@@ -111,6 +111,12 @@ public final class CombatSnapshot {
     public double knockX, knockZ;
     /** Depth of that drop (0 = none nearby, {@link #DEEP} = lava or the void). */
     public int knockDepth;
+    /**
+     * Our own edge danger: depth of the first drop within three blocks along the push a hit from the target gives us
+     * (from the target through us; 0 = none, {@link #DEEP} = lava or the void), and the unit direction to it.
+     */
+    public int selfKnockDepth;
+    public double selfKnockX, selfKnockZ;
 
     // ---- arena read (filled by the assistant from combat.tactics.ArenaField when knock vectoring is on) ------------
     /**
