@@ -66,6 +66,8 @@ public final class CombatSettings {
     public static final String CRIT_NEEDS_HEALER = "crit_only_vs_healers";
     public static final String LEARN_THREAT = "learn_opponent_reach";
     public static final String KEEP_TEMPO = "keep_tempo";
+    public static final String BREAK_STALEMATES = "break_stalemates";
+    public static final String STALL_SECONDS = "stalemate_seconds";
 
     public TargetSelector.Mode engageMode = TargetSelector.Mode.REACTIVE;
     public TargetSelector.Targets targets = TargetSelector.Targets.HOSTILE;
@@ -130,6 +132,10 @@ public final class CombatSettings {
     public boolean learnThreat = true;
     /** No kiting on reaction hops, no regeneration reset against an opponent that keeps pace. */
     public boolean keepTempo = true;
+    /** When nobody can or will move in, route to the target, wait where it can reach us, or take a new angle. */
+    public boolean breakStalemates = true;
+    /** Seconds without a hit, out of reach and with nobody closing in, before the stalemate breaker acts. */
+    public double stallSeconds = 4.0;
 
     public void read(ProfileConfig p, String id) {
         engageMode = parseEnum(p.getString(id, ENGAGE_MODE, ""), TargetSelector.Mode.REACTIVE);
@@ -183,6 +189,8 @@ public final class CombatSettings {
         critNeedsHealer = p.getBool(id, CRIT_NEEDS_HEALER, true);
         learnThreat = p.getBool(id, LEARN_THREAT, true);
         keepTempo = p.getBool(id, KEEP_TEMPO, true);
+        breakStalemates = p.getBool(id, BREAK_STALEMATES, true);
+        stallSeconds = Math.max(2.0, Math.min(15.0, p.getDouble(id, STALL_SECONDS, 4.0)));
     }
 
     static <E extends Enum<E>> E parseEnum(String s, E def) {
@@ -288,6 +296,14 @@ public final class CombatSettings {
                         "Never run from the fight or drop it when the target gets far or out of sight while it is"
                                 + " alive and loaded: back off, heal and come back instead. For closed arenas and boss"
                                 + " rooms."),
+                SettingSpec.bool(BREAK_STALEMATES, "Break stalemates", true, "Tactics",
+                        "When nobody lands a hit and neither side can or will close in (you are in a ravine and it"
+                                + " paces at the top, it stands on a ledge, it stares across water), do something:"
+                                + " walk a route to its level (e.g. up the ravine's stairs), else wait on open ground it"
+                                + " can walk to, else move to a new angle. Never walks into hazards or takes a fall"
+                                + " your health cannot spare."),
+                SettingSpec.decimal(STALL_SECONDS, "Stalemate time (s)", 4.0, 2.0, 15.0, "Tactics",
+                        "How long a fight must stall before Break stalemates acts.").asAdvanced(),
                 SettingSpec.bool(CHASE_RETREAT, "Chase a retreating opponent", true, "Tactics",
                         "When the opponent turns away and runs without swinging, treat it as no threat: keep"
                                 + " fighting, step into reach and chase it as soon as it leaves reach, steering it"

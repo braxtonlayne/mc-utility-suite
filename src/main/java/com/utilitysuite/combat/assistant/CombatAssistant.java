@@ -165,6 +165,58 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
     static final int ROUTE_FLEE = 2;
     /** Run to where the target's ender pearl lands ({@link PearlIntercept}). */
     static final int ROUTE_INTERCEPT = 3;
+    /** The stalemate breaker's own route ({@link StalemateBreaker}: to the target's level, a meeting spot, a new angle). */
+    static final int ROUTE_STALEMATE = 4;
+    /**
+     * LOS-lost pursuit only while the target is this far beyond spacing max horizontally: the runner's stop range is
+     * horizontal, so a target straight above or below "arrives" at once and the chase would flap without moving (the
+     * stalemate breaker routes to its level instead).
+     */
+    static final double LOS_PURSUIT_MIN_EXTRA = 0.5;
+    private final StalemateBreaker stalemate = new StalemateBreaker();
+    private CombatVoxels arenaVoxels;
+    private int stalemateNoteSerial;
+    /** The breaker's moves: our lease handed to the route runner (one instance, no per-tick allocation). */
+    private final StalemateBreaker.Runner stalemateRunner = new StalemateBreaker.Runner() {
+        @Override
+        public boolean follow(long[] cells, int count) {
+            IRouteRunner r = Services.routeRunnerOrNull();
+            if (r == null || lease == null || !lease.isActive()) {
+                return false;
+            }
+            boolean handOver = routeMode != ROUTE_STALEMATE;
+            if (handOver) {
+                if (routeMode != ROUTE_NONE) {
+                    r.stop(lease);
+                } else {
+                    move(SpacingController.HOLD, StrafePlanner.NONE, false);
+                }
+                routeMode = ROUTE_NONE;
+                clearKeyCache();
+            }
+            if (!r.follow(lease, cells, count, true)) {
+                return false;
+            }
+            if (handOver) {
+                routeMode = ROUTE_STALEMATE;
+                routeRuns++;
+            }
+            return true;
+        }
+
+        @Override
+        public IRouteRunner.State state() {
+            IRouteRunner r = Services.routeRunnerOrNull();
+            return routeMode == ROUTE_STALEMATE && r != null ? r.state() : IRouteRunner.State.IDLE;
+        }
+
+        @Override
+        public void stop() {
+            if (routeMode == ROUTE_STALEMATE) {
+                leaveRoute();
+            }
+        }
+    };
     private int routeMode = ROUTE_NONE;
     private int routeRetry;
     private int routeRuns;
@@ -436,6 +488,7 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         }
         boolean fresh = state == CombatState.DORMANT;
         leaveRoute(); // a target switch ends any pursuit or flight from the old one
+        stalemate.reset(null); // a new opponent: no stall yet, no escalation memory (the route was left above)
         routeRetry = 0;
         targetId = entityId;
         targetIsPlayer = world.isPlayer(entityId);
@@ -593,6 +646,13 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         prevOppReach = Math.sqrt(HitTradeSolver.reachSq(s.tx, s.ty, s.tz, s.px, s.py, s.pz));
         prevOppReachId = targetId;
         observeOpponent(s);
+        // stalemate bookkeeping (cheap): eating, backing off or a pearl run are deliberate, never a stall
+        boolean busy = eating || retreating || broadTactic == TacticUtility.Tactic.FLEE
+                || broadTactic == TacticUtility.Tactic.RETREAT_HEAL || feel.pearl().active();
+        stalemate.observe(s, busy);
+        if (busy && stalemate.active()) {
+            stalemate.abort(stalemateRunner);
+        }
         gear.update(eff, s.targetHealth, GearRead.afterArmor(s.ownAttackDamage, s.targetArmor, s.targetToughness),
                 GearRead.afterArmor(s.targetAttackDamage, s.ownArmor, s.ownToughness));
         feel.observe(s, settings, opponents, tacticClock,
@@ -751,9 +811,27 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
             return;
         }
 
+        // ---- 1c'. stalemate breaker: nobody can or will close in (a ravine, a ledge, water between) ---------------
+        int act = stalemate.drive(s, arenaVoxels, stalemateRunner, settings.breakStalemates,
+                (int) Math.round(settings.stallSeconds * 20.0));
+        noteStalemate();
+        if (act == StalemateBreaker.ACT_ROUTE && routeMode == ROUTE_STALEMATE) {
+            return; // the runner walks the breaker's route (look where you move)
+        }
+        if (act == StalemateBreaker.ACT_HOLD) {
+            leaveRoute();
+            aimAtTarget(s); // waiting where it can reach us, or at the new angle: face it, stand still
+            move(SpacingController.HOLD, StrafePlanner.NONE, false);
+            return;
+        }
+        if (routeMode == ROUTE_STALEMATE) {
+            leaveRoute();
+        }
+
         // ---- 1d. pursuit along a route (far away or out of sight), melee code inside the range -------------------
         double dist = s.horizontalDistance();
-        boolean chase = losLostTicks > LOS_PURSUIT_TICKS || dist > settings.spacingMax
+        boolean chase = (losLostTicks > LOS_PURSUIT_TICKS && dist > settings.spacingMax + LOS_PURSUIT_MIN_EXTRA)
+                || dist > settings.spacingMax
                 + (routeMode == ROUTE_PURSUE ? PURSUIT_EXIT_EXTRA : PURSUIT_ENTER_EXTRA);
         if (chase && runRoute(s, ROUTE_PURSUE)) {
             return;
@@ -1214,6 +1292,7 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
     /** Blocks for the arena read and the pearl landing (the bootstrap passes the live level); null = both idle. */
     public void useArenaVoxels(CombatVoxels voxels) {
         feel.useVoxels(voxels);
+        arenaVoxels = voxels; // the stalemate breaker's walking search reads the same blocks
     }
 
     /** Ender pearls in flight by thrower (the bootstrap passes the entity-event watch). */
@@ -1573,6 +1652,38 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
     }
 
     /** Logs a tactic change (strings only on change, never per tick). */
+    /** Status line for the stalemate breaker: only when its note serial changed (never per tick). */
+    private void noteStalemate() {
+        StalemateBreaker b = stalemate;
+        if (b.noteSerial() == stalemateNoteSerial) {
+            return;
+        }
+        stalemateNoteSerial = b.noteSerial();
+        if (!b.noteFresh()) {
+            return; // the same option re-planned after a knock off the route
+        }
+        String who = world.describe(targetId);
+        double dy = b.noteDy();
+        lastNote = switch (b.notePhase()) {
+            case SEARCH -> "Stalemate with " + who + ": looking for a way to it";
+            case APPROACH -> b.noteFall()
+                    ? "Stalemate: dropping down to " + who + " (a fall the health can take; no stairs found)"
+                    : dy > StalemateDetector.JUMP_RISE ? "Stalemate: routing up to " + who + "'s level"
+                    : dy < -StalemateDetector.SAFE_DROP ? "Stalemate: routing down to " + who + "'s level"
+                    : "Stalemate: taking the fight to " + who + " along a route";
+            case MEET -> "Stalemate: no way to " + who + "; waiting on open ground it can reach";
+            case BAIT -> "Stalemate: repositioning to a new angle on " + who;
+            case HOLD_OFF -> "Stalemate: no route, meeting ground or new angle toward " + who + "; holding";
+            default -> lastNote;
+        };
+        diagnostic(lastNote);
+    }
+
+    /** The stalemate breaker (diagnostics, tests). */
+    public StalemateBreaker stalemate() {
+        return stalemate;
+    }
+
     private void noteTactic(TacticsPlanner.Tactic tac) {
         if (tac == lastTactic) {
             return;
@@ -1863,6 +1974,7 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         takenUnanswered = 0;
         lastAttacker = -1;
         lastAttackerAt = -1L;
+        stalemate.reset(null); // the lease is gone; the disengage paths stopped any route already
         for (FightStage st : allStages) {
             st.reset();
         }

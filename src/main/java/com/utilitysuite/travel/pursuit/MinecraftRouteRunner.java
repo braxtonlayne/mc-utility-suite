@@ -105,6 +105,12 @@ public final class MinecraftRouteRunner implements IRouteRunner {
     }
 
     @Override
+    public boolean follow(ControlLease lease, long[] cells, int count, boolean lookAlongRoute) {
+        bind();
+        return core.follow(lease, cells, count, lookAlongRoute);
+    }
+
+    @Override
     public void stop(ControlLease lease) {
         bind();
         core.stop(lease);
