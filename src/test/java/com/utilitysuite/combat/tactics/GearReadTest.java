@@ -82,4 +82,15 @@ class GearReadTest {
         // armour reduction never above 80%
         assertEquals(1.0 * 0.2, GearRead.afterArmor(1.0, 30.0, 20.0), 1e-9);
     }
+
+    @Test
+    void tradeCautionScalesTheTakenWeightInsideTheClamp() {
+        GearRead g = new GearRead();
+        g.update(20, 20, 3.12, 3.12); // even iron kits
+        assertEquals(1.0, g.ratio(), 1e-9);
+        assertEquals(GearRead.EVEN_BIAS, g.takenWeight(false, 1.0), 1e-9);
+        assertEquals(3.0, g.takenWeight(false, 2.5), 1e-9, "1.2 x 2.5 = 3.0, the cap");
+        assertEquals(3.0, g.takenWeight(false, 3.0), 1e-9, "never above the cap");
+        assertEquals(3.0 * GearRead.KITE_FACTOR, g.takenWeight(true, 2.5), 1e-9);
+    }
 }

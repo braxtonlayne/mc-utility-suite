@@ -51,6 +51,7 @@ public final class CombatSettings {
     public static final String AUTO_WEAPON = "auto_weapon";
     public static final String HIT_TRADE = "hit_trade";
     public static final String HIT_TRADE_HORIZON = "hit_trade_horizon";
+    public static final String TRADE_CAUTION = "trade_caution";
     public static final String COOLDOWN_READ = "cooldown_read";
     public static final String ROUTE_PURSUIT = "route_pursuit";
     public static final String COMBO_KEEPER = "combo_keeper";
@@ -107,6 +108,7 @@ public final class CombatSettings {
     public boolean jumpReset = false;
     public boolean hitTrade = true;
     public int hitTradeHorizon = 7;
+    public double tradeCaution = 2.5;
     public boolean cooldownRead = true;
     public boolean routePursuit = true;
     public boolean comboKeeper = true;
@@ -176,6 +178,7 @@ public final class CombatSettings {
         gapples = p.getBool(id, GAPPLES, true);
         hitTrade = p.getBool(id, HIT_TRADE, true);
         hitTradeHorizon = Math.max(6, Math.min(8, p.getInt(id, HIT_TRADE_HORIZON, 7)));
+        tradeCaution = Math.max(0.5, Math.min(3.0, p.getDouble(id, TRADE_CAUTION, 2.5)));
         cooldownRead = p.getBool(id, COOLDOWN_READ, true);
         routePursuit = p.getBool(id, ROUTE_PURSUIT, true);
         comboKeeper = p.getBool(id, COMBO_KEEPER, true);
@@ -342,6 +345,12 @@ public final class CombatSettings {
                                 + " charged. Off uses the fixed spacing band.").asAdvanced(),
                 SettingSpec.integer(HIT_TRADE_HORIZON, "Trade look-ahead (ticks)", 7, 6, 8, "Spacing",
                         "How many ticks ahead the trade solver simulates.").asAdvanced(),
+                SettingSpec.decimal(TRADE_CAUTION, "Trade caution", 2.5, 0.5, 3.0, "Spacing",
+                        "How much a hit taken counts against a hit landed when the trade solver picks movement, on top"
+                                + " of the gear read. Above 1 stays out of reach longer and only steps in on a clear"
+                                + " opening. Default 2.5: the opponent sees you a few ticks late over the network, so an"
+                                + " even trade is not even (arena benchmark 2026-11-23: 1.0 won 2 of 10 even-gear rounds,"
+                                + " 2.5 won 10 of 20).").asAdvanced(),
                 SettingSpec.bool(EXACT_WORLD, "Exact world shapes for combat prediction", false, "Spacing",
                         "The trade solver, the combo keeper and route chasing predict both of you on the real block"
                                 + " shapes Movement Assist uses (slabs, stairs, fence tops, stepping up, ice) and with"

@@ -1187,7 +1187,7 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
             side = feel.comboSide();
             sprint = feel.comboSprint();
         } else if (t != null && t.decide(s, opponents, targetId, tacticClock, targetIsPlayer, settings.cooldownRead,
-                settings.hitTradeHorizon, gear.takenWeight(kiting), allowJump)) {
+                settings.hitTradeHorizon, gear.takenWeight(kiting, settings.tradeCaution), allowJump)) {
             tradeTicks++;
             planned = true;
             spacing.reset(); // the band restarts from HOLD when the solver hands back

@@ -106,6 +106,12 @@ public final class GearRead {
         return kiting ? w * KITE_FACTOR : w;
     }
 
+    /** {@link #takenWeight(boolean)} with the "Trade caution" multiplier applied before the clamp. */
+    public double takenWeight(boolean kiting, double caution) {
+        double w = Math.max(MIN_WEIGHT, Math.min(MAX_WEIGHT, EVEN_BIAS * ratio * caution));
+        return kiting ? w * KITE_FACTOR : w;
+    }
+
     /** Their per-hit damage used by the last {@link #update}. */
     public double theirHit() {
         return theirHit;
