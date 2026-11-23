@@ -80,6 +80,20 @@ public final class HitPlanner {
     public static final float HIGH_HEALTH_MOB = 20f;
     /** Opponent within this horizontal distance counts as in its reach (3 blocks plus its box). */
     public static final double OPP_REACH = 3.6;
+    /**
+     * Approach crit: closing speed (blocks per tick, eye to box, smoothed) from which an opponent counts as walking
+     * into us. A walking player alone closes at about 0.22, both sprinting at about 0.55.
+     */
+    public static final double APPROACH_MIN_CLOSING = 0.18;
+    /** The target's own speed toward us from which it is the one walking in (a walk is about 0.22 per tick). */
+    public static final double APPROACH_TARGET_SPEED = 0.1;
+    /** Predicted ticks to reach entry, relative to the hop lead, inside which the approach hop is pressed. */
+    public static final int APPROACH_EARLY = 1;
+    public static final int APPROACH_LATE = 2;
+    /** Smoothing of the closing speed (weight of the newest tick). */
+    public static final double CLOSING_ALPHA = 0.5;
+    /** Per-tick distance changes beyond this are a teleport or a new target, not motion. */
+    public static final double CLOSING_JUMP = 1.0;
 
     // ---- context (set by the caller before decide) --------------------------------------------------------------
     public Policy policy = Policy.AUTO;
@@ -110,6 +124,12 @@ public final class HitPlanner {
      * Observed healing of the opponent outpaces our plain hits ({@link #outHeals}): only crits make progress.
      */
     public boolean oppOutHeals;
+    /**
+     * The "Crit on approach" setting: when the gap closes with our attack charged, hop so the first falling tick
+     * meets the opponent's entry into reach, and make that first hit a crit (it overrides the opener's sprint hit
+     * and the "its hit is charged" hop veto: the hop is made before it is in its reach).
+     */
+    public boolean approachCrit = true;
 
     // ---- outputs of the last decide -----------------------------------------------------------------------------
     private boolean swing;
@@ -128,9 +148,16 @@ public final class HitPlanner {
     private int swingsThisEngagement;
     private int outOfReachTicks;
     private boolean reengage;
+    private double prevReachDist = -1.0;
+    private double closing;
+    private boolean approachHop;
+    private int approachHops;
 
     /** A new engagement: the next hit is an opener. */
     public void reset() {
+        prevReachDist = -1.0;
+        closing = 0.0;
+        approachHop = false;
         kind = Kind.SPRINT_KB;
         lastSwingKind = Kind.PLAIN;
         latched = false;
@@ -264,9 +291,23 @@ public final class HitPlanner {
             hopped = false; // landed without a swing: the next hop may start again
         }
         wasAirborne = airborne;
+        double dist = Math.sqrt(reachSq);
+        trackClosing(dist);
+        if (!airborne && !hopped) {
+            approachHop = false;
+        }
 
         int readyIn = ticksUntilReady(s.attackStrength, s.ownAttackSpeed);
         boolean hopOk = hopAllowed(s);
+        if (!airborne && !hopped && approachHopDue(s, dist, readyIn)) {
+            // the gap closes with our hit charged: hop now so we fall as it walks into reach, and crit it first
+            kind = Kind.CRIT;
+            latched = true;
+            jump = true;
+            hopped = true;
+            approachHop = true;
+            approachHops++;
+        }
         if (!latched || (kind == Kind.CRIT && !airborne && !hopped && !hopOk)) {
             kind = choose(s, hopOk);
             latched = readyIn <= LATCH_TICKS;
@@ -322,10 +363,91 @@ public final class HitPlanner {
         }
     }
 
+    /** Smoothed closing speed from the eye-to-box distance; a jump in distance (teleport, new target) restarts it. */
+    private void trackClosing(double dist) {
+        if (prevReachDist >= 0.0) {
+            double d = prevReachDist - dist;
+            if (Math.abs(d) > CLOSING_JUMP) {
+                closing = 0.0;
+            } else {
+                closing += CLOSING_ALPHA * (d - closing);
+            }
+        }
+        prevReachDist = dist;
+    }
+
+    /** Smoothed closing speed in blocks per tick (positive: the gap shrinks). */
+    public double closing() {
+        return closing;
+    }
+
+    /**
+     * Ticks until the eye-to-box distance reaches {@code reach} at the current closing speed, or -1 when the gap is
+     * not closing (or already closed).
+     */
+    public static double entryTicks(double dist, double reach, double closing) {
+        double gap = dist - reach;
+        if (gap <= 0.0 || closing <= 1e-6) {
+            return -1.0;
+        }
+        return gap / closing;
+    }
+
+    /**
+     * The approach hop is due: on the ground, the gap closing at {@link #APPROACH_MIN_CLOSING} or more, its entry
+     * into reach predicted between {@code lead - APPROACH_EARLY} and {@code lead + APPROACH_LATE} ticks (the first
+     * falling tick of a hop pressed now is {@code lead} away, and the fall lasts about five more), and the attack
+     * charged by then. Every safety rule of a normal hop applies, except the "its hit is charged" veto: that veto is
+     * about standing in its reach, and this hop starts outside it. Not when the arena read steers the hit toward lava
+     * or a drop (knockback wins there), and only for the AUTO and CRITS policies.
+     */
+    boolean approachHopDue(CombatSnapshot s, double dist, int readyIn) {
+        if (!approachCrit || !critTiming || (policy != Policy.AUTO && policy != Policy.CRITS)) {
+            return false;
+        }
+        if (holdGap || s.hazardBack || s.headroom <= LOW_HEADROOM || s.inWater || s.climbing || s.usingItem) {
+            return false;
+        }
+        if (s.knockValue > 0.0 && (s.knockKind == ArenaField.KNOCK_LAVA || s.knockKind == ArenaField.KNOCK_DROP)) {
+            return false;
+        }
+        if (closing < APPROACH_MIN_CLOSING || targetApproachSpeed(s) < APPROACH_TARGET_SPEED) {
+            return false; // we walking at a standing target is the sprint opener's job
+        }
+        double entry = entryTicks(dist, s.reach, closing);
+        if (entry < 0.0) {
+            return false;
+        }
+        int lead = hopLead(s.headroom);
+        return entry >= lead - APPROACH_EARLY && entry <= lead + APPROACH_LATE && readyIn <= Math.max(entry, lead);
+    }
+
+    /** The target's own speed toward us (its real per-tick motion projected on the line to us), blocks per tick. */
+    public static double targetApproachSpeed(CombatSnapshot s) {
+        double dx = s.px - s.tx;
+        double dz = s.pz - s.tz;
+        double len = Math.sqrt(dx * dx + dz * dz);
+        if (len < 1e-6) {
+            return 0.0;
+        }
+        return (s.tdx * dx + s.tdz * dz) / len;
+    }
+
+    /** True from an approach hop's press until the swing or the landing. */
+    public boolean approachHop() {
+        return approachHop;
+    }
+
+    /** Approach hops made since this planner was created (telemetry). */
+    public int approachHops() {
+        return approachHops;
+    }
+
     /** The caller sent the swing this planner asked for (or any other swing): the cycle starts over. */
     public void onSwing() {
         lastSwingKind = kind;
         swingsThisEngagement++;
+        approachHop = false;
         latched = false;
         hopped = false;
         waitTicks = 0;

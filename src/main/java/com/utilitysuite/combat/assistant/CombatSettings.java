@@ -21,6 +21,7 @@ public final class CombatSettings {
     public static final String VELOCITY_LEAD = "velocity_lead";
     public static final String LEAD_TICKS = "lead_ticks";
     public static final String CRIT_SYNC = "crit_sync";
+    public static final String APPROACH_CRIT = "approach_crit";
     public static final String SPACING_MIN = "spacing_min";
     public static final String SPACING_MAX = "spacing_max";
     public static final String STRAFE = "strafe";
@@ -88,6 +89,7 @@ public final class CombatSettings {
     public boolean velocityLead = false;
     public double leadTicks = 2.0;
     public boolean critSync = true;
+    public boolean approachCrit = true;
     public double spacingMin = 2.7;
     public double spacingMax = 3.1;
     public boolean strafe = true;
@@ -160,6 +162,7 @@ public final class CombatSettings {
         velocityLead = p.getBool(id, VELOCITY_LEAD, false);
         leadTicks = p.getDouble(id, LEAD_TICKS, 2.0);
         critSync = p.getBool(id, CRIT_SYNC, true);
+        approachCrit = p.getBool(id, APPROACH_CRIT, true);
         spacingMin = p.getDouble(id, SPACING_MIN, 2.7);
         spacingMax = Math.max(spacingMin + 0.1, p.getDouble(id, SPACING_MAX, 3.1));
         strafe = p.getBool(id, STRAFE, true);
@@ -289,6 +292,10 @@ public final class CombatSettings {
                         "How far ahead to lead, in ticks of target movement.").asAdvanced(),
                 SettingSpec.bool(CRIT_SYNC, "Critical-hit timing", true, "Cooldown",
                         "Hop and swing while falling for critical hits.").asAdvanced(),
+                SettingSpec.bool(APPROACH_CRIT, "Crit on approach", true, "Cooldown",
+                        "When a charged fight closes in, jump so you are already falling as the opponent walks into"
+                                + " reach: the first hit is a critical hit instead of walking into its swing.")
+                        .asAdvanced(),
                 SettingSpec.choice(HIT_CHOICE, "Hit choice", HitPlanner.Policy.AUTO, "Hit choice",
                         "Auto: open and re-engage with a sprint knockback hit, keep combos with knockback, crit when"
                                 + " knockback is worth little (cornered or eating target, out-damaged, a big mob), sweep"

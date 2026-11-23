@@ -159,10 +159,10 @@ final class ArenaClient {
             swingSeen = sw;
             net.minecraft.client.player.LocalPlayer p = mc.player;
             PlaytestMod.LOG.info(String.format(java.util.Locale.ROOT,
-                    "[swing] kind=%s policy=%s ratio=%.2f gnd=%b fall=%.2f vy=%.2f sprint=%b str=%.2f W=%b",
+                    "[swing] kind=%s policy=%s ratio=%.2f gnd=%b fall=%.2f vy=%.2f sprint=%b str=%.2f W=%b appr=%d close=%.2f",
                     ca.hitPlanner().kind(), ca.lastHitPolicy(), ca.gearRatio(), p.onGround(), p.fallDistance,
                     p.getDeltaMovement().y, p.isSprinting(), p.getAttackStrengthScale(0f),
-                    mc.options.keyUp.isDown()));
+                    mc.options.keyUp.isDown(), ca.hitPlanner().approachHops(), ca.hitPlanner().closing()));
         }
     }
 

@@ -906,6 +906,7 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         HitPlanner hp = hits;
         hp.policy = stagePolicy != null ? stagePolicy : settings.hitChoice;
         hp.critTiming = settings.critSync;
+        hp.approachCrit = settings.approachCrit;
         hp.targetIsPlayer = targetIsPlayer;
         hp.comboLive = feel.comboDrives(settings);
         hp.holdGap = tac == TacticsPlanner.Tactic.HOLD_GAP;
