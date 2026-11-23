@@ -373,37 +373,42 @@ class ApproachControlTest {
     @Test
     void theTargetIsFrozenFromTakeoffWithOneTrimBeforeTheApex() {
         Assumptions.assumeTrue(shapes(), "needs the shape-physics replica");
-        for (boolean beforeApex : new boolean[]{true, false}) {
-            ShapeGrid g = course(ShapeGrid.FENCE_POST, 2).put(0, 19, 6, ShapeGrid.FENCE_POST);
-            MovementAssistBrain b = brain(JumpCommit.Mode.GUIDE, false);
-            MovementPhysics p = new MovementPhysics().set(0.5, 20, -8, 0, -0.0784, 0, true);
-            int air = 0;
-            int checked = 0;
-            for (int t = 0; t < 120 && p.y > 15 && checked < 2; t++) {
-                boolean airborne = !p.onGround;
-                if (airborne) {
-                    air++;
+        for (int far : new int[] {5, 7}) {
+            boolean reach = far == 5; // one block past the post: this flight still lands there; three: it does not
+            for (boolean beforeApex : new boolean[]{true, false}) {
+                ShapeGrid g = course(ShapeGrid.FENCE_POST, 2).put(0, 19, far, ShapeGrid.FENCE_POST);
+                MovementAssistBrain b = brain(JumpCommit.Mode.GUIDE, false);
+                MovementPhysics p = new MovementPhysics().set(0.5, 20, -8, 0, -0.0784, 0, true);
+                int air = 0;
+                int checked = 0;
+                for (int t = 0; t < 120 && p.y > 15 && checked < 2; t++) {
+                    boolean airborne = !p.onGround;
+                    if (airborne) {
+                        air++;
+                    }
+                    boolean sweep = airborne && checked == 0 && (beforeApex ? air == 2 : p.vy < 0);
+                    boolean back = airborne && checked == 1;
+                    // the look sweeps to the far post once; the next tick it sweeps back (before the apex) or stays there
+                    int lookZ = sweep ? far : back ? (beforeApex ? 4 : far) : 4;
+                    b.setIntentTarget(0, 19, lookZ, 0.9);
+                    b.decide(p, 0f, p.sprinting, 1, 0, false, 20f, g);
+                    if (sweep) {
+                        assertTrue(b.targetFrozen(), "frozen in flight");
+                        assertEquals(beforeApex && reach ? far : 4, b.targetZ(), beforeApex
+                                ? (reach ? "one trim before the apex follows the look"
+                                : "a trim out of reach of this flight goes back to the post (J19, 2026-11-23)")
+                                : "after the apex the target stays");
+                        checked = 1;
+                    } else if (back) {
+                        // a second change in the same flight is ignored
+                        assertEquals(beforeApex && reach ? far : 4, b.targetZ(), "only one trim per flight");
+                        checked = 2;
+                    }
+                    int f = b.forward() == MovementAssistBrain.KEEP ? 1 : b.forward();
+                    p.tick(f, 0, 0f, !b.sprintOff(), b.jump(), b.sneak(), g);
                 }
-                boolean sweep = airborne && checked == 0 && (beforeApex ? air == 2 : p.vy < 0);
-                boolean back = airborne && checked == 1;
-                // the look sweeps to the far post once; the next tick it sweeps back (before the apex) or stays there
-                int lookZ = sweep ? 6 : back ? (beforeApex ? 4 : 6) : 4;
-                b.setIntentTarget(0, 19, lookZ, 0.9);
-                b.decide(p, 0f, p.sprinting, 1, 0, false, 20f, g);
-                if (sweep) {
-                    assertTrue(b.targetFrozen(), "frozen in flight");
-                    assertEquals(beforeApex ? 6 : 4, b.targetZ(), beforeApex
-                            ? "one trim before the apex follows the look" : "after the apex the target stays");
-                    checked = 1;
-                } else if (back) {
-                    // a second change in the same flight is ignored
-                    assertEquals(beforeApex ? 6 : 4, b.targetZ(), "only one trim per flight");
-                    checked = 2;
-                }
-                int f = b.forward() == MovementAssistBrain.KEEP ? 1 : b.forward();
-                p.tick(f, 0, 0f, !b.sprintOff(), b.jump(), b.sneak(), g);
+                assertEquals(2, checked, "the flight was observed");
             }
-            assertEquals(2, checked, "the flight was observed");
         }
     }
 

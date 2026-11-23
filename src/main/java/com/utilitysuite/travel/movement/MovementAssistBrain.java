@@ -204,6 +204,9 @@ public final class MovementAssistBrain {
             targetSafe = false;
         }
         commit.mode = mode;
+        commit.narrowTarget = targetOn && targetRegionValid
+                && (targetRegion.topBound(2) - targetRegion.topBound(0) < NARROW_TOP
+                || targetRegion.topBound(3) - targetRegion.topBound(1) < NARROW_TOP);
         commit.reactionTicks = baseReactionTicks <= 0 ? 0 : baseReactionTicks - 1 + jumpsSeen % 3;
         boolean planOnGround = now.onGround && targetOn && targetSafe;
         commit.tick(now.onGround, tookOff, touchedDown, keys, userSneak, yaw, yawRate,
@@ -644,6 +647,19 @@ public final class MovementAssistBrain {
             lands = true; // the user's own keys land on the target (no region to brake for)
         }
         lastPlanLands = lands || myMiss <= 0.0;
+        if (trimRevert) {
+            trimRevert = false;
+            if (!lastPlanLands) {
+                // the trim is out of reach from this flight: back to the top it was landing on
+                itx = trimX;
+                ity = trimY;
+                itz = trimZ;
+                intentConfidence = trimConfidence;
+                idealValid = false;
+                targetChanged();
+                lastPlanLands = true;
+            }
+        }
         lastPlanForward = planF == KEEP ? userForward : planF;
         // co-steer from the flight plan: toward the target's centre when the keys at this yaw do not land it
         if (coSteerAllowed && targetRegionValid && !(flight.found() && flight.userLands())) {
@@ -1063,6 +1079,13 @@ public final class MovementAssistBrain {
         scriptOn = false;
     }
 
+    /** A top narrower than this on either axis (blocks) is a post or a row: fence 0.25, wall 0.5, pane 0.125. */
+    static final double NARROW_TOP = 0.75;
+    /** The one in-flight trim reverts on the next air plan when that plan no longer lands. */
+    private boolean trimRevert;
+    private int trimX, trimY, trimZ;
+    private double trimConfidence;
+
     /**
      * Target freeze (design 9.6): from TAKEOFF until the commitment ends (SETTLE included, RELEASE not, so the next
      * jump's target is free during the hand-back) the locked target ignores the estimator, except one trim before the
@@ -1086,6 +1109,7 @@ public final class MovementAssistBrain {
         if (!frozen) {
             targetFrozen = false;
             trimUsed = false;
+            trimRevert = false;
             lockFromRaw();
             return;
         }
@@ -1095,8 +1119,21 @@ public final class MovementAssistBrain {
         if (!trimUsed && !scriptOn && rawSet && rawConfidence >= intentThreshold && !now.onGround && now.vy > 0.0
                 && (rtx != itx || rty != ity || rtz != itz)) {
             trimUsed = true; // the one trim of this flight
+            // kept only if this flight still lands on the new top (checked by the air plan this tick): over a fence
+            // post the pick moved on to the pad behind it, out of reach, the commitment aborted and the body slid off
+            // the post with no brake and no hold (J19, 2026-11-23)
+            trimRevert = lastPlanLands;
+            trimX = itx;
+            trimY = ity;
+            trimZ = itz;
+            trimConfidence = intentConfidence;
             lockFromRaw();
         }
+    }
+
+    /** The last plan lands on the locked target (diagnostics). */
+    public boolean planLands() {
+        return lastPlanLands;
     }
 
     /** The locked target is frozen for the running commitment. */

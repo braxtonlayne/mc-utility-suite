@@ -1,0 +1,133 @@
+package com.utilitysuite.travel.movement;
+
+import org.junit.jupiter.api.Test;
+
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+/**
+ * Live trace of 2026-11-23, course J19 (2 air, +0.5, onto a lone fence post), Co-pilot: three falls off the post. Twice
+ * the one in-flight trim moved the target to the pad behind the post (out of reach), the commitment aborted and the
+ * body slid off the post with no brake and no hold; once the user glanced down at the post and turned the view 24
+ * degrees, which ended the commitment the same way.
+ */
+class FencePostLoopTest {
+    /** Prints a tick line per loop tick (set it in a debugger or a one-off test). */
+    static boolean debug;
+
+    /** The takeoff strip (z -8..0), 2 air, a fence post at z 3 (top 20.5), 4 air, a pad at z 8..10. */
+    static ShapeGrid scene() {
+        return new ShapeGrid().fill(0, 19, -8, 0, 19, 0).fencePost(0, 19, 3).fill(-1, 19, 8, 1, 19, 10)
+                .fill(-8, 5, -12, 8, 5, 16);
+    }
+
+    /**
+     * The whole loop as the module runs it: the user holds W + sprint along the strip, presses jump at the edge and,
+     * with {@code glance}, looks down at the post and turns the view from 3 ticks after the takeoff.
+     *
+     * @return "held" when the body stands on the post 10 ticks after its touchdown, else what happened
+     */
+    static String loop(JumpCommit.Mode mode, double startX, double startZ, float pitch, int glance) {
+        ShapeGrid g = scene();
+        SupportRegion post = TechniqueLibraryTest.top(g, 0, 19, 3);
+        MovementAssistBrain b = new MovementAssistBrain();
+        b.mode = mode;
+        b.landingHold = true;
+        b.sprintWithholdAvailable = true;
+        b.setTechniques(new TechniqueLibrary());
+        b.setKeyChangeLimits(6, 2, 0);
+        IntentEstimator intent = new IntentEstimator();
+        boolean carry = mode == JumpCommit.Mode.CARRY;
+        float steerRate = carry ? 12f : 7.5f;
+        float steerMax = carry ? 90f : 25f;
+        com.utilitysuite.core.input.YawCoSteer steer = new com.utilitysuite.core.input.YawCoSteer();
+        MovementPhysics p = new MovementPhysics().set(startX, 20, startZ, 0, -0.0784, 0, true);
+        float yaw = 0f;
+        boolean sprint = true;
+        boolean pressed = false;
+        int airborne = -1;
+        int onPost = 0;
+        boolean aborted = false;
+        for (int t = 0; t < 90; t++) {
+            boolean uj = !pressed && p.onGround && p.z >= 0.75;
+            pressed |= uj;
+            if (glance != 0 && airborne >= 0 && t - airborne >= 3 && t - airborne <= 10) {
+                pitch = Math.min(80f, pitch + 9f);
+                yaw += 3f * glance; // 24 degrees over 8 ticks
+            }
+            intent.setCommitThreshold(carry ? IntentEstimator.CARRY_THRESHOLD : IntentEstimator.GUIDE_THRESHOLD);
+            b.intentThreshold = intent.commitThreshold();
+            if (intent.estimate(p, yaw, pitch, 1, 0, sprint, g) && intent.hasTarget()) {
+                b.setIntentBlocked(intent.targetBlocked());
+                b.setIntentLook(intent.lookConfidence());
+                b.setIntentTarget(intent.targetX(), intent.targetY(), intent.targetZ(), intent.confidence());
+            } else {
+                b.clearIntentTarget();
+            }
+            b.coSteerAllowed = true;
+            b.coSteerMaxDegPerTick = steerRate;
+            b.coSteerMaxTotalDeg = steerMax;
+            if (!b.commit().live()) {
+                steer.reset();
+            }
+            b.decide(p, yaw, sprint, 1, 0, uj, 20f, g);
+            aborted |= b.commit().phase() == JumpCommit.Phase.ABORT;
+            if (debug) {
+                System.out.printf("FDBG %d x%.2f y%.2f z%.2f yaw%.1f p%.0f %s tgt%s lands%s narrow%s f%s s%s%n", t, p.x, p.y, p.z, yaw, pitch,
+                        b.commit().phase(), b.intentActive() ? b.targetZ() : "-", b.planLands(), b.commit().narrowTarget, b.forward(), b.strafe());
+            }
+            int f = b.forward() == MovementAssistBrain.KEEP ? 1 : b.forward();
+            int s = b.strafe() == MovementAssistBrain.KEEP ? 0 : b.strafe();
+            boolean jump = (uj && !b.withholdJump()) || b.jump();
+            steer.beginTick();
+            if (b.wantsCoSteer()) {
+                steer.request(b.coSteerYaw(), steerRate * 20.0, Math.min(steerMax, b.coSteerTotalDeg()), 1.0);
+            }
+            sprint = (sprint || b.sprint()) && !b.sprintOff() && f > 0;
+            boolean wasGround = p.onGround;
+            p.tick(f, s, yaw, sprint, jump, b.sneak(), g);
+            if (wasGround && !p.onGround && airborne < 0) {
+                airborne = t;
+            }
+            for (int k = 0; k < 3; k++) {
+                yaw += (float) steer.onFrame(yaw, 0.0, 0.0, 0.05 / 3, false);
+            }
+            if (p.onGround && Math.abs(p.y - post.top()) < 1e-6 && post.contains(p.x, p.z)) {
+                if (++onPost >= 10) {
+                    return aborted ? "held after an abort" : "held";
+                }
+            } else if (onPost > 0) {
+                return String.format("slid off the post at x%.2f z%.2f (%s)", p.x, p.z, b.commit().phase());
+            }
+            if (p.y < 18) {
+                return String.format("fell at x%.2f z%.2f (%s)", p.x, p.z, b.commit().phase());
+            }
+        }
+        return String.format("stuck at x%.2f y%.2f z%.2f", p.x, p.y, p.z);
+    }
+
+    @Test
+    void coPilotHoldsTheFencePostWhetherTheUserGlancesDownOrNot() {
+        for (JumpCommit.Mode mode : new JumpCommit.Mode[] {JumpCommit.Mode.GUIDE, JumpCommit.Mode.CARRY}) {
+            for (int glance : new int[] {0, -1, 1}) {
+                int held = 0;
+                int tried = 0;
+                StringBuilder out = new StringBuilder();
+                for (double x = 0.3; x <= 0.71; x += 0.2) {
+                    for (double z = -6.0; z <= -4.9; z += 0.5) {
+                        for (float pitch : new float[] {10f, 25f}) {
+                            tried++;
+                            String r = loop(mode, x, z, pitch, glance);
+                            if (r.equals("held")) {
+                                held++;
+                            } else {
+                                out.append(String.format(" [x%.1f z%.1f p%.0f: %s]", x, z, pitch, r));
+                            }
+                        }
+                    }
+                }
+                System.out.println("FENCE LOOP " + mode + (glance != 0 ? " glance " + glance + " " : " ") + held + "/" + tried + out);
+                assertTrue(held * 10 >= tried * 9, mode + (glance != 0 ? " glance " + glance + ": " : ": ") + held + " of " + tried + out);
+            }
+        }
+    }
+}

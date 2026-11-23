@@ -40,6 +40,13 @@ public final class JumpCommit {
     public int maxKeyChanges;
     public int minChangeHoldTicks = 1;
     public int reactionTicks;
+    /**
+     * The locked top is narrow (a fence, wall or pane post or row, set by the brain each tick). In flight onto it and
+     * while the hold settles the body on it, the mouse needs {@link #NARROW_YAW_SCALE} times the usual angle off the line to end the commitment: the user looks
+     * down at the post (J19, 2026-11-23: a 24-degree glance aborted it, no brake, no hold, off the post).
+     */
+    public boolean narrowTarget;
+    static final double NARROW_YAW_SCALE = 2.0;
 
     private Phase phase = Phase.IDLE;
     private boolean touchdownPassed;
@@ -103,7 +110,10 @@ public final class JumpCommit {
             OverrideClassifier.Kind k = classifier.hard(userSneak, backTicks, Integer.bitCount(axisOverrides),
                     external);
             if (lineSet) {
-                k = OverrideClassifier.max(k, classifier.yaw(Math.abs(yawPerTick) * 4.0, off, Math.abs(yawPerTick),
+                double offLine = narrowTarget && (phase == Phase.TAKEOFF || phase == Phase.FLIGHT
+                        || phase == Phase.TOUCHDOWN || phase == Phase.SETTLE)
+                        ? off / NARROW_YAW_SCALE : off;
+                k = OverrideClassifier.max(k, classifier.yaw(Math.abs(yawPerTick) * 4.0, offLine, Math.abs(yawPerTick),
                         0.0));
             } else if (userSneak || external) {
                 k = OverrideClassifier.Kind.HARD_OVERRIDE;
