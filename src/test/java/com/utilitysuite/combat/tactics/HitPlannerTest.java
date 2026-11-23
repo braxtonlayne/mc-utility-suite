@@ -297,6 +297,21 @@ class HitPlannerTest {
     }
 
     @Test
+    void noHopWithARavineAFewBlocksBehind() {
+        HitPlanner p = afterOpener();
+        CombatSnapshot s = snap(2.5);
+        s.selfKnockDepth = 10; // a hit taken mid-air carries 3-5 blocks
+        s.selfKnockDist = 5.0;
+        p.decide(s);
+        assertFalse(p.jump());
+        assertEquals(HitPlanner.Kind.SPRINT_KB, p.kind());
+        HitPlanner q = afterOpener();
+        s.selfKnockDepth = 2; // a step down is no danger
+        q.decide(s);
+        assertTrue(q.jump(), "a step down behind does not stop the crit hop");
+    }
+
+    @Test
     void noHopUnderALowCeiling() {
         HitPlanner p = afterOpener();
         CombatSnapshot s = snap(2.5);

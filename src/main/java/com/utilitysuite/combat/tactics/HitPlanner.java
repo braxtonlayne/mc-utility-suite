@@ -194,9 +194,22 @@ public final class HitPlanner {
 
     /** True when being airborne now costs nothing it should not: every "no hop" rule. */
     public boolean hopAllowed(CombatSnapshot s) {
-        return critTiming && !holdGap && !s.hazardBack && s.headroom > LOW_HEADROOM && !s.inWater && !s.climbing
+        return critTiming && !holdGap && !s.hazardBack && !dropBehind(s)
+                && s.headroom > LOW_HEADROOM && !s.inWater && !s.climbing
                 && !s.usingItem
                 && !(targetIsPlayer && oppCharged && !critOrNothing() && s.horizontalDistance() <= OPP_REACH);
+    }
+
+    /** Depth (open blocks) from which a drop behind us vetoes a hop. */
+    public static final int DROP_BEHIND_DEPTH = 4;
+
+    /**
+     * A real drop lies up to 6 blocks behind us on the line from the target: a hit taken in the air (no ground
+     * friction) carries us 3-5 blocks, so no hop here (arena benchmark 2026-11-23: two of three losses were crit hops
+     * at the reach edge, hit mid-air and knocked over the edge).
+     */
+    public static boolean dropBehind(CombatSnapshot s) {
+        return s.selfKnockDepth >= DROP_BEHIND_DEPTH;
     }
 
     /** Heavily out-geared by a player ({@link #CRIT_OR_NOTHING_RATIO}): only crits make progress. */
@@ -405,7 +418,8 @@ public final class HitPlanner {
         if (!approachCrit || !critTiming || (policy != Policy.AUTO && policy != Policy.CRITS)) {
             return false;
         }
-        if (holdGap || s.hazardBack || s.headroom <= LOW_HEADROOM || s.inWater || s.climbing || s.usingItem) {
+        if (holdGap || s.hazardBack || dropBehind(s) || s.headroom <= LOW_HEADROOM
+                || s.inWater || s.climbing || s.usingItem) {
             return false;
         }
         if (s.knockValue > 0.0 && (s.knockKind == ArenaField.KNOCK_LAVA || s.knockKind == ArenaField.KNOCK_DROP)) {

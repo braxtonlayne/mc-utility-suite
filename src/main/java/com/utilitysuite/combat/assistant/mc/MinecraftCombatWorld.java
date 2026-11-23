@@ -344,7 +344,7 @@ public final class MinecraftCombatWorld implements CombatWorld, LineOfSight.Soli
      */
     private void sampleHitChoice(LocalPlayer p, LivingEntity t, ClientLevel lvl, CombatSnapshot out) {
         out.ownAttackSpeed = p.getAttributeValue(Attributes.ATTACK_SPEED);
-        out.ownAttackDamage = p.getAttributeValue(Attributes.ATTACK_DAMAGE);
+        out.ownAttackDamage = ownAttackDamage(p);
         out.ownArmor = p.getArmorValue();
         out.ownToughness = p.getAttributeValue(Attributes.ARMOR_TOUGHNESS);
         out.sweepWeapon = p.getMainHandItem().canPerformAction(ItemAbilities.SWORD_SWEEP);
@@ -426,6 +426,29 @@ public final class MinecraftCombatWorld implements CombatWorld, LineOfSight.Soli
             damageCacheValue = damageScan;
         }
         return Math.max(0.5, base + damageCacheValue);
+    }
+
+    private ItemAttributeModifiers ownDamageKey;
+    private double ownDamageValue;
+
+    /**
+     * Our melee damage per hit before armour. The client's ATTACK_DAMAGE attribute value can miss the held weapon
+     * (arena benchmark 2026-11-23: it read 1.0 with an iron sword in hand, so the gear read thought an even fight was
+     * 4:1 against us), so the held item's modifiers are added to the base like for the target, and the higher of the
+     * two counts (a correct attribute value still carries Strength and other buffs).
+     */
+    private double ownAttackDamage(LocalPlayer p) {
+        ItemAttributeModifiers mods = p.getMainHandItem().getAttributeModifiers();
+        if (mods != ownDamageKey) {
+            damageScan = 0.0;
+            mods.forEach(EquipmentSlot.MAINHAND, damageVisitor);
+            ownDamageKey = mods;
+            ownDamageValue = damageScan;
+        }
+        AttributeInstance inst = p.getAttribute(Attributes.ATTACK_DAMAGE);
+        double base = inst != null ? inst.getBaseValue() : 1.0;
+        double attr = inst != null ? inst.getValue() : 1.0;
+        return Math.max(attr, base + ownDamageValue);
     }
 
     // ---- target arm-swing edge and attack speed (cooldown reading) -----------------------------------------------
@@ -548,7 +571,7 @@ public final class MinecraftCombatWorld implements CombatWorld, LineOfSight.Soli
     private static final double GAP_MAX = 8.0;
     private static final double[] KNOCK_DIST = {1.0, 2.0};
     /** Probes behind us along a hit's push: a sprint hit carries a player 3-4 blocks (arena: knocked 3.5 into a ravine). */
-    private static final double[] SELF_KNOCK_DIST = {1.0, 2.0, 3.0, 4.0};
+    private static final double[] SELF_KNOCK_DIST = {1.0, 2.0, 3.0, 4.0, 5.0, 6.0};
 
     /** Gap on the line to the target, open blocks under the target, deepest drop around the target. */
     private void sampleTerrain(CombatSnapshot out, double fx, double fz, double len) {
@@ -603,6 +626,7 @@ public final class MinecraftCombatWorld implements CombatWorld, LineOfSight.Soli
         // our own edge danger: the drop a hit from the target would push us toward (fixed probes, no allocation)
         out.selfKnockDepth = 0;
         out.selfKnockX = 0;
+        out.selfKnockDist = 0;
         out.selfKnockZ = 0;
         double ux = out.px - out.tx;
         double uz = out.pz - out.tz;
@@ -617,6 +641,7 @@ public final class MinecraftCombatWorld implements CombatWorld, LineOfSight.Soli
                 }
                 if (depth > 0) {
                     out.selfKnockDepth = depth;
+                    out.selfKnockDist = r;
                     out.selfKnockX = ux;
                     out.selfKnockZ = uz;
                     break;

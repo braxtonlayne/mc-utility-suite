@@ -130,6 +130,14 @@ final class ArenaClient {
         boolean swung = ca.swings() != gateSwingSeen;
         gateSwingSeen = ca.swings();
         double reach = Math.sqrt(s.reachDistanceSq());
+        if (reach > s.reach && reach < s.reach + 5.0) {
+            var hp0 = ca.hitPlanner();
+            PlaytestMod.LOG.info(String.format(java.util.Locale.ROOT,
+                    "[appr] d=%.2f close=%.2f tapp=%.2f entry=%.1f str=%.2f gnd=%b kind=%s jumpHop=%b hb=%b hr=%d",
+                    reach, hp0.closing(), com.utilitysuite.combat.tactics.HitPlanner.targetApproachSpeed(s),
+                    com.utilitysuite.combat.tactics.HitPlanner.entryTicks(reach, s.reach, hp0.closing()),
+                    s.attackStrength, s.onGround, hp0.kind(), hp0.approachHop(), s.hazardBack, s.headroom));
+        }
         if (swung || s.attackStrength < 0.95f || reach > 3.6) {
             return;
         }
@@ -159,10 +167,16 @@ final class ArenaClient {
             swingSeen = sw;
             net.minecraft.client.player.LocalPlayer p = mc.player;
             PlaytestMod.LOG.info(String.format(java.util.Locale.ROOT,
-                    "[swing] kind=%s policy=%s ratio=%.2f gnd=%b fall=%.2f vy=%.2f sprint=%b str=%.2f W=%b appr=%d close=%.2f",
+                    "[swing] kind=%s policy=%s ratio=%.2f gnd=%b fall=%.2f vy=%.2f sprint=%b str=%.2f W=%b appr=%d close=%.2f their=%.2f ours=%.2f nT=%d nD=%d hp=%.1f thp=%.1f tdmg=%.2f tarm=%.1f arm=%.1f spd=%.2f dmg=%.2f attrDmg=%.2f",
                     ca.hitPlanner().kind(), ca.lastHitPolicy(), ca.gearRatio(), p.onGround(), p.fallDistance,
                     p.getDeltaMovement().y, p.isSprinting(), p.getAttackStrengthScale(0f),
-                    mc.options.keyUp.isDown(), ca.hitPlanner().approachHops(), ca.hitPlanner().closing()));
+                    mc.options.keyUp.isDown(), ca.hitPlanner().approachHops(), ca.hitPlanner().closing(),
+                    ca.gearRead().theirHit(), ca.gearRead().ourHit(), ca.gearRead().takenHits(), ca.gearRead().dealtHits(),
+                    ca.snapshotForDiagnostics().effectiveHealth(), ca.snapshotForDiagnostics().targetHealth,
+                    ca.snapshotForDiagnostics().targetAttackDamage, ca.snapshotForDiagnostics().targetArmor,
+                    ca.snapshotForDiagnostics().ownArmor, ca.snapshotForDiagnostics().ownAttackSpeed,
+                    ca.snapshotForDiagnostics().ownAttackDamage,
+                    p.getAttributeValue(net.minecraft.world.entity.ai.attributes.Attributes.ATTACK_DAMAGE)));
         }
     }
 

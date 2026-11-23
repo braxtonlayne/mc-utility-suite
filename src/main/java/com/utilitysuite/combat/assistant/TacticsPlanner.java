@@ -50,6 +50,8 @@ public final class TacticsPlanner {
     public static final double KNOCK_VECTOR_MIN_VALUE = 0.35;
     /** Edge guard: a drop behind us at least this deep (fall damage starts past 3 blocks). */
     public static final int SELF_GUARD_DEPTH = 4;
+    /** Edge guard only for a drop this close behind us (a ground hit carries 3-4 blocks). */
+    public static final double SELF_GUARD_PROBE = 4.0;
     /** Edge guard only while the target is about to be able to hit us (horizontal blocks). */
     public static final double SELF_GUARD_RANGE = 5.0;
     /** Knock tactics only while the target stands within this height of us (blocks). */
@@ -79,7 +81,7 @@ public final class TacticsPlanner {
                 && s.crosshairOnTarget && s.attackStrength >= FORCED_SWING_CHARGE;
 
         double dist = s.horizontalDistance();
-        if (s.selfKnockDepth >= SELF_GUARD_DEPTH && dist <= SELF_GUARD_RANGE) {
+        if (s.selfKnockDepth >= SELF_GUARD_DEPTH && s.selfKnockDist <= SELF_GUARD_PROBE && dist <= SELF_GUARD_RANGE) {
             // arena, 2026-11-23: rounds lost while ahead to one hit that knocked us 8 blocks into a ravine
             tactic = Tactic.EDGE_GUARD;
             circleAndCloseIn(s, s.selfKnockX, s.selfKnockZ, dist, false);

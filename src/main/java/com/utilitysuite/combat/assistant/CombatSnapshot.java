@@ -122,6 +122,9 @@ public final class CombatSnapshot {
      */
     public int selfKnockDepth;
     public double selfKnockX, selfKnockZ;
+    /** Distance behind us (blocks) of the drop in {@link #selfKnockDepth}; the probe reaches 6 (a hit taken in the air
+     *  carries further than one on the ground). */
+    public double selfKnockDist;
 
     // ---- arena read (filled by the assistant from combat.tactics.ArenaField when knock vectoring is on) ------------
     /**

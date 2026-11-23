@@ -188,6 +188,9 @@ class TacticsPlannerTest {
         assertEquals(Tactic.EDGE_GUARD, t.plan(s, true, true));
         assertNotEquals(SpacingController.BACK, t.forward());
         assertNotEquals(StrafePlanner.NONE, t.side());
+        s.selfKnockDist = 5.0; // further than a ground hit carries: no circling yet
+        assertEquals(Tactic.EDGE_KNOCK, t.plan(s, true, true));
+        s.selfKnockDist = 2.0;
         s.selfKnockDepth = 2; // a step down is no danger
         assertEquals(Tactic.EDGE_KNOCK, t.plan(s, true, true));
     }

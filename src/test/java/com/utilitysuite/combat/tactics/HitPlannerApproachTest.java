@@ -102,6 +102,10 @@ class HitPlannerApproachTest {
         s.hazardBack = true;
         assertEquals(-1, walkIn(new HitPlanner(), s, 12, 0.5, entry), "drop behind");
         s = snap(12);
+        s.selfKnockDepth = 10;
+        s.selfKnockDist = 5.0;
+        assertEquals(-1, walkIn(new HitPlanner(), s, 12, 0.5, entry), "ravine 5 blocks behind: an air hit carries");
+        s = snap(12);
         s.headroom = 2;
         assertEquals(-1, walkIn(new HitPlanner(), s, 12, 0.5, entry), "low ceiling");
         s = snap(12);

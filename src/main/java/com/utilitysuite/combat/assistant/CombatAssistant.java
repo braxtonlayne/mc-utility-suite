@@ -2380,6 +2380,11 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         return gear.ratio();
     }
 
+    /** The gear read (diagnostics). */
+    public com.utilitysuite.combat.tactics.GearRead gearRead() {
+        return gear;
+    }
+
     /** Hit policy the hit planner used on its last decision (a stage's one-tick override included; tests). */
     public HitPlanner.Policy lastHitPolicy() {
         return hits.policy;
