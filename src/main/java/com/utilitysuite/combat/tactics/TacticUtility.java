@@ -64,6 +64,17 @@ public final class TacticUtility {
      * becoming a reset and the fight goes on.
      */
     public boolean canRegenerate = true;
+    /**
+     * The opponent is retreating ({@link OpponentModel#retreating}): no threat right now, so FIGHT wins outright
+     * (without the dwell) and every other tactic scores 0. Default false.
+     */
+    public boolean oppRetreating;
+    /**
+     * We out-reach it (its learned reach is below ours): the trade solver ranges its crit hops out by itself, so the hop
+     * pressure counts at {@link #OUT_RANGED_PRESSURE} toward KITE and CEILING_DENY. Default false.
+     */
+    public boolean outRanged;
+    public static final double OUT_RANGED_PRESSURE = 0.5;
 
     /** Health (points) we must miss beyond what the opponent misses for a regeneration reset to pay. */
     public static final double REGEN_RESET_MARGIN = 2.0;
@@ -75,6 +86,18 @@ public final class TacticUtility {
      */
     public static boolean regenResetPays(double ownMissing, double oppMissing) {
         return ownMissing > oppMissing + REGEN_RESET_MARGIN;
+    }
+
+    /** Its chase speed must stay below this share of our sprint for a regeneration reset to gain distance. */
+    public static final double PACE_SHARE = 0.9;
+
+    /**
+     * The opponent keeps pace with us on a regeneration reset: its observed chase speed
+     * ({@link OpponentModel#chaseSpeed}) is at least {@value #PACE_SHARE} of our sprint speed, or it was never seen
+     * running at us (unknown counts as keeping pace: a reset on natural regeneration then only hands it free hits).
+     */
+    public static boolean oppKeepsPace(double chaseSpeed, double ownSprintSpeed) {
+        return chaseSpeed != chaseSpeed || chaseSpeed >= PACE_SHARE * ownSprintSpeed;
     }
 
     private final double[] scores = new double[Tactic.values().length];
@@ -97,7 +120,14 @@ public final class TacticUtility {
     public void scoreAll() {
         double a = advantage();
         double hp = ownMaxHealth > 0 ? Math.max(0.0, Math.min(1.0, ownHealth / ownMaxHealth)) : 1.0;
-        double pressure = Math.max(0.0, Math.min(1.0, oppHopRate / 1.5));
+        double pressure = Math.max(0.0, Math.min(1.0, oppHopRate / 1.5)) * (outRanged ? OUT_RANGED_PRESSURE : 1.0);
+        if (oppRetreating) {
+            for (int i = 0; i < scores.length; i++) {
+                scores[i] = 0.0;
+            }
+            scores[Tactic.FIGHT.ordinal()] = Math.max(a, 1.0);
+            return;
+        }
         scores[Tactic.FIGHT.ordinal()] = a;
         scores[Tactic.KITE.ordinal()] = 0.75 * a + 0.3 * pressure * (1.0 - Math.abs(a - 0.5));
         scores[Tactic.RETREAT_HEAL.ordinal()] = healingItems > 0 ? (1.0 - hp) * 1.2 * (1.0 - 0.5 * a) : 0.0;
@@ -138,6 +168,16 @@ public final class TacticUtility {
             // not wait to be outscored, since in a losing fight every score is near zero and the hysteresis would hold it
             current = Tactic.FIGHT;
             dwell = 0;
+        }
+        if (oppRetreating) {
+            // a retreating opponent is no threat: chase it now, no dwell in a kite or a reset
+            if (current != Tactic.FIGHT) {
+                current = Tactic.FIGHT;
+                dwell = 0;
+            } else {
+                dwell++;
+            }
+            return current;
         }
         Tactic best = current;
         double bestScore = scores[current.ordinal()] + HYSTERESIS;

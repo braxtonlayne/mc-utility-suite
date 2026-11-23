@@ -1,5 +1,6 @@
 package com.utilitysuite.combat.assistant.stages;
 
+import com.utilitysuite.combat.assistant.CombatSettings;
 import com.utilitysuite.combat.assistant.CombatSnapshot;
 import com.utilitysuite.combat.assistant.FightContext;
 import com.utilitysuite.combat.assistant.FightStage;
@@ -41,11 +42,30 @@ public final class ShieldDuelStage implements FightStage {
     /** Vanilla entity interaction range of a player (the opponent's reach of us). */
     static final double OPP_REACH = 3.0;
 
+    /** Do not circle a shield that turns with us: wait outside its reach instead. */
+    public static final String KEY_NO_CIRCLE = "shield_duel_no_circle";
+    /** Centre-to-centre margin past its reach while waiting out a tracking shield (blocks). */
+    static final double HOLD_MARGIN = 0.2;
+    /** Half the width of a player's box: eye-to-box reach plus this is the centre distance on flat ground. */
+    static final double HALF_WIDTH = 0.3;
+    /** Spacing min assumed when no settings are attached (the setting's default). */
+    static final double DEFAULT_SPACING_MIN = 2.7;
+
     private final ShieldFacts facts;
     private final ShieldDuel duel = new ShieldDuel();
 
     private boolean enabled = true;
     private boolean blockEnabled = true;
+    private boolean noCircle = true;
+    private int waits;
+
+    /**
+     * Blocks to widen the spacing band so its low end sits {@value #HOLD_MARGIN} past the opponent's reach
+     * ({@code eyeToBoxReach} + {@value #HALF_WIDTH} centre to centre on flat ground); 0 when the band already does.
+     */
+    public static double holdOutside(double eyeToBoxReach, double spacingMin) {
+        return Math.max(0.0, eyeToBoxReach + HALF_WIDTH + HOLD_MARGIN - spacingMin);
+    }
 
     /** We hold USE for our shield (through the context). */
     private boolean holdingUse;
@@ -129,8 +149,24 @@ public final class ShieldDuelStage implements FightStage {
         if (theirUp) {
             ctx.vetoSwing();
             ctx.vetoJump();
-            lastSide = ShieldDuel.openSide(theirYaw, s.tx, s.tz, s.px, s.pz, s.hazardLeft, s.hazardRight, lastSide);
-            ctx.forceSide(lastSide);
+            if (noCircle && d.tracksUs()) {
+                // it turns as fast as we circle: no open side to find. Wait just outside its reach (it cannot drop
+                // the shield and swing from there) and punish the tick it lowers it
+                CombatSettings cs = ctx.settings();
+                double extra = holdOutside(om.learnedReach(id, OPP_REACH),
+                        cs == null ? DEFAULT_SPACING_MIN : cs.spacingMin);
+                if (extra > 0.0) {
+                    ctx.widenSpacing(extra);
+                }
+                waits++;
+            } else {
+                lastSide = ShieldDuel.openSide(theirYaw, s.tx, s.tz, s.px, s.pz, s.hazardLeft, s.hazardRight,
+                        lastSide);
+                ctx.forceSide(lastSide);
+                if (noCircle) {
+                    d.noteCircling(ShieldDuel.offAxisDeg(theirYaw, s.tx, s.tz, s.px, s.pz));
+                }
+            }
             vetoes++;
         } else if (theirUpBefore && !d.vetoSwing() && SwingGate.ready(s.attackStrength) && s.inReach()
                 && s.crosshairOnTarget) {
@@ -138,6 +174,9 @@ public final class ShieldDuelStage implements FightStage {
             ctx.tapAttack();
             ctx.vetoSwing(); // no second tap from the hit planner
             drops++;
+        }
+        if (!theirUp) {
+            d.endCircling();
         }
         theirUpBefore = theirUp;
 
@@ -187,12 +226,31 @@ public final class ShieldDuelStage implements FightStage {
                 "With a shield in the offhand: raise it just before the opponent's charged hit, take the hit on it, "
                         + "lower and answer inside their cooldown. Never against an axe, never while eating, only "
                         + "with the opponent in front of you."));
+        out.add(SettingSpec.bool(KEY_NO_CIRCLE, "Wait out a shield that turns with you", true, GROUP,
+                "If circling never gets round a raised shield (the opponent turns as fast as you move), stop circling:"
+                        + " wait just outside its reach and hit the moment it comes down."));
     }
 
     @Override
     public void read(ProfileConfig profile, String moduleId) {
         enabled = profile.getBool(moduleId, KEY_DUEL, true);
         blockEnabled = profile.getBool(moduleId, KEY_BLOCK, true);
+        noCircle = profile.getBool(moduleId, KEY_NO_CIRCLE, true);
+    }
+
+    /** Settings without a profile (tests): the no-circle rule. */
+    public void configureNoCircle(boolean on) {
+        this.noCircle = on;
+    }
+
+    /** Ticks spent waiting outside the reach of a shield that turns with us. */
+    public int waits() {
+        return waits;
+    }
+
+    /** The current fight's opponent turns its shield with us. */
+    public boolean tracksUs() {
+        return duel.tracksUs();
     }
 
     // ---- diagnostics and tests ------------------------------------------------------------------------------------

@@ -103,6 +103,7 @@ class ShieldDuelStageTest {
         int side = Integer.MIN_VALUE;
         boolean press;
         int taps;
+        double widen;
 
         void clearTick() {
             vetoSwing = false;
@@ -110,6 +111,7 @@ class ShieldDuelStageTest {
             policy = null;
             side = Integer.MIN_VALUE;
             press = false;
+            widen = 0.0;
         }
 
         @Override
@@ -239,6 +241,7 @@ class ShieldDuelStageTest {
 
         @Override
         public void widenSpacing(double blocks) {
+            widen = Math.max(widen, blocks);
             d.widenSpacing(blocks);
         }
 
@@ -376,7 +379,7 @@ class ShieldDuelStageTest {
                 ours.add(sp);
             }
         }
-        assertEquals(2, ours.size());
+        assertEquals(3, ours.size()); // duel, block, and (2026-11-23) wait out a shield that turns with us
         for (SettingSpec sp : ours) {
             assertEquals("Shield & weapons", sp.group());
             assertEquals(Boolean.TRUE, sp.defaultValue());
@@ -385,6 +388,9 @@ class ShieldDuelStageTest {
 
     @Test
     void noAttackWhileTheTargetBlocksFrontallyThenATapOnTheTickItLowers() {
+        // this fake target always faces us, so after the probe the no-circle rule (its own test below) would stop the
+        // circling this test checks: switched off here (2026-11-23)
+        stage.configureNoCircle(false);
         raiseTheirShield();
         engage();
         int before = attacks();
@@ -402,6 +408,51 @@ class ShieldDuelStageTest {
         assertEquals(1, wrapped.rec.taps);
         tick(1);
         assertTrue(attacks() > before, "and reaches the game on the next tick");
+    }
+
+    @Test
+    void aShieldThatTurnsWithUsIsWaitedOutNotCircledThenPunishedWhenItDrops() {
+        // the target keeps its shield square on us however we circle (it turns instantly): circling gains nothing
+        raiseTheirShield();
+        engage();
+        int before = attacks();
+        assertFalse(stage.tracksUs(), "circling comes first: most holders do not turn that fast");
+        tick(ShieldDuel.TRACK_PROBE_TICKS + 5);
+        assertTrue(stage.tracksUs(), "never got off its axis: it turns with us");
+        assertTrue(stage.waits() > 0);
+        assertEquals(Integer.MIN_VALUE, wrapped.rec.side, "no more circling");
+        assertTrue(wrapped.rec.widen > 0.0, "waits just outside its reach instead");
+        assertEquals(ShieldDuelStage.holdOutside(3.0, 2.7), wrapped.rec.widen, 1.0e-9);
+        assertTrue(wrapped.rec.vetoSwing, "still no swing into it");
+        assertEquals(before, attacks());
+
+        lowerTheirShield();
+        tick(1);
+        assertEquals(0.0, wrapped.rec.widen, "the wait ends the tick it comes down");
+        assertEquals(1, stage.drops(), "and the charged hit goes in");
+    }
+
+    @Test
+    void holdOutsideSitsPastTheLearnedReach() {
+        assertEquals(0.8, ShieldDuelStage.holdOutside(3.0, 2.7), 1.0e-9, "3.0 eye-to-box = 3.3 centre, +0.2");
+        assertEquals(0.7, ShieldDuelStage.holdOutside(2.9, 2.7), 1.0e-9);
+        assertEquals(0.0, ShieldDuelStage.holdOutside(2.0, 3.0), 1.0e-9, "the band already sits outside");
+    }
+
+    @Test
+    void shieldCirclingProbeKeepsCirclingWhenItGetsRound() {
+        ShieldDuel d = new ShieldDuel();
+        for (int i = 0; i < ShieldDuel.TRACK_PROBE_TICKS * 2; i++) {
+            d.noteCircling(i * 3.0); // we gain three degrees a tick round it
+        }
+        assertFalse(d.tracksUs(), "a slow turner: circling works");
+        d.endCircling();
+        for (int i = 0; i < ShieldDuel.TRACK_PROBE_TICKS; i++) {
+            d.noteCircling(5.0);
+        }
+        assertTrue(d.tracksUs());
+        d.reset();
+        assertFalse(d.tracksUs(), "a new fight forgets it");
     }
 
     @Test

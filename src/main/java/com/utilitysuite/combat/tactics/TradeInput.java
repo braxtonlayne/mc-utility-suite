@@ -57,6 +57,16 @@ public final class TradeInput {
      * cooldown and cost the shield's knockback ({@code LivingEntity.blockedByShield}, strength 0.5). Default false.
      */
     public boolean oShieldUp;
+    /**
+     * Ticks after our landed hit on a non-sprinting opponent in which it cannot swing back
+     * ({@code OpponentModel.hitStun}, learned). 0 (default) = it can answer on the next tick.
+     */
+    public int oHitStun;
+    /**
+     * The opponent's reach {@link #oReach} was learned from its hits: hover at the edge of it, inside our own reach when
+     * it is shorter ({@code HitTradeSolver.LEARNED_BAND}), not in the fixed band past it. Default false.
+     */
+    public boolean hoverRelative;
     /** The opponent's movement model, as {@link #sSpeed}, {@link #sJumpBoost}, {@link #sBodySprinting}. */
     public double oSpeed = com.utilitysuite.core.api.BodySim.BASE_SPEED;
     public double oJumpBoost;

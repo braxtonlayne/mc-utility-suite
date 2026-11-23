@@ -99,6 +99,17 @@ public final class HitPlanner {
      * {@link #MAX_KB_WAIT} ticks for it. Without it the swing is not delayed (a plain hit now beats a late one).
      */
     public boolean sprintPending;
+    /**
+     * The "Crits only against fast healers" setting: crit-or-nothing ({@link #critOrNothing}) also needs
+     * {@link #oppOutHeals}, and while out-damaged by a player that does not out-heal plain hits every charged in-reach
+     * tick swings (sprint knockback; a crit only on a walled or eating target, without waiting for the fall on the
+     * ground). False (default) keeps the gear-ratio-only rule.
+     */
+    public boolean healGate;
+    /**
+     * Observed healing of the opponent outpaces our plain hits ({@link #outHeals}): only crits make progress.
+     */
+    public boolean oppOutHeals;
 
     // ---- outputs of the last decide -----------------------------------------------------------------------------
     private boolean swing;
@@ -163,7 +174,27 @@ public final class HitPlanner {
 
     /** Heavily out-geared by a player ({@link #CRIT_OR_NOTHING_RATIO}): only crits make progress. */
     public boolean critOrNothing() {
-        return critTiming && targetIsPlayer && gearRatio >= CRIT_OR_NOTHING_RATIO;
+        return critTiming && targetIsPlayer && gearRatio >= CRIT_OR_NOTHING_RATIO && (!healGate || oppOutHeals);
+    }
+
+    /**
+     * Out-damaged by a player whose healing does not outpace our plain hits ({@link #healGate} on): tempo beats crit
+     * damage, every charged tick in reach is a hit (each tick held in its reach is a free swing for it).
+     */
+    public boolean tempo() {
+        return healGate && targetIsPlayer && !oppOutHeals && gearRatio >= OUT_DAMAGED_RATIO;
+    }
+
+    /** Share of our plain-hit DPS that its healing must reach before only crits count (we land about half our swings). */
+    public static final double OUT_HEAL_SHARE = 0.5;
+
+    /**
+     * Its observed healing ({@code OpponentModel.healRate}, points per second) outpaces our plain hits landing on
+     * about half the charged swings: {@code healRate >= 0.5 x plainHit x 20 / cooldownTicks}.
+     */
+    public static boolean outHeals(double healRate, double plainHit, double cooldownTicks) {
+        double dps = Math.max(0.0, plainHit) * 20.0 / Math.max(1.0, cooldownTicks);
+        return healRate > 0.0 && healRate >= OUT_HEAL_SHARE * dps;
     }
 
     /** True when a ground swing now would sweep (sword, ground, no sprint, slow) and something protected is close. */
@@ -198,6 +229,11 @@ public final class HitPlanner {
             return Kind.SWEEP; // the target plus at least one more hostile in the sweep box
         }
         boolean walled = s.knockValue > 0.0 && s.knockKind == ArenaField.KNOCK_WALL;
+        if (tempo()) {
+            // out-damaged, its healing is slow: plain hits make progress, so knockback hits on every charge
+            return (walled || s.targetUsingItem) && critTiming && (hopOk || !s.onGround) ? Kind.CRIT
+                    : Kind.SPRINT_KB;
+        }
         boolean bigMob = !targetIsPlayer && s.targetHealth >= HIGH_HEALTH_MOB && !s.targetHeavyHitter;
         boolean worth = walled || s.targetUsingItem || !comboLive || gearRatio >= OUT_DAMAGED_RATIO || bigMob;
         if (worth && critTiming && (hopOk || !s.onGround)) {
@@ -247,7 +283,8 @@ public final class HitPlanner {
                         jump = true;
                         hopped = true;
                     }
-                    want = canHit && (waitTicks >= MAX_CRIT_WAIT || !hopOk);
+                    // tempo: a charged hit in reach on the ground goes now, the crit is not worth a held tick
+                    want = canHit && (waitTicks >= MAX_CRIT_WAIT || !hopOk || tempo());
                 } else {
                     if (s.pvy < APEX_VY) {
                         releaseForward = true; // the apex and the fall: sprint off before the swing tick

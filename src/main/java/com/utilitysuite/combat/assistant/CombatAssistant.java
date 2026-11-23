@@ -99,6 +99,7 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
     private final ShieldBreakSequencer shield = new ShieldBreakSequencer();
     private final AerialPlanner wind = new AerialPlanner();
     private final TacticsPlanner tactics = new TacticsPlanner();
+    private final RetreatChase chase = new RetreatChase();
     private final OpponentModel opponents = new OpponentModel();
     /** Damage this player dealt, per target (same ring structure, used for the own-DPS estimate). */
     private final OpponentModel dealt = new OpponentModel();
@@ -136,6 +137,11 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
     private boolean tradeFixed;
     private boolean targetIsPlayer;
     private int tradeTicks;
+    /** The target's eye to our box last tick, and which target it was for (the reach sample of its next hit). */
+    private double prevOppReach = Double.NaN;
+    private int prevOppReachId = -1;
+    /** Ticks the retreat chase drove the keys (diagnostics, tests). */
+    private int chaseTicks;
 
     // route runner hand-over (pursuit and flee)
     /** Pursue along a route beyond spacing max + this; hand back to melee inside spacing max + the exit value. */
@@ -564,6 +570,10 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
             opponents.recordHit(targetId, tacticClock, lastHitDamage);
             if (targetHitPending > 0) {
                 gear.noteTaken(lastHitDamage);
+                if (prevOppReachId == targetId) {
+                    // its eye to our box on the tick before the hit showed, before the knockback moved us
+                    opponents.noteHitDistance(targetId, tacticClock, prevOppReach);
+                }
                 targetHitPending = 0;
                 hitTakenAt = tacticClock; // the target's hit (stages: combo escape)
                 takenUnanswered++;
@@ -573,6 +583,8 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
             targetHitPending--;
         }
         lastHealth = eff;
+        prevOppReach = Math.sqrt(HitTradeSolver.reachSq(s.tx, s.ty, s.tz, s.px, s.py, s.pz));
+        prevOppReachId = targetId;
         observeOpponent(s);
         gear.update(eff, s.targetHealth, GearRead.afterArmor(s.ownAttackDamage, s.targetArmor, s.targetToughness),
                 GearRead.afterArmor(s.targetAttackDamage, s.ownArmor, s.ownToughness));
@@ -683,7 +695,8 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
             if (retreating && duel && !duelResetPays(s)) {
                 retreating = false;
             }
-            if (retreating) {
+            // a retreating opponent is no threat to back away from (eating above still runs)
+            if (retreating && !oppRetreating()) {
                 if (retreatRun(s, duel)) {
                     return; // the opponent keeps closing (duel mode: always): turn and run along a route
                 }
@@ -812,8 +825,13 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         hp.comboLive = feel.comboDrives(settings);
         hp.holdGap = tac == TacticsPlanner.Tactic.HOLD_GAP;
         hp.oppCharged = settings.cooldownRead
-                && ProFeelLayer.oppReadyIn(settings, opponents, targetId, tacticClock) == 0;
+                && ProFeelLayer.oppReadyIn(settings, opponents, targetId, tacticClock) == 0
+                && !oppRetreating();
         hp.gearRatio = gear.ratio();
+        hp.healGate = settings.critNeedsHealer;
+        hp.oppOutHeals = HitPlanner.outHeals(opponents.healRate(targetId, tacticClock),
+                GearRead.afterArmor(s.ownAttackDamage, s.targetArmor, s.targetToughness), trade != null
+                        ? trade.ownCooldown() : 20.0 / Math.max(0.1, s.ownAttackSpeed));
         hp.sprintPending = keyDown[SimKey.FORWARD.ordinal()] && keyDown[SimKey.SPRINT.ordinal()] && !s.sprinting;
         hp.decide(s);
         if (hp.jump() && !stageVetoJump) {
@@ -915,12 +933,19 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
 
     /** Feeds the opponent model and the damage-dealt model from this tick's snapshot. Allocation free. */
     private void observeOpponent(CombatSnapshot s) {
+        boolean landed = targetId == lastTargetHealthId && s.targetHealth < lastTargetHealth - 0.01f;
+        if (landed) {
+            // before the observation: the knockback's lift on this tick is a reaction, not a hop of its own
+            opponents.noteOwnHit(targetId, tacticClock);
+        }
         opponents.observe(targetId, tacticClock, s.tx, s.tz, s.tvx, s.tvz, s.px, s.pz, s.targetOnGround,
                 s.targetBlocking);
+        opponents.noteHealth(targetId, tacticClock, s.targetHealth);
         if (s.targetSwingStarted) {
             opponents.noteSwing(targetId, tacticClock, s.targetAttackSpeed); // cooldown reading
         }
-        if (targetId == lastTargetHealthId && s.targetHealth < lastTargetHealth - 0.01f) {
+        opponents.observeRetreat(targetId, tacticClock, s.targetYaw, s.tx, s.tz, s.tvx, s.tvz, s.px, s.pz);
+        if (landed) {
             dealt.recordHit(targetId, tacticClock, lastTargetHealth - s.targetHealth);
             gear.noteDealt(lastTargetHealth - s.targetHealth);
             feel.noteOwnHit(tacticClock); // rank dial: a swing in reach landed
@@ -950,15 +975,39 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         u.oppDps = Math.max(MIN_OPP_DPS, opponents.dps(targetId, tacticClock));
         u.healingItems = s.gappleSlot >= 0 || s.sustainInvSlot >= 0 ? 1 : 0;
         u.distance = s.horizontalDistance();
-        u.oppHopRate = opponents.hopRate(targetId);
+        boolean tempo = settings.keepTempo;
+        // keep the tempo: hops that answer our hits (knockback lift, combo-break hops) are no crit pressure
+        u.oppHopRate = tempo ? opponents.pressureHopRate(targetId) : opponents.hopRate(targetId);
+        u.outRanged = tempo && settings.learnThreat && targetIsPlayer && opponents.reachLearned(targetId)
+                && opponents.learnedReach(targetId, TradeDriver.DEFAULT_REACH) < s.reach - 0.05;
+        u.oppRetreating = oppRetreating();
         u.highGround = feel.highGround(); // 0 while the arena read is off or idle
         u.ceilingDeny = feel.ceilingDeny();
         u.gearRatio = gear.ratio(); // the gear read leads the observed DPS, which lags by seconds
         u.duelMode = settings.duelMode;
         // the opponent regenerates too: a reset on natural regeneration counts only while it gives us more back
-        u.canRegenerate = fastRegen(s)
-                && TacticUtility.regenResetPays(missingHealth(s), targetMissingHealth(s));
+        u.canRegenerate = regenResetPays(s);
         return u.choose();
+    }
+
+    /** Our sprint speed on flat ground (blocks per tick) at the base movement speed 0.1. */
+    static final double OWN_SPRINT_SPEED = 0.28;
+
+    /**
+     * A reset on natural regeneration gains health: fast regeneration, we miss clearly more than the opponent, and
+     * (setting "Keep the tempo") the opponent cannot keep pace with our run.
+     */
+    private boolean regenResetPays(CombatSnapshot s) {
+        if (!fastRegen(s) || !TacticUtility.regenResetPays(missingHealth(s), targetMissingHealth(s))) {
+            return false;
+        }
+        double ownSprint = OWN_SPRINT_SPEED * (s.selfSpeed > 0.0 ? s.selfSpeed / 0.1 : 1.0);
+        return !settings.keepTempo || !TacticUtility.oppKeepsPace(opponents.chaseSpeed(targetId), ownSprint);
+    }
+
+    /** The target is read as retreating and the "Chase a retreating opponent" setting is on. */
+    private boolean oppRetreating() {
+        return settings.chaseRetreat && opponents.retreating(targetId);
     }
 
     private static final double PLAYER_MAX_HEALTH = 20.0;
@@ -980,8 +1029,7 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         if ((settings.gapples && s.gappleSlot >= 0) || s.sustainInvSlot >= 0) {
             return true;
         }
-        return fastRegen(s)
-                && TacticUtility.regenResetPays(missingHealth(s), targetMissingHealth(s));
+        return regenResetPays(s);
     }
 
     /** Broad tactic of the last engaged tick (FIGHT while the setting is off). */
@@ -1012,6 +1060,32 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         boolean widened = stageSpacing > 0.0;
         TradeDriver t = !widened && settings.hitTrade && d <= settings.spacingMax + TRADE_RANGE_EXTRA
                 ? tradeDriver() : null;
+        if (t != null) {
+            t.useReads(settings.learnThreat, settings.chaseRetreat);
+        }
+        if (!widened && !eating && oppRetreating() && !s.inReach() && chase.plan(s)) {
+            // ---- retreat chase: it faces away and runs; close the gap from the moment it leaves reach ----
+            if (t != null) {
+                t.reset();
+            }
+            spacing.reset();
+            feel.endFeint();
+            chaseTicks++;
+            int cf = chase.forward();
+            int cs = chase.side();
+            if ((cs == StrafePlanner.LEFT && s.hazardLeft) || (cs == StrafePlanner.RIGHT && s.hazardRight)) {
+                cs = StrafePlanner.NONE;
+            }
+            if (cf > 0 && s.hazardFront) {
+                cf = SpacingController.HOLD;
+            }
+            if (chase.jump() && cf > 0 && s.onGround && tradeAllowJump(s)) {
+                input.scheduleKeyTap(lease, SimKey.JUMP, 1, 1); // sprint-jump: faster than its run
+            }
+            sprintResetTicks = 0; // no w-tap while chasing: the run is worth more than the next hit's knockback
+            move(cf, cs, cf > 0);
+            return;
+        }
         // crit sync owns the hops while it waits for or rides one; no solver hops at the lip of a gap or a low roof
         boolean allowJump = tradeAllowJump(s);
         int withDir = feel.withDir();
@@ -1152,6 +1226,11 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
     /** Ticks the trade solver drove the movement keys (diagnostics, tests). */
     public int tradeTicks() {
         return tradeTicks;
+    }
+
+    /** Ticks the retreat chase drove the keys (diagnostics, tests). */
+    public int chaseTicks() {
+        return chaseTicks;
     }
 
     /** Route runs started for pursuit or flight (diagnostics, tests). */

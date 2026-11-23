@@ -230,11 +230,41 @@ class DuelModeTest {
     @Test
     void fastRegenerationAgainstAHealthyOpponentIsADuelReset() {
         lowHealthDuel(true, 20, 4f, 20f);
+        // 2026-11-23 ("Keep the tempo"): a regeneration reset also needs an opponent seen chasing slower than our
+        // sprint; this one walks in at 0.2 blocks per tick
+        world.entities.get(TARGET).vx = -0.2;
         tick(TacticUtility.MIN_DWELL_TICKS + 5); // the tactic dwell: the reset takes over within a few ticks
         int before = assistant.swings();
         tick(40);
         assertEquals(TacticUtility.Tactic.RETREAT_HEAL, assistant.broadTactic(), "we heal, they have nothing to heal");
         assertEquals(before, assistant.swings());
+    }
+
+    @Test
+    void noRegenerationResetFromAnOpponentThatKeepsPaceOrWasNeverSeenRunning() {
+        lowHealthDuel(true, 20, 4f, 20f);
+        world.entities.get(TARGET).vx = -0.27; // it sprints at us almost as fast as we run
+        tick(TacticUtility.MIN_DWELL_TICKS + 5);
+        int before = assistant.swings();
+        tick(40);
+        assertNotEquals(TacticUtility.Tactic.RETREAT_HEAL, assistant.broadTactic(), "it would catch us: keep fighting");
+        assertTrue(assistant.swings() > before);
+    }
+
+    @Test
+    void unknownPaceCountsAsKeepingPace() {
+        assertTrue(TacticUtility.oppKeepsPace(Double.NaN, 0.28));
+        assertTrue(TacticUtility.oppKeepsPace(0.26, 0.28), "0.26 is within 90% of our 0.28 sprint");
+        assertFalse(TacticUtility.oppKeepsPace(0.2, 0.28));
+    }
+
+    @Test
+    void keepTempoOffRestoresTheOldRegenerationReset() {
+        lowHealthDuel(true, 20, 4f, 20f);
+        assistant.config().keepTempo = false;
+        tick(TacticUtility.MIN_DWELL_TICKS + 5);
+        tick(40);
+        assertEquals(TacticUtility.Tactic.RETREAT_HEAL, assistant.broadTactic());
     }
 
     @Test

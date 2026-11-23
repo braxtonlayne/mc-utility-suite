@@ -62,6 +62,10 @@ public final class CombatSettings {
     public static final String HIT_CHOICE = "hit_choice";
     public static final String DUEL_MODE = "duel_mode";
     public static final String EXACT_WORLD = "exact_world";
+    public static final String CHASE_RETREAT = "chase_retreat";
+    public static final String CRIT_NEEDS_HEALER = "crit_only_vs_healers";
+    public static final String LEARN_THREAT = "learn_opponent_reach";
+    public static final String KEEP_TEMPO = "keep_tempo";
 
     public TargetSelector.Mode engageMode = TargetSelector.Mode.REACTIVE;
     public TargetSelector.Targets targets = TargetSelector.Targets.HOSTILE;
@@ -118,6 +122,14 @@ public final class CombatSettings {
      * Off by default until it is A/B-tested in the arena.
      */
     public boolean exactWorld = false;
+    /** A retreating opponent (facing away, running, not swinging) is no threat: FIGHT, step in, chase from reach. */
+    public boolean chaseRetreat = true;
+    /** Crit-or-nothing only against an opponent whose healing outpaces our plain hits; otherwise swing every charge. */
+    public boolean critNeedsHealer = true;
+    /** Learn the opponent's reach and post-hit recovery from the fight and plan the spacing on them. */
+    public boolean learnThreat = true;
+    /** No kiting on reaction hops, no regeneration reset against an opponent that keeps pace. */
+    public boolean keepTempo = true;
 
     public void read(ProfileConfig p, String id) {
         engageMode = parseEnum(p.getString(id, ENGAGE_MODE, ""), TargetSelector.Mode.REACTIVE);
@@ -167,6 +179,10 @@ public final class CombatSettings {
         hitChoice = parseEnum(p.getString(id, HIT_CHOICE, ""), HitPlanner.Policy.AUTO);
         duelMode = p.getBool(id, DUEL_MODE, false);
         exactWorld = p.getBool(id, EXACT_WORLD, false);
+        chaseRetreat = p.getBool(id, CHASE_RETREAT, true);
+        critNeedsHealer = p.getBool(id, CRIT_NEEDS_HEALER, true);
+        learnThreat = p.getBool(id, LEARN_THREAT, true);
+        keepTempo = p.getBool(id, KEEP_TEMPO, true);
     }
 
     static <E extends Enum<E>> E parseEnum(String s, E def) {
@@ -272,6 +288,20 @@ public final class CombatSettings {
                         "Never run from the fight or drop it when the target gets far or out of sight while it is"
                                 + " alive and loaded: back off, heal and come back instead. For closed arenas and boss"
                                 + " rooms."),
+                SettingSpec.bool(CHASE_RETREAT, "Chase a retreating opponent", true, "Tactics",
+                        "When the opponent turns away and runs without swinging, treat it as no threat: keep"
+                                + " fighting, step into reach and chase it as soon as it leaves reach, steering it"
+                                + " toward walls."),
+                SettingSpec.bool(KEEP_TEMPO, "Keep the tempo", true, "Tactics",
+                        "Don't keep extra distance because of hops that only answer your hits, and don't back off to"
+                                + " regenerate from an opponent that runs as fast as you."),
+                SettingSpec.bool(CRIT_NEEDS_HEALER, "Crits only against fast healers", true, "Hit choice",
+                        "When out-geared, wait for crits only if the opponent heals faster than plain hits hurt it;"
+                                + " otherwise hit on every charged swing in reach.").asAdvanced(),
+                SettingSpec.bool(LEARN_THREAT, "Learn their reach and recovery", true, "Spacing",
+                        "Measure how far the opponent's hits reach and how long it needs to answer your hit, then"
+                                + " hover at the edge of its real reach and step in right after a landed hit.")
+                        .asAdvanced(),
                 SettingSpec.bool(COOLDOWN_READ, "Read their cooldown", true, "Cooldown",
                         "Watch the opponent's swings to know when their next hit is charged. Off treats them as"
                                 + " always ready to hit.").asAdvanced(),
