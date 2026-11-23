@@ -12,55 +12,6 @@ public final class AimSolver {
     private AimSolver() {
     }
 
-    /**
-     * Does the view ray from the eye along (yaw, pitch) meet the box within {@code range}? This is what vanilla's pick
-     * (GameRenderer.pick, run at the start of every client tick right before the attack key is handled) will report
-     * for that box, minus block occlusion. An eye inside the box counts as a hit at distance 0. Allocation free.
-     */
-    public static boolean viewRayHits(double ex, double ey, double ez, float yawDeg, float pitchDeg, double minX,
-            double minY, double minZ, double maxX, double maxY, double maxZ, double range) {
-        double yr = Math.toRadians(yawDeg);
-        double pr = Math.toRadians(pitchDeg);
-        double cp = Math.cos(pr);
-        double dx = -Math.sin(yr) * cp;
-        double dy = -Math.sin(pr);
-        double dz = Math.cos(yr) * cp;
-        double tEnter = 0.0;
-        double tExit = range;
-        // slab test per axis
-        if (Math.abs(dx) < 1.0e-12) {
-            if (ex < minX || ex > maxX) {
-                return false;
-            }
-        } else {
-            double a = (minX - ex) / dx;
-            double b = (maxX - ex) / dx;
-            tEnter = Math.max(tEnter, Math.min(a, b));
-            tExit = Math.min(tExit, Math.max(a, b));
-        }
-        if (Math.abs(dy) < 1.0e-12) {
-            if (ey < minY || ey > maxY) {
-                return false;
-            }
-        } else {
-            double a = (minY - ey) / dy;
-            double b = (maxY - ey) / dy;
-            tEnter = Math.max(tEnter, Math.min(a, b));
-            tExit = Math.min(tExit, Math.max(a, b));
-        }
-        if (Math.abs(dz) < 1.0e-12) {
-            if (ez < minZ || ez > maxZ) {
-                return false;
-            }
-        } else {
-            double a = (minZ - ez) / dz;
-            double b = (maxZ - ez) / dz;
-            tEnter = Math.max(tEnter, Math.min(a, b));
-            tExit = Math.min(tExit, Math.max(a, b));
-        }
-        return tEnter <= tExit;
-    }
-
     /** @param out {@code out[0]} = yaw, {@code out[1]} = pitch */
     public static void solve(CombatSnapshot s, double leadTicks, float[] out) {
         solve(s, s.tvx * leadTicks, s.tvy * leadTicks, s.tvz * leadTicks, out);

@@ -247,15 +247,9 @@ public final class MinecraftCombatWorld implements CombatWorld, LineOfSight.Soli
         out.targetAttackSpeed = targetAttackSpeed(t);
         out.targetSwingStarted = swingStarted(t, lvl.getGameTime());
         out.targetHealth = t.getHealth() + t.getAbsorptionAmount();
+        out.crosshairOnTarget = mc.hitResult instanceof EntityHitResult ehr && ehr.getEntity() == t;
         out.lineOfSight = LineOfSight.clear(out.px, out.eyeY, out.pz, t.getX(), t.getEyeY(), t.getZ(), this,
                 LOS_MAX_STEPS);
-        // What the attack will meet: vanilla re-picks at the start of the next tick (Minecraft.tick: pick(1.0F), then
-        // handleKeybinds) with the positions as they are now, so cast that ray here. mc.hitResult itself is from the
-        // start of this tick, one tick of movement stale (arena, 2026-11-23: aimed dead on at 2.7-3.0 blocks, closing,
-        // and "off" every tick). Block occlusion stands in as the line of sight, or the stale pick agreeing.
-        boolean stalePick = mc.hitResult instanceof EntityHitResult ehr && ehr.getEntity() == t;
-        out.crosshairOnTarget = com.utilitysuite.combat.assistant.AimSolver.viewRayHits(out.px, out.eyeY, out.pz, out.yaw, out.pitch, out.minX,
-                out.minY, out.minZ, out.maxX, out.maxY, out.maxZ, out.reach) && (out.lineOfSight || stalePick);
 
         // ---- hazards around the player, relative to the direction toward the target
         double dx = out.tx - out.px;
