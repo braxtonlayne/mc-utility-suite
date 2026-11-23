@@ -20,14 +20,14 @@ const BOT = args.bot || "ArenaBot";
 const OUT = args.out || path.join(__dirname, "..", "results", `${SETUP}-${ENGINE}${(args.arena || "hazards") === "flat" ? "" : "-hazards"}.jsonl`);
 const HOST = "127.0.0.1";
 const PORT = 25570;
-const ROUND_TIMEOUT_MS = 90_000;
+// long enough for a fight that runs, kites and resets around the box (the client is unrestricted in the arena)
+const ROUND_TIMEOUT_MS = 240_000;
 
 // Arena, far from spawn. Both start 8 blocks apart on the x = AX + 0.5 line.
 //   --arena flat     the original 21x21 stone floor with a glass ring (keeps old results comparable)
 //   --arena hazards  (default) 41x41 field on a 10-deep stone base with terrain that punishes bad footing.
 //                    Every hazard is mirror-symmetric in x and z about the field centre (cell c <-> cell -c), so
 //                    neither start has a positional edge:
-//                      lava hole   3x3, 1 deep, dead centre between the starts (knockback into it is a death)
 //                      ravines     3 wide, 8 deep, 25 long on both flanks (x cells +-9..11), stairs out at both ends
 //                      streams     2 wide, 1 deep still water along both side walls (x cells +-15..16): wading slows
 const ARENA = args.arena || "hazards";
@@ -120,8 +120,8 @@ async function buildArena(c) {
       }
     }
   }
-  // lava hole, 1 deep, centre (contained: stone on every side at its level, nothing to flow into)
-  await c(`fill ${AX - 1} ${AY} ${AZ - 1} ${AX + 1} ${AY} ${AZ + 1} minecraft:lava`);
+  // (the centre lava hole was removed 2026-11-23 at the owner's request: the opponent bot kept walking into it,
+  // which scored our wins for us instead of measuring the fight)
   // streams along both side walls: 1-deep source water, contained by stone
   for (const [a, b] of [[15, 16], [-16, -15]]) {
     await c(`fill ${AX + a} ${AY} ${AZ - 18} ${AX + b} ${AY} ${AZ + 18} minecraft:water`);
@@ -129,8 +129,33 @@ async function buildArena(c) {
   await c(`kill @e[type=minecraft:falling_block]`);
 }
 
+// A dead player that has not respawned yet still answers commands: a reset sent then healed and kitted the dead
+// entity, and the player came back at world spawn with nothing (2026-11-23: every round after one of our deaths was
+// fought unarmoured). So wait until both are alive, and check the kit landed.
+async function waitAlive(rcon, who, timeoutMs = 20000) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < timeoutMs) {
+    const r = await rcon.send(`data get entity ${who} Health`);
+    const m = r.match(/([0-9.]+)f/);
+    if (m && Number(m[1]) > 0) {
+      await sleep(500); // the respawn's own position packet settles before the teleport
+      return true;
+    }
+    await sleep(250);
+  }
+  console.log(`  WARN ${who} not alive after ${timeoutMs} ms`);
+  return false;
+}
+
+async function kitMissing(rcon, who, items) {
+  const inv = await rcon.send(`data get entity ${who} Inventory`);
+  return items.map((it) => it.split("{")[0]).filter((n) => !inv.includes(`minecraft:${n}`));
+}
+
 async function resetRound(rcon) {
   const c = (cmd) => rcon.send(cmd);
+  await waitAlive(rcon, PLAYER);
+  await waitAlive(rcon, BOT);
   await buildArena(c);
   await c(`kill @e[type=item]`);
   await c(`kill @e[type=arrow]`);
@@ -143,7 +168,13 @@ async function resetRound(rcon) {
   }
   const kit = KITS[SETUP];
   for (const [who, items] of [[PLAYER, kit.ours], [BOT, kit.bot]]) {
-    for (const it of items) await c(`item replace entity ${who} ${SLOT_FOR(it)} with ${itemArg(it)}`);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      for (const it of items) await c(`item replace entity ${who} ${SLOT_FOR(it)} with ${itemArg(it)}`);
+      const missing = await kitMissing(rcon, who, items);
+      if (missing.length === 0) break;
+      console.log(`  WARN ${who} kit missing ${missing.join(",")} (attempt ${attempt + 1})`);
+      await waitAlive(rcon, who);
+    }
   }
   await c(`tp ${PLAYER} ${START_PLAYER.join(" ")} 0 0`);
   await c(`tp ${BOT} ${START_BOT.join(" ")} 180 0`);
@@ -292,7 +323,9 @@ function grimFlags(from) {
   } catch (_) { return null; }
   const checks = {};
   let total = 0;
-  for (const line of text.split(String.fromCharCode(10))) {
+  for (const raw of text.split(String.fromCharCode(10))) {
+    // strip ANSI colour codes the console may carry between the name and "failed"
+    const line = raw.replace(new RegExp(String.fromCharCode(27) + "\\[[0-9;]*m", "g"), "");
     if (!/grim/i.test(line) || !line.includes(` ${PLAYER} `)) continue;
     const m = line.match(new RegExp(`${PLAYER} failed ([A-Za-z0-9]+)`));
     const k = m ? m[1] : "other";
@@ -322,7 +355,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
         const r = await rcon.send(`execute if block ${AX + dx} ${AY + dy} ${AZ + dz} minecraft:${block}`);
         console.log(`  ${dx},${dy},${dz} ${block}: ${/passed/i.test(r) ? "ok" : "NO (" + r + ")"}`);
       };
-      await probe(0, 0, 0, "lava"); await probe(0, 0, -4, "stone"); await probe(0, 1, -4, "air");
+      await probe(0, 0, 0, "stone"); await probe(0, 0, -4, "stone"); await probe(0, 1, -4, "air");
       await probe(10, 0, 0, "air"); await probe(10, -RAVINE_DEPTH, 0, "stone"); await probe(-10, -7, 0, "air");
       await probe(10, -1, 12, "stone"); await probe(10, -1, 11, "air"); await probe(10, -2, 11, "stone");
       await probe(15, 0, 0, "water"); await probe(-16, 0, 18, "water"); await probe(21, 3, 0, "glass");
@@ -347,7 +380,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       `  min hp ours ${rec.minHp.ours} bot ${rec.minHp.bot}, last ours ${rec.lastHp.ours} bot ${rec.lastHp.bot}`);
   }
   console.log(`RESULT ${SETUP} vs ${ENGINE}: ours ${wins}/${ROUNDS}, bot ${losses}, timeouts ${timeouts}, ` +
-    `pass ${wins >= Math.ceil(ROUNDS * 0.8) ? "YES" : "NO"} (bar 8/10)`);
+    `pass ${wins >= Math.ceil(ROUNDS * 0.8) ? "YES" : "NO"} (bar ${Math.ceil(ROUNDS * 0.8)}/${ROUNDS})`);
   bot.quit();
   await rcon.end();
 })().catch((e) => { console.error(e); process.exit(1); });

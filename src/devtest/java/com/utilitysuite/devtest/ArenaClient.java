@@ -54,12 +54,39 @@ final class ArenaClient {
         H.enable(CombatAssistant.ID, true);
         H.setting(CombatAssistant.ID, CombatSettings.ENGAGE_MODE, "PROACTIVE");
         H.setting(CombatAssistant.ID, CombatSettings.TARGETS, "PLAYERS");
-        H.setting(CombatAssistant.ID, CombatSettings.ENGAGE_RANGE, 24.0);
+        // Owner, 2026-11-23: legit play, but free to move. Both fighters are boxed in, so the assistant may run, kite,
+        // reset and re-engage anywhere in the box; its goal is the kill. So the legit level stays BALANCED (the
+        // defaults; applied explicitly so nothing left over loosens it), engage and disengage reach cover the whole
+        // 41x41 field, duel mode keeps it from giving the fight up, and jump resets (a vanilla technique) are on.
+        applyLevel(com.utilitysuite.core.LegitPresets.Level.BALANCED);
+        H.setting(CombatAssistant.ID, CombatSettings.DISENGAGE_RADIUS, 64.0);
+        H.setting(CombatAssistant.ID, CombatSettings.ENGAGE_RANGE, 60.0);
+        H.setting(CombatAssistant.ID, CombatSettings.JUMP_RESET, true);
         H.setting(CombatAssistant.ID, CombatSettings.DUEL_MODE, true);
         H.enable(AutoRespawn.ID, true);
         configured = true;
         PlaytestMod.LOG.info("[arena-client] configured: combat assistant proactive on players, duel mode, auto"
                 + " respawn; server {}", mc.getCurrentServer() == null ? "?" : mc.getCurrentServer().ip);
+    }
+
+    /** A legit level, applied the way the menu applies it (knobs written, modules notified, core reloaded). */
+    private static void applyLevel(com.utilitysuite.core.LegitPresets.Level level) {
+        var ms = Services.modState();
+        boolean core = false;
+        for (var k : com.utilitysuite.core.LegitPresets.apply(level, ms.profile(), ms.global())) {
+            if (k.global()) {
+                core = true;
+                continue;
+            }
+            Services.modules().byId(k.moduleId()).ifPresent(m -> {
+                if (m instanceof com.utilitysuite.core.api.IConfigurable c) {
+                    c.onSettingChanged(k.key());
+                }
+            });
+        }
+        if (core) {
+            com.utilitysuite.core.CoreBootstrap.applyCoreSettings();
+        }
     }
 
     private int swingSeen;
