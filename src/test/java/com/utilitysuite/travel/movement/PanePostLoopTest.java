@@ -21,10 +21,14 @@ class PanePostLoopTest {
 
     /** W + sprint from z -2.4 at {@code pitch}; jump pressed for two ticks at tick {@code pressAt} (-1: never). */
     static String loop(float pitch, int pressAt) {
+        return loop(JumpCommit.Mode.GUIDE, pitch, pressAt);
+    }
+
+    static String loop(JumpCommit.Mode mode, float pitch, int pressAt) {
         ShapeGrid g = scene();
         SupportRegion pane = TechniqueLibraryTest.top(g, 0, 19, 2);
         MovementAssistBrain b = new MovementAssistBrain();
-        b.mode = JumpCommit.Mode.GUIDE;
+        b.mode = mode;
         b.landingHold = true;
         b.sprintWithholdAvailable = true;
         b.setTechniques(new TechniqueLibrary());
@@ -34,7 +38,8 @@ class PanePostLoopTest {
         boolean sprint = true;
         int onPane = 0;
         for (int t = 0; t < 60; t++) {
-            intent.setCommitThreshold(IntentEstimator.GUIDE_THRESHOLD);
+            intent.setCommitThreshold(mode == JumpCommit.Mode.CARRY ? IntentEstimator.CARRY_THRESHOLD
+                    : IntentEstimator.GUIDE_THRESHOLD);
             b.intentThreshold = intent.commitThreshold();
             if (intent.estimate(p, 0f, pitch, 1, 0, sprint, g) && intent.hasTarget()) {
                 b.setIntentBlocked(intent.targetBlocked());
@@ -84,6 +89,29 @@ class PanePostLoopTest {
             }
         }
         System.out.println("PANE LOOP " + held + "/" + tried + out);
+        assertTrue(held * 10 >= tried * 9, held + " of " + tried + out);
+    }
+
+    /**
+     * Live Takeover lap of 2026-11-23 17:55, J23: no press, a flat look; on the last ground ticks the pane is under the
+     * estimator's range and its pick moved to the pad behind it, which reset the pane's approach one tick before the
+     * edge, and the body walked off. Takeover takes off by itself, so no press here.
+     */
+    @Test
+    void takeoverWithNoPressLandsOnThePaneNotThePadBehindIt() {
+        int held = 0;
+        int tried = 0;
+        StringBuilder out = new StringBuilder();
+        for (float pitch = 11f; pitch <= 23f; pitch += 2f) {
+            tried++;
+            String r = loop(JumpCommit.Mode.CARRY, pitch, -1);
+            if (r.equals("held")) {
+                held++;
+            } else {
+                out.append(String.format(" [p%.0f: %s]", pitch, r));
+            }
+        }
+        System.out.println("PANE TAKEOVER " + held + "/" + tried + out);
         assertTrue(held * 10 >= tried * 9, held + " of " + tried + out);
     }
 }

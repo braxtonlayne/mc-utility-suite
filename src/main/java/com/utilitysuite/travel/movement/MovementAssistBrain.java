@@ -1046,6 +1046,8 @@ public final class MovementAssistBrain {
     static final int ARMED_MISS_GRACE = 6;
     /** The same for an open line while the approach owns the takeoff (only the last ground ticks need it). */
     static final int ARMED_OPEN_MISS_GRACE = 3;
+    /** A verified planned takeoff this close (ticks) keeps its target against a new estimator pick. */
+    static final int COMMITTED_TAKEOFF_TICKS = 4;
 
     private void lockFromRaw() {
         if (!rawSet) {
@@ -1067,6 +1069,14 @@ public final class MovementAssistBrain {
                 hasIdealYaw = false;
                 targetChanged();
             }
+            return;
+        }
+        if (intentSet && (rtx != itx || rty != ity || rtz != itz) && mode != JumpCommit.Mode.NUDGE
+                && commit.phase() == JumpCommit.Phase.ARMED && approach.hasPlan()
+                && approach.ticksToTakeoff() <= COMMITTED_TAKEOFF_TICKS) {
+            // a verified takeoff a few ticks out is this jump: a post one gap out drops under the estimator's range
+            // there and its pick moved to the pad behind it, which reset the approach a tick before the edge and the
+            // body walked off (course J23, Takeover, 2026-11-23 17:55)
             return;
         }
         if (!intentSet || rtx != itx || rty != ity || rtz != itz) {
