@@ -177,7 +177,15 @@ async function ensurePvpBot(rcon) {
 
 async function resetRound(rcon) {
   const c = (cmd) => rcon.send(cmd);
-  if (PVPBOT) await ensurePvpBot(rcon);
+  if (PVPBOT) {
+    // Same start for both every round: hunger and saturation carry over between rounds otherwise (the fake player
+    // stays in the game when it wins and sat at food 11, unable to regenerate, while we respawned full). A fresh
+    // respawn gives both vanilla's 20 food / 5 saturation. /kill before logAt, so it never scores.
+    await c(`kill ${BOT}`);
+    await c(`kill ${PLAYER}`);
+    await sleep(1500);
+    await ensurePvpBot(rcon);
+  }
   await waitAlive(rcon, PLAYER);
   await waitAlive(rcon, BOT);
   await buildArena(c);
