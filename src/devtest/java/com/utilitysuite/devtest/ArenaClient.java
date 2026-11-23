@@ -127,6 +127,7 @@ final class ArenaClient {
             return;
         }
         var s = ca.snapshotForDiagnostics();
+        hitTelemetry(s);
         boolean swung = ca.swings() != gateSwingSeen;
         gateSwingSeen = ca.swings();
         double reach = Math.sqrt(s.reachDistanceSq());
@@ -152,6 +153,41 @@ final class ArenaClient {
                         + " sprint=%b blk=%b broad=%s held=%d",
                 reach, s.inReach(), s.crosshairOnTarget, yawErr, aimNow[1] - s.pitch, halfDeg, s.targetHurtTime,
                 s.attackStrength, hp.kind(), s.onGround, s.sprinting, s.targetBlocking, ca.broadTactic(), heldTicks));
+    }
+
+    private float prevOwnHp = -1f;
+    private float prevOppHp = -1f;
+    private double prevOppReach;
+    private double prevOwnReach;
+    private double prevTapp;
+    private double prevOwnApp;
+
+    /**
+     * One line per hit either way: the drawn eye-to-box distances on the tick before the hit showed, and both
+     * fighters' speed toward the other. Hits taken from beyond 3.0 while it walks in are its network lead on us.
+     */
+    private void hitTelemetry(com.utilitysuite.combat.assistant.CombatSnapshot s) {
+        float hp = s.effectiveHealth();
+        if (prevOwnHp >= 0f && hp < prevOwnHp - 0.01f) {
+            PlaytestMod.LOG.info(String.format(java.util.Locale.ROOT,
+                    "[hit-taken] dmg=%.2f itsReach=%.2f ourReach=%.2f itsApp=%.2f ourApp=%.2f",
+                    prevOwnHp - hp, prevOppReach, prevOwnReach, prevTapp, prevOwnApp));
+        }
+        if (prevOppHp >= 0f && s.targetHealth < prevOppHp - 0.01f) {
+            PlaytestMod.LOG.info(String.format(java.util.Locale.ROOT,
+                    "[hit-dealt] dmg=%.2f itsReach=%.2f ourReach=%.2f itsApp=%.2f ourApp=%.2f",
+                    prevOppHp - s.targetHealth, prevOppReach, prevOwnReach, prevTapp, prevOwnApp));
+        }
+        prevOwnHp = hp;
+        prevOppHp = s.targetHealth;
+        prevOppReach = Math.sqrt(com.utilitysuite.combat.tactics.HitTradeSolver.reachSq(s.tx, s.ty, s.tz, s.px, s.py,
+                s.pz));
+        prevOwnReach = Math.sqrt(s.reachDistanceSq());
+        prevTapp = com.utilitysuite.combat.tactics.HitPlanner.targetApproachSpeed(s);
+        double dx = s.tx - s.px;
+        double dz = s.tz - s.pz;
+        double len = Math.max(1e-6, Math.sqrt(dx * dx + dz * dz));
+        prevOwnApp = (s.pvx * dx + s.pvz * dz) / len;
     }
 
     private int swingSeen;
