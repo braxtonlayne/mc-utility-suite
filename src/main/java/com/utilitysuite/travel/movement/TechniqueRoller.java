@@ -11,9 +11,9 @@ package com.utilitysuite.travel.movement;
  * {@link #HOLD_REACH} of it (the landing hold brakes and guards the rest); every view step stays within the level's
  * rate and the view never moves without {@code yawAllowed}; the takeoff yaw is reached by the takeoff tick.
  * <p>
- * The corner-cut family is rolled with {@link CoSteerModel}: the view follows each goal the way the core's smooth
- * follower does (a request on tick i is in the physics from tick i + 1, and closes the error gradually), so its
- * takeoff heading is a goal, not a condition. The older families still move the view at the full rate from the same
+ * The corner-cut family and the neo are rolled with {@link CoSteerModel}: the view follows each goal the way the
+ * core's smooth follower does (a request on tick i is in the physics from tick i + 1, and closes the error gradually),
+ * so their takeoff heading is a goal, not a condition. The other families still move the view at the full rate from the same
  * tick; the client cannot fly that, so their yaw variants need the same treatment before they are relied on.
  */
 final class TechniqueRoller {
@@ -71,9 +71,9 @@ final class TechniqueRoller {
         out.name = TechniqueTemplates.name(c.template);
         out.takeoffIndex = jumpAt;
         float yawNow = baseYaw;
-        // the corner cut is rolled with the real view dynamics; the older families still assume a view that moves at
+        // the corner cut and the neo are rolled with the real view dynamics; the other families still assume a view that moves at
         // the full rate (their yaw variants are not verified in the client, see the run note of 2026-11-22)
-        boolean follow = c.template == TechniqueTemplates.CUT && rate > 0f;
+        boolean follow = (c.template == TechniqueTemplates.CUT || c.template == TechniqueTemplates.NEO) && rate > 0f;
         follower.reset();
         float maxStep = 0f;
         double yawTravel = 0.0;

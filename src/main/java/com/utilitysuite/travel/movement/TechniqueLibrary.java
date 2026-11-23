@@ -58,11 +58,14 @@ public final class TechniqueLibrary implements TechniqueSource {
      * cut first (a small grid, and the shape a blocked line most often needs), then the older families.
      */
     private static final int[] BLOCKED_TEMPLATE = {TechniqueTemplates.CUT, TechniqueTemplates.CUT,
-            TechniqueTemplates.CORNER, TechniqueTemplates.HEADHITTER, TechniqueTemplates.NEO,
-            TechniqueTemplates.CORNER, TechniqueTemplates.HEADHITTER, TechniqueTemplates.NEO,
-            TechniqueTemplates.FORTY_FIVE};
-    /** Whether a stage walks the family's yaw variants (skipped when the view may not be turned). */
-    private static final boolean[] BLOCKED_YAW = {false, true, false, false, false, true, true, true, true};
+            TechniqueTemplates.NEO, TechniqueTemplates.CORNER, TechniqueTemplates.HEADHITTER, TechniqueTemplates.NEO,
+            TechniqueTemplates.CORNER, TechniqueTemplates.HEADHITTER, TechniqueTemplates.FORTY_FIVE};
+    /**
+     * Whether a stage walks the family's yaw variants (skipped when the view may not be turned). The neo with the view
+     * comes right after the corner cut: a pillar in the line (course J36) needs it, and its rolls end at the pillar
+     * within a few ticks when the line is clipped from the side instead, so it costs the corner lanes little.
+     */
+    private static final boolean[] BLOCKED_YAW = {false, true, true, false, false, false, true, true, true};
     /** The order otherwise: the older families as before (keys only, then yaw), the corner cut last. */
     private static final int[] OPEN_TEMPLATE = {TechniqueTemplates.CORNER, TechniqueTemplates.HEADHITTER,
             TechniqueTemplates.NEO, TechniqueTemplates.CORNER, TechniqueTemplates.HEADHITTER,

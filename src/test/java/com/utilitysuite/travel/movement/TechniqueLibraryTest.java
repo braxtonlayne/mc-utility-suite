@@ -42,8 +42,15 @@ class TechniqueLibraryTest {
      */
     static Run search(MovementPhysics.Voxels g, SupportRegion top, double startX, double startY, double startZ,
                       boolean yawAllowed, int maxCalls) {
+        return search(g, top, startX, startY, startZ, yawAllowed, maxCalls, false);
+    }
+
+    /** As above; {@code blocked} is the brain's line-blocked flag (it walks the blocked-line family order). */
+    static Run search(MovementPhysics.Voxels g, SupportRegion top, double startX, double startY, double startZ,
+                      boolean yawAllowed, int maxCalls, boolean blocked) {
         float yaw = aim(top, startX, startZ);
         TechniqueLibrary lib = new TechniqueLibrary();
+        lib.setLineBlocked(blocked);
         MovementPhysics p = new MovementPhysics().set(startX, startY, startZ, 0, -0.0784, 0, true);
         int maxTicks = 0;
         for (int c = 0; c < maxCalls; c++) {
@@ -231,6 +238,51 @@ class TechniqueLibraryTest {
     void oneBlockNeoWithYaw() {
         ShapeGrid g = neoScene();
         Run r = search(g, top(g, 0, 19, 4), 0.5, 20, -4, true, MAX_CALLS);
+        verify(r, g, true);
+    }
+
+    /**
+     * The course's J36 (mirrored onto +z): a 1-wide strip 4 long, a 4-high pillar standing in the single gap cell
+     * (from the floor up, so nothing passes under or through), the 1x3 landing strip right behind it.
+     */
+    static ShapeGrid courseNeoScene() {
+        return new ShapeGrid().fill(0, 19, -1, 0, 19, 2).fill(0, 19, 3, 0, 22, 3).fill(0, 19, 4, 0, 19, 6)
+                .fill(-8, 5, -12, 8, 5, 12);
+    }
+
+    /**
+     * Keys only, J36 is one tick-perfect input (a brute force of 34k strafe timings found 2 landings, both on the rim),
+     * so the assist does not offer it without the view; the view variant below is the one that lands.
+     */
+    @Test
+    void courseNeoStraightRunHitsThePillar() {
+        ShapeGrid g = courseNeoScene();
+        assertFalse(plainLands(g, top(g, 0, 19, 5), 0.5, -0.5), "straight into the pillar");
+    }
+
+    @Test
+    void courseNeoWithYawFromWhereverJ35Lands() {
+        ShapeGrid g = courseNeoScene();
+        SupportRegion top = top(g, 0, 19, 5);
+        int found = 0, tried = 0;
+        for (double x = 0.3; x <= 0.71; x += 0.2) {
+            for (double z = -0.9; z <= 0.11; z += 0.25) {
+                tried++;
+                Run r = search(g, top, x, 20, z, true, MAX_CALLS, true);
+                if (r.found()) {
+                    verify(r, g, true);
+                    found++;
+                }
+            }
+        }
+        System.out.println("COURSE NEO starts " + found + "/" + tried);
+        assertTrue(found * 10 >= tried * 8, found + " of " + tried + " starts");
+    }
+
+    @Test
+    void courseNeoWithYaw() {
+        ShapeGrid g = courseNeoScene();
+        Run r = search(g, top(g, 0, 19, 5), 0.5, 20, -0.5, true, MAX_CALLS, true);
         verify(r, g, true);
     }
 

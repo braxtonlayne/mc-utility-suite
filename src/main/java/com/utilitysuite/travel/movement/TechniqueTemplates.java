@@ -50,6 +50,19 @@ final class TechniqueTemplates {
     private static final int NEO_GROUND_VARIANTS = 6;
     /** Neo: air ticks parallel to the wall before strafing back in (0..5). */
     private static final int NEO_PARALLEL_VARIANTS = 6;
+    /*
+     * Neo with the view (J36 study, 2026-11-23): a pillar standing in the gap cell of a 1-wide strip leaves keys-only
+     * play one tick-perfect input (2 of 34k brute-forced sequences land), while turning the view ~20 degrees toward
+     * the swing-out side through the run-up and the outward strafe, then back to the line for the inward strafe, lands
+     * in hundreds. The variant strafes out from the start of the script with that view, keeps the outward strafe for
+     * a few air ticks, coasts, then strafes back in with the view goal on the original line.
+     */
+    /** Neo with the view: turn toward the swing-out side, most likely first. */
+    private static final float[] NEO_TURN_ANGLES = {20f, 15f, 25f};
+    /** Neo with the view: air ticks of outward strafe after the takeoff. */
+    private static final int[] NEO_TURN_OUT = {2, 1, 3};
+    /** Neo with the view: air ticks of forward only before the inward strafe. */
+    private static final int[] NEO_TURN_COAST = {1, 0, 2};
     /** 45-degree: air ticks on the line before the view turns (0..2). */
     private static final int FORTY_FIVE_DELAYS = 3;
     static final float FORTY_FIVE_ANGLE = 45f;
@@ -160,7 +173,9 @@ final class TechniqueTemplates {
             case HEADHITTER:
                 return HEADHITTER_OFFSETS * 3 * sweeps;
             case NEO:
-                return EDGE_OFFSETS.length * 2 * NEO_GROUND_VARIANTS * NEO_PARALLEL_VARIANTS * sweeps;
+                return yawAllowed
+                        ? NEO_TURN_OUT.length * NEO_TURN_COAST.length * EDGE_OFFSETS.length * 2 * NEO_TURN_ANGLES.length
+                        : EDGE_OFFSETS.length * 2 * NEO_GROUND_VARIANTS * NEO_PARALLEL_VARIANTS;
             case FORTY_FIVE:
                 return yawAllowed ? EDGE_OFFSETS.length * 2 * FORTY_FIVE_DELAYS : 0;
             case CUT:
@@ -251,6 +266,32 @@ final class TechniqueTemplates {
                 return true;
             }
             case NEO: {
+                if (yawAllowed) {
+                    int outTicks = NEO_TURN_OUT[index % NEO_TURN_OUT.length];
+                    index /= NEO_TURN_OUT.length;
+                    int coast = NEO_TURN_COAST[index % NEO_TURN_COAST.length];
+                    index /= NEO_TURN_COAST.length;
+                    int jump = edgeTick + EDGE_OFFSETS[index % EDGE_OFFSETS.length];
+                    index /= EDGE_OFFSETS.length;
+                    int side = index % 2 == 0 ? 1 : -1;
+                    index /= 2;
+                    float angle = Math.min(NEO_TURN_ANGLES[index % NEO_TURN_ANGLES.length], maxTurnDeg);
+                    if (jump < 0 || angle <= 0f) {
+                        return false;
+                    }
+                    // strafe s with the view turned by s * angle: the run angles out past the pillar's side
+                    out.reset(NEO, jump, baseYaw + side * angle);
+                    out.groundStrafe = side;
+                    out.groundStrafeTicks = jump + 1; // from the start of the script
+                    if (outTicks > 0) {
+                        out.segment(side, outTicks, Float.NaN);
+                    }
+                    if (coast > 0) {
+                        out.segment(0, coast, Float.NaN);
+                    }
+                    out.segment(-side, 0, baseYaw);
+                    return true;
+                }
                 int sweep = index % sweeps;
                 index /= sweeps;
                 int parallel = index % NEO_PARALLEL_VARIANTS;
