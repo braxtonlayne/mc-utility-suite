@@ -175,6 +175,19 @@ class TacticsPlannerTest {
     }
 
     @Test
+    void noKnockTacticsFromBelowTheTarget() {
+        TacticsPlanner t = new TacticsPlanner();
+        CombatSnapshot s = snap(3);
+        s.knockDepth = 10;
+        s.knockX = 0;
+        s.knockZ = -1;
+        s.ty = s.py + 8.0; // it paces the rim, we stand on the ravine floor
+        assertEquals(Tactic.NONE, t.plan(s, true, true));
+        s.ty = s.py + 1.0; // a step up is still a knock
+        assertEquals(Tactic.EDGE_KNOCK, t.plan(s, true, true));
+    }
+
+    @Test
     void edgeKnockKeepsPriorityOverKnockVector() {
         TacticsPlanner t = new TacticsPlanner();
         CombatSnapshot s = lava(3);

@@ -43,6 +43,8 @@ public final class TacticsPlanner {
     public static final double KNOCK_ALIGNED_DEG = 25.0;
     /** Minimum {@link CombatSnapshot#knockValue} that is worth circling for. */
     public static final double KNOCK_VECTOR_MIN_VALUE = 0.35;
+    /** Knock tactics only while the target stands within this height of us (blocks). */
+    public static final double KNOCK_LEVEL_DY = 1.5;
     /** Minimum attack charge for a forced swing (a weaker hit still knocks back, but this keeps it human). */
     public static final float FORCED_SWING_CHARGE = 0.6f;
 
@@ -75,6 +77,11 @@ public final class TacticsPlanner {
             } else if (s.gapNear < EDGE_STANDOFF_MIN && !s.hazardBack) {
                 forward = SpacingController.BACK;
             }
+            return tactic;
+        }
+        // knocking it off needs us at its level: from a ravine floor below a target on the rim, circling never lands a
+        // hit (arena, 2026-11-23: a 240 s stand-off spent "circling" 8 blocks below), so leave it to the stalemate breaker
+        if (Math.abs(s.ty - s.py) > KNOCK_LEVEL_DY) {
             return tactic;
         }
         if (edgeKnock && s.knockDepth >= GAP_DEPTH) {
