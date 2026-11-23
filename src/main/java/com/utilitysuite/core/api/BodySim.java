@@ -9,8 +9,27 @@ package com.utilitysuite.core.api;
  */
 public interface BodySim {
 
-    /** Places the body (feet position, velocity in blocks per tick) and clears its fall distance. */
+    /** Walking speed of a plain player: the MOVEMENT_SPEED attribute without effects or the sprint modifier. */
+    double BASE_SPEED = 0.1;
+
+    /**
+     * Places the body (feet position, velocity in blocks per tick), clears its fall distance and restores the plain
+     * movement model ({@link #BASE_SPEED}, no jump boost, not sprinting); {@link #movement} after it seeds a real one.
+     */
     BodySim set(double x, double y, double z, double vx, double vy, double vz, boolean onGround);
+
+    /**
+     * Seeds the movement model of the body (kept by {@link #copyFrom} and every {@link #tick}, reset by {@link #set}).
+     * The defaults (0.1, 0, false) reproduce a body that was only {@link #set}.
+     *
+     * @param speed     the MOVEMENT_SPEED attribute WITHOUT the sprint modifier (Speed and Slowness included: 0.1 x
+     *                  (1 + 0.2 per Speed level) for a plain player); the sprint key adds vanilla's x1.3
+     * @param jumpBoost extra jump velocity from Jump Boost ({@code LivingEntity.getJumpBoostPower}: 0.1 per level)
+     * @param sprinting the body is sprinting right now (the last tick was a sprinting tick)
+     */
+    default BodySim movement(double speed, double jumpBoost, boolean sprinting) {
+        return this;
+    }
 
     /** Copies the full state of another body from the same provider. */
     BodySim copyFrom(BodySim other);

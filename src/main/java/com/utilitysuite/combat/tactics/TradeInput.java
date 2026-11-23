@@ -27,6 +27,14 @@ public final class TradeInput {
      * Default false.
      */
     public boolean sBlocking;
+    /**
+     * Our movement model for the simulated body ({@link com.utilitysuite.core.api.BodySim#movement}): walking speed
+     * attribute without the sprint modifier, Jump Boost velocity, sprinting right now. The defaults are the plain
+     * model the solver used before these existed; the combat world fills real values only with "Exact world shapes".
+     */
+    public double sSpeed = com.utilitysuite.core.api.BodySim.BASE_SPEED;
+    public double sJumpBoost;
+    public boolean sBodySprinting;
 
     // ---- opponent -------------------------------------------------------------------------------------------------
     public double ox, oy, oz, ovx, ovy, ovz;
@@ -49,6 +57,10 @@ public final class TradeInput {
      * cooldown and cost the shield's knockback ({@code LivingEntity.blockedByShield}, strength 0.5). Default false.
      */
     public boolean oShieldUp;
+    /** The opponent's movement model, as {@link #sSpeed}, {@link #sJumpBoost}, {@link #sBodySprinting}. */
+    public double oSpeed = com.utilitysuite.core.api.BodySim.BASE_SPEED;
+    public double oJumpBoost;
+    public boolean oBodySprinting;
 
     // ---- arena and tuning -----------------------------------------------------------------------------------------
     /** Hazards relative to our direction toward the opponent; a combination that moves into one is rejected. */

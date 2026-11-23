@@ -119,8 +119,10 @@ public final class ComboKeeper {
         if (in.hazardFront) {
             return false; // every follow-up closes in; nothing to steer
         }
-        selfStart.set(in.sx, in.sy, in.sz, in.svx, in.svy, in.svz, in.sOnGround);
-        oppStart.set(in.ox, in.oy, in.oz, in.ovx, in.ovy, in.ovz, in.oOnGround);
+        selfStart.set(in.sx, in.sy, in.sz, in.svx, in.svy, in.svz, in.sOnGround)
+                .movement(in.sSpeed, in.sJumpBoost, in.sBodySprinting);
+        oppStart.set(in.ox, in.oy, in.oz, in.ovx, in.ovy, in.ovz, in.oOnGround)
+                .movement(in.oSpeed, in.oJumpBoost, in.oBodySprinting);
         oppStart.knockback(HitTradeSolver.KNOCKBACK, in.sx - in.ox, in.sz - in.oz);
         if (sprintHit) {
             double yaw = Math.toRadians(in.sYaw);

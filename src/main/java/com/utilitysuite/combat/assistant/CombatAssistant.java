@@ -518,6 +518,8 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         }
         CombatSnapshot s = snap;
         s.wantTerrain = settings.holdGap || settings.edgeKnock;
+        s.wantMovementModel = settings.exactWorld;
+        syncExactWorld();
         if (!world.sample(targetId, s)) {
             if (foodEngagement) {
                 startCollect();
@@ -1887,6 +1889,18 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         for (FightStage st : allStages) {
             st.read(profile, ID);
         }
+        syncExactWorld();
+    }
+
+    /**
+     * Hands the "Exact world shapes" setting to the shared body sims (combat bodies and pursuit read the same switch).
+     * Called on settings reads and each engaged tick (a field compare; the provider may register after the profile).
+     */
+    private void syncExactWorld() {
+        IBodySimProvider sims = Services.bodySimsOrNull();
+        if (sims != null && sims.exactShapes() != settings.exactWorld) {
+            sims.useExactShapes(settings.exactWorld);
+        }
     }
 
     @Override
@@ -1916,6 +1930,7 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         for (FightStage st : allStages) {
             st.read(profile, ID);
         }
+        syncExactWorld();
     }
 
     // =================================================================================================================

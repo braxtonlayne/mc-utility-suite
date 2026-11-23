@@ -10,6 +10,7 @@ import com.utilitysuite.travel.mobility.Fly;
 import com.utilitysuite.travel.mobility.MountJump;
 import com.utilitysuite.travel.mobility.MoveToggles;
 import com.utilitysuite.travel.mobility.VelocityScale;
+import com.utilitysuite.travel.movement.TickWorldShapes;
 import com.utilitysuite.travel.terrain.TerrainAssist;
 import com.utilitysuite.travel.terrain.TerrainHooks;
 import net.minecraft.client.Minecraft;
@@ -44,16 +45,21 @@ public final class TravelBootstrap {
         bridge = new BridgeAssist();
         Services.modules().register(terrain);
         Services.modules().register(autopilot);
-        movement = new com.utilitysuite.travel.movement.MovementAssist();
+        // One exact-shape world view per client tick, read by Movement Assist, the body sims and pursuit.
+        TickWorldShapes worldShapes = new TickWorldShapes();
+        movement = new com.utilitysuite.travel.movement.MovementAssist(worldShapes);
         Services.modules().register(bridge);
         Services.modules().register(movement);
         // Shared forward simulation (core.api.BodySim) for modules outside travel, e.g. the combat hit-trade solver.
-        com.utilitysuite.travel.movement.WorldBodySims bodySims = new com.utilitysuite.travel.movement.WorldBodySims();
+        com.utilitysuite.travel.movement.WorldBodySims bodySims =
+                new com.utilitysuite.travel.movement.WorldBodySims(worldShapes);
         Services.registerBodySims(bodySims);
-        NeoForge.EVENT_BUS.addListener(net.neoforged.neoforge.client.event.ClientTickEvent.Pre.class,
-                event -> bodySims.beginTick());
+        NeoForge.EVENT_BUS.addListener(net.neoforged.neoforge.client.event.ClientTickEvent.Pre.class, event -> {
+            worldShapes.beginTick();
+            bodySims.beginTick();
+        });
         com.utilitysuite.travel.pursuit.MinecraftRouteRunner routeRunner =
-                new com.utilitysuite.travel.pursuit.MinecraftRouteRunner();
+                new com.utilitysuite.travel.pursuit.MinecraftRouteRunner(worldShapes, bodySims);
         Services.registerRouteRunner(routeRunner);
         NeoForge.EVENT_BUS.addListener(ClientTickEvent.Post.class, routeRunner::onTick);
         com.utilitysuite.travel.movement.GhostLineModule ghostLine =

@@ -170,7 +170,15 @@ public final class TradeDriver {
             t.oForward = 0;
             t.oStrafe = 0;
         }
-        t.oSprinting = s.tvx * s.tvx + s.tvz * s.tvz > SPRINT_SPEED * SPRINT_SPEED;
+        // the synced sprint flag, when the movement model is read ("Exact world shapes"), backs the speed estimate
+        t.oSprinting = s.tvx * s.tvx + s.tvz * s.tvz > SPRINT_SPEED * SPRINT_SPEED || s.targetBodySprinting;
+        // movement model of both bodies (plain values unless the snapshot read the real ones)
+        t.sSpeed = s.selfSpeed;
+        t.sJumpBoost = s.selfJumpBoost;
+        t.sBodySprinting = s.selfBodySprinting;
+        t.oSpeed = s.targetSpeed;
+        t.oJumpBoost = s.targetJumpBoost;
+        t.oBodySprinting = s.targetBodySprinting;
 
         t.hazardFront = s.hazardFront;
         t.hazardBack = s.hazardBack;
