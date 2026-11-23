@@ -89,6 +89,7 @@ final class CourseLive {
                 case BOOT -> {
                     if (mc.screen instanceof TitleScreen && mc.getOverlay() == null && phaseTicks > 20) {
                         course = CourseFile.load();
+                        JumpTrace.init(course);
                         timer = new CourseTimer(course);
                         deleteWorld(mc);
                         CreateWorldScreen.openFresh(mc, mc.screen);
@@ -240,7 +241,7 @@ final class CourseLive {
         if (timer.state == CourseTimer.State.RUNNING && !modeNow.equals(runMode)) {
             modeChanged = true;
         }
-        NeoTrace.tick(mc, mc.player.getX() - ox, mc.player.getY() - oy, mc.player.getZ() - oz);
+        JumpTrace.tick(mc, mc.player.getX() - ox, mc.player.getY() - oy, mc.player.getZ() - oz);
         if (auto != null && finishedHold < 0 && tpGrace == 0) { // not on the tick a respawn teleport was sent
             auto.tick(mc, timer, mc.player.getX() - ox, mc.player.getY() - oy, mc.player.getZ() - oz);
         }

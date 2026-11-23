@@ -359,8 +359,11 @@ public final class MovementAssist implements IModule, IConfigurable {
                 || handOverHeld
                 ? IntentEstimator.CARRY_THRESHOLD : IntentEstimator.GUIDE_THRESHOLD);
         brain.intentThreshold = intent.commitThreshold();
-        // the jump chain ahead: the estimator leans toward the link the chain goes on from, the hold reads the path
-        chain.update(now, moveYaw(yaw, userF, userS), voxels);
+        // the jump chain ahead: the estimator leans toward the link the chain goes on from, the hold reads the path.
+        // With W held the view leads the corridor (a strafe on top is technique, not a new heading) and the block the
+        // crosshair rests on steers where the chain ends
+        chain.look(now, yaw, p.getXRot(), voxels);
+        chain.update(now, userF > 0 ? yaw : moveYaw(yaw, userF, userS), voxels);
         brain.viewYaw = yaw;
         brain.viewPitch = p.getXRot();
         if (now.onGround) {

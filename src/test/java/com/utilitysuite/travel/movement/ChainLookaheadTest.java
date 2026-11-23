@@ -163,9 +163,67 @@ class ChainLookaheadTest {
         MovementPhysics a = standing(0.5, 10, 0.5);
         MovementPhysics b = standing(0.5, 10, 4.5);
         long bytes = AllocationProbe.measure(40, () -> {
+            c.look(a, 0f, 10f, g);
             c.update(a, 0f, g);
+            c.look(b, 0f, 10f, g);
             c.update(b, 0f, g);
         });
         assertTrue(bytes < 1_024, "update allocated " + bytes + " bytes");
+    }
+
+    /** A Y: from the start block, one branch of blocks at x -2 and one at x +2, every 3 blocks along +z. */
+    static Grid fork() {
+        Grid g = new Grid();
+        g.fill(0, 9, 0, 0, 9, 0);
+        for (int k = 1; k <= 8; k++) {
+            g.fill(-2, 9, 3 * k, -2, 9, 3 * k);
+            g.fill(2, 9, 3 * k, 2, 9, 3 * k);
+        }
+        return g;
+    }
+
+    /** Yaw and pitch from the eyes of a body at {@code at} to a point. */
+    static float[] viewTo(MovementPhysics at, double x, double y, double z) {
+        double dx = x - at.x;
+        double dy = y - (at.y + 1.62);
+        double dz = z - at.z;
+        float yaw = (float) Math.toDegrees(Math.atan2(-dx, dz));
+        float pitch = (float) Math.toDegrees(-Math.atan2(dy, Math.sqrt(dx * dx + dz * dz)));
+        return new float[] {yaw, pitch};
+    }
+
+    @Test
+    void theBranchTheUserLooksAtIsTheChain() {
+        for (int side : new int[] {-1, 1}) {
+            Grid g = fork();
+            MovementPhysics at = standing(0.5, 10, 0.5);
+            // the crosshair on the front face of the far block of one branch
+            float[] v = viewTo(at, side * 2 + 0.5, 9.5, 18.0);
+            ChainLookahead c = new ChainLookahead();
+            c.look(at, v[0], v[1], g);
+            assertTrue(c.gazing(), "a block far down the branch is looked at");
+            settle(c, at, 0f, g);
+            int last = c.length() - 1;
+            assertTrue(last >= 3, "the chain runs down the branch: " + c.length());
+            assertEquals(side * 2, c.linkX(last), "the chain ends on the branch looked at");
+            assertTrue(c.linkZ(last) >= 12, "and far down it: z " + c.linkZ(last));
+            // looking at the other branch re-picks the end without a rebuild
+            float[] o = viewTo(at, -side * 2 + 0.5, 9.5, 18.0);
+            c.look(at, o[0], o[1], g);
+            c.update(at, 0f, g);
+            assertEquals(-side * 2, c.linkX(c.length() - 1), "the end follows the gaze to the other branch");
+        }
+    }
+
+    @Test
+    void aBlockAtTheFeetIsNoGaze() {
+        Grid g = fork();
+        MovementPhysics at = standing(0.5, 10, 0.5);
+        ChainLookahead c = new ChainLookahead();
+        c.look(at, 0f, 80f, g); // looking down at the start block
+        assertFalse(c.gazing());
+        c.look(at, 0f, -30f, g); // at the sky
+        assertFalse(c.gazing());
+        assertTrue(c.gazeCells() <= (ChainLookahead.LENGTH + 7) * 3, "one test per visited cell");
     }
 }

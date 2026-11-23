@@ -112,6 +112,104 @@ public final class ChainLookahead {
     private int lastLookups;
     private final float[] box = new float[6];
 
+    // ---- gaze (owner, 2026-11-23: "where the player is looking should guide its longer distance predictions") ----
+    /** A looked-at block at least this far away (blocks) steers the end of the chain; nearer is the estimator's. */
+    static final double GAZE_MIN = 6.0;
+    /** Ray samples per block: an eighth of a block finds a fence post (a quarter wide) and most panes. */
+    private static final int GAZE_STEPS_PER_BLOCK = 8;
+    /** Score per block between a chain end and the looked-at block (the furthest-along term is small beside it). */
+    static final double GAZE_COST = 1.0;
+    /** Score per block of height between a chain end and the looked-at top. */
+    static final double GAZE_RISE_COST = 0.5;
+    /** Score per block of progress along the heading while a gaze steers (ties go to the further top). */
+    static final double GAZE_ALONG = 0.05;
+    /** The looked-at block moved this far (blocks): the end of a finished chain is picked again. */
+    static final double GAZE_REPICK = 1.0;
+    private static final double EYE_HEIGHT = 1.62;
+    private boolean gazeSet;
+    private double gazeX, gazeTop, gazeZ;
+    private boolean pickedGaze;
+    private double pickedX, pickedZ;
+    private int gazeCells;
+
+    /**
+     * Marches the view ray from the eyes up to the corridor's length and keeps the first block it hits as the
+     * looked-at point, when it is at least {@link #GAZE_MIN} away. Allocation-free; one box test per new cell.
+     */
+    public void look(MovementPhysics now, float yaw, float pitch, MovementPhysics.Voxels w) {
+        gazeSet = false;
+        gazeCells = 0;
+        double r = Math.toRadians(yaw);
+        double p = Math.toRadians(pitch);
+        double cp = Math.cos(p);
+        double dx = -Math.sin(r) * cp;
+        double dy = -Math.sin(p);
+        double dz = Math.cos(r) * cp;
+        double ey = now.y + EYE_HEIGHT;
+        int steps = (LENGTH + RING) * GAZE_STEPS_PER_BLOCK;
+        int lx = Integer.MIN_VALUE;
+        int ly = 0;
+        int lz = 0;
+        for (int i = 1; i <= steps; i++) {
+            double t = (double) i / GAZE_STEPS_PER_BLOCK;
+            double px = now.x + dx * t;
+            double py = ey + dy * t;
+            double pz = now.z + dz * t;
+            int bx = MovementPhysics.floor(px);
+            int by = MovementPhysics.floor(py);
+            int bz = MovementPhysics.floor(pz);
+            if (bx == lx && by == ly && bz == lz) {
+                continue;
+            }
+            lx = bx;
+            ly = by;
+            lz = bz;
+            gazeCells++;
+            int n = w.boxCount(bx, by, bz);
+            boolean hit = false;
+            double top = -Double.MAX_VALUE;
+            for (int k = 0; k < n; k++) {
+                w.box(bx, by, bz, k, box, 0);
+                top = Math.max(top, by + box[4]);
+                hit |= px >= bx + box[0] && px <= bx + box[3] && py >= by + box[1] && py <= by + box[4]
+                        && pz >= bz + box[2] && pz <= bz + box[5];
+            }
+            if (hit) {
+                double hx0 = bx + 0.5 - now.x;
+                double hz0 = bz + 0.5 - now.z;
+                if (hx0 * hx0 + hz0 * hz0 >= GAZE_MIN * GAZE_MIN) {
+                    gazeSet = true;
+                    gazeX = bx + 0.5;
+                    gazeTop = top;
+                    gazeZ = bz + 0.5;
+                }
+                return;
+            }
+        }
+    }
+
+    /** A looked-at block steers the chain now. */
+    public boolean gazing() {
+        return gazeSet;
+    }
+
+    /** Cells the last {@link #look} ray visited. */
+    int gazeCells() {
+        return gazeCells;
+    }
+
+    private boolean gazeMoved() {
+        if (gazeSet != pickedGaze) {
+            return true;
+        }
+        if (!gazeSet) {
+            return false;
+        }
+        double ddx = gazeX - pickedX;
+        double ddz = gazeZ - pickedZ;
+        return ddx * ddx + ddz * ddz > GAZE_REPICK * GAZE_REPICK;
+    }
+
     /** One tick. {@code moveYaw}: the direction the user is heading (view yaw turned by the held keys). */
     public void update(MovementPhysics now, float moveYaw, MovementPhysics.Voxels w) {
         lookups = 0;
@@ -135,6 +233,9 @@ public final class ChainLookahead {
         }
         if (solving) {
             solve(w);
+        }
+        if (ready && !building && !solving && gazeMoved()) {
+            finish(); // the corridor still holds the search: only the end and its path change
         }
         lastLookups = lookups;
     }
@@ -418,8 +519,11 @@ public final class ChainLookahead {
         return false;
     }
 
-    /** Picks the end node (furthest along, cheapest, nearest the heading line) and stores the path to it. */
+    /** Picks the end node (nearest the looked-at block; otherwise furthest along, cheapest, nearest the heading line) and stores the path to it. */
     private void finish() {
+        pickedGaze = gazeSet;
+        pickedX = gazeX;
+        pickedZ = gazeZ;
         int best = -1;
         double bestScore = -Double.MAX_VALUE;
         for (int i = 0; i < orderCount; i++) {
@@ -433,7 +537,16 @@ public final class ChainLookahead {
                 double dz = minZ + c % DIM - oz;
                 double along = dx * hx + dz * hz;
                 double across = Math.abs(-dx * hz + dz * hx);
-                double s = along - END_COST * cost[n] - SIDE_COST * across;
+                double s;
+                if (gazeSet) {
+                    // the end nearest the looked-at block: the chain runs to where the user is looking
+                    double gx = minX + c / DIM + 0.5 - gazeX;
+                    double gz = minZ + c % DIM + 0.5 - gazeZ;
+                    s = -GAZE_COST * Math.sqrt(gx * gx + gz * gz) - GAZE_RISE_COST * Math.abs(tops[n] - gazeTop)
+                            - END_COST * cost[n] + GAZE_ALONG * along;
+                } else {
+                    s = along - END_COST * cost[n] - SIDE_COST * across;
+                }
                 if (s > bestScore) {
                     bestScore = s;
                     best = n;
