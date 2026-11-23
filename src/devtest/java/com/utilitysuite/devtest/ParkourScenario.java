@@ -690,6 +690,9 @@ final class ParkourScenario {
                                     : "still on top 10 ticks after the fresh press");
                 }
             } else if (ovr == Override.NONE) {
+                if (!(r.standing && !r.fell)) {
+                    s.note(label + " run-up, what the assist wrote:" + r.groundTrace);
+                }
                 s.check(label + ": still on the " + kind.landingClass + " top " + HOLD_TICKS
                                 + " ticks after landing, forward held throughout",
                         r.standing && !r.fell, r.standNote + "; " + parity);
@@ -739,7 +742,10 @@ final class ParkourScenario {
                             : String.valueOf(brain.strafe()),
                     brain.sneak() ? " sneak" : "", brain.sprintOff() ? " nosprint" : "", p.getYRot(),
                     brain.commit().phase().name(), brain.scriptActive() ? "+" + brain.activeScript().name + "@"
-                            + brain.scriptIndex() + "/" + brain.activeScript().takeoffIndex : "");
+                            + brain.scriptIndex() + "/" + brain.activeScript().takeoffIndex : "")
+                    + (brain.intentActive() ? " int" : " noint") + (brain.targetFrozen() ? " frz" : "")
+                    + (brain.approach().engaged() ? " ap" : "") + (brain.approach().exhausted() ? "x" : "")
+                    + (brain.withholdJump() ? " W" : "");
             if (!sig.equals(r.lastGround) && r.groundTrace.length() < 1400) {
                 r.groundTrace.append(Harness.fmt(" [%d z%.2f x%+.2f %s]", r.tick, z, p.getX() - postCx, sig));
                 r.lastGround = sig;
