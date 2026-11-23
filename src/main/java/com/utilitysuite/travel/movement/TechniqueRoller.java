@@ -173,7 +173,9 @@ final class TechniqueRoller {
                 }
                 yawTravel += turned;
             }
-            if (body.horizontalCollision) {
+            // a neo may graze the pillar in the air: the replica slides along it and drops the sprint like vanilla on a
+            // contact that is not minor, and the brute force of J36 found most of its landings that way
+            if (body.horizontalCollision && (!c.airSlide || i <= jumpAt)) {
                 return false;
             }
             if (i > jumpAt) {

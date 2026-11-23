@@ -24,6 +24,16 @@ public final class TechniqueLibrary implements TechniqueSource {
     static final int MAX_GROUND = 20;
     /** Budget reserved for one roll: a roll never runs past the end of a script. */
     private static final int ROLL_COST = FlightScript.MAX_TICKS;
+    /** The view this far off the line to the target times the neo from a run along that line (degrees). */
+    private static final float NEO_AIM_EDGE_DEG = 3f;
+    /** Leading stages of the blocked order that take turns (corner cut keys, corner cut view, neo view). */
+    private static final int BLOCKED_TURN_STAGES = 3;
+    /** First stage of those (the keys-only corner cut, a small grid, still goes first on its own). */
+    private static final int BLOCKED_TURN_FROM = 1;
+    /** The last edge probe ended at a wall across the run (not at the end of the support). */
+    private boolean lastEdgeWall;
+    /** A straight run along the line to the target runs into a wall: a pillar stands in the line (J36). */
+    private boolean pillarInLine;
 
     private final TechniqueRoller roller = new TechniqueRoller();
     private final TechniqueTemplates.Candidate cand = new TechniqueTemplates.Candidate();
@@ -131,6 +141,19 @@ public final class TechniqueLibrary implements TechniqueSource {
         ticks += now.onGround ? lastEdgeProbeTicks : 0;
         if (edge >= 0) { // no edge within reach yet: nothing to time a takeoff against
             float aim = aimYaw(now, yaw, target);
+            // the neo with the view is timed from a run along the line to the target: a run-up looking well off the line
+            // walks off a 1-wide strip's side long before the pillar (J36 from a view 18 degrees off: edge 8 instead of 12)
+            int aimEdge = edge;
+            pillarInLine = lastEdgeWall;
+            if (stageTemplate == BLOCKED_TEMPLATE && yawAllowed && Math.abs(aim - yaw) > NEO_AIM_EDGE_DEG) {
+                aimEdge = edgeTick(now, aim, sprinting, userS, w);
+                pillarInLine = lastEdgeWall;
+                ticks += lastEdgeProbeTicks;
+                lastEdgeTick = edge;
+                if (aimEdge < 0) {
+                    aimEdge = edge;
+                }
+            }
             int decodes = 0;
             int maxDecodes = totalSize(yawAllowed);
             while (ticks + ROLL_COST <= MAX_SIM_TICKS_PER_CALL && decodes < maxDecodes) {
@@ -139,7 +162,8 @@ public final class TechniqueLibrary implements TechniqueSource {
                 int i = cursorIndex;
                 boolean yawPhase = stageYaw[cursorStage] && yawAllowed;
                 advanceCursor(yawAllowed);
-                if (!TechniqueTemplates.decode(t, i, yawPhase, edge, yaw, aim, maxTurn, cand)) {
+                int e = t == TechniqueTemplates.NEO && yawPhase ? aimEdge : edge;
+                if (!TechniqueTemplates.decode(t, i, yawPhase, e, yaw, aim, maxTurn, cand)) {
                     continue;
                 }
                 boolean ok = roller.roll(now, yaw, sprinting, userS, cand, 0, target, yawAllowed,
@@ -197,12 +221,14 @@ public final class TechniqueLibrary implements TechniqueSource {
     private int edgeTick(MovementPhysics now, float yaw, boolean sprinting, int userS, MovementPhysics.Voxels w) {
         lastEdgeProbeTicks = 0;
         probe.copyFrom(now);
+        lastEdgeWall = false;
         int edge = -1;
         for (int i = 0; i < MAX_GROUND; i++) {
             probeNext.copyFrom(probe).tick(1, userS, yaw, sprinting, false, false, w);
             lastEdgeProbeTicks++;
             if (!probeNext.supported(w) || probeNext.horizontalCollision) { // an edge, or a wall across the run-up
                 edge = i;
+                lastEdgeWall = probeNext.horizontalCollision;
                 break;
             }
             probe.copyFrom(probeNext);
@@ -248,6 +274,33 @@ public final class TechniqueLibrary implements TechniqueSource {
      * variants; then it wraps.
      */
     private void advanceCursor(boolean yawAllowed) {
+        int from = BLOCKED_TURN_FROM;
+        int group = stageTemplate == BLOCKED_TEMPLATE && pillarInLine ? BLOCKED_TURN_STAGES : 0;
+        if (cursorStage >= from && cursorStage < group) {
+            // blocked line: the corner cut (keys, view) and the neo with the view take turns, one candidate each.
+            // Walking them one after another spent the whole run-up of J36 (2026-11-23) on the corner-cut grids and
+            // reached the neo only at the edge. The older families follow one after another as before (letting them
+            // take turns too broke a corner-wall lane: an older family's script was found first and followed)
+            int largest = 0;
+            for (int s = from; s < group; s++) {
+                largest = Math.max(largest, TechniqueTemplates.size(stageTemplate[s], stageYaw[s]));
+            }
+            int guard = 0;
+            do {
+                if (++cursorStage >= group) {
+                    cursorStage = from;
+                    if (++cursorIndex >= largest) {
+                        cursorStage = group;
+                        cursorIndex = -1; // the sequential walk below steps it to 0
+                        break;
+                    }
+                }
+            } while ((cursorIndex >= TechniqueTemplates.size(stageTemplate[cursorStage], stageYaw[cursorStage])
+                    || (stageYaw[cursorStage] && !yawAllowed)) && guard++ <= (group - from) * (largest + 1));
+            if (cursorStage < group) {
+                return;
+            }
+        }
         cursorIndex++;
         int guard = 0;
         while ((cursorIndex >= TechniqueTemplates.size(stageTemplate[cursorStage], stageYaw[cursorStage])

@@ -21,6 +21,12 @@ class CourseNeoIntentTest {
     }
 
     static String loop(JumpCommit.Mode mode, double startX, double startZ, float pitch, StringBuilder trace) {
+        return loop(mode, startX, startZ, pitch, 0f, true, trace);
+    }
+
+    /** {@code viewOff}: the user's view this far off the line (degrees); {@code sprintKey}: sprinting at the start. */
+    static String loop(JumpCommit.Mode mode, double startX, double startZ, float pitch, float viewOff, boolean sprintKey,
+                       StringBuilder trace) {
         ShapeGrid g = TechniqueLibraryTest.courseNeoScene();
         SupportRegion top = TechniqueLibraryTest.top(g, 0, 19, 5);
         MovementAssistBrain b = new MovementAssistBrain();
@@ -35,8 +41,8 @@ class CourseNeoIntentTest {
         float steerMax = carry ? 90f : 25f;
         com.utilitysuite.core.input.YawCoSteer steer = new com.utilitysuite.core.input.YawCoSteer();
         MovementPhysics p = new MovementPhysics().set(startX, 20, startZ, 0, -0.0784, 0, true);
-        float yaw = 0f;
-        boolean sprint = true;
+        float yaw = viewOff;
+        boolean sprint = sprintKey;
         boolean pressed = false;
         for (int t = 0; t < 80; t++) {
             boolean uj = !pressed && p.onGround && p.z >= 2.75;
@@ -70,13 +76,14 @@ class CourseNeoIntentTest {
                         b.intentActive() ? b.targetZ() : "-",
                         b.scriptActive() ? b.activeScript().name + "@" + b.scriptIndex() : ""));
             }
-            sprint = !b.sprintOff() && f > 0;
+            // vanilla: a sprint the module started stays on until forward ends it (or the user's key restarts it)
+            sprint = (sprint || sprintKey || b.sprint()) && !b.sprintOff() && f > 0;
             if (trace != null && b.scriptActive()) {
                 FlightScript sc = b.activeScript();
                 int i = b.scriptIndex();
-                trace.append(String.format(" script f%d s%d spr%s jmp%s yaw%.2f -> x%.3f z%.3f | used spr%s sneak%s",
+                trace.append(String.format(" script f%d s%d spr%s jmp%s yaw%.2f -> x%.3f z%.3f | used spr%s sneak%s land%d/%d at x%.2f y%.2f z%.2f",
                         sc.forward[i], sc.strafe[i], sc.sprint[i] ? 1 : 0, sc.jump[i] ? 1 : 0, sc.yaw[i], sc.x[i],
-                        sc.z[i], sprint ? 1 : 0, b.sneak() ? 1 : 0));
+                        sc.z[i], sprint ? 1 : 0, b.sneak() ? 1 : 0, sc.landIndex, sc.length, sc.x[sc.landIndex], sc.y[sc.landIndex], sc.z[sc.landIndex]));
             }
             float used = yaw;
             p.tick(f, s, used, sprint, jump, b.sneak(), g);
@@ -116,6 +123,31 @@ class CourseNeoIntentTest {
             System.out.println("NEO LOOP " + mode + " " + landed + "/" + tried + out);
             assertTrue(landed * 10 >= tried * 9, mode + ": " + landed + " of " + tried + out);
         }
+    }
+
+    /**
+     * Live trace of 2026-11-23: after J35's landing hold the user walked (no sprint) toward the pillar with the view
+     * 10-18 degrees off the line. Every such run-up lands: the neo is timed from a run along the line, the stages take
+     * turns so the neo is reached early, and the replay fills in the sprint.
+     */
+    @Test
+    void theLiveRunUpViewOffTheLineAndWalking() {
+        StringBuilder out = new StringBuilder();
+        int landed = 0;
+        int tried = 0;
+        for (float off : new float[] {-18f, -10f, 10f, 18f}) {
+            for (boolean spr : new boolean[] {true, false}) {
+                tried++;
+                String r = loop(JumpCommit.Mode.GUIDE, 0.7, -0.6, 20f, off, spr, null);
+                if (r.equals("landed")) {
+                    landed++;
+                } else {
+                    out.append(String.format(" [off %.0f sprint %s: %s]", off, spr, r));
+                }
+            }
+        }
+        System.out.println("NEO LIVE " + landed + "/" + tried + out);
+        assertTrue(landed == tried, landed + " of " + tried + out);
     }
 
     @Test

@@ -87,7 +87,58 @@ public final class SupportRegion {
      * @return true when at least one top box was found
      */
     public boolean build(MovementPhysics.Voxels w, double x, double topY, double z) {
-        return build(w, x, z, x, z, topY);
+        if (!build(w, x, z, x, z, topY)) {
+            return false;
+        }
+        keepConnected(x, z);
+        return count > 0;
+    }
+
+    private final boolean[] reached = new boolean[MAX_RECTS];
+    private final int[] stack = new int[MAX_RECTS];
+
+    /**
+     * Drops the rectangles not connected to the one holding ({@code x}, {@code z}): a top of the same height across a
+     * gap is another top, not part of this one. J36 (2026-11-23): the strip in front of a pillar sat inside the scan
+     * window of the landing strip behind it, and a neo that bounced off the pillar back onto the takeoff strip rolled
+     * as a landing.
+     */
+    private void keepConnected(double x, double z) {
+        int seed = -1;
+        for (int i = 0, o = 0; i < count; i++, o += 4) {
+            reached[i] = false;
+            if (seed < 0 && x >= rects[o] - EPS && x <= rects[o + 2] + EPS && z >= rects[o + 1] - EPS
+                    && z <= rects[o + 3] + EPS) {
+                seed = i;
+            }
+        }
+        if (seed < 0) {
+            return; // the point is off every rectangle: keep the scan as it is
+        }
+        int sp = 0;
+        stack[sp++] = seed;
+        reached[seed] = true;
+        while (sp > 0) {
+            int a = 4 * stack[--sp];
+            for (int j = 0, o = 0; j < count; j++, o += 4) {
+                // grown rectangles of touching tops overlap by the body width: a shared edge or corner connects
+                if (!reached[j] && rects[o] <= rects[a + 2] + EPS && rects[o + 2] >= rects[a] - EPS
+                        && rects[o + 1] <= rects[a + 3] + EPS && rects[o + 3] >= rects[a + 1] - EPS) {
+                    reached[j] = true;
+                    stack[sp++] = j;
+                }
+            }
+        }
+        int n = 0;
+        for (int i = 0; i < count; i++) {
+            if (reached[i]) {
+                if (n != i) {
+                    System.arraycopy(rects, 4 * i, rects, 4 * n, 4);
+                }
+                n++;
+            }
+        }
+        count = n;
     }
 
     /**

@@ -52,20 +52,36 @@ final class TechniqueTemplates {
     private static final int NEO_PARALLEL_VARIANTS = 6;
     /*
      * Neo with the view (J36 study, 2026-11-23): a pillar standing in the gap cell of a 1-wide strip leaves keys-only
-     * play one tick-perfect input (2 of 34k brute-forced sequences land), while turning the view ~20 degrees toward
-     * the swing-out side through the run-up and the outward strafe, then back to the line for the inward strafe, lands
-     * in hundreds. The variant strafes out from the start of the script with that view, keeps the outward strafe for
-     * a few air ticks, coasts, then strafes back in with the view goal on the original line.
+     * play one tick-perfect input. A brute force over view goal, strafe timing and takeoff tick from run-ups looking
+     * 0..18 degrees off the line found two families that land from every view, once a glancing slide along the
+     * pillar's side is allowed (the replica models the slide and its sprint loss):
+     *  - short swing: the view 5..15 degrees toward the swing-out side, the outward strafe only over the last few
+     *    ground ticks and at most one air tick, then the inward strafe;
+     *  - long swing: the view 20..35 degrees out, the outward strafe from the start of the run-up and 0..4 air ticks.
+     * The view holds its goal for the inward strafe: turning back as well spent more than Co-pilot's co-steer total.
+     * The families alternate by index so both are reached early within the per-tick search budget.
      */
-    /** Neo with the view: turn toward the swing-out side, most likely first. */
-    private static final float[] NEO_TURN_ANGLES = {20f, 15f, 25f};
-    /** Neo with the view: air ticks of outward strafe after the takeoff (at least 2, like every air change). */
-    private static final int[] NEO_TURN_OUT = {2, 3};
+    private static final float[] NEO_SHORT_ANGLES = {10f, 15f, 5f};
+    /** Short swing: ground ticks of outward strafe up to and including the takeoff. */
+    private static final int[] NEO_SHORT_GROUND = {6, 4};
+    /** Short swing: air ticks of outward strafe after the takeoff. */
+    private static final int[] NEO_SHORT_OUT = {0, 1};
+    private static final float[] NEO_LONG_ANGLES = {30f, 25f, 35f, 20f};
+    /** Long swing: air ticks of outward strafe after the takeoff. */
+    private static final int[] NEO_LONG_OUT = {3, 2, 4, 0};
     /**
      * Neo with the view: air ticks of forward only before the inward strafe. Never 1: the brain holds a key at least
      * two ticks (BALANCED key-change limits), so a one-tick release is not flown as rolled.
      */
     private static final int[] NEO_TURN_COAST = {0, 2, 3};
+    /** Neo with the view: takeoff ticks from the plain edge tick (the brute force landed 1..3 ticks early). */
+    private static final int[] NEO_TURN_OFFSETS = {-1, -2, -3, 0};
+    private static final int NEO_SHORT_SIZE = 2 * NEO_SHORT_ANGLES.length * NEO_TURN_OFFSETS.length
+            * NEO_TURN_COAST.length * NEO_SHORT_OUT.length * NEO_SHORT_GROUND.length;
+    private static final int NEO_LONG_SIZE = 2 * NEO_LONG_ANGLES.length * NEO_TURN_OFFSETS.length
+            * NEO_TURN_COAST.length * NEO_LONG_OUT.length;
+    /** A view more than this off the line to the target leans to a side (degrees). */
+    static final float NEO_LEAN_DEG = 4f;
     /** 45-degree: air ticks on the line before the view turns (0..2). */
     private static final int FORTY_FIVE_DELAYS = 3;
     static final float FORTY_FIVE_ANGLE = 45f;
@@ -103,6 +119,8 @@ final class TechniqueTemplates {
         /** Ground ticks {@code [0, earlyEnd)} from the start of the roll hold {@link #earlyStrafe} (re-based like jump). */
         int earlyEnd;
         int earlyStrafe;
+        /** The roll may graze a wall in the air and slide along it (the neo with the view around a pillar). */
+        boolean airSlide;
         final int[] segForward = new int[MAX_SEGMENTS];
         final int[] segStrafe = new int[MAX_SEGMENTS];
         final int[] segTicks = new int[MAX_SEGMENTS];
@@ -117,6 +135,7 @@ final class TechniqueTemplates {
             segments = o.segments;
             earlyEnd = o.earlyEnd;
             earlyStrafe = o.earlyStrafe;
+            airSlide = o.airSlide;
             for (int i = 0; i < MAX_SEGMENTS; i++) {
                 segForward[i] = o.segForward[i];
                 segStrafe[i] = o.segStrafe[i];
@@ -125,13 +144,14 @@ final class TechniqueTemplates {
             }
         }
 
-        private void reset(int template, int jump, float yaw) {
+        void reset(int template, int jump, float yaw) {
             this.template = template;
             this.jump = jump;
             groundStrafe = 0;
             groundStrafeTicks = 0;
             takeoffYaw = yaw;
             segments = 0;
+            airSlide = false;
             earlyEnd = 0;
             earlyStrafe = 0;
             for (int i = 0; i < MAX_SEGMENTS; i++) {
@@ -142,7 +162,7 @@ final class TechniqueTemplates {
             }
         }
 
-        private void segment(int strafe, int ticks, float yaw) {
+        void segment(int strafe, int ticks, float yaw) {
             segForward[segments] = 1;
             segStrafe[segments] = strafe;
             segTicks[segments] = ticks;
@@ -177,7 +197,7 @@ final class TechniqueTemplates {
                 return HEADHITTER_OFFSETS * 3 * sweeps;
             case NEO:
                 return yawAllowed
-                        ? NEO_TURN_OUT.length * NEO_TURN_COAST.length * EDGE_OFFSETS.length * 2 * NEO_TURN_ANGLES.length * 2
+                        ? 2 * Math.max(NEO_SHORT_SIZE, NEO_LONG_SIZE)
                         : EDGE_OFFSETS.length * 2 * NEO_GROUND_VARIANTS * NEO_PARALLEL_VARIANTS;
             case FORTY_FIVE:
                 return yawAllowed ? EDGE_OFFSETS.length * 2 * FORTY_FIVE_DELAYS : 0;
@@ -270,30 +290,41 @@ final class TechniqueTemplates {
             }
             case NEO: {
                 if (yawAllowed) {
-                    int outTicks = NEO_TURN_OUT[index % NEO_TURN_OUT.length];
-                    index /= NEO_TURN_OUT.length;
-                    int coast = NEO_TURN_COAST[index % NEO_TURN_COAST.length];
-                    index /= NEO_TURN_COAST.length;
-                    int jump = edgeTick + EDGE_OFFSETS[index % EDGE_OFFSETS.length];
-                    index /= EDGE_OFFSETS.length;
-                    int side = index % 2 == 0 ? 1 : -1;
+                    boolean shortSwing = index % 2 == 0;
                     index /= 2;
-                    float angle = Math.min(NEO_TURN_ANGLES[index % NEO_TURN_ANGLES.length], maxTurnDeg);
-                    index /= NEO_TURN_ANGLES.length;
-                    // the inward strafe: hold the turned view (half the allowance), or turn back to the line when the
-                    // level's total covers the way out and back (the core caps the total travel, not the offset)
-                    boolean back = index % 2 == 1;
-                    if (back && 2f * angle > maxTurnDeg) {
+                    if (index >= (shortSwing ? NEO_SHORT_SIZE : NEO_LONG_SIZE)) {
                         return false;
                     }
-                    if (jump < 0 || angle <= 0f) {
+                    // fastest-varying first: side, angle, takeoff tick, so the first rolls already span the families
+                    int sideBit = index % 2;
+                    index /= 2;
+                    float[] angles = shortSwing ? NEO_SHORT_ANGLES : NEO_LONG_ANGLES;
+                    float angle = Math.min(angles[index % angles.length], maxTurnDeg);
+                    index /= angles.length;
+                    int jump = edgeTick + NEO_TURN_OFFSETS[index % NEO_TURN_OFFSETS.length];
+                    index /= NEO_TURN_OFFSETS.length;
+                    int coast = NEO_TURN_COAST[index % NEO_TURN_COAST.length];
+                    index /= NEO_TURN_COAST.length;
+                    int[] outs = shortSwing ? NEO_SHORT_OUT : NEO_LONG_OUT;
+                    int outTicks = outs[index % outs.length];
+                    index /= outs.length;
+                    int ground = shortSwing ? NEO_SHORT_GROUND[index % NEO_SHORT_GROUND.length] : jump + 1;
+                    // angled from the line to the target, not from the view: a run-up looking 10-20 degrees off the
+                    // line (live trace, J36) found nothing from the view
+                    float line = Math.abs(aimYaw - baseYaw) <= maxTurnDeg ? aimYaw : baseYaw;
+                    // the side the view already leans to first: it needs the least turn
+                    float lean = baseYaw - line;
+                    int first = lean < -NEO_LEAN_DEG ? -1 : 1;
+                    int side = sideBit == 0 ? first : -first;
+                    float turned = line + side * angle;
+                    if (jump < 0 || angle <= 0f || Math.abs(turned - baseYaw) > maxTurnDeg) {
                         return false;
                     }
                     // strafe s with the view turned by s * angle: the run angles out past the pillar's side
-                    float turned = baseYaw + side * angle;
                     out.reset(NEO, jump, turned);
+                    out.airSlide = true;
                     out.groundStrafe = side;
-                    out.groundStrafeTicks = jump + 1; // from the start of the script
+                    out.groundStrafeTicks = Math.min(ground, jump + 1);
                     if (outTicks > 0) {
                         out.segment(side, outTicks, turned);
                     }
@@ -301,8 +332,8 @@ final class TechniqueTemplates {
                         out.segment(0, coast, turned);
                     }
                     // every segment keeps a goal: a NaN goal sends no request and the core's follower stops short of
-                    // the turn the replica rolled (seen in the full-loop replica, 2026-11-23)
-                    out.segment(-side, 0, back ? baseYaw : turned);
+                    // the turn the replica rolled
+                    out.segment(-side, 0, turned);
                     return true;
                 }
                 int sweep = index % sweeps;

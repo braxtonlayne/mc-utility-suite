@@ -958,6 +958,7 @@ public final class MovementAssistBrain {
      */
     public void setIntentTarget(int x, int y, int z, double confidence) {
         rawSet = true;
+        rawMissTicks = 0;
         rtx = x;
         rty = y;
         rtz = z;
@@ -996,6 +997,7 @@ public final class MovementAssistBrain {
 
     public void clearIntentTarget() {
         rawSet = false;
+        rawMissTicks++;
         if (!targetFrozen && !lockDeferred()) {
             lockFromRaw();
         }
@@ -1019,8 +1021,20 @@ public final class MovementAssistBrain {
     private boolean targetFrozen;
     private boolean trimUsed;
 
+    /**
+     * Ticks the estimator has had no pick in a row. An ARMED target behind a wall sits right at the commit threshold
+     * (the wall hides most of it from the look), and live on course J36 it dropped out for a few ticks in the middle
+     * of the run-up, so the commitment ended where the neo had to be planned: a few missing ticks keep it.
+     */
+    private int rawMissTicks;
+    static final int ARMED_MISS_GRACE = 6;
+
     private void lockFromRaw() {
         if (!rawSet) {
+            if (intentSet && mode != JumpCommit.Mode.NUDGE && commit.phase() == JumpCommit.Phase.ARMED
+                    && lineBlocked && rawMissTicks <= ARMED_MISS_GRACE) {
+                return;
+            }
             if (intentSet) {
                 intentSet = false;
                 idealValid = false;
@@ -1407,7 +1421,10 @@ public final class MovementAssistBrain {
         }
         techniques.setMaxTurn(coSteerAllowed ? coSteerLeft(yaw) : 0f);
         techniques.setLineBlocked(techniqueFirst);
-        boolean got = techniques.plan(now, yaw, sprintKey, userForward, userStrafe, planRegion, coSteerAllowed,
+        // a blocked line (a neo around a pillar) needs the sprint jump: a walking run-up is rolled with the sprint the
+        // replay fills in for the user where vanilla allows it (live J36, 2026-11-23: the user walked after J35's hold)
+        boolean planSprint = sprintKey || (techniqueFirst && sprintFillAllowed && now.onGround);
+        boolean got = techniques.plan(now, yaw, planSprint, userForward, userStrafe, planRegion, coSteerAllowed,
                 coSteerMaxDegPerTick, safeOnly, holdHealth, w);
         commitSimTicks += techniques.lastSimTicks();
         if (got) {

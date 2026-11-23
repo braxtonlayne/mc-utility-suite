@@ -115,7 +115,9 @@ class TechniqueLibraryTest {
             }
             prevYaw = s.yaw[i];
             p.tick(s.forward[i], s.strafe[i], s.yaw[i], s.sprint[i], s.jump[i], false, g);
-            assertFalse(p.horizontalCollision, "wall touch at tick " + i);
+            // the neo with the view may graze the pillar in the air (the replica slides along it like vanilla)
+            boolean graze = yawAllowed && s.name.equals(TechniqueTemplates.NAME_NEO) && i > s.takeoffIndex && !p.onGround;
+            assertFalse(p.horizontalCollision && !graze, "wall touch at tick " + i);
             assertEquals(s.x[i], p.x, 0.0, "x at " + i);
             assertEquals(s.y[i], p.y, 0.0, "y at " + i);
             assertEquals(s.z[i], p.z, 0.0, "z at " + i);
