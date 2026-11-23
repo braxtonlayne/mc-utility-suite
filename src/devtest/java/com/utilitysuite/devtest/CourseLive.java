@@ -57,6 +57,14 @@ final class CourseLive {
     private String runMode = "OFF";
     private boolean modeChanged;
     private int finishedHold = -1;
+    /** A teleport is on its way: until the body arrives (or 20 ticks) the timer only counts time, so the old
+     *  position (still on the fail floor) is not read as another fall. */
+    private int tpGrace;
+    private double tpX, tpY, tpZ;
+    private float tpYaw;
+    private int tpTries;
+    /** The automated runner, when {@code -Dutilitysuite.courseAuto} is set (null for human runs). */
+    private CourseAuto auto;
 
     void register(IEventBus bus) {
         bus.addListener(this::onTick);
@@ -126,6 +134,12 @@ final class CourseLive {
                         say("Course built: " + course.jumps.size() + " jumps, " + course.checkpoints.size()
                                 + " checkpoints. Mode OFF (baseline). Run off the start pad to start the clock."
                                 + " !help for commands.");
+                        String spec = System.getProperty("utilitysuite.courseAuto", "");
+                        if (!spec.isBlank()) {
+                            auto = new CourseAuto(this, course, spec,
+                                    Integer.getInteger("utilitysuite.courseAutoSeeds", 1));
+                            say("Automated runner: " + spec);
+                        }
                         go(Phase.READY);
                     }
                 }
@@ -177,6 +191,26 @@ final class CourseLive {
             return;
         }
         double x = mc.player.getX() - ox, y = mc.player.getY() - oy, z = mc.player.getZ() - oz;
+        if (tpGrace > 0) {
+            double ax = x - tpX, az = z - tpZ;
+            if (ax * ax + az * az < 1.0 && Math.abs(y - tpY) < 1.0) {
+                tpGrace = 0;
+            } else {
+                if (--tpGrace == 0 && tpTries < 3) {
+                    // the teleport never arrived (seen 2026-11-23: the old position stayed for a whole second and
+                    // read as falls again and again): send it again instead of reading the stale position
+                    tpTries++;
+                    PlaytestMod.LOG.warn(String.format(java.util.Locale.ROOT,
+                            "[course] teleport to %.1f %.1f %.1f not arrived (body at %.2f %.2f %.2f), resending",
+                            tpX, tpY, tpZ, x, y, z));
+                    sendTp();
+                }
+                if (timer.state == CourseTimer.State.RUNNING) {
+                    timer.ticks++;
+                }
+                return;
+            }
+        }
         String modeNow = currentMode();
         switch (timer.tick(x, y, z)) {
             case STARTED -> {
@@ -194,12 +228,9 @@ final class CourseLive {
             }
             case FELL -> {
                 int k = timer.respawnIndex();
-                if (k < 0) {
-                    command(tpStart());
-                } else {
-                    CourseFile.Checkpoint cp = course.checkpoints.get(k);
-                    command("tp @s " + (ox + cp.x()) + " " + (oy + cp.y()) + " " + (oz + cp.z()) + " " + cp.yaw()
-                            + " 0");
+                respawn(k);
+                if (auto != null) {
+                    auto.onFell(k, timer, x, y, z);
                 }
             }
             case FINISHED -> finish();
@@ -209,6 +240,39 @@ final class CourseLive {
         if (timer.state == CourseTimer.State.RUNNING && !modeNow.equals(runMode)) {
             modeChanged = true;
         }
+        if (auto != null && finishedHold < 0 && tpGrace == 0) { // not on the tick a respawn teleport was sent
+            auto.tick(mc, timer, mc.player.getX() - ox, mc.player.getY() - oy, mc.player.getZ() - oz);
+        }
+    }
+
+    /** Puts the body back on checkpoint {@code k} (-1 = the start pad). */
+    void respawn(int k) {
+        if (k < 0) {
+            tpRel(course.startX, course.startY, course.startZ, course.startYaw);
+        } else {
+            CourseFile.Checkpoint cp = course.checkpoints.get(k);
+            tpRel(cp.x(), cp.y(), cp.z(), cp.yaw());
+        }
+    }
+
+    /** Teleports to a course-relative position facing {@code yaw}, pitch level. */
+    void tpRel(double x, double y, double z, float yaw) {
+        tpX = x;
+        tpY = y;
+        tpZ = z;
+        tpYaw = yaw;
+        tpTries = 0;
+        sendTp();
+    }
+
+    private void sendTp() {
+        command("tp @s " + (ox + tpX) + " " + (oy + tpY) + " " + (oz + tpZ) + " " + tpYaw + " 0");
+        tpGrace = 20;
+    }
+
+    /** The mode the current run was started in. */
+    String runModeNow() {
+        return runMode;
     }
 
     private void finish() {
@@ -226,6 +290,18 @@ final class CourseLive {
             sp.add(s);
         }
         o.add("splitTicks", sp);
+        if (auto != null) {
+            auto.onFinished(o);
+        }
+        append(o);
+        PlaytestMod.LOG.info("[course] run finished: {}", o);
+        say(String.format("FINISH %s  mode %s%s, %d falls. %s", time, runMode,
+                modeChanged ? " (mode changed mid-run, kept apart)" : "", timer.falls, summaryLine(runMode)));
+        finishedHold = 60;
+    }
+
+    /** Appends one run to results.jsonl. */
+    static void append(JsonObject o) {
         try {
             Path f = resultsFile();
             Files.createDirectories(f.getParent());
@@ -234,20 +310,11 @@ final class CourseLive {
         } catch (IOException ex) {
             PlaytestMod.LOG.error("[course] could not save the run", ex);
         }
-        PlaytestMod.LOG.info("[course] run finished: {}", o);
-        say(String.format("FINISH %s  mode %s%s, %d falls. %s", time, runMode,
-                modeChanged ? " (mode changed mid-run, kept apart)" : "", timer.falls, summaryLine(runMode)));
-        finishedHold = 60;
     }
 
-    private void toStart() {
+    void toStart() {
         timer.reset();
-        command(tpStart());
-    }
-
-    private String tpStart() {
-        return "tp @s " + (ox + course.startX) + " " + (oy + course.startY) + " " + (oz + course.startZ) + " "
-                + course.startYaw + " 0";
+        tpRel(course.startX, course.startY, course.startZ, course.startYaw);
     }
 
     // ---- modes ----------------------------------------------------------------------------------------------------
@@ -257,7 +324,7 @@ final class CourseLive {
         return m.isEnabled() ? m.controlMode().name() : "OFF";
     }
 
-    private void setMode(String arg) {
+    void setMode(String arg) {
         String a = arg.toLowerCase(Locale.ROOT);
         switch (a) {
             case "off", "baseline" -> H.enable(MovementAssist.ID, false);

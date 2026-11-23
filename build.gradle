@@ -104,6 +104,11 @@ neoForge {
             sourceSet = sourceSets.devtest
             loadedMods = [mods.utilitysuite, mods.utilitysuite_devtest]
             systemProperty 'utilitysuite.course', 'true'
+            // automated runner: ./gradlew runCourse -PcourseAuto=off,corrections,copilot+alt -PcourseAutoSeeds=3
+            if (project.hasProperty('courseAuto')) {
+                systemProperty 'utilitysuite.courseAuto', project.property('courseAuto').toString()
+                systemProperty 'utilitysuite.courseAutoSeeds', (project.findProperty('courseAutoSeeds') ?: '1').toString()
+            }
         }
         // Dev only: opens the menu at the title screen, saves every tab to run/ui-preview/*.png, then quits
         // (com.utilitysuite.ui.UiPreview). ./gradlew runUiPreview

@@ -58,6 +58,9 @@ final class CourseFile {
     final List<Jump> jumps = new ArrayList<>();
     final List<Kit> kits = new ArrayList<>();
     final java.util.Map<String, List<RoutePoint>> alts = new java.util.LinkedHashMap<>();
+    /** Per shortcut: the size of the main route when its first {@code alt} line was read (it follows the main-line
+     *  points it replaces, which run from the last {@code run} point before it). */
+    final java.util.Map<String, Integer> altAt = new java.util.LinkedHashMap<>();
     /** The fail floor's level (relative), or {@code Integer.MIN_VALUE} when the course has none. */
     int failY = Integer.MIN_VALUE;
     double startX, startY, startZ;
@@ -104,8 +107,11 @@ final class CourseFile {
                     case "checkpoint" -> c.checkpoints.add(new Checkpoint(i(t[1]), d(t[2]), d(t[3]), d(t[4]),
                             (float) d(t[5]), rest(t, 6)));
                     case "route" -> c.route.add(new RoutePoint(d(t[1]), d(t[2]), d(t[3]), pending, rest(t, 4)));
-                    case "alt" -> c.alts.computeIfAbsent(t[1], k -> new ArrayList<>())
+                    case "alt" -> {
+                        c.altAt.putIfAbsent(t[1], c.route.size());
+                        c.alts.computeIfAbsent(t[1], k -> new ArrayList<>())
                             .add(new RoutePoint(d(t[2]), d(t[3]), d(t[4]), null, rest(t, 5)));
+                    }
                     case "kit" -> c.kits.add(new Kit(i(t[1]), t[2], t.length > 3 ? i(t[3]) : 1));
                     case "fail" -> {
                         c.failY = i(t[1]);
@@ -155,6 +161,35 @@ final class CourseFile {
         for (int y = ay; y <= by; y += rows) {
             add(new Build(ax, y, az, bx, Math.min(by, y + rows - 1), bz, "minecraft:air"));
         }
+    }
+
+    /**
+     * The route to run: the main line with the named shortcuts spliced in. A shortcut replaces the main-line points
+     * after the last {@code run} point before its {@code alt} lines, up to where those lines were read; its points
+     * belong to a jump named {@code alt-<id>}.
+     */
+    List<RoutePoint> line(java.util.Collection<String> shortcuts) {
+        List<RoutePoint> out = new ArrayList<>(route);
+        List<String> ids = new ArrayList<>(altAt.keySet());
+        for (int k = ids.size() - 1; k >= 0; k--) { // back to front: earlier indices stay valid
+            String id = ids.get(k);
+            if (!shortcuts.contains(id)) {
+                continue;
+            }
+            int at = altAt.get(id);
+            int from = at - 1;
+            while (from > 0 && !"run".equals(route.get(from).tag())) {
+                from--;
+            }
+            Jump j = new Jump("alt-" + id, "", "shortcut", 0, "shortcut " + id);
+            List<RoutePoint> pts = new ArrayList<>();
+            for (RoutePoint p : alts.get(id)) {
+                pts.add(new RoutePoint(p.x(), p.y(), p.z(), j, p.tag()));
+            }
+            out.subList(from + 1, at).clear();
+            out.addAll(from + 1, pts);
+        }
+        return out;
     }
 
     /** True when the feet are on (or below) the fail floor; without one, well below the lowest built block. */
