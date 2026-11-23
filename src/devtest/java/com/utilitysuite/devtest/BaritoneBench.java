@@ -27,5 +27,6 @@ final class BaritoneBench {
         s.allowSprint.value = true;
         s.allowDiagonalAscend.value = true;
         s.allowDiagonalDescend.value = true;
+        s.chatDebug.value = true; // path failures and their reasons reach the log as chat
     }
 }

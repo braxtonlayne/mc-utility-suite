@@ -413,6 +413,8 @@ final class CourseAuto {
     private com.utilitysuite.core.api.NavigationRun nav;
     /** Route index the current navigator goal is for (-1 = none issued). */
     private int navIdx = -1;
+    /** Route index whose refused leg was logged already. */
+    private int refusedIdx = -1;
 
     private boolean bot() {
         return cfg != null && "baritone".equals(cfg.mode());
@@ -467,7 +469,9 @@ final class CourseAuto {
             return; // the next leg is issued next tick
         }
         if (navIdx != idx || nav == null || !nav.isActive()) {
-            boolean failed = nav != null && navIdx == idx && !nav.isActive()
+            // Baritone gave up on its own (no path, stopped short); a lease cut short (manual input, preemption) is not
+            // its failure: the leg is simply issued again
+            boolean failed = nav != null && navIdx == idx && !nav.isActive() && nav.endReason() == null
                     && nav.status() == com.utilitysuite.core.api.NavigationStatus.FAILED;
             if (failed) {
                 botStuck(timer, "no path");
@@ -482,7 +486,8 @@ final class CourseAuto {
             nav = Services.navigator().goToLeased(BOT_ID, com.utilitysuite.core.api.ControlPriority.GOAL, bx, by, bz, 0)
                     .orElse(null);
             navIdx = idx;
-            if (nav == null) {
+            if (nav == null && refusedIdx != idx) {
+                refusedIdx = idx; // once per leg (the arbiter pauses automation for a while after manual input)
                 PlaytestMod.LOG.warn("[course-auto] baritone refused the leg to {} {} {}", bx, by, bz);
             }
         }
