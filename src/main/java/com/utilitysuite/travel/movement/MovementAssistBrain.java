@@ -1059,6 +1059,16 @@ public final class MovementAssistBrain {
                 && (before == JumpCommit.Phase.TAKEOFF || before == JumpCommit.Phase.FLIGHT
                 || before == JumpCommit.Phase.TOUCHDOWN || before == JumpCommit.Phase.SETTLE
                 || before == JumpCommit.Phase.CHAIN || (before == JumpCommit.Phase.ARMED && tookOff));
+        if (!frozen && mode != JumpCommit.Mode.NUDGE && intentSet && before == JumpCommit.Phase.ARMED && scriptOn) {
+            // a technique script is flying to the locked target and turns the view itself (the neo swings ~20
+            // degrees off the line): the estimator's look fades with that turn, and dropping the target dropped the
+            // script on its takeoff tick (course J36, 2026-11-23). It holds; only a confident other pick replaces it.
+            targetFrozen = false;
+            if (rawSet && rawConfidence >= intentThreshold && (rtx != itx || rty != ity || rtz != itz)) {
+                lockFromRaw();
+            }
+            return;
+        }
         if (!frozen) {
             targetFrozen = false;
             trimUsed = false;
@@ -1066,7 +1076,9 @@ public final class MovementAssistBrain {
             return;
         }
         targetFrozen = true;
-        if (!trimUsed && rawSet && rawConfidence >= intentThreshold && !now.onGround && now.vy > 0.0
+        // no trim under a technique script: it is already flying its own line to the locked top, and a re-pick (the
+        // far end of the same strip, course J36) dropped it mid-air
+        if (!trimUsed && !scriptOn && rawSet && rawConfidence >= intentThreshold && !now.onGround && now.vy > 0.0
                 && (rtx != itx || rty != ity || rtz != itz)) {
             trimUsed = true; // the one trim of this flight
             lockFromRaw();
@@ -1330,6 +1342,24 @@ public final class MovementAssistBrain {
     }
 
     /** A technique script is being replayed. */
+    /** Diagnostics: the line to the target is blocked and the technique library is searched first. */
+    public boolean techniqueFirst() {
+        return techniqueFirst;
+    }
+
+    /** Diagnostics: the estimator's latest pick (x, y, z, confidence, look confidence), or false when none. */
+    public boolean rawTarget(double[] out) {
+        if (!rawSet) {
+            return false;
+        }
+        out[0] = rtx;
+        out[1] = rty;
+        out[2] = rtz;
+        out[3] = rawConfidence;
+        out[4] = rawLookConfidence;
+        return true;
+    }
+
     public boolean scriptActive() {
         return scriptOn;
     }
@@ -1362,7 +1392,9 @@ public final class MovementAssistBrain {
             boolean pressAhead = now.onGround && (userJumpNow || heldPress > 0) && scriptIndex < script.length
                     && !script.jump[scriptIndex] && (untilJump < 0 || untilJump > room);
             if (pressAhead || userForward <= 0 || !phaseOk || commit.overrideThisTick() || scriptIndex >= script.length
-                    || (scriptIndex > 0 && !script.onLine(scriptIndex - 1, now.x, now.y, now.z))
+                    || (scriptIndex > 0 && !script.onLine(scriptIndex - 1, now.x, now.y, now.z,
+                    script.usesYaw && scriptIndex > script.takeoffIndex + 1 ? FlightScript.AIR_YAW_DRIFT_LIMIT
+                            : FlightScript.DRIFT_LIMIT))
                     || (script.usesYaw && !coSteerAllowed)) {
                 scriptOn = false;
             }

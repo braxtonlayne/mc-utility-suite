@@ -86,12 +86,23 @@ public final class FlightScript {
 
     /** True when the body (after tick {@code index}) is within {@link #DRIFT_LIMIT} of the prediction. */
     public boolean onLine(int index, double bx, double by, double bz) {
+        return onLine(index, bx, by, bz, DRIFT_LIMIT);
+    }
+
+    /**
+     * Looser limit for a script that turns the view, once it is in the air: the replica's model of the core's
+     * view follower is close but not exact (0.084 off after a neo's swing in the full-loop replica), and a script
+     * dropped mid-air leaves the body on a line that lands nowhere.
+     */
+    public static final double AIR_YAW_DRIFT_LIMIT = 0.2;
+
+    public boolean onLine(int index, double bx, double by, double bz, double limit) {
         if (index < 0 || index >= length) {
             return false;
         }
         double dx = bx - x[index];
         double dy = by - y[index];
         double dz = bz - z[index];
-        return dx * dx + dy * dy + dz * dz <= DRIFT_LIMIT * DRIFT_LIMIT;
+        return dx * dx + dy * dy + dz * dz <= limit * limit;
     }
 }

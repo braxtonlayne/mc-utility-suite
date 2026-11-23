@@ -59,10 +59,13 @@ final class TechniqueTemplates {
      */
     /** Neo with the view: turn toward the swing-out side, most likely first. */
     private static final float[] NEO_TURN_ANGLES = {20f, 15f, 25f};
-    /** Neo with the view: air ticks of outward strafe after the takeoff. */
-    private static final int[] NEO_TURN_OUT = {2, 1, 3};
-    /** Neo with the view: air ticks of forward only before the inward strafe. */
-    private static final int[] NEO_TURN_COAST = {1, 0, 2};
+    /** Neo with the view: air ticks of outward strafe after the takeoff (at least 2, like every air change). */
+    private static final int[] NEO_TURN_OUT = {2, 3};
+    /**
+     * Neo with the view: air ticks of forward only before the inward strafe. Never 1: the brain holds a key at least
+     * two ticks (BALANCED key-change limits), so a one-tick release is not flown as rolled.
+     */
+    private static final int[] NEO_TURN_COAST = {0, 2, 3};
     /** 45-degree: air ticks on the line before the view turns (0..2). */
     private static final int FORTY_FIVE_DELAYS = 3;
     static final float FORTY_FIVE_ANGLE = 45f;
@@ -174,7 +177,7 @@ final class TechniqueTemplates {
                 return HEADHITTER_OFFSETS * 3 * sweeps;
             case NEO:
                 return yawAllowed
-                        ? NEO_TURN_OUT.length * NEO_TURN_COAST.length * EDGE_OFFSETS.length * 2 * NEO_TURN_ANGLES.length
+                        ? NEO_TURN_OUT.length * NEO_TURN_COAST.length * EDGE_OFFSETS.length * 2 * NEO_TURN_ANGLES.length * 2
                         : EDGE_OFFSETS.length * 2 * NEO_GROUND_VARIANTS * NEO_PARALLEL_VARIANTS;
             case FORTY_FIVE:
                 return yawAllowed ? EDGE_OFFSETS.length * 2 * FORTY_FIVE_DELAYS : 0;
@@ -276,20 +279,30 @@ final class TechniqueTemplates {
                     int side = index % 2 == 0 ? 1 : -1;
                     index /= 2;
                     float angle = Math.min(NEO_TURN_ANGLES[index % NEO_TURN_ANGLES.length], maxTurnDeg);
+                    index /= NEO_TURN_ANGLES.length;
+                    // the inward strafe: hold the turned view (half the allowance), or turn back to the line when the
+                    // level's total covers the way out and back (the core caps the total travel, not the offset)
+                    boolean back = index % 2 == 1;
+                    if (back && 2f * angle > maxTurnDeg) {
+                        return false;
+                    }
                     if (jump < 0 || angle <= 0f) {
                         return false;
                     }
                     // strafe s with the view turned by s * angle: the run angles out past the pillar's side
-                    out.reset(NEO, jump, baseYaw + side * angle);
+                    float turned = baseYaw + side * angle;
+                    out.reset(NEO, jump, turned);
                     out.groundStrafe = side;
                     out.groundStrafeTicks = jump + 1; // from the start of the script
                     if (outTicks > 0) {
-                        out.segment(side, outTicks, Float.NaN);
+                        out.segment(side, outTicks, turned);
                     }
                     if (coast > 0) {
-                        out.segment(0, coast, Float.NaN);
+                        out.segment(0, coast, turned);
                     }
-                    out.segment(-side, 0, baseYaw);
+                    // every segment keeps a goal: a NaN goal sends no request and the core's follower stops short of
+                    // the turn the replica rolled (seen in the full-loop replica, 2026-11-23)
+                    out.segment(-side, 0, back ? baseYaw : turned);
                     return true;
                 }
                 int sweep = index % sweeps;

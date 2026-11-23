@@ -858,6 +858,11 @@ public final class IntentEstimator {
             if (!(Math.abs(t - refTop) < 0.01)) {
                 return true;
             }
+            // a floor-level block with more blocks on it is a wall, not floor: the course J36 pillar stands in the
+            // gap cell, and the strip behind it was dropped as "walkable" (live trace, 2026-11-23)
+            if (!clear(w, sx, cy, sz, t, cy + COL_CELLS + 1)) {
+                return true;
+            }
         }
         return false;
     }
@@ -1304,6 +1309,17 @@ public final class IntentEstimator {
      * themselves. The landing hold's "the user is going on" reads this one: with the floor, W alone would count as
      * going on wherever a single top lies ahead, and holding W must never chain a series of jumps.
      */
+    /** Diagnostics for tests (allocates): every candidate of the last estimate. */
+    String debugCandidates() {
+        StringBuilder s = new StringBuilder();
+        for (int i = 0; i < candCount; i++) {
+            int c = candCache[i];
+            s.append(String.format(" [%d,%d,%d top%.2f sc%.3f key%.2f f%d]", candX[i], candY[i], candZ[i], candTop[i],
+                    candScore[i], candKey[i], c >= 0 ? cacheFeasible[c] : -1));
+        }
+        return s.toString();
+    }
+
     public double lookConfidence() {
         return lookConfidence;
     }
