@@ -36,6 +36,7 @@ final class ArenaClient {
             return;
         }
         if (configured) {
+            gateTelemetry();
             swingTelemetry(mc);
             telemetry(mc);
             return;
@@ -87,6 +88,40 @@ final class ArenaClient {
         if (core) {
             com.utilitysuite.core.CoreBootstrap.applyCoreSettings();
         }
+    }
+
+    /**
+     * Swing-gate diagnostics: one line per tick in which the attack is charged and the target is within 3.6 blocks
+     * (eye to box) but no swing went out, naming each gate. Counts ready-but-held ticks against swings for the
+     * per-round summary ("why does it hold its swings at close range").
+     */
+    private int heldTicks;
+    private int gateSwingSeen;
+    private final float[] aimNow = new float[2];
+
+    private void gateTelemetry() {
+        CombatAssistant ca = com.utilitysuite.combat.CombatBootstrap.assistant();
+        if (ca == null || ca.targetId() < 0) {
+            return;
+        }
+        var s = ca.snapshotForDiagnostics();
+        boolean swung = ca.swings() != gateSwingSeen;
+        gateSwingSeen = ca.swings();
+        double reach = Math.sqrt(s.reachDistanceSq());
+        if (swung || s.attackStrength < 0.95f || reach > 3.6) {
+            return;
+        }
+        heldTicks++;
+        var hp = ca.hitPlanner();
+        // aim error against the target's centre now (no lead), and the box's half-width in degrees at this range
+        com.utilitysuite.combat.assistant.AimSolver.solve(s, 0.0, aimNow);
+        double yawErr = com.utilitysuite.combat.assistant.AimSolver.yawDelta(aimNow[0], s.yaw);
+        double halfDeg = Math.toDegrees(Math.atan2(0.3, Math.max(0.5, Math.sqrt(s.distanceSq()))));
+        PlaytestMod.LOG.info(String.format(java.util.Locale.ROOT,
+                "[gate] reach=%.2f inReach=%b xhair=%b yawErr=%.1f pitchErr=%.1f half=%.1f hurt=%d str=%.2f kind=%s gnd=%b"
+                        + " sprint=%b blk=%b broad=%s held=%d",
+                reach, s.inReach(), s.crosshairOnTarget, yawErr, aimNow[1] - s.pitch, halfDeg, s.targetHurtTime,
+                s.attackStrength, hp.kind(), s.onGround, s.sprinting, s.targetBlocking, ca.broadTactic(), heldTicks));
     }
 
     private int swingSeen;

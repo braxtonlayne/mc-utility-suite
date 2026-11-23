@@ -2157,6 +2157,11 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         return hits;
     }
 
+    /** This tick's fight snapshot (diagnostics only: read, never written, and only on the client thread). */
+    public CombatSnapshot snapshotForDiagnostics() {
+        return snap;
+    }
+
     /** {@link GearRead#ratio()} of this fight (diagnostics, tests). */
     public double gearRatio() {
         return gear.ratio();
