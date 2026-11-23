@@ -184,7 +184,9 @@ public final class MovementAssist implements IModule, IConfigurable {
     private double groundX, groundZ;
     private final JumpReach reach = new JumpReach();
     private final MovementPhysics now = new MovementPhysics();
-    private final LevelShapes voxels = new LevelShapes();
+    /** The tick's exact-shape view, shared with the body sims and the pursuit runner (begun once per client tick). */
+    private final TickWorldShapes world;
+    private final LevelShapes voxels;
     private final EscapePlanner escape = new EscapePlanner();
     private final ParkourBlocks blocks = new ParkourBlocks();
     private boolean blocksOn;
@@ -230,6 +232,12 @@ public final class MovementAssist implements IModule, IConfigurable {
     private int corrections;
     private boolean wasCorrecting;
     private String status = "off";
+
+    /** @param world the shared per-tick exact-shape view (the travel bootstrap owns it and advances its ticks) */
+    public MovementAssist(TickWorldShapes world) {
+        this.world = world;
+        this.voxels = world.shapes();
+    }
 
     public void onMovementInput(MovementInputUpdateEvent event) {
         jumpingThisTick = false;
@@ -689,7 +697,7 @@ public final class MovementAssist implements IModule, IConfigurable {
         now.fallDistance = p.fallDistance;
         BlockPos below = p.getBlockPosBelowThatAffectsMyMovement();
         now.slipperiness = mc.level.getBlockState(below).getBlock().getFriction();
-        voxels.begin(mc.level);
+        world.forTick(mc.level); // the first reader of the tick clears the shared cell cache
     }
 
     /**

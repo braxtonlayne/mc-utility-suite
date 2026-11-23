@@ -28,6 +28,16 @@ public final class PhysicsBodySim implements BodySim {
         body.jumpDelay = 0;
         body.sprintBlocked = false;
         body.sprinting = false;
+        body.speed = MovementPhysics.BASE_SPEED;
+        body.jumpBoost = 0.0;
+        return this;
+    }
+
+    @Override
+    public BodySim movement(double speed, double jumpBoost, boolean sprinting) {
+        body.speed = speed;
+        body.jumpBoost = jumpBoost;
+        body.sprinting = sprinting;
         return this;
     }
 

@@ -268,11 +268,58 @@ public final class MinecraftCombatWorld implements CombatWorld, LineOfSight.Soli
         out.hazardLeft = isHazard(out.px + fz * d, out.py, out.pz - fx * d);
         out.hazardRight = isHazard(out.px - fz * d, out.py, out.pz + fx * d);
         out.targetOnGround = t.onGround();
+        sampleMovementModel(p, t, out);
         if (out.wantTerrain) {
             sampleTerrain(out, fx, fz, len);
         }
         sampleHitChoice(p, t, lvl, out);
         return true;
+    }
+
+    // ---- movement model for the body sims ------------------------------------------------------------------------
+
+    /** {@code LivingEntity.SPEED_MODIFIER_SPRINTING}'s id (private in vanilla): ADD_MULTIPLIED_TOTAL 0.3. */
+    private static final ResourceLocation SPRINT_MODIFIER_ID = ResourceLocation.withDefaultNamespace("sprinting");
+    private static final double SPRINT_FACTOR = 1.0 + 0.3F; // the modifier amount is the float 0.3F, widened
+
+    /**
+     * Seeds the snapshot's movement model when {@code out.wantMovementModel} is set, plain values otherwise (so the
+     * body sims behave exactly as before while the setting is off). The target's model is read only for a player:
+     * MOVEMENT_SPEED is a synced attribute (Speed and Slowness and the server's sprint modifier arrive with it), Jump
+     * Boost is a synced effect and the sprint flag is synced entity data. Allocation free.
+     */
+    private static void sampleMovementModel(LocalPlayer p, LivingEntity t, CombatSnapshot out) {
+        if (!out.wantMovementModel) {
+            out.selfSpeed = 0.1;
+            out.selfJumpBoost = 0.0;
+            out.selfBodySprinting = false;
+            out.targetSpeed = 0.1;
+            out.targetJumpBoost = 0.0;
+            out.targetBodySprinting = false;
+            return;
+        }
+        out.selfSpeed = walkingSpeed(p);
+        out.selfJumpBoost = p.getJumpBoostPower();
+        out.selfBodySprinting = p.isSprinting();
+        if (t instanceof Player) {
+            out.targetSpeed = walkingSpeed(t);
+            out.targetJumpBoost = t.getJumpBoostPower();
+            out.targetBodySprinting = t.isSprinting();
+        } else {
+            out.targetSpeed = 0.1;
+            out.targetJumpBoost = 0.0;
+            out.targetBodySprinting = false;
+        }
+    }
+
+    /** MOVEMENT_SPEED without the sprint modifier (the body sims add the sprint factor from the sprint key). */
+    static double walkingSpeed(LivingEntity e) {
+        AttributeInstance a = e.getAttribute(Attributes.MOVEMENT_SPEED);
+        if (a == null) {
+            return 0.1;
+        }
+        double v = a.getValue();
+        return a.hasModifier(SPRINT_MODIFIER_ID) ? v / SPRINT_FACTOR : v;
     }
 
     // ---- hit choice and gear read --------------------------------------------------------------------------------

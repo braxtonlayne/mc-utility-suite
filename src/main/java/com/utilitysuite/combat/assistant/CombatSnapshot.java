@@ -79,6 +79,18 @@ public final class CombatSnapshot {
      */
     public int sweepHostiles, sweepProtected;
 
+    // ---- movement model for the body sims (filled only when wantMovementModel is set before sampling) ----------
+    /** Input: the "Exact world shapes" setting is on, so seed the simulated bodies with the real movement state. */
+    public boolean wantMovementModel;
+    /**
+     * MOVEMENT_SPEED attribute without the sprint modifier (Speed and Slowness included), Jump Boost velocity
+     * ({@code getJumpBoostPower}) and the sprint flag, for us and for the target. The target's stay at the plain
+     * values (0.1, 0, false) for a mob: the body sims model players. Plain values whenever wantMovementModel is off.
+     */
+    public double selfSpeed = 0.1, targetSpeed = 0.1;
+    public double selfJumpBoost, targetJumpBoost;
+    public boolean selfBodySprinting, targetBodySprinting;
+
     // ---- hazards (relative to the player->target direction) -------------------------------------------------------
     public boolean hazardFront, hazardBack, hazardLeft, hazardRight;
 

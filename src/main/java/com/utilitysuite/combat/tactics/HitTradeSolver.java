@@ -163,8 +163,10 @@ public final class HitTradeSolver {
 
     /** Simulates one combination; returns its score. */
     private double rollout(TradeInput in, int f, int s, boolean hold, int horizon) {
-        self.set(in.sx, in.sy, in.sz, in.svx, in.svy, in.svz, in.sOnGround);
-        opp.set(in.ox, in.oy, in.oz, in.ovx, in.ovy, in.ovz, in.oOnGround);
+        self.set(in.sx, in.sy, in.sz, in.svx, in.svy, in.svz, in.sOnGround)
+                .movement(in.sSpeed, in.sJumpBoost, in.sBodySprinting);
+        opp.set(in.ox, in.oy, in.oz, in.ovx, in.ovy, in.ovz, in.oOnGround)
+                .movement(in.oSpeed, in.oJumpBoost, in.oBodySprinting);
 
         double sCharge = in.sReadyIn;
         double sPeriod = Math.max(1.0, in.sCooldownTicks - 0.5); // vanilla: full strength 0.5 tick early

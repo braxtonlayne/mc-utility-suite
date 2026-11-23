@@ -1,12 +1,14 @@
 package com.utilitysuite.travel.pursuit;
 
 import com.utilitysuite.core.api.ControlLease;
+import com.utilitysuite.core.api.IBodySimProvider;
 import com.utilitysuite.core.api.IRouteRunner;
 import com.utilitysuite.core.api.Services;
 import com.utilitysuite.travel.movement.EscapePlanner;
 import com.utilitysuite.travel.movement.LevelVoxels;
 import com.utilitysuite.travel.movement.MovementPhysics;
 import com.utilitysuite.travel.movement.RouteFollower;
+import com.utilitysuite.travel.movement.TickWorldShapes;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
@@ -23,11 +25,17 @@ public final class MinecraftRouteRunner implements IRouteRunner {
     /** Assumed chaser speed (blocks per tick) for the local escape plan; it can follow over gaps. */
     private static final double THREAT_SPEED = 0.25;
 
-    private final Body body = new Body();
+    private final Body body;
     private final RouteRunnerCore core;
     private final RouteFollower follower;
 
-    public MinecraftRouteRunner() {
+    /**
+     * @param shared the tick's exact-shape view (shared with Movement Assist)
+     * @param mode   whose {@link IBodySimProvider#exactShapes} picks the view: the full-cube {@link LevelVoxels}
+     *               (default) or {@code shared}, so pursuit follows the combat "Exact world shapes" setting
+     */
+    public MinecraftRouteRunner(TickWorldShapes shared, IBodySimProvider mode) {
+        body = new Body(shared, mode);
         follower = new RouteFollower();
         EscapePlanner escape = new EscapePlanner();
         Steering steering = new FollowerSteering(follower, body);
@@ -115,8 +123,17 @@ public final class MinecraftRouteRunner implements IRouteRunner {
     /** Fills a {@link MovementPhysics} from the local player once per tick (as MovementAssist does). */
     private static final class Body implements BodySource {
         final MovementPhysics now = new MovementPhysics();
-        final LevelVoxels voxels = new LevelVoxels();
+        private final LevelVoxels cubes = new LevelVoxels();
+        private final TickWorldShapes shared;
+        private final IBodySimProvider mode;
+        /** This tick's view: {@link #cubes} or the shared exact shapes. */
+        MovementPhysics.Voxels voxels = cubes;
         private final BlockPos.MutableBlockPos below = new BlockPos.MutableBlockPos();
+
+        Body(TickWorldShapes shared, IBodySimProvider mode) {
+            this.shared = shared;
+            this.mode = mode;
+        }
         double x, y, z;
         float yaw, health;
         boolean refreshed;
@@ -147,7 +164,7 @@ public final class MinecraftRouteRunner implements IRouteRunner {
             now.fallDistance = p.fallDistance;
             below.set(x, p.getBoundingBox().minY - 0.500001, z);
             now.slipperiness = mc.level.getBlockState(below).getBlock().getFriction();
-            voxels.begin(mc.level);
+            voxels = mode.exactShapes() ? shared.forTick(mc.level) : cubes.begin(mc.level);
             refreshed = true;
             return true;
         }

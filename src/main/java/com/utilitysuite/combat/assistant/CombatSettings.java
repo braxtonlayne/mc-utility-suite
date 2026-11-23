@@ -61,6 +61,7 @@ public final class CombatSettings {
     public static final String PEARL_INTERCEPT = "pearl_intercept";
     public static final String HIT_CHOICE = "hit_choice";
     public static final String DUEL_MODE = "duel_mode";
+    public static final String EXACT_WORLD = "exact_world";
 
     public TargetSelector.Mode engageMode = TargetSelector.Mode.REACTIVE;
     public TargetSelector.Targets targets = TargetSelector.Targets.HOSTILE;
@@ -111,6 +112,12 @@ public final class CombatSettings {
     public HitPlanner.Policy hitChoice = HitPlanner.Policy.AUTO;
     /** Never disengage: fleeing becomes a reset, range and sight never end the fight while the target is loaded. */
     public boolean duelMode = false;
+    /**
+     * Combat and pursuit predictions read the exact block shapes Movement Assist uses (slabs, stairs, fence tops,
+     * step-up, ice) and both fighters' speed, Jump Boost and sprint state, instead of full cubes and a plain body.
+     * Off by default until it is A/B-tested in the arena.
+     */
+    public boolean exactWorld = false;
 
     public void read(ProfileConfig p, String id) {
         engageMode = parseEnum(p.getString(id, ENGAGE_MODE, ""), TargetSelector.Mode.REACTIVE);
@@ -159,6 +166,7 @@ public final class CombatSettings {
         pearlIntercept = p.getBool(id, PEARL_INTERCEPT, true);
         hitChoice = parseEnum(p.getString(id, HIT_CHOICE, ""), HitPlanner.Policy.AUTO);
         duelMode = p.getBool(id, DUEL_MODE, false);
+        exactWorld = p.getBool(id, EXACT_WORLD, false);
     }
 
     static <E extends Enum<E>> E parseEnum(String s, E def) {
@@ -279,6 +287,11 @@ public final class CombatSettings {
                                 + " charged. Off uses the fixed spacing band.").asAdvanced(),
                 SettingSpec.integer(HIT_TRADE_HORIZON, "Trade look-ahead (ticks)", 7, 6, 8, "Spacing",
                         "How many ticks ahead the trade solver simulates.").asAdvanced(),
+                SettingSpec.bool(EXACT_WORLD, "Exact world shapes for combat prediction", false, "Spacing",
+                        "The trade solver, the combo keeper and route chasing predict both of you on the real block"
+                                + " shapes Movement Assist uses (slabs, stairs, fence tops, stepping up, ice) and with"
+                                + " each player's speed, Jump Boost and sprint, instead of full cubes and a plain body."
+                                + " Experimental: off until it is tested in the arena.").asAdvanced(),
                 SettingSpec.choice(SPRINT_RESET, "Sprint reset", SprintReset.W_RELEASE, "Spacing",
                         "Brief forward release or back tap after a hit.").asAdvanced(),
                 SettingSpec.bool(SHIELD_BREAK, "Axe vs. shields", true, "Shield & weapons",
