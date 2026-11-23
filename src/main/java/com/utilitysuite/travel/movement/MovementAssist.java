@@ -137,6 +137,12 @@ public final class MovementAssist implements IModule, IConfigurable {
     static final int REACH_EVERY_TICKS = 5;
 
     private final MovementAssistBrain brain = new MovementAssistBrain();
+    /** Jump-chain lookahead: 32 blocks along the heading, 12 wide (owner, 2026-11-23). */
+    private final ChainLookahead chain = new ChainLookahead();
+
+    {
+        brain.setChain(chain);
+    }
 
     {
         brain.setTechniques(new TechniqueLibrary()); // scripted takeoffs once the plain approach search is exhausted
@@ -353,6 +359,19 @@ public final class MovementAssist implements IModule, IConfigurable {
                 || handOverHeld
                 ? IntentEstimator.CARRY_THRESHOLD : IntentEstimator.GUIDE_THRESHOLD);
         brain.intentThreshold = intent.commitThreshold();
+        // the jump chain ahead: the estimator leans toward the link the chain goes on from, the hold reads the path
+        chain.update(now, moveYaw(yaw, userF, userS), voxels);
+        brain.viewYaw = yaw;
+        brain.viewPitch = p.getXRot();
+        if (now.onGround) {
+            int link = chain.ready() ? chain.indexAt(now.x, now.y, now.z) : -1;
+            int next = link < 0 ? -1 : chain.nextJump(link);
+            if (next >= 0) {
+                intent.setChainHint(chain.linkX(next), chain.linkTop(next), chain.linkZ(next));
+            } else {
+                intent.clearChainHint();
+            }
+        }
         if (brain.intentAssist && (userF != 0 || userS != 0 || !now.onGround)
                 && intent.estimate(now, yaw, p.getXRot(), userF, userS, sprinting, voxels) && intent.hasTarget()) {
             brain.setIntentBlocked(intent.targetBlocked());
@@ -750,6 +769,14 @@ public final class MovementAssist implements IModule, IConfigurable {
                 && !p.isPassenger() && !p.isInWater();
     }
 
+    /** Direction the keys move the body: strafe +1 (left) travels toward the yaw - 90 side. */
+    static float moveYaw(float yaw, int forward, int strafe) {
+        if (forward == 0 && strafe == 0) {
+            return yaw;
+        }
+        return yaw - (float) Math.toDegrees(Math.atan2(strafe, forward));
+    }
+
     private static int sign(float f) {
         return f > 1.0e-3f ? 1 : (f < -1.0e-3f ? -1 : 0);
     }
@@ -1021,6 +1048,8 @@ public final class MovementAssist implements IModule, IConfigurable {
     /** World change or teleport: forget the line of recent jumps and the authorship history. */
     private void forgetJumps() {
         intent.reset();
+        intent.clearChainHint();
+        chain.reset();
         brain.reset();
         haveTakeoff = false;
     }

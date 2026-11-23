@@ -353,6 +353,9 @@ public final class MovementAssistBrain {
         if ((keys & LandingHold.JUMP) != 0) {
             return true;
         }
+        if (chainContinues(at, keys)) {
+            return true;
+        }
         // where the user is looking now: the estimator's latest pick, not the target frozen for the commitment
         // (the confidence without the sole-candidate floor: W toward the only top ahead is not "going on")
         if (!intentAssist || !rawSet || rawLookConfidence < intentThreshold) {
@@ -365,6 +368,72 @@ public final class MovementAssistBrain {
 
     /** The intent target must be at least this far (blocks, horizontal) from the landing to count as going on. */
     static final double CONTINUE_MIN_DIST = 1.2;
+
+    /** The jump-chain lookahead (set by the module; null in tests that do not use it). */
+    private ChainLookahead chain;
+    /** The view this tick (the module sets both before {@link #decide}). */
+    public float viewYaw;
+    public float viewPitch;
+    /** The view must point within this of a link down the chain (yaw and pitch, degrees) to count as going on. */
+    static final double CHAIN_LOOK_DEG = 15.0;
+    /** Links past the next one the view may be on (a fast player looks two or three jumps ahead). */
+    static final int CHAIN_LOOK_LINKS = 3;
+
+    public void setChain(ChainLookahead c) {
+        chain = c;
+    }
+
+    /**
+     * Owner, 2026-11-23: chains slowed down because the hold latched W on every link: the estimator scores one jump
+     * ahead, and a player looking two or three jumps on had no confident target there. Going on also counts when the
+     * body lands on a link of the chain lookahead's path, W is down, and the view is on one of the next links: the
+     * same evidence as the estimator's look, further out. The last link of a chain keeps the full hold.
+     */
+    private boolean chainContinues(MovementPhysics at, int keys) {
+        if (!intentAssist || chain == null || !chain.ready() || (keys & LandingHold.FORWARD) == 0) {
+            return false;
+        }
+        int j = chainNext(at);
+        if (j < 0) {
+            return false;
+        }
+        double eye = at.y + 1.62;
+        int end = Math.min(chain.length(), j + CHAIN_LOOK_LINKS);
+        for (int k = j; k < end; k++) {
+            double dx = chain.linkX(k) + 0.5 - at.x;
+            double dz = chain.linkZ(k) + 0.5 - at.z;
+            double d = Math.sqrt(dx * dx + dz * dz);
+            if (d < CONTINUE_MIN_DIST) {
+                continue;
+            }
+            double bearing = Math.toDegrees(Math.atan2(-dx, dz));
+            double pitchTo = Math.toDegrees(Math.atan2(eye - chain.linkTop(k), d));
+            if (Math.abs(wrapDeg(bearing - viewYaw)) <= CHAIN_LOOK_DEG
+                    && Math.abs(pitchTo - viewPitch) <= CHAIN_LOOK_DEG) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Index of the next jump link of the chain from the top the body is on, or -1. */
+    private int chainNext(MovementPhysics at) {
+        if (chain == null || !chain.ready()) {
+            return -1;
+        }
+        int i = chain.indexAt(at.x, at.y, at.z);
+        return i < 0 ? -1 : chain.nextJump(i);
+    }
+
+    private static double wrapDeg(double d) {
+        d %= 360.0;
+        if (d >= 180.0) {
+            d -= 360.0;
+        } else if (d < -180.0) {
+            d += 360.0;
+        }
+        return d;
+    }
 
     /** A narrow landing where the user means to go on and their keys lead safely into the next jump: no hold. */
     private boolean flowsOn(MovementPhysics at, float yaw, boolean sprinting, int f, int s, int keys,
@@ -402,8 +471,12 @@ public final class MovementAssistBrain {
         // designed, the estimator often dropped the target on the takeoff tick, the flight ran unfrozen and the lock
         // had moved on to the next block by the touchdown; this keeps that flow with the freeze in place.
         // decide() sets the search's target again right after the hold update.
+        int link = rawSet && rawConfidence >= intentThreshold ? -1 : chainNext(now);
         if (rawSet && rawConfidence >= intentThreshold) {
             search.setTarget(rtx, rty, rtz);
+        } else if (link >= 0 && chainContinues(now, LandingHold.FORWARD)) {
+            // no confident pick, but the user looks down the chain: its next link is where the jump goes
+            search.setTarget(chain.linkX(link), chain.linkBlockY(link), chain.linkZ(link));
         } else {
             search.clearTarget();
         }

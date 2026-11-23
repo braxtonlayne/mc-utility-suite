@@ -324,6 +324,47 @@ class MovementAssistBrainTest {
         }
     }
 
+    /**
+     * Owner, 2026-11-23 (Co-pilot run): chains slowed down. A player looking two or three jumps ahead gives the
+     * one-jump estimator no confident look at the next block; with the chain lookahead, the view on a link further
+     * down the path is going on, so the held W is not latched on each block. The same run looking off the course
+     * (W alone) still holds on the first block.
+     */
+    @Test
+    void lookingDownTheChainBeyondTheNextBlockIsGoingOn() {
+        for (JumpCommit.Mode mode : JumpCommit.Mode.values()) {
+            int[] stalled = new int[2];
+            for (int look = 0; look < 2; look++) {
+                Grid g = singleBlockChain();
+                MovementAssistBrain b = new MovementAssistBrain();
+                ChainLookahead chain = new ChainLookahead();
+                b.setChain(chain);
+                b.mode = mode;
+                b.landingHold = true;
+                MovementPhysics p = new MovementPhysics().set(0.5, 20, -6, 0, -0.0784, 0, true);
+                for (int t = 0; t < 90 && p.y >= 19 && p.z < 6.9; t++) {
+                    chain.update(p, 0f, g);
+                    // the view rests on the course about six blocks ahead: past the estimator's next-block look
+                    double ahead = Math.min(15.5, p.z + 6.0) - p.z;
+                    b.viewYaw = look == 1 ? 0f : 40f;
+                    b.viewPitch = (float) Math.toDegrees(Math.atan2(1.62, Math.max(1.0, ahead)));
+                    int next = (int) Math.floor(p.z) + 2;
+                    b.setIntentLook(0.2);
+                    b.setIntentTarget(0, 19, Math.max(5, Math.min(15, next | 1)), IntentEstimator.SOLE_CONFIDENCE);
+                    b.decide(p, 0f, true, 1, 0, false, 20f, g);
+                    int f = b.forward() == MovementAssistBrain.KEEP ? 1 : b.forward();
+                    int s = b.strafe() == MovementAssistBrain.KEEP ? 0 : b.strafe();
+                    p.tick(f, s, 0f, f > 0, b.jump(), b.sneak(), g);
+                    if (p.onGround && Math.abs(p.vz) < 0.05 && p.z > 4) {
+                        stalled[look]++;
+                    }
+                }
+            }
+            assertTrue(stalled[1] <= 2, mode + ": looking down the chain, no stop: " + stalled[1]);
+            assertTrue(stalled[0] >= 3, mode + ": W alone must hold on the first block, stalled ticks " + stalled[0]);
+        }
+    }
+
     /** Owner, 2026-11-22: never force a series of jumps on someone who meant one. W let go on landing: they stay. */
     @Test
     void lettingGoOfForwardOnLandingNeverChains() {

@@ -293,6 +293,24 @@ public final class IntentEstimator {
         haveLeft = true;
     }
 
+    /** Score factor of the candidate that is the next link of the {@link ChainLookahead} path (sets up the chain). */
+    public static final double CHAIN_BONUS = 1.12;
+    private boolean hintSet;
+    private int hintX, hintZ;
+    private double hintTop;
+
+    /** The next jump link of the chain lookahead from where the body stands (block column and feet height). */
+    public void setChainHint(int x, double top, int z) {
+        hintSet = true;
+        hintX = x;
+        hintTop = top;
+        hintZ = z;
+    }
+
+    public void clearChainHint() {
+        hintSet = false;
+    }
+
     /** Commit threshold: {@link #GUIDE_THRESHOLD} (default) or {@link #CARRY_THRESHOLD}; clamped to 0.05..1. */
     public void setCommitThreshold(double threshold) {
         commitThreshold = Math.max(0.05, Math.min(1.0, threshold));
@@ -904,6 +922,9 @@ public final class IntentEstimator {
         }
         if (candSurface[i] == MovementPhysics.SURFACE_UNMODELLED) {
             s *= UNMODELLED_FACTOR;
+        }
+        if (hintSet && candX[i] == hintX && candZ[i] == hintZ && Math.abs(top - hintTop) < 0.05) {
+            s *= CHAIN_BONUS; // of two plausible tops, the one the chain goes on from
         }
         return s;
     }
