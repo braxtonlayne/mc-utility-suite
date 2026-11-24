@@ -24,6 +24,7 @@ import net.minecraft.world.entity.monster.Creeper;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.inventory.AbstractFurnaceMenu;
+import net.minecraft.world.inventory.CraftingMenu;
 import net.minecraft.world.inventory.InventoryMenu;
 import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.ItemStack;
@@ -31,6 +32,8 @@ import net.minecraft.world.item.crafting.Ingredient;
 import net.minecraft.world.item.crafting.Recipe;
 import net.minecraft.world.item.crafting.RecipeHolder;
 import net.minecraft.world.item.crafting.RecipeType;
+import net.minecraft.world.item.crafting.ShapedRecipe;
+import net.minecraft.world.item.crafting.ShapelessRecipe;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.entity.EntityTypeTest;
 import net.minecraft.world.level.block.Block;
@@ -43,6 +46,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -56,7 +60,9 @@ import java.util.function.Supplier;
  * <p>
  * Recipe placement uses the vanilla recipe-book request through {@code IContainerClicker.placeRecipe} (needs an
  * active lease with HOTBAR); the crafted result is then taken with
- * a clicker QUICK_MOVE. The server only places recipes the player has unlocked in the recipe book.
+ * a clicker QUICK_MOVE. The server only places recipes the player has unlocked in the recipe book; for a locked
+ * shaped or shapeless recipe the grid is filled by hand with PICKUP clicks planned by {@link ManualCraftPlanner}
+ * (a manual craft also unlocks the recipe, so later rounds go back to the recipe book).
  */
 public final class MinecraftWorldActions implements WorldActions {
 
@@ -93,6 +99,15 @@ public final class MinecraftWorldActions implements WorldActions {
     private static final int RECIPE_UNLOCK_WAIT = 20;
     private PlanStep step;
     private RecipeHolder<?> recipe;
+    /** The craft recipe reduced to ids for hand placement; null for special recipes (those need the recipe book). */
+    private ManualCraftPlanner.Shape manualShape;
+    /** The current craft round fills the grid by hand. */
+    private boolean manual;
+    /** Recipe-book placement produced no result once this action; place by hand from then on. */
+    private boolean bookFailed;
+    /** Grid-clearing rounds this action (guards against a grid that never empties, e.g. a full inventory). */
+    private int gridClears;
+    private static final int MAX_GRID_CLEARS = 3;
     private String station;
     private long stationPos = Long.MIN_VALUE;
     private long supportPos;
@@ -121,6 +136,7 @@ public final class MinecraftWorldActions implements WorldActions {
             return;
         }
         recipe = r.get();
+        manualShape = shapeOf(recipe.value());
         craftsLeft = Math.max(1, s.crafts());
         startCount = inv.count(s.itemId());
         boolean table = !recipe.value().canCraftInDimensions(2, 2);
@@ -175,6 +191,9 @@ public final class MinecraftWorldActions implements WorldActions {
         message = "";
         timer = 0;
         placedAt = -1;
+        manual = false;
+        bookFailed = false;
+        gridClears = 0;
         spotWalks = 0;
         obstructionClears = 0;
         clearPos = Long.MIN_VALUE;
@@ -362,29 +381,48 @@ public final class MinecraftWorldActions implements WorldActions {
                         fail("No game mode");
                         return;
                     }
-                    if (!player.getRecipeBook().contains(recipe.id())) {
-                        // Vanilla unlocks a recipe through an advancement when an ingredient reaches the inventory;
-                        // the unlock packet can arrive a few ticks after the ingredient was crafted, so wait briefly.
-                        // The server refuses recipe-book placement for locked recipes; replanning cannot fix that.
+                    if (!bookFailed && player.getRecipeBook().contains(recipe.id())) {
+                        if (!Services.clicker().placeRecipe(lease, recipe.id().toString(), false)) {
+                            fail("Could not place recipe " + recipe.id());
+                            return;
+                        }
+                        manual = false;
+                        placedAt = timer;
+                        return;
+                    }
+                    if (manualShape == null) {
+                        // Special recipe without a fixed pattern: only the recipe book can place it. Vanilla unlocks
+                        // a recipe when an ingredient reaches the inventory and the packet can lag, so wait briefly.
                         if (timer > RECIPE_UNLOCK_WAIT) {
                             fail("Recipe " + recipe.id() + " is not unlocked in your recipe book");
                         }
                         return;
                     }
-                    if (!Services.clicker().placeRecipe(lease, recipe.id().toString(), false)) {
-                        fail("Could not place recipe " + recipe.id());
-                        return;
-                    }
-                    placedAt = timer;
+                    // Locked recipe (fresh world, or the unlock packet is late): fill the grid by hand.
+                    placeByHand(player, menu);
                 } else if (timer >= placedAt + 5) {
                     Slot result = menu.getSlot(0);
                     if (result.getItem().isEmpty()) {
-                        fail("Missing ingredients for " + step.itemId());
+                        if (manual) {
+                            int size = gridSizeOf(menu);
+                            String[] grid = gridIds(menu, size);
+                            fail(grid != null && ManualCraftPlanner.matches(manualShape, size, grid)
+                                    ? "Filled the grid for " + step.itemId() + " but got no result (recipe locked by"
+                                    + " limited crafting?)"
+                                    : "Missing ingredients for " + step.itemId());
+                        } else if (manualShape != null && !bookFailed) {
+                            bookFailed = true; // the server refused the book request: place by hand next round
+                            placedAt = -1;
+                            timer = 0;
+                        } else {
+                            fail("Missing ingredients for " + step.itemId());
+                        }
                         return;
                     }
                     Services.clicker().queueClick(lease, 0, 0, IContainerClicker.Click.QUICK_MOVE);
                     craftsLeft--;
                     placedAt = -1;
+                    manual = false;
                     phase = Phase.WAIT_CLICKS;
                     timer = 0;
                 }
@@ -419,6 +457,125 @@ public final class MinecraftWorldActions implements WorldActions {
             }
             default -> fail("No operation");
         }
+    }
+
+    /**
+     * One hand-placement round: snapshots the open crafting grid, inventory and cursor, lets
+     * {@link ManualCraftPlanner} plan the clicks and queues them through the clicker under the action's lease.
+     */
+    private void placeByHand(LocalPlayer player, AbstractContainerMenu menu) {
+        int gridSize = gridSizeOf(menu);
+        String[] grid = gridIds(menu, gridSize);
+        if (grid == null) {
+            fail("No crafting grid open for " + step.itemId());
+            return;
+        }
+        Inventory pinv = player.getInventory();
+        int n = 0;
+        for (Slot s : menu.slots) {
+            if (s.container == pinv && s.getContainerSlot() < Inventory.INVENTORY_SIZE) {
+                n++;
+            }
+        }
+        int[] slots = new int[n];
+        String[] items = new String[n];
+        int[] counts = new int[n];
+        int k = 0;
+        for (Slot s : menu.slots) {
+            if (s.container == pinv && s.getContainerSlot() < Inventory.INVENTORY_SIZE) {
+                ItemStack st = s.getItem();
+                slots[k] = s.index;
+                items[k] = st.isEmpty() ? null : inv.idOf(st.getItem());
+                counts[k] = st.getCount();
+                k++;
+            }
+        }
+        ItemStack carried = menu.getCarried();
+        ManualCraftPlanner.Plan plan = ManualCraftPlanner.plan(manualShape, new ManualCraftPlanner.Menu(gridSize,
+                CRAFT_GRID_FIRST_SLOT, grid, slots, items, counts,
+                carried.isEmpty() ? null : inv.idOf(carried.getItem()), carried.getCount()));
+        switch (plan.status()) {
+            case PLACE -> {
+                if (queueAll(plan.clicks())) {
+                    manual = true;
+                    placedAt = 0; // checked once the clicks are done (afterClicks restarts the timer)
+                    phase = Phase.WAIT_CLICKS;
+                    timer = 0;
+                }
+            }
+            case CLEAR_GRID -> {
+                if (++gridClears > MAX_GRID_CLEARS) {
+                    fail("Could not empty the crafting grid (inventory full?)");
+                } else if (queueAll(plan.clicks())) {
+                    phase = Phase.WAIT_CLICKS; // back to WORK with placedAt < 0: plan again on the emptied grid
+                    timer = 0;
+                }
+            }
+            case CURSOR_STUCK -> fail("Inventory full: nowhere to put the held " + plan.detail());
+            case MISSING -> fail("Missing ingredients for " + step.itemId() + ": " + plan.detail());
+            case TOO_BIG -> fail("Recipe " + recipe.id() + " does not fit the open crafting grid");
+            case EMPTY_RECIPE -> fail("Recipe " + recipe.id() + " has no ingredients to place");
+        }
+    }
+
+    /** Queues every click or none: on a full queue the action's clicks are dropped and the action fails. */
+    private boolean queueAll(List<ManualCraftPlanner.Click> clicks) {
+        IContainerClicker clicker = Services.clicker();
+        for (ManualCraftPlanner.Click c : clicks) {
+            if (!clicker.queueClick(lease, c.slot(), c.button(), c.type())) {
+                clicker.cancel(lease);
+                fail("Could not queue crafting clicks");
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** Menu slot of the crafting grid's top-left cell in both the inventory and the crafting-table menus. */
+    private static final int CRAFT_GRID_FIRST_SLOT = 1;
+
+    private static int gridSizeOf(AbstractContainerMenu menu) {
+        return menu instanceof CraftingMenu ? 3 : menu instanceof InventoryMenu ? 2 : 0;
+    }
+
+    /** Item id per crafting-grid cell (row-major, null when empty), or null when the menu has no crafting grid. */
+    private String[] gridIds(AbstractContainerMenu menu, int gridSize) {
+        if (gridSize == 0) {
+            return null;
+        }
+        String[] grid = new String[gridSize * gridSize];
+        for (int c = 0; c < grid.length; c++) {
+            ItemStack st = menu.getSlot(CRAFT_GRID_FIRST_SLOT + c).getItem();
+            grid[c] = st.isEmpty() ? null : inv.idOf(st.getItem());
+        }
+        return grid;
+    }
+
+    /** Shaped/shapeless crafting recipe as ids for {@link ManualCraftPlanner}; null for any other recipe. */
+    private ManualCraftPlanner.Shape shapeOf(Recipe<?> r) {
+        if (r instanceof ShapedRecipe sr) {
+            return ManualCraftPlanner.Shape.shaped(sr.getWidth(), sr.getHeight(), idsOf(sr.getIngredients()));
+        }
+        if (r instanceof ShapelessRecipe) {
+            return ManualCraftPlanner.Shape.shapeless(idsOf(r.getIngredients()));
+        }
+        return null;
+    }
+
+    private List<Set<String>> idsOf(List<Ingredient> ingredients) {
+        List<Set<String>> out = new ArrayList<>(ingredients.size());
+        for (Ingredient ing : ingredients) {
+            if (ing.isEmpty()) {
+                out.add(Set.of());
+                continue;
+            }
+            Set<String> ids = new HashSet<>();
+            for (ItemStack st : ing.getItems()) {
+                ids.add(inv.idOf(st.getItem()));
+            }
+            out.add(Set.copyOf(ids));
+        }
+        return out;
     }
 
     private void loadFurnace(LocalPlayer player, AbstractContainerMenu menu) {
