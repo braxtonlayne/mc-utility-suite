@@ -115,8 +115,6 @@ public final class ChainLookahead {
     // ---- gaze (owner, 2026-11-23: "where the player is looking should guide its longer distance predictions") ----
     /** A looked-at block at least this far away (blocks) steers the end of the chain; nearer is the estimator's. */
     static final double GAZE_MIN = 6.0;
-    /** Ray samples per block: an eighth of a block finds a fence post (a quarter wide) and most panes. */
-    private static final int GAZE_STEPS_PER_BLOCK = 8;
     /** Score per block between a chain end and the looked-at block (the furthest-along term is small beside it). */
     static final double GAZE_COST = 1.0;
     /** Score per block of height between a chain end and the looked-at top. */
@@ -133,8 +131,10 @@ public final class ChainLookahead {
     private int gazeCells;
 
     /**
-     * Marches the view ray from the eyes up to the corridor's length and keeps the first block it hits as the
-     * looked-at point, when it is at least {@link #GAZE_MIN} away. Allocation-free; one box test per new cell.
+     * Walks the view ray from the eyes cell by cell (an exact grid traversal) up to the corridor's length and keeps
+     * the first block whose boxes it crosses as the looked-at point, when it is at least {@link #GAZE_MIN} away. The
+     * boxes are intersected exactly, so a fence post, a pane or a bottom slab is hit wherever the ray enters its cell.
+     * Allocation-free; at most two cell lookups per visited cell.
      */
     public void look(MovementPhysics now, float yaw, float pitch, MovementPhysics.Voxels w) {
         gazeSet = false;
@@ -145,47 +145,93 @@ public final class ChainLookahead {
         double dx = -Math.sin(r) * cp;
         double dy = -Math.sin(p);
         double dz = Math.cos(r) * cp;
+        double ex = now.x;
         double ey = now.y + EYE_HEIGHT;
-        int steps = (LENGTH + RING) * GAZE_STEPS_PER_BLOCK;
-        int lx = Integer.MIN_VALUE;
-        int ly = 0;
-        int lz = 0;
-        for (int i = 1; i <= steps; i++) {
-            double t = (double) i / GAZE_STEPS_PER_BLOCK;
-            double px = now.x + dx * t;
-            double py = ey + dy * t;
-            double pz = now.z + dz * t;
-            int bx = MovementPhysics.floor(px);
-            int by = MovementPhysics.floor(py);
-            int bz = MovementPhysics.floor(pz);
-            if (bx == lx && by == ly && bz == lz) {
-                continue;
-            }
-            lx = bx;
-            ly = by;
-            lz = bz;
+        double ez = now.z;
+        int cx = MovementPhysics.floor(ex);
+        int cy = MovementPhysics.floor(ey);
+        int cz = MovementPhysics.floor(ez);
+        boolean ax = Math.abs(dx) >= 1.0e-9;
+        boolean ay = Math.abs(dy) >= 1.0e-9;
+        boolean az = Math.abs(dz) >= 1.0e-9;
+        int stepX = dx > 0 ? 1 : -1;
+        int stepY = dy > 0 ? 1 : -1;
+        int stepZ = dz > 0 ? 1 : -1;
+        double tdx = ax ? Math.abs(1.0 / dx) : Double.MAX_VALUE;
+        double tdy = ay ? Math.abs(1.0 / dy) : Double.MAX_VALUE;
+        double tdz = az ? Math.abs(1.0 / dz) : Double.MAX_VALUE;
+        double tmx = ax ? (dx > 0 ? cx + 1 - ex : ex - cx) * tdx : Double.MAX_VALUE;
+        double tmy = ay ? (dy > 0 ? cy + 1 - ey : ey - cy) * tdy : Double.MAX_VALUE;
+        double tmz = az ? (dz > 0 ? cz + 1 - ez : ez - cz) * tdz : Double.MAX_VALUE;
+        boolean shaped = w.shaped();
+        double range = LENGTH + RING;
+        int maxCells = 3 * (LENGTH + RING) + 3;
+        while (gazeCells < maxCells) {
             gazeCells++;
-            int n = w.boxCount(bx, by, bz);
-            boolean hit = false;
-            double top = -Double.MAX_VALUE;
-            for (int k = 0; k < n; k++) {
-                w.box(bx, by, bz, k, box, 0);
-                top = Math.max(top, by + box[4]);
-                hit |= px >= bx + box[0] && px <= bx + box[3] && py >= by + box[1] && py <= by + box[4]
-                        && pz >= bz + box[2] && pz <= bz + box[5];
+            int hy = cy;
+            double t = gazeCell(w, cx, cy, cz, ex, ey, ez, dx, dy, dz);
+            if (shaped) {
+                // fences and walls rise half a block into the cell above theirs
+                double t2 = gazeCell(w, cx, cy - 1, cz, ex, ey, ez, dx, dy, dz);
+                if (t2 >= 0.0 && (t < 0.0 || t2 < t)) {
+                    t = t2;
+                    hy = cy - 1;
+                }
             }
-            if (hit) {
-                double hx0 = bx + 0.5 - now.x;
-                double hz0 = bz + 0.5 - now.z;
+            if (t >= 0.0) {
+                if (t > range) {
+                    return;
+                }
+                double hx0 = cx + 0.5 - ex;
+                double hz0 = cz + 0.5 - ez;
                 if (hx0 * hx0 + hz0 * hz0 >= GAZE_MIN * GAZE_MIN) {
                     gazeSet = true;
-                    gazeX = bx + 0.5;
-                    gazeTop = top;
-                    gazeZ = bz + 0.5;
+                    gazeX = cx + 0.5;
+                    gazeTop = gazeCellTop(w, cx, hy, cz);
+                    gazeZ = cz + 0.5;
                 }
                 return;
             }
+            if (Math.min(tmx, Math.min(tmy, tmz)) > range) {
+                return;
+            }
+            if (tmx <= tmy && tmx <= tmz) {
+                cx += stepX;
+                tmx += tdx;
+            } else if (tmy <= tmz) {
+                cy += stepY;
+                tmy += tdy;
+            } else {
+                cz += stepZ;
+                tmz += tdz;
+            }
         }
+    }
+
+    /** Nearest ray parameter at which the ray enters a box of the cell, or -1. */
+    private double gazeCell(MovementPhysics.Voxels w, int cx, int cy, int cz, double ex, double ey, double ez,
+                            double dx, double dy, double dz) {
+        int n = w.boxCount(cx, cy, cz);
+        double best = -1.0;
+        for (int k = 0; k < n; k++) {
+            w.box(cx, cy, cz, k, box, 0);
+            double t = RayBox.enter(ex, ey, ez, dx, dy, dz, cx + box[0], cy + box[1], cz + box[2], cx + box[3],
+                    cy + box[4], cz + box[5]);
+            if (t >= 0.0 && (best < 0.0 || t < best)) {
+                best = t;
+            }
+        }
+        return best;
+    }
+
+    private double gazeCellTop(MovementPhysics.Voxels w, int cx, int cy, int cz) {
+        int n = w.boxCount(cx, cy, cz);
+        double top = -Double.MAX_VALUE;
+        for (int k = 0; k < n; k++) {
+            w.box(cx, cy, cz, k, box, 0);
+            top = Math.max(top, cy + box[4]);
+        }
+        return top;
     }
 
     /** A looked-at block steers the chain now. */
@@ -196,6 +242,20 @@ public final class ChainLookahead {
     /** Cells the last {@link #look} ray visited. */
     int gazeCells() {
         return gazeCells;
+    }
+
+    /** Centre x of the looked-at block (meaningful while {@link #gazing}). */
+    double gazeX() {
+        return gazeX;
+    }
+
+    /** Top of the looked-at block. */
+    double gazeTop() {
+        return gazeTop;
+    }
+
+    double gazeZ() {
+        return gazeZ;
     }
 
     private boolean gazeMoved() {
@@ -334,6 +394,12 @@ public final class ChainLookahead {
             if (t != t || !clear(w, x, y, z, t)) {
                 continue;
             }
+            lookups++;
+            // a top that hurts, traps or is not modelled is never part of the course; the one under the feet stays
+            // (the chain still has to start somewhere)
+            if (unsafe(w.surface(x, y, z)) && !(x == ox && z == oz && Math.abs(t - oTop) <= 0.05)) {
+                continue;
+            }
             tops[base + n] = t;
             topCell[base + n] = y;
             n++;
@@ -355,17 +421,26 @@ public final class ChainLookahead {
         return best;
     }
 
-    /** Room for the body over a top: no box in the cells the body would occupy (the top's own cell excepted). */
+    /**
+     * Room for the body over a top: no box in the cells the body would occupy (the top's own cell excepted), and
+     * nothing there that hurts or traps without a box (fire, cobweb, powder snow, a berry bush).
+     */
     private boolean clear(MovementPhysics.Voxels w, int x, int y, int z, double top) {
         int from = Math.max(y + 1, MovementPhysics.floor(top + TOP_EPS));
         int to = MovementPhysics.floor(top + BODY - TOP_EPS);
         for (int cy = from; cy <= to; cy++) {
-            lookups++;
-            if (w.boxCount(x, cy, z) != 0) {
+            lookups += 2;
+            if (w.boxCount(x, cy, z) != 0 || unsafe(w.surface(x, cy, z))) {
                 return false;
             }
         }
         return true;
+    }
+
+    /** Surfaces a chain never lands on: harmful, trapping, or not modelled by the replica. */
+    private static boolean unsafe(byte surface) {
+        return surface == MovementPhysics.SURFACE_HARM || surface == MovementPhysics.SURFACE_STUCK
+                || surface == MovementPhysics.SURFACE_UNMODELLED;
     }
 
     // ---- search -----------------------------------------------------------------------------------------------------
