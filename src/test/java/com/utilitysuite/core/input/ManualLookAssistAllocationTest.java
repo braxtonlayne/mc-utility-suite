@@ -29,6 +29,29 @@ class ManualLookAssistAllocationTest {
     }
 
     @Test
+    void pitchHookAndRequestsAllocateNothing() {
+        Assumptions.assumeTrue(AllocationProbe.supported());
+        ManualLookAssist a = new ManualLookAssist();
+        String[] ids = {"travel.movement", "combat.assistant"};
+        int[] i = {0};
+        double[] sink = {0};
+        long bytes = AllocationProbe.measure(CALLS, () -> {
+            int k = i[0]++;
+            if ((k & 7) == 0) {
+                a.setPitchGain(ids[k & 1], ((k % 180) - 90) * 1f, 1.3, 0.7, 3);
+            }
+            if ((k & 31) == 0) {
+                a.beginTick();
+            }
+            if ((k & 1023) == 0) {
+                a.clearPitchGain(ids[(k >> 10) & 1]);
+            }
+            sink[0] += a.onFramePitch(((k * 7) % 180) - 90f, ((k % 41) - 20) * 0.15, 0.007, (k & 63) == 0);
+        });
+        assertTrue(bytes < BUDGET, "pitch gain allocated " + bytes + " bytes (" + sink[0] + ")");
+    }
+
+    @Test
     void frameHookAndRequestsWithLiveRequest() {
         Assumptions.assumeTrue(AllocationProbe.supported());
         ManualLookAssist a = new ManualLookAssist();

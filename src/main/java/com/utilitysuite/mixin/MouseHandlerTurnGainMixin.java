@@ -19,7 +19,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * between the mouse delta and {@code Entity.turn}. Writing yaw afterwards from a frame event would be rotation
  * injection, which this feature must not do.
  * <p>
- * Kept as small as possible: a HEAD hook that records the frame time (the method's own argument) and one
+ * The opt-in pitch gain is a second {@code @ModifyArg} (index 1) on the same call. Kept as small as possible: a HEAD hook that records the frame time (the method's own argument) and one
  * {@code @ModifyArg} on index 0 of the single {@code LocalPlayer.turn(DD)V} call. Both delegate to static methods that
  * return at once when no gain request is live. Manual-override detection ({@link MouseHandlerManualLookMixin}) reads
  * the raw accumulated deltas at HEAD and is unaffected.
@@ -38,5 +38,14 @@ public abstract class MouseHandlerTurnGainMixin {
             index = 0)
     private double utilitysuite$scaleTurnYaw(double yaw) {
         return ManualInputHooks.onTurnYaw(yaw);
+    }
+
+    /** Opt-in pitch counterpart: index 1 of the same call; returns the argument at once when no pitch gain is live. */
+    @ModifyArg(method = "turnPlayer",
+            at = @At(value = "INVOKE",
+                    target = "Lnet/minecraft/client/player/LocalPlayer;turn(DD)V"),
+            index = 1)
+    private double utilitysuite$scaleTurnPitch(double pitch) {
+        return ManualInputHooks.onTurnPitch(pitch);
     }
 }

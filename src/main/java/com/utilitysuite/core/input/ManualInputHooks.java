@@ -147,6 +147,30 @@ public final class ManualInputHooks {
         return h.turnYaw(h.look, cs, steerLive, yawArg);
     }
 
+    /**
+     * The pitch argument of {@code LocalPlayer.turn} (turn units): the opt-in pitch gain on the hand's own motion, same
+     * math as yaw. Unchanged (the same double) unless a pitch request is live and the mouse moved.
+     */
+    public static double onTurnPitch(double pitchArg) {
+        ManualInputHooks h = instance;
+        if (h == null || pitchArg == 0.0) {
+            return pitchArg;
+        }
+        ManualLookAssist a = h.look;
+        if (a == null || !a.hasLivePitchRequest()) {
+            return pitchArg;
+        }
+        Minecraft mc = Minecraft.getInstance();
+        net.minecraft.client.player.LocalPlayer p = mc.player;
+        if (p == null) {
+            return pitchArg;
+        }
+        boolean blocked = mc.screen != null || p.isSpectator() || p.isPassenger();
+        double raw = pitchArg * ManualLookAssist.DEG_PER_TURN_UNIT;
+        double out = a.onFramePitch(p.getXRot(), raw, h.frameSeconds, blocked);
+        return out == raw ? pitchArg : out / ManualLookAssist.DEG_PER_TURN_UNIT;
+    }
+
     private double turnYaw(ManualLookAssist a, YawCoSteer cs, boolean steerLive, double yawArg) {
         double raw = yawArg * ManualLookAssist.DEG_PER_TURN_UNIT;
         ManualFactsTracker f = facts;

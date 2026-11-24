@@ -56,10 +56,21 @@ public final class ModState implements IModState {
 
     /** Login: loads the world/server profile and applies module enabled states and settings. */
     public void loadProfile(String profileId) {
+        loadProfile(profileId, null);
+    }
+
+    /**
+     * As {@link #loadProfile(String)}; {@code beforeApply} (may be null) edits the loaded profile before the modules
+     * read it (the per-server legit level).
+     */
+    public void loadProfile(String profileId, java.util.function.Consumer<ProfileConfig> beforeApply) {
         if (active != null) {
             unloadProfile();
         }
         active = store.load(profileId);
+        if (beforeApply != null) {
+            beforeApply.accept(active);
+        }
         modules.applyProfile(active);
     }
 

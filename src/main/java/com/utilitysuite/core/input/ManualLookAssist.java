@@ -7,7 +7,8 @@ import com.utilitysuite.core.api.IManualLookAssist;
  * motion a little toward a module's ideal heading. Nothing here writes a rotation: the mouse hook asks
  * {@link #onFrameYaw} for the size of the yaw delta the user's hand produced this frame and gets back a slightly larger
  * or smaller delta of the same sign. A still mouse produces a zero delta, and zero in is zero out, so the camera never
- * moves by itself. Pitch never passes through this class.
+ * moves by itself. Pitch has an opt-in counterpart ({@link #setPitchGain}, {@link #onFramePitch}) with the same math
+ * and its own request table; a pitch request only exists while a module sets an ideal pitch (NaN = off).
  *
  * <h2>Math ({@link #scale})</h2>
  * <ol>
@@ -52,6 +53,15 @@ public final class ManualLookAssist implements IManualLookAssist {
     private long seq;
     /** Slot of the most recently set live request, or -1. */
     private int active = -1;
+
+    // pitch requests: a separate small table, same rules (an ideal pitch of NaN is never stored)
+    private final String[] pIds = new String[CAPACITY];
+    private final float[] pIdeal = new float[CAPACITY];
+    private final double[] pToward = new double[CAPACITY];
+    private final double[] pAway = new double[CAPACITY];
+    private final int[] pTtl = new int[CAPACITY];
+    private final long[] pSetSeq = new long[CAPACITY];
+    private int pActive = -1;
 
     private InputSmoother smoother;
 
@@ -106,6 +116,43 @@ public final class ManualLookAssist implements IManualLookAssist {
     }
 
     @Override
+    public void setPitchGain(String moduleId, float idealPitchDeg, double towardGain, double awayGain, int ttlTicks) {
+        if (moduleId == null) {
+            return;
+        }
+        if (!Float.isFinite(idealPitchDeg) || ttlTicks <= 0) {
+            clearPitchGain(moduleId); // NaN = off
+            return;
+        }
+        int slot = pFind(moduleId);
+        if (slot < 0) {
+            slot = pFreeOrOldest();
+        }
+        pIds[slot] = moduleId;
+        pIdeal[slot] = idealPitchDeg;
+        pToward[slot] = clampGain(towardGain);
+        pAway[slot] = clampGain(awayGain);
+        pTtl[slot] = ttlTicks;
+        pSetSeq[slot] = ++seq;
+        pActive = slot;
+    }
+
+    @Override
+    public void clearPitchGain(String moduleId) {
+        if (moduleId == null) {
+            return;
+        }
+        int slot = pFind(moduleId);
+        if (slot >= 0) {
+            pIds[slot] = null;
+            pTtl[slot] = 0;
+            if (slot == pActive) {
+                pActive = pLatestLive();
+            }
+        }
+    }
+
+    @Override
     public double manualYawRateDegPerTick() {
         return lastYawDeg;
     }
@@ -122,10 +169,20 @@ public final class ManualLookAssist implements IManualLookAssist {
             ttl[i] = 0;
         }
         active = -1;
+        for (int i = 0; i < CAPACITY; i++) {
+            pIds[i] = null;
+            pTtl[i] = 0;
+        }
+        pActive = -1;
         tickYawDeg = 0.0;
         tickAssistDeg = 0.0;
         lastYawDeg = 0.0;
         lastAssistDeg = 0.0;
+    }
+
+    /** True while a pitch request is live. */
+    public boolean hasLivePitchRequest() {
+        return pActive >= 0;
     }
 
     /** True while a request is live. */
@@ -152,6 +209,30 @@ public final class ManualLookAssist implements IManualLookAssist {
         if (changed) {
             active = latestLive();
         }
+        boolean pChanged = false;
+        for (int i = 0; i < CAPACITY; i++) {
+            if (pIds[i] != null && --pTtl[i] <= 0) {
+                pIds[i] = null;
+                pTtl[i] = 0;
+                pChanged = true;
+            }
+        }
+        if (pChanged) {
+            pActive = pLatestLive();
+        }
+    }
+
+    /**
+     * Per mouse frame: the pitch delta (degrees, + = looking down) the user's hand produced; returns the delta to
+     * apply. Raw when no pitch request is live, when {@code blocked}, or while an automated look runs; zero in is zero
+     * out. Allocation free.
+     */
+    public double onFramePitch(float currentPitch, double rawDeg, double frameSeconds, boolean blocked) {
+        int a = pActive;
+        if (a < 0 || rawDeg == 0.0 || blocked || automatedLookRunning()) {
+            return rawDeg;
+        }
+        return scaleError(pIdeal[a] - currentPitch, rawDeg, frameSeconds, pToward[a], pAway[a]);
     }
 
     /**
@@ -201,7 +282,18 @@ public final class ManualLookAssist implements IManualLookAssist {
                 || !Double.isFinite(frameSeconds) || frameSeconds <= 0.0) {
             return rawDeg;
         }
-        double err = RotationCurve.wrapDegrees(idealYaw - yaw);
+        return scaleError(RotationCurve.wrapDegrees(idealYaw - yaw), rawDeg, frameSeconds, towardGain, awayGain);
+    }
+
+    /**
+     * The same math on an already computed error {@code e = ideal - current} (degrees; yaw wraps it first, pitch uses
+     * the plain difference because the pitch range is bounded).
+     */
+    static double scaleError(double err, double rawDeg, double frameSeconds, double towardGain, double awayGain) {
+        if (rawDeg == 0.0 || !Double.isFinite(rawDeg) || !Double.isFinite(err)
+                || !Double.isFinite(frameSeconds) || frameSeconds <= 0.0) {
+            return rawDeg;
+        }
         double absErr = Math.abs(err);
         if (absErr <= DEAD_ZONE_DEG) {
             return rawDeg;
@@ -260,6 +352,39 @@ public final class ManualLookAssist implements IManualLookAssist {
         int best = -1;
         for (int i = 0; i < CAPACITY; i++) {
             if (ids[i] != null && (best < 0 || setSeq[i] > setSeq[best])) {
+                best = i;
+            }
+        }
+        return best;
+    }
+
+    private int pFind(String moduleId) {
+        for (int i = 0; i < CAPACITY; i++) {
+            String id = pIds[i];
+            if (id != null && (id == moduleId || id.equals(moduleId))) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private int pFreeOrOldest() {
+        int oldest = 0;
+        for (int i = 0; i < CAPACITY; i++) {
+            if (pIds[i] == null) {
+                return i;
+            }
+            if (pSetSeq[i] < pSetSeq[oldest]) {
+                oldest = i;
+            }
+        }
+        return oldest;
+    }
+
+    private int pLatestLive() {
+        int best = -1;
+        for (int i = 0; i < CAPACITY; i++) {
+            if (pIds[i] != null && (best < 0 || pSetSeq[i] > pSetSeq[best])) {
                 best = i;
             }
         }

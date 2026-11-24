@@ -250,7 +250,18 @@ public final class CoreBootstrap {
     private static void onLogin(ClientPlayerNetworkEvent.LoggingIn event) {
         String id = currentProfileId(Minecraft.getInstance());
         UtilitySuiteMod.LOGGER.info("Loading profile {}", id);
-        modState.loadProfile(id);
+        Minecraft mc = Minecraft.getInstance();
+        boolean sp = mc.getSingleplayerServer() != null;
+        ServerData sd = mc.getCurrentServer();
+        // the user's own per-server level (core "server_levels"), written before any module reads the profile
+        modState.loadProfile(id, profile -> {
+            LegitPresets.Level level = ServerLevels.resolve(modState.global(), sp, sd == null ? null : sd.ip);
+            if (level != null) {
+                UtilitySuiteMod.LOGGER.info("Server level {} for profile {}", level, id);
+                LegitPresets.apply(level, profile, modState.global());
+                applyCoreSettings();
+            }
+        });
     }
 
     private static void onLogout(ClientPlayerNetworkEvent.LoggingOut event) {

@@ -8,7 +8,7 @@ package com.utilitysuite.core.api;
  * Limits enforced by the core, whatever a module asks for: gains are clamped to
  * [{@link #MIN_GAIN}, {@link #MAX_GAIN}]; the degrees the gain adds or removes never exceed
  * {@link IInputSmoother#MAX_TURN_DEG_PER_SEC}; a request lapses by itself after its ttl; nothing applies while a
- * screen is open, while an automated rotation is running, or after Stop-All. Pitch is never touched.
+ * screen is open, while an automated rotation is running, or after Stop-All. Pitch is touched only through the opt-in {@link #setPitchGain}.
  * Client thread only.
  */
 public interface IManualLookAssist {
@@ -46,6 +46,17 @@ public interface IManualLookAssist {
     void setYawGain(String moduleId, float idealYawDeg, double towardGain, double awayGain, int ttlTicks);
 
     void clearYawGain(String moduleId);
+
+    /**
+     * Opt-in pitch counterpart of {@link #setYawGain}: same math and limits on the user's own mouse pitch motion
+     * (+ = looking down), pulled toward {@code idealPitchDeg}. A NaN or infinite ideal pitch means off (clears this
+     * module's request). A still mouse never moves the camera. Default: ignored.
+     */
+    default void setPitchGain(String moduleId, float idealPitchDeg, double towardGain, double awayGain, int ttlTicks) {
+    }
+
+    default void clearPitchGain(String moduleId) {
+    }
 
     /**
      * The user's own yaw rate over the last tick in degrees per tick (+ = yaw increasing), from hardware mouse motion
