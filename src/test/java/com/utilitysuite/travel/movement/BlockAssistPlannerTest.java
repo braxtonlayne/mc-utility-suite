@@ -181,4 +181,48 @@ class BlockAssistPlannerTest {
         long bytes = AllocationProbe.measure(50, () -> b.plan(p, 0f, true, 1, 0, 20f, 0f, 20f, TURN, 0, g));
         assertTrue(bytes < 1_024, "plan allocated " + bytes + " bytes");
     }
+
+    /** A grid whose given z-plane (between two heights) is replaceable, as tall grass or a snow layer would be. */
+    private static MovementPhysics.Voxels withReplaceablePlane(Grid g, int z, int y0, int y1) {
+        return new MovementPhysics.Voxels() {
+            @Override
+            public boolean solid(int x, int y, int zz) {
+                return g.solid(x, y, zz);
+            }
+
+            @Override
+            public boolean replaceable(int x, int y, int zz) {
+                return zz == z && y >= y0 && y <= y1;
+            }
+        };
+    }
+
+    @Test
+    void aReplaceableBlockIsNeverTheSupportFace() {
+        Grid g = wall();
+        MovementPhysics p = new MovementPhysics().set(0.5, 10, 2.2, 0, -0.0784, 0.15, true);
+        p.tick(1, 0, 0f, true, true, g);
+        assertTrue(new BlockAssistPlanner().plan(p, 0f, true, 1, 0, 20f, 0f, 10f, TURN, 0, g));
+        // the same wall, now grass: its side is no place to click; the floor under the block still is
+        MovementPhysics.Voxels grassy = withReplaceablePlane(g, 4, 10, 11);
+        BlockAssistPlanner b = new BlockAssistPlanner();
+        if (b.plan(p, 0f, true, 1, 0, 20f, 0f, 10f, TURN, 0, grassy)) {
+            long s = b.support();
+            assertFalse(grassy.replaceable(Packed.x(s), Packed.y(s), Packed.z(s)),
+                    "support " + Packed.x(s) + "," + Packed.y(s) + "," + Packed.z(s));
+        }
+        // when every neighbour that could support the block is replaceable, nothing is planned
+        MovementPhysics.Voxels allGrass = new MovementPhysics.Voxels() {
+            @Override
+            public boolean solid(int x, int y, int zz) {
+                return g.solid(x, y, zz);
+            }
+
+            @Override
+            public boolean replaceable(int x, int y, int zz) {
+                return true;
+            }
+        };
+        assertFalse(new BlockAssistPlanner().plan(p, 0f, true, 1, 0, 20f, 0f, 10f, TURN, 0, allGrass));
+    }
 }

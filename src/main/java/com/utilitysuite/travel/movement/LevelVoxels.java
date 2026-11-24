@@ -16,6 +16,8 @@ public final class LevelVoxels implements MovementPhysics.Voxels {
     private static final byte AIR = 1;
     private static final byte SOLID = 2;
     private static final byte FULL = 3;
+    /** Flag on top of the kind: a placement replaces this block (see {@link #replaceable}). */
+    private static final byte REPL = 4;
 
     private final BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
     private final Long2ByteOpenHashMap cache = new Long2ByteOpenHashMap(1024);
@@ -36,7 +38,7 @@ public final class LevelVoxels implements MovementPhysics.Voxels {
             v = read();
             cache.put(key, v);
         }
-        return v >= SOLID;
+        return (v & 3) >= SOLID;
     }
 
     @Override
@@ -48,7 +50,25 @@ public final class LevelVoxels implements MovementPhysics.Voxels {
             v = read();
             cache.put(key, v);
         }
-        return v == FULL;
+        return (v & 3) == FULL;
+    }
+
+    @Override
+    public boolean replaceable(int x, int y, int z) {
+        long key = BlockPos.asLong(x, y, z);
+        byte v = cache.get(key);
+        if (v == 0) {
+            pos.set(x, y, z);
+            v = read();
+            cache.put(key, v);
+        }
+        return (v & REPL) != 0;
+    }
+
+    /** Grass, ferns, vines, fluids and the like, plus a one-layer snow cover. */
+    static boolean isReplaceable(BlockState st) {
+        return st.canBeReplaced() || st.is(net.minecraft.world.level.block.Blocks.SNOW)
+                && st.getValue(net.minecraft.world.level.block.SnowLayerBlock.LAYERS) == 1;
     }
 
     private byte read() {
@@ -57,6 +77,7 @@ public final class LevelVoxels implements MovementPhysics.Voxels {
             return AIR;
         }
         var shape = st.getCollisionShape(level, pos);
-        return shape.isEmpty() ? AIR : st.isCollisionShapeFullBlock(level, pos) ? FULL : SOLID;
+        byte kind = shape.isEmpty() ? AIR : st.isCollisionShapeFullBlock(level, pos) ? FULL : SOLID;
+        return isReplaceable(st) ? (byte) (kind | REPL) : kind;
     }
 }

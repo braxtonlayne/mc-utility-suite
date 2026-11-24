@@ -223,8 +223,8 @@ public final class BlockAssistPlanner {
                 int nx = cx - FX[d];
                 int ny = cy - FY[d];
                 int nz = cz - FZ[d];
-                if (!w.solid(nx, ny, nz)) {
-                    continue;
+                if (!w.solid(nx, ny, nz) || w.replaceable(nx, ny, nz)) {
+                    continue; // a replaceable block (grass, snow layer) takes the new block inside it: no support face
                 }
                 // face plane between N and C; the eye must be on C's side to see it
                 double hx = FX[d] != 0 ? cx + (FX[d] > 0 ? 0.0 : 1.0) : cx + 0.5;
@@ -400,6 +400,11 @@ public final class BlockAssistPlanner {
         @Override
         public boolean fullBlock(int x, int y, int z) {
             return placed(x, y, z) || base.fullBlock(x, y, z);
+        }
+
+        @Override
+        public boolean replaceable(int x, int y, int z) {
+            return !placed(x, y, z) && base.replaceable(x, y, z);
         }
 
         // exact shapes: the rollout must see the base grid's real boxes (as the trajectory trace does); the placed

@@ -40,6 +40,11 @@ public final class WorldViewSwitch implements MovementPhysics.Voxels {
     }
 
     @Override
+    public boolean replaceable(int x, int y, int z) {
+        return view().replaceable(x, y, z);
+    }
+
+    @Override
     public boolean shaped() {
         return view().shaped();
     }

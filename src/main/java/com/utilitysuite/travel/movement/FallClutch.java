@@ -72,10 +72,13 @@ final class FallClutch {
     boolean elytraDeploy = true;
     boolean glideGuard = true;
 
-    static final int MAX_PICKUP_TICKS = 20;
+    static final int MAX_PICKUP_TICKS = 40;
     static final int MAX_RETURN_TICKS = 20;
-    /** Ticks in the water before scooping it up: the server must see the landing in water first. */
-    static final int SETTLE_TICKS = 2;
+    /** Ticks settled (on the ground or in the water) before the scoop, picked per clutch in this range: a human tap. */
+    static final int SETTLE_MIN_TICKS = 4;
+    static final int SETTLE_MAX_TICKS = 8;
+    /** The user walking farther than this (blocks, horizontal) from where they settled cancels the scoop. */
+    static final double SCOOP_MOVE_LIMIT = 1.5;
     static final double REACH = 4.5;
     /** Ticks of slack between starting the turn and the planned use (the smoother eases in; yaw and pitch together). */
     static final int LEAD_TICKS = 6;
@@ -100,6 +103,10 @@ final class FallClutch {
     private long poured = Long.MIN_VALUE;
     private boolean hasPlan;
     private int graceTicks;
+    private int settledTicks;
+    private int settleWait;
+    private double settleX;
+    private double settleZ;
     private long planSupport;
     private int planFace;
     private long planCell;
@@ -335,6 +342,8 @@ final class FallClutch {
             }
             phase = Phase.PICKUP;
             ticks = 0;
+            settledTicks = 0;
+            settleWait = SETTLE_MIN_TICKS + p.getRandom().nextInt(SETTLE_MAX_TICKS - SETTLE_MIN_TICKS + 1);
             aim.reset();
         }
     }
@@ -352,7 +361,19 @@ final class FallClutch {
             startReturn(); // flowed away or already gone
             return;
         }
-        if (!(p.onGround() || p.isInWater() || p.isInPowderSnow) || ticks <= SETTLE_TICKS) {
+        if (!(p.onGround() || p.isInWater() || p.isInPowderSnow)) {
+            settledTicks = 0;
+            return;
+        }
+        if (settledTicks++ == 0) {
+            settleX = p.getX();
+            settleZ = p.getZ();
+        }
+        if (!scoopStillWanted(p)) {
+            startReturn();
+            return;
+        }
+        if (settledTicks <= settleWait) {
             return;
         }
         int s = p.getInventory().getItem(slot).getItem() == Items.BUCKET ? slot
@@ -387,6 +408,19 @@ final class FallClutch {
             pickups++;
         }
         startReturn();
+    }
+
+    /** The user stayed put since settling and the source is still within reach (checked from the stored cell). */
+    private boolean scoopStillWanted(LocalPlayer p) {
+        double mx = p.getX() - settleX;
+        double mz = p.getZ() - settleZ;
+        if (mx * mx + mz * mz > SCOOP_MOVE_LIMIT * SCOOP_MOVE_LIMIT) {
+            return false; // walked away: leave it
+        }
+        double dx = water.getX() + 0.5 - p.getX();
+        double dy = water.getY() + 0.5 - p.getEyeY();
+        double dz = water.getZ() + 0.5 - p.getZ();
+        return dx * dx + dy * dy + dz * dz <= REACH * REACH;
     }
 
     private void finish(LocalPlayer p) {

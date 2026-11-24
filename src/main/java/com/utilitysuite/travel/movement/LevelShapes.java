@@ -49,6 +49,7 @@ public final class LevelShapes implements MovementPhysics.Voxels {
     // session table, indexed by entry
     private short[] entryShape = new short[256];
     private byte[] entrySurface = new byte[256];
+    private boolean[] entryRepl = new boolean[256];
     private float[] entrySlip = new float[256];
     private int entries;
     // shape table, indexed by shape id
@@ -97,6 +98,7 @@ public final class LevelShapes implements MovementPhysics.Voxels {
             int n = entryShape.length * 2;
             entryShape = Arrays.copyOf(entryShape, n);
             entrySurface = Arrays.copyOf(entrySurface, n);
+            entryRepl = Arrays.copyOf(entryRepl, n);
             entrySlip = Arrays.copyOf(entrySlip, n);
         }
         short id;
@@ -130,6 +132,11 @@ public final class LevelShapes implements MovementPhysics.Voxels {
     @Override
     public boolean fullBlock(int x, int y, int z) {
         return entryShape[entry(x, y, z)] == SHAPE_CUBE;
+    }
+
+    @Override
+    public boolean replaceable(int x, int y, int z) {
+        return entryRepl[entry(x, y, z)];
     }
 
     @Override
@@ -189,11 +196,13 @@ public final class LevelShapes implements MovementPhysics.Voxels {
             int n = entryShape.length * 2;
             entryShape = Arrays.copyOf(entryShape, n);
             entrySurface = Arrays.copyOf(entrySurface, n);
+            entryRepl = Arrays.copyOf(entryRepl, n);
             entrySlip = Arrays.copyOf(entrySlip, n);
         }
         VoxelShape shape = st.isAir() ? Shapes.empty() : st.getCollisionShape(level, pos);
         entryShape[e] = shapeIdFor(shape);
         entrySurface[e] = surfaceOf(st, entryShape[e] != SHAPE_NONE);
+        entryRepl[e] = LevelVoxels.isReplaceable(st);
         entrySlip[e] = st.getBlock().getFriction();
         entryOf.put(st, e);
         return e;

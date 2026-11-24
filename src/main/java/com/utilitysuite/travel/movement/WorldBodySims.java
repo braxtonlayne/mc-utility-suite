@@ -72,6 +72,11 @@ public final class WorldBodySims implements IBodySimProvider {
         public boolean fullBlock(int x, int y, int z) {
             return refresh() && voxels.fullBlock(x, y, z);
         }
+
+        @Override
+        public boolean replaceable(int x, int y, int z) {
+            return refresh() && voxels.replaceable(x, y, z);
+        }
     }
 
     /** The shared exact-shape view; all air outside a world. */
@@ -96,6 +101,12 @@ public final class WorldBodySims implements IBodySimProvider {
         public boolean fullBlock(int x, int y, int z) {
             LevelShapes s = now();
             return s != null && s.fullBlock(x, y, z);
+        }
+
+        @Override
+        public boolean replaceable(int x, int y, int z) {
+            LevelShapes s = now();
+            return s != null && s.replaceable(x, y, z);
         }
 
         @Override

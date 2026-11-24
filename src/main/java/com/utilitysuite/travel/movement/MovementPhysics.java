@@ -51,6 +51,14 @@ public final class MovementPhysics {
             return solid(x, y, z);
         }
 
+        /**
+         * A block a placement replaces instead of clicking against (tall grass, a one-layer snow cover, vines,
+         * fluids): clicking its side puts the new block inside that cell, so it is never a support face.
+         */
+        default boolean replaceable(int x, int y, int z) {
+            return false;
+        }
+
         // ---- exact shapes (contract of the 2026-11-22 control model; cubes stay the fast path) ----------------------
 
         /**
