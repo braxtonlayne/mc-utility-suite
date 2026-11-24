@@ -55,14 +55,14 @@ class ManualLookAssistTest {
     }
 
     @Test
-    void pitchIsUntouchedByConstruction() throws NoSuchMethodException {
-        // the API carries no pitch: setYawGain has only yaw parameters and the frame hook takes and returns one yaw
-        // delta; the mixin modifies only index 0 (yaw) of LocalPlayer.turn(yaw, pitch)
-        assertEquals(double.class, ManualLookAssist.class.getMethod("onFrameYaw", float.class, double.class,
-                double.class, boolean.class).getReturnType());
-        for (var m : IManualLookAssist.class.getMethods()) {
-            assertFalse(m.getName().toLowerCase().contains("pitch"), m.getName());
-        }
+    void aYawRequestLeavesPitchUntouched() {
+        // pitch has its own opt-in request table (setPitchGain, ManualLookAssistPitchTest); a yaw request never
+        // scales the pitch delta
+        ManualLookAssist a = new ManualLookAssist();
+        a.setYawGain("m", 90f, 1.5, 0.5, 5);
+        assertFalse(a.hasLivePitchRequest());
+        assertEquals(0.7, a.onFramePitch(10f, 0.7, DT, false), 0.0);
+        assertEquals(-0.3, a.onFramePitch(10f, -0.3, DT, false), 0.0);
     }
 
     @Test
