@@ -38,6 +38,28 @@ public final class FlightController {
     private int airTicks;
     private boolean userLands;
     private double userMargin;
+    /** Rank of the chosen plan ({@link NextLinkBias#rank}; the margin itself without a next link). */
+    private double bestRank;
+    /** Stop point of the last roll that landed. */
+    private double rollStopX, rollStopZ;
+    /** Touchdown position and horizontal velocity of the last roll that landed. */
+    private double rollTouchX, rollTouchZ, rollTouchVx, rollTouchVz;
+    /** The next-link bias (roadmap 2.1), or null: plans are ranked by margin alone. */
+    private NextLinkBias nextLink;
+
+    /**
+     * Ranks the brake family with the next-link bias: among plans whose stop point keeps {@link NextLinkBias#FLOOR},
+     * the one that carries its speed toward the next link of a chain and comes to rest nearer it wins over a deeper
+     * stop (null: margin only).
+     */
+    public void setNextLinkBias(NextLinkBias b) {
+        nextLink = b;
+    }
+
+    /** Rank of the last roll that landed with margin {@code m}. */
+    private double rankOfRoll(double m) {
+        return NextLinkBias.rank(nextLink, m, rollStopX, rollStopZ, rollTouchX, rollTouchZ, rollTouchVx, rollTouchVz);
+    }
 
     /**
      * Plans the arrival.
@@ -56,6 +78,7 @@ public final class FlightController {
         brakeTick = -1;
         brakeForward = f;
         bestMargin = -Double.MAX_VALUE;
+        bestRank = -Double.MAX_VALUE;
         userLands = false;
         userMargin = -SupportRegion.MARGIN_CAP;
         if (now.onGround || region.count() == 0) {
@@ -70,6 +93,7 @@ public final class FlightController {
             userMargin = m;
             found = true;
             bestMargin = m;
+            bestRank = rankOfRoll(m);
             brakeTick = -1;
             brakeForward = f;
         }
@@ -101,7 +125,14 @@ public final class FlightController {
                     continue;
                 }
                 double cm = roll(now, f, s, yaw, sprint, k, bf, region, w);
-                if (cm > bestMargin + 1.0e-9) {
+                if (cm <= -Double.MAX_VALUE) {
+                    continue;
+                }
+                // the margin itself without a next link (the old order); with one, a stop that keeps the floor and
+                // sits nearer the next link beats a deeper stop (NextLinkBias)
+                double cr = rankOfRoll(cm);
+                if (cr > bestRank + 1.0e-9) {
+                    bestRank = cr;
                     bestMargin = cm;
                     brakeTick = k;
                     brakeForward = bf;
@@ -150,7 +181,13 @@ public final class FlightController {
                 }
                 region.computeStop(sim.x, sim.z, sim.vx, sim.vz, 0, 0, yaw, false, sim.speed, sim.slipperiness,
                         true);
-                return region.margin(region.stopX(), region.stopZ());
+                rollStopX = region.stopX();
+                rollTouchX = sim.x;
+                rollTouchZ = sim.z;
+                rollTouchVx = sim.vx;
+                rollTouchVz = sim.vz;
+                rollStopZ = region.stopZ();
+                return region.margin(rollStopX, rollStopZ);
             }
         }
         return -Double.MAX_VALUE;
@@ -190,6 +227,11 @@ public final class FlightController {
     /** Air tick the brake starts on (0 = now), or -1 when the current keys are the best plan. */
     public int brakeTick() {
         return brakeTick;
+    }
+
+    /** Rank the chosen plan won on (its margin when no next link biases the family). */
+    public double bestRank() {
+        return bestRank;
     }
 
     /** Margin of the chosen plan's stop point. */

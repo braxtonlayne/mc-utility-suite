@@ -90,6 +90,13 @@ public interface TechniqueSource {
     default void setLineBlocked(boolean blocked) {
     }
 
+    /**
+     * The next-link bias of a chain (roadmap 2.1; null = none): scripts whose stop points tie on margin prefer the one
+     * nearer the next link. Read on every roll; the owner updates it in place.
+     */
+    default void setNextLinkBias(NextLinkBias bias) {
+    }
+
     /** Forget the search (target changed, world change). */
     void reset();
 }

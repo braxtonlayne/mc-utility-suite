@@ -35,6 +35,11 @@ final class TechniqueRoller {
      */
     static final double TOUCH_MARGIN = FlightScript.DRIFT_LIMIT;
 
+    /** Score per block between the stop point and the next link (tie-breaker; 4 blocks = 2, under a key change's 3). */
+    static final double NEXT_LINK_WEIGHT = 0.5;
+    /** The next-link bias (null: none). */
+    NextLinkBias nextLink;
+
     private static final double Y_EPS = 1.0e-6;
     private static final float YAW_EPS = 1.0e-3f;
 
@@ -262,6 +267,11 @@ final class TechniqueRoller {
         out.usesYaw = yawTravel > YAW_EPS;
         double bucket = Math.floor(Math.min(margin, MARGIN_ENOUGH) / MARGIN_BUCKET);
         score = bucket * 1000.0 - departures * 2.0 - changes * 3.0 - yawTravel * 0.1 - (out.usesYaw ? 10.0 : 0.0);
+        if (nextLink != null && nextLink.valid() && margin >= NextLinkBias.FLOOR) {
+            // next-link bias (roadmap 2.1), a pure tie-breaker: inside one margin bucket, the stop point nearer the
+            // next link of the chain (at most NEXT_LINK_WEIGHT * MAX_DIST, below one key change)
+            score -= NEXT_LINK_WEIGHT * nextLink.distance(target.stopX(), target.stopZ());
+        }
         return true;
     }
 }

@@ -93,6 +93,11 @@ public final class TechniqueLibrary implements TechniqueSource {
             reset();
         }
     }
+    @Override
+    public void setNextLinkBias(NextLinkBias bias) {
+        roller.nextLink = bias;
+    }
+
     /** The most a script may turn the view from where it starts (the level's co-steer total). */
     private float maxTurn = TechniqueTemplates.DEFAULT_MAX_TURN;
 

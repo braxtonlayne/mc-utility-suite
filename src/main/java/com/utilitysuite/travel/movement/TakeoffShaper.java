@@ -56,6 +56,7 @@ public final class TakeoffShaper {
     private double cMiss;
     private double cSpeed;
     private double cLandX, cLandY, cLandZ;
+    private double cLandVx, cLandVz;
     private float cDamage;
 
     // result of the last evaluate
@@ -76,6 +77,21 @@ public final class TakeoffShaper {
     private double shapeSpeed;
     private int plainJumpTick = -1;
     private int ticks;
+    /** The next-link bias (roadmap 2.1), or null: equal-cost shapes compare by margin alone. */
+    private NextLinkBias nextLink;
+
+    /**
+     * Breaks ties between shapes of the same cost with the next-link bias: a touchdown that keeps
+     * {@link NextLinkBias#FLOOR} and sits nearer the next link of a chain beats a deeper one (null: margin only).
+     * The cost order and the validity rules are unchanged.
+     */
+    public void setNextLinkBias(NextLinkBias b) {
+        nextLink = b;
+    }
+
+    private double rankOf(double margin) {
+        return NextLinkBias.rank(nextLink, margin, cLandX, cLandZ, cLandX, cLandZ, cLandVx, cLandVz);
+    }
 
     /**
      * Evaluates the run-up. Needs a target on {@code search}; does nothing (and reports nothing needed) without one,
@@ -134,6 +150,7 @@ public final class TakeoffShaper {
         double need = plainMargin >= 0.0 ? SAFE_MARGIN : 0.0; // a narrow landing must gain margin to be worth it
         int bestCost = Integer.MAX_VALUE;
         double bestMargin = -Double.MAX_VALUE;
+        double bestRank = -Double.MAX_VALUE;
         double bestSpeed = 0.0;
         int groundTicks = plainJumpTick + 1;
 
@@ -149,6 +166,7 @@ public final class TakeoffShaper {
                 boolean better = 1 < bestCost || (1 == bestCost && cSpeed > bestSpeed + 1.0e-9);
                 if (better) {
                     bestCost = 1;
+                    bestRank = rankOf(cMargin);
                     bestMargin = cMargin;
                     bestSpeed = cSpeed;
                     take(0, 0, k, false, yaw, 1);
@@ -167,8 +185,10 @@ public final class TakeoffShaper {
                             need)) {
                         continue;
                     }
-                    if (n < bestCost || cMargin > bestMargin + 1.0e-9) {
+                    double r = rankOf(cMargin);
+                    if (n < bestCost || r > bestRank + 1.0e-9) {
                         bestCost = n;
+                        bestRank = r;
                         bestMargin = cMargin;
                         bestSpeed = cSpeed;
                         take(side, n, -1, false, yaw, n);
@@ -183,8 +203,9 @@ public final class TakeoffShaper {
             float shapeYaw = yaw + side * STRAFE_YAW;
             int c = groundTicks + YAW_COST;
             if (c <= bestCost && valid(simulate(now, shapeYaw, userF, userS, side, MAX_GROUND + 1, sprinting, -1,
-                    health, search, w), safeOnly, need) && (c < bestCost || cMargin > bestMargin + 1.0e-9)) {
+                    health, search, w), safeOnly, need) && (c < bestCost || rankOf(cMargin) > bestRank + 1.0e-9)) {
                 bestCost = c;
+                bestRank = rankOf(cMargin);
                 bestMargin = cMargin;
                 bestSpeed = cSpeed;
                 take(side, MAX_GROUND + 1, -1, true, shapeYaw, c);
@@ -280,6 +301,8 @@ public final class TakeoffShaper {
         cLandX = body.x;
         cLandY = body.y;
         cLandZ = body.z;
+        cLandVx = body.vx;
+        cLandVz = body.vz;
         cMiss = search.missDistance(cLandX, cLandY, cLandZ);
         cMargin = margin(cLandX, cLandY, cLandZ, search);
         return cMiss <= 0.0;

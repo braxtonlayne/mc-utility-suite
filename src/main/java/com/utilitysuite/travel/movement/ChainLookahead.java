@@ -880,6 +880,113 @@ public final class ChainLookahead {
         return pendingColumns;
     }
 
+    // ---- next link after a landing (roadmap 2.1: next-link landing bias) ---------------------------------------------
+
+    private boolean nextValid;
+    private int nextIndex = -1;
+    private int nextX, nextBlockY, nextZ;
+    private double nextTop;
+
+    /** A block this close (blocks) to the straight line of a path jump counts as a stepping stone on it. */
+    static final double ON_JUMP_LINE = 0.75;
+
+    /**
+     * Looks up where the chain goes after the block ({@code x}, {@code blockY}, {@code z}): the link it jumps to from
+     * there when that block is a link, or the far end of the path jump whose straight line the block sits on (the path
+     * keeps the cheapest chain, so it often jumps over a block the user hops onto: with one-block gaps it goes
+     * 5 -> 9 while the user lands on 7 first, and 9 is where they go next either way). The result is kept in
+     * primitives ({@link #nextLinkValid}, {@link #nextLinkX} ...) so a caller can hand it on without holding indices
+     * into a path that may be replaced. Invalid when no plan is ready, the block is not on the path, or the chain only
+     * walks on / ends there (the last link of a chain keeps every safety margin). Allocation free.
+     *
+     * @return {@link #nextLinkValid()}
+     */
+    public boolean findNextLink(int x, int blockY, int z) {
+        nextValid = false;
+        nextIndex = -1;
+        if (!ready) {
+            return false;
+        }
+        double top = blockY + 1.0;
+        double px = x + 0.5;
+        double pz = z + 0.5;
+        for (int i = 0; i < pathLen; i++) {
+            if (pathX[i] == x && pathZ[i] == z && pathBlockY[i] == blockY) {
+                return takeNext(nextJump(i));
+            }
+        }
+        for (int i = 0; i + 1 < pathLen; i++) {
+            if (pathJump[i + 1] && onJumpLine(i, px, top, pz)) {
+                return takeNext(i + 1);
+            }
+        }
+        return false;
+    }
+
+    /** The block centre lies strictly between links i and i + 1, near their straight line and between their tops. */
+    private boolean onJumpLine(int i, double px, double top, double pz) {
+        double ax = pathX[i] + 0.5;
+        double az = pathZ[i] + 0.5;
+        double dx = pathX[i + 1] + 0.5 - ax;
+        double dz = pathZ[i + 1] + 0.5 - az;
+        double len2 = dx * dx + dz * dz;
+        if (len2 < 1.0e-9) {
+            return false;
+        }
+        double u = ((px - ax) * dx + (pz - az) * dz) / len2;
+        if (u <= 0.0 || u >= 1.0) {
+            return false;
+        }
+        double ex = ax + u * dx - px;
+        double ez = az + u * dz - pz;
+        if (ex * ex + ez * ez > ON_JUMP_LINE * ON_JUMP_LINE) {
+            return false;
+        }
+        double lo = Math.min(pathTop[i], pathTop[i + 1]) - 1.0;
+        double hi = Math.max(pathTop[i], pathTop[i + 1]) + 1.0;
+        return top >= lo && top <= hi;
+    }
+
+    private boolean takeNext(int j) {
+        if (j < 0) {
+            return false;
+        }
+        nextValid = true;
+        nextIndex = j;
+        nextX = pathX[j];
+        nextBlockY = pathBlockY[j];
+        nextZ = pathZ[j];
+        nextTop = pathTop[j];
+        return true;
+    }
+
+    /** The last {@link #findNextLink} found a next jump link. */
+    public boolean nextLinkValid() {
+        return nextValid;
+    }
+
+    /** Path index of the next link (-1 when invalid). */
+    public int nextLinkIndex() {
+        return nextIndex;
+    }
+
+    public int nextLinkX() {
+        return nextX;
+    }
+
+    public int nextLinkBlockY() {
+        return nextBlockY;
+    }
+
+    public int nextLinkZ() {
+        return nextZ;
+    }
+
+    /** Feet height on the next link's top. */
+    public double nextLinkTop() {
+        return nextTop;
+    }
+
     /** Voxel lookups of the last update (budget check). */
     public int lastLookups() {
         return lastLookups;

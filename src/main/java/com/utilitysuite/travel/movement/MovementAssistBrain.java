@@ -97,6 +97,19 @@ public final class MovementAssistBrain {
     private final FlightController flight = new FlightController();
     /** The brake family rolled at the co-steer's yaw: is a target no plan lands on at this yaw still in reach. */
     private final FlightController aimFlight = new FlightController();
+    /**
+     * Next-link landing bias (roadmap 2.1): the link of the chain after the locked target, while the user is going on
+     * down the chain. Updated each {@link #decide}; the air brake, the takeoff shaper and the technique search read it.
+     */
+    private final NextLinkBias nextLink = new NextLinkBias();
+
+    {
+        flight.setNextLinkBias(nextLink);
+        shaper.setNextLinkBias(nextLink);
+    }
+
+    /** The next-link bias is on (tests compare without it). */
+    public boolean nextLinkBias = true;
     /** Region of the top the body landed on (the hold's stability check). */
     private final SupportRegion landRegion = new SupportRegion();
     /** Region of the locked target's real top (flight plan, mark). */
@@ -206,6 +219,7 @@ public final class MovementAssistBrain {
             targetRegionValid = false;
             targetSafe = false;
         }
+        updateNextLink(now, targetOn, keys);
         commit.mode = mode;
         commit.narrowTarget = targetOn && targetRegionValid
                 && (targetRegion.topBound(2) - targetRegion.topBound(0) < NARROW_TOP
@@ -397,9 +411,11 @@ public final class MovementAssistBrain {
             return false;
         }
         int j = chainNext(at);
-        if (j < 0) {
-            return false;
-        }
+        return j >= 0 && viewOnChain(at, j);
+    }
+
+    /** The view is within {@link #CHAIN_LOOK_DEG} of a chain link from {@code j} to {@link #CHAIN_LOOK_LINKS} on. */
+    private boolean viewOnChain(MovementPhysics at, int j) {
         double eye = at.y + 1.62;
         int end = Math.min(chain.length(), j + CHAIN_LOOK_LINKS);
         for (int k = j; k < end; k++) {
@@ -417,6 +433,52 @@ public final class MovementAssistBrain {
             }
         }
         return false;
+    }
+
+    /**
+     * Roadmap 2.1: the planners biased each landing toward its own deepest stop, which forced a stop or a sharp turn
+     * before the next jump of a chain. When the locked target is a link of the chain path with a jump after it, and the
+     * user is going on (W down, and jump held or the view down the chain past the target, the same evidence as
+     * {@link #chainContinues}), the next link is handed to the planners as a tie-breaker ({@link NextLinkBias}).
+     */
+    private void updateNextLink(MovementPhysics at, boolean targetOn, int keys) {
+        // a bias taken up in the air holds to the touchdown onto the same target while W stays down: a glance away
+        // mid-flight must not flip the brake plan back to the deepest stop, which then brakes late and hard
+        boolean held = nextLinkAir && !at.onGround && heldX == itx && heldY == ity && heldZ == itz;
+        nextLinkAir = false;
+        nextLink.clear();
+        if (!nextLinkBias || !targetOn || !targetRegionValid || !intentAssist || chain == null || !chain.ready()
+                || (keys & LandingHold.FORWARD) == 0 || !chain.findNextLink(itx, ity, itz)) {
+            return;
+        }
+        if (!held && (keys & LandingHold.JUMP) == 0 && !viewOnChain(at, chain.nextLinkIndex())) {
+            return;
+        }
+        // the way in: the body's travel, or the line to the target while it barely moves
+        double inX = at.vx;
+        double inZ = at.vz;
+        if (inX * inX + inZ * inZ < NEXT_LINK_MIN_SPEED * NEXT_LINK_MIN_SPEED) {
+            inX = itx + 0.5 - at.x;
+            inZ = itz + 0.5 - at.z;
+        }
+        if (nextLink.offer(chain.nextLinkX(), chain.nextLinkZ(), inX, inZ, itx, itz) && !at.onGround) {
+            nextLinkAir = true;
+            heldX = itx;
+            heldY = ity;
+            heldZ = itz;
+        }
+    }
+
+    /** The bias was live in the air for the target {@code held*} (it holds to the touchdown). */
+    private boolean nextLinkAir;
+    private int heldX, heldY, heldZ;
+
+    /** Below this horizontal speed (blocks/tick) the way into a landing is the line to it, not the travel. */
+    static final double NEXT_LINK_MIN_SPEED = 0.05;
+
+    /** The next-link bias of this tick (valid while the user goes on down the chain past the locked target). */
+    public NextLinkBias nextLink() {
+        return nextLink;
     }
 
     /** Index of the next jump link of the chain from the top the body is on, or -1. */
@@ -1334,6 +1396,8 @@ public final class MovementAssistBrain {
     public void reset() {
         targetFrozen = false;
         trimUsed = false;
+        nextLinkAir = false;
+        nextLink.clear();
         clearIntentTarget();
         approach.reset();
         scriptOn = false;
@@ -1656,6 +1720,7 @@ public final class MovementAssistBrain {
     /** The technique planner (corner, neo, headhitter, 45-degree); {@link TechniqueSource#NONE} until one is set. */
     public void setTechniques(TechniqueSource source) {
         techniques = source != null ? source : TechniqueSource.NONE;
+        techniques.setNextLinkBias(nextLink);
     }
 
     public TechniqueSource techniques() {
