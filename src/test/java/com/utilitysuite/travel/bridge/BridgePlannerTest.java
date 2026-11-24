@@ -51,6 +51,41 @@ class BridgePlannerTest {
     }
 
     @Test
+    void diagonalLineAlternatesAxes() {
+        long[] ps = BridgePlanner.between(0, 64, 0, 6, 6).positions();
+        assertEquals(12, ps.length);
+        assertFaceConnected(0, 0, ps);
+        for (int i = 1; i < ps.length; i++) {
+            boolean xStep = Packed.x(ps[i]) != Packed.x(ps[i - 1]);
+            boolean prevX = i == 1 ? Packed.x(ps[0]) != 0 : Packed.x(ps[i - 1]) != Packed.x(ps[i - 2]);
+            assertTrue(xStep != prevX, "strict alternation at " + i);
+        }
+    }
+
+    @Test
+    void steadyYawIsConstantAndDiagonalOnly() {
+        assertTrue(Double.isNaN(BridgePlanner.steadyBackYaw(0, 0, 10, 0)));
+        assertTrue(Double.isNaN(BridgePlanner.steadyBackYaw(0, 0, 0, -7)));
+        assertEquals(135.0, Math.abs(BridgePlanner.steadyBackYaw(0, 0, 9, 9)), 1e-9);
+        assertEquals(BridgePlanner.steadyBackYaw(0, 0, 9, 9), BridgePlanner.steadyBackYaw(3, 3, 9, 9), 1e-9);
+    }
+
+    @Test
+    void previousSupportFaceWinsWhenVisible() {
+        assertEquals(BridgePlanner.SUPPORT_PREVIOUS,
+                BridgePlanner.chooseSupport(1, 0, 0, 0, true, true, 1.4, 0.5));
+    }
+
+    @Test
+    void sideSupportUsedOnlyWhenPreviousHiddenAndSideVisible() {
+        // Target (1,0) from (0,0); side A block (1,1) has a -z face (plane z=1), side B block (1,-1) a +z face (z=0).
+        assertEquals(BridgePlanner.SUPPORT_SIDE_A, BridgePlanner.chooseSupport(1, 0, 0, 0, true, false, 0.5, 0.5));
+        assertEquals(BridgePlanner.SUPPORT_SIDE_B, BridgePlanner.chooseSupport(1, 0, 0, 0, false, true, 0.5, 0.5));
+        assertEquals(BridgePlanner.SUPPORT_PREVIOUS, BridgePlanner.chooseSupport(1, 0, 0, 0, false, false, 0.5, 0.5));
+        assertEquals(BridgePlanner.SUPPORT_PREVIOUS, BridgePlanner.chooseSupport(1, 0, 0, 0, true, false, 0.5, 1.5));
+    }
+
+    @Test
     void facingPlansSnapToEightDirections() {
         BridgePlanner.Plan south = BridgePlanner.facing(0, 64, 0, 3.0, 4); // yaw ~0 = +z
         assertFalse(south.toMarker());

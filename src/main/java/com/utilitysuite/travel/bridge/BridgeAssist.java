@@ -104,6 +104,7 @@ public final class BridgeAssist implements IModule, IConfigurable {
     // run
     private boolean running;
     private BridgePlanner.Plan plan;
+    private double steadyYaw = Double.NaN;
     private long start;
     private int index;
     private int placed;
@@ -260,6 +261,21 @@ public final class BridgeAssist implements IModule, IConfigurable {
         int pz = Packed.z(p);
         int qx = Packed.x(q);
         int qz = Packed.z(q);
+        if (!Double.isNaN(steadyYaw)) {
+            // Diagonal route: the previous block, or a solid side neighbour of the target, whichever face is visible.
+            int perpX = pz != qz ? 1 : 0;
+            int perpZ = px != qx ? 1 : 0;
+            boolean sideA = occupied(level, Packed.pack(px + perpX, baseY, pz + perpZ));
+            boolean sideB = occupied(level, Packed.pack(px - perpX, baseY, pz - perpZ));
+            int sup = BridgePlanner.chooseSupport(px, pz, qx, qz, sideA, sideB, player.getX(), player.getZ());
+            if (sup == BridgePlanner.SUPPORT_SIDE_A) {
+                qx = px + perpX;
+                qz = pz + perpZ;
+            } else if (sup == BridgePlanner.SUPPORT_SIDE_B) {
+                qx = px - perpX;
+                qz = pz - perpZ;
+            }
+        }
         int dirX = px - qx;
         int dirZ = pz - qz;
         Direction face = dirX > 0 ? Direction.EAST : dirX < 0 ? Direction.WEST : dirZ > 0 ? Direction.SOUTH
@@ -285,7 +301,7 @@ public final class BridgeAssist implements IModule, IConfigurable {
         // spans the lane, so a centred player hits it without yaw corrections), pitch from how far the eye is past the
         // face plane. Aiming at the face point itself made the yaw swing wildly: that point is almost straight down,
         // so centimetre moves changed the horizontal direction by tens of degrees.
-        double backYaw = Angles.yawTo(-dirX, -dirZ);
+        double backYaw = Double.isNaN(steadyYaw) ? Angles.yawTo(-dirX, -dirZ) : steadyYaw;
         double pitch = Math.max(BRIDGE_PITCH - 8f, Math.min(88.0,
                 Angles.pitchTo(Math.max(beyond, PITCH_BEYOND_MIN), hy)));
         aim.aim(input, lease, backYaw, pitch, rotationMode, AIM_SPEED);
@@ -424,6 +440,8 @@ public final class BridgeAssist implements IModule, IConfigurable {
             plan = BridgePlanner.facing(on.getX(), on.getY(), on.getZ(), player.getYRot(), length);
             start = here;
         }
+        steadyYaw = plan.length() == 0 ? Double.NaN : BridgePlanner.steadyBackYaw(Packed.x(start), Packed.z(start),
+                Packed.x(plan.positions()[plan.length() - 1]), Packed.z(plan.positions()[plan.length() - 1]));
         if (startIndex >= plan.length()) {
             TravelMessages.status("message.utilitysuite.bridge.at_marker", 0);
             return false;

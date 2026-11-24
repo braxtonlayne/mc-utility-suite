@@ -97,6 +97,14 @@ public final class RouteState {
         return Angles.yawTo(xs[index] + 0.5 - px, zs[index] + 0.5 - pz);
     }
 
+    /** Yaw of the leg leaving the current stop, or the incoming bearing at the final stop. */
+    public double outgoingYaw(double px, double pz) {
+        if (isFinalStop()) {
+            return bearing(px, pz);
+        }
+        return Angles.yawTo(xs[index + 1] - xs[index], zs[index + 1] - zs[index]);
+    }
+
     /** Turn angle (absolute degrees) at the current stop toward the next one, or 0 at the final stop. */
     public double cornerTurn(double px, double pz) {
         if (isFinalStop()) {

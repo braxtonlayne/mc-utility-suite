@@ -15,6 +15,7 @@ import net.minecraft.tags.FluidTags;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.vehicle.Boat;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
 
@@ -40,6 +41,7 @@ final class BoatDriver {
     private final DutyCycle duty = new DutyCycle();
     private final HeldKeys keys = new HeldKeys();
     private final CameraAim aim = new CameraAim(2f);
+    private final BlockPos.MutableBlockPos surfacePos = new BlockPos.MutableBlockPos();
     private int rayCursor;
     private boolean dismounting;
     private int dismountWait;
@@ -93,15 +95,44 @@ final class BoatDriver {
         double bearing = route.bearing(bx, bz);
         sampleRays(boat.level(), bx, boat.getY(), bz, bearing);
         double heading = BoatSteering.chooseHeading(bearing, clearances, rayRange, dist);
+        double cornerTurn = route.cornerTurn(bx, bz);
+        double iceDecel = iceDecel(boat);
+        int brake = route.isFinalStop() ? BoatIceBraking.NONE
+                : BoatIceBraking.command(iceDecel > 0.0, speed, iceDecel, dist, cornerTurn);
+        if (brake != BoatIceBraking.NONE) {
+            // Pre-turn into the corner while coasting, so the boat already points down the next leg on arrival.
+            heading = BoatIceBraking.preTurnHeading(heading, route.outgoingYaw(bx, bz), dist,
+                    BoatIceBraking.stoppingDistance(speed, iceDecel) + BoatIceBraking.MARGIN);
+        }
         double err = Angles.delta(boat.getYRot(), heading);
         // A boat's yaw decreases with LEFT (deltaRotation--) and increases with RIGHT.
         keys.set(input, lease, SimKey.LEFT, err < -TURN_DEADBAND_DEG);
         keys.set(input, lease, SimKey.RIGHT, err > TURN_DEADBAND_DEG);
+        if (brake != BoatIceBraking.NONE) {
+            keys.set(input, lease, SimKey.FORWARD, false);
+            keys.set(input, lease, SimKey.BACK, brake == BoatIceBraking.COAST_AND_BACK);
+            aim.aim(input, lease, heading, CAMERA_PITCH, RotationMode.VISIBLE, 0.6f);
+            return Result.RUNNING;
+        }
+        keys.set(input, lease, SimKey.BACK, false);
         double throttle = BoatThrottle.throttle(err, route.isFinalStop() ? Double.POSITIVE_INFINITY : dist,
-                route.cornerTurn(bx, bz), route.remainingDistance(bx, bz), speed);
+                cornerTurn, route.remainingDistance(bx, bz), speed);
         keys.set(input, lease, SimKey.FORWARD, duty.next(throttle));
         aim.aim(input, lease, heading, CAMERA_PITCH, RotationMode.VISIBLE, 0.6f);
         return Result.RUNNING;
+    }
+
+    /** Surface deceleration estimate when the boat rides on packed or blue ice, else 0. */
+    private double iceDecel(Boat boat) {
+        Level level = boat.level();
+        BlockState s = level.getBlockState(surfacePos.set(boat.getX(), boat.getY() - 0.3, boat.getZ()));
+        if (s.is(Blocks.BLUE_ICE)) {
+            return BoatIceBraking.DECEL_BLUE_ICE;
+        }
+        if (s.is(Blocks.PACKED_ICE) || s.is(Blocks.ICE) || s.is(Blocks.FROSTED_ICE)) {
+            return BoatIceBraking.DECEL_ICE;
+        }
+        return 0.0;
     }
 
     private void sampleRays(Level level, double x, double y, double z, double bearing) {

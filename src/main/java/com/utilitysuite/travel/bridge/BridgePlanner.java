@@ -70,4 +70,58 @@ public final class BridgePlanner {
         Plan p = between(sx, y, sz, sx + ddx * len, sz + ddz * len);
         return new Plan(p.positions(), false);
     }
+
+    public static final int SUPPORT_PREVIOUS = 0;
+    public static final int SUPPORT_SIDE_A = 1;
+    public static final int SUPPORT_SIDE_B = 2;
+
+    /**
+     * Steady yaw for a diagonal route (both axes non-zero): straight back along the whole route direction, about 45
+     * degrees for a true diagonal. Constant for the run, so the head does not swing between the X-step and Z-step
+     * poses of an alternating grid line. NaN when the route is axis-aligned (the per-step yaw is already steady).
+     */
+    public static double steadyBackYaw(int sx, int sz, int ex, int ez) {
+        int dx = ex - sx;
+        int dz = ez - sz;
+        if (dx == 0 || dz == 0) {
+            return Double.NaN;
+        }
+        return Angles.yawTo(-dx, -dz);
+    }
+
+    /**
+     * Picks which block supports placing target {@code (px, pz)}, given the previous plan block {@code (qx, qz)}
+     * (grid-adjacent to the target). Candidates: the previous block's face, and the two side neighbours of the target
+     * (perpendicular to the step) when already solid, so a stair-step can be placed against whichever face the eye
+     * sees. The previous block wins whenever its face is visible (no flip-flopping); a side neighbour is used only
+     * when the previous face is hidden and the side face is visible.
+     *
+     * @param sideAOccupied neighbour at target + perpendicular(+) is solid
+     * @param sideBOccupied neighbour at target - perpendicular(+) is solid
+     */
+    public static int chooseSupport(int px, int pz, int qx, int qz, boolean sideAOccupied, boolean sideBOccupied,
+                                    double eyeX, double eyeZ) {
+        int dirX = px - qx;
+        int dirZ = pz - qz;
+        if (faceVisible(qx, qz, dirX, dirZ, eyeX, eyeZ)) {
+            return SUPPORT_PREVIOUS;
+        }
+        int perpX = dirZ != 0 ? 1 : 0;
+        int perpZ = dirX != 0 ? 1 : 0;
+        if (sideAOccupied && faceVisible(px + perpX, pz + perpZ, -perpX, -perpZ, eyeX, eyeZ)) {
+            return SUPPORT_SIDE_A;
+        }
+        if (sideBOccupied && faceVisible(px - perpX, pz - perpZ, perpX, perpZ, eyeX, eyeZ)) {
+            return SUPPORT_SIDE_B;
+        }
+        return SUPPORT_PREVIOUS;
+    }
+
+    /** Whether the face of block {@code (bx, bz)} pointing along {@code (dirX, dirZ)} is in front of the eye. */
+    public static boolean faceVisible(int bx, int bz, int dirX, int dirZ, double eyeX, double eyeZ) {
+        if (dirX != 0) {
+            return (eyeX - (bx + (dirX > 0 ? 1.0 : 0.0))) * dirX > 0.05;
+        }
+        return (eyeZ - (bz + (dirZ > 0 ? 1.0 : 0.0))) * dirZ > 0.05;
+    }
 }
