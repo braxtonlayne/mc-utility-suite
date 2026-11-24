@@ -20,6 +20,30 @@ public final class FakeInputBackend implements InputBackend {
     public float pitch;
     public int rotationWrites;
     public int selectedSlot;
+    /** The "player's" movement input of this tick (what {@code MovementInputUpdateEvent} carries). */
+    public final SharedInputOverlay.MoveFields move = new SharedInputOverlay.MoveFields();
+    public int moveWrites;
+
+    @Override
+    public boolean readMoveAxes(SharedInputOverlay.MoveFields f) {
+        if (!ready) {
+            return false;
+        }
+        f.forwardImpulse = move.forwardImpulse;
+        f.leftImpulse = move.leftImpulse;
+        return true;
+    }
+
+    @Override
+    public void writeMoveAxes(SharedInputOverlay.MoveFields f) {
+        move.forwardImpulse = f.forwardImpulse;
+        move.leftImpulse = f.leftImpulse;
+        move.up = f.up;
+        move.down = f.down;
+        move.left = f.left;
+        move.right = f.right;
+        moveWrites++;
+    }
 
     public boolean isDown(SimKey k) {
         return down[k.ordinal()];

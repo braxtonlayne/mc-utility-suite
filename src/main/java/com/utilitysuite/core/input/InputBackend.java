@@ -30,6 +30,18 @@ public interface InputBackend {
     /** Registers one click (a press edge) for keys whose vanilla handling consumes clicks (attack/use). */
     void clickKey(SimKey key);
 
+    /**
+     * Copies the forward and strafe impulse of the local player's movement input of this tick into {@code f}. False
+     * when there is none (no player). The default has no movement input.
+     */
+    default boolean readMoveAxes(SharedInputOverlay.MoveFields f) {
+        return false;
+    }
+
+    /** Writes the forward/strafe impulse and the four direction flags of {@code f} onto that movement input. */
+    default void writeMoveAxes(SharedInputOverlay.MoveFields f) {
+    }
+
     float yaw();
 
     float pitch();

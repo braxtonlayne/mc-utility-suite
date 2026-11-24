@@ -48,6 +48,14 @@ import java.util.function.BooleanSupplier;
  * {@link SharedGrant#end}, Stop-All, world unload, a lease that wins MOVEMENT (arbiter callback) and a screen opening
  * ({@link #onScreenOpening} and the per-tick check). Hardware key presses never end it; modules read them through
  * {@link #manual()}. Client thread only.
+ *
+ * <h2>Assist grant</h2>
+ * {@link #beginAssist} hands out a second reused instance that rides along with another module's MOVEMENT lease
+ * ({@link ActionArbiter#beginAssist}) instead of holding MOVEMENT: axes, jump and sneak only (sprint and co-steer
+ * calls are ignored), applied in the same pass right after the grant's writes, with the same one-tick lapse and sneak
+ * multiplier. It ends with the lease it rides on (so the user's own movement keys end it with the job's lease), on
+ * Stop-All, world unload and a screen opening. The two never write in the same tick: a lease on MOVEMENT and the
+ * shared grant exclude each other in the arbiter.
  */
 public final class SharedInputOverlay implements ISharedControl {
 
@@ -61,7 +69,9 @@ public final class SharedInputOverlay implements ISharedControl {
     private final YawCoSteer steer;
     private final BooleanSupplier screenOpen;
     private final BooleanSupplier legitLevel;
-    private final Grant grant = new Grant();
+    private final Grant grant = new Grant(false);
+    /** The assist grant ({@link #beginAssist}): axes, jump and sneak next to another module's MOVEMENT lease. */
+    private final Grant assist = new Grant(true);
     /** Scratch copy of the movement input the writes are applied to (reused). */
     private final MoveFields fields = new MoveFields();
     /** The overlay the sprint-withhold mixin reads (the registered one; null before the core starts). */
@@ -115,6 +125,35 @@ public final class SharedInputOverlay implements ISharedControl {
     }
 
     @Override
+    public SharedGrant beginAssist(String moduleId) {
+        if (moduleId == null || screenOpen.getAsBoolean()) {
+            return null;
+        }
+        Grant a = assist;
+        if (a.active && !a.moduleId.equals(moduleId)) {
+            return null;
+        }
+        if (!arbiter.beginAssist(moduleId, a)) {
+            return null;
+        }
+        if (!a.active) {
+            // a live grant stays as it is (pending writes included): the arbiter ends it with the lease it rides on
+            a.start(moduleId, false, false);
+        }
+        return a;
+    }
+
+    /** The assist grant instance (live or not), for diagnostics and tests. */
+    public SharedGrant assistGrant() {
+        return assist;
+    }
+
+    /** Why the last assist grant ended (null while live or before the first). */
+    public LeaseEndReason lastAssistEndReason() {
+        return assist.endReason;
+    }
+
+    @Override
     public ManualFacts manual() {
         return facts;
     }
@@ -145,11 +184,15 @@ public final class SharedInputOverlay implements ISharedControl {
         steer.beginTick();
     }
 
-    /** A screen opened: the grant ends at once (PREEMPTED by "screen"). */
+    /** A screen opened: the grant and the assist grant end at once (PREEMPTED by "screen"). */
     public void onScreenOpening() {
         if (grant.active) {
             arbiter.endShared(grant);
             grant.finish(LeaseEndReason.PREEMPTED);
+        }
+        if (assist.active) {
+            arbiter.endAssist(assist);
+            assist.finish(LeaseEndReason.PREEMPTED);
         }
     }
 
@@ -157,7 +200,8 @@ public final class SharedInputOverlay implements ISharedControl {
     public void onMovementInput(MovementInputUpdateEvent event) {
         sprintBlocked = false;
         Grant g = grant;
-        if (g.active && g.hasWrites()) {
+        Grant a = assist;
+        if ((g.active && g.hasWrites()) || (a.active && a.hasWrites())) {
             GameSide.apply(this, event);
         }
     }
@@ -229,8 +273,13 @@ public final class SharedInputOverlay implements ISharedControl {
      * @param slow vanilla's impulse multiplier while moving slowly (sneaking speed), else 1
      */
     public boolean apply(MoveFields f, float slow) {
-        Grant g = grant;
         sprintBlocked = false;
+        boolean sprint = applyGrant(grant, f, slow);
+        applyGrant(assist, f, slow); // axes, jump and sneak only: it never carries a sprint write
+        return sprint;
+    }
+
+    private boolean applyGrant(Grant g, MoveFields f, float slow) {
         if (!g.active) {
             return false;
         }
@@ -256,7 +305,9 @@ public final class SharedInputOverlay implements ISharedControl {
                 f.shiftKeyDown = true;
             }
             sprint = g.sprint && !g.noSprint;
-            sprintBlocked = g.noSprint;
+            if (g.noSprint) {
+                sprintBlocked = true;
+            }
         }
         g.clearWrites();
         return sprint;
@@ -286,6 +337,8 @@ public final class SharedInputOverlay implements ISharedControl {
     // ---- the grant --------------------------------------------------------------------------------------------------
 
     private final class Grant implements SharedGrant, ActionArbiter.SharedHolder {
+        /** The assist grant: axes, jump and sneak only; sprint and yaw calls are ignored. */
+        final boolean assistOnly;
         boolean active;
         String moduleId;
         boolean wantsYaw;
@@ -300,6 +353,10 @@ public final class SharedInputOverlay implements ISharedControl {
         boolean sprint;
         boolean noSprint;
 
+        Grant(boolean assistOnly) {
+            this.assistOnly = assistOnly;
+        }
+
         void start(String id, boolean wantsYaw, boolean yawAllowed) {
             this.active = true;
             this.moduleId = id;
@@ -307,15 +364,19 @@ public final class SharedInputOverlay implements ISharedControl {
             this.yawAllowed = yawAllowed;
             this.endReason = null;
             clearWrites();
-            steer.reset();
+            if (!assistOnly) {
+                steer.reset();
+            }
         }
 
         void finish(LeaseEndReason reason) {
             active = false;
             endReason = reason;
-            sprintBlocked = false;
             clearWrites();
-            steer.reset();
+            if (!assistOnly) {
+                sprintBlocked = false;
+                steer.reset();
+            }
         }
 
         void clearWrites() {
@@ -370,7 +431,7 @@ public final class SharedInputOverlay implements ISharedControl {
 
         @Override
         public void startSprint() {
-            if (!active) {
+            if (!active || assistOnly) {
                 return;
             }
             stamp();
@@ -379,7 +440,7 @@ public final class SharedInputOverlay implements ISharedControl {
 
         @Override
         public void withholdSprint() {
-            if (!active) {
+            if (!active || assistOnly) {
                 return;
             }
             stamp();
@@ -388,7 +449,7 @@ public final class SharedInputOverlay implements ISharedControl {
 
         @Override
         public boolean canWithholdSprint() {
-            return true;
+            return !assistOnly;
         }
 
         @Override
@@ -400,18 +461,22 @@ public final class SharedInputOverlay implements ISharedControl {
 
         @Override
         public double opposingYawDeg() {
-            return active ? steer.opposingDeg() : 0.0;
+            return active && !assistOnly ? steer.opposingDeg() : 0.0;
         }
 
         @Override
         public double coSteerAddedDeg() {
-            return active ? steer.totalAddedDeg() : 0.0;
+            return active && !assistOnly ? steer.totalAddedDeg() : 0.0;
         }
 
         @Override
         public void end() {
             if (active) {
-                arbiter.endShared(this);
+                if (assistOnly) {
+                    arbiter.endAssist(this);
+                } else {
+                    arbiter.endShared(this);
+                }
                 finish(LeaseEndReason.RELEASED);
             }
         }

@@ -25,10 +25,8 @@ import com.utilitysuite.core.input.YawCoSteer;
 import net.neoforged.neoforge.client.event.ScreenEvent;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ServerData;
-import net.minecraft.client.player.Input;
 import net.minecraft.client.server.IntegratedServer;
 import net.minecraft.network.chat.Component;
-import net.minecraft.util.Mth;
 import net.minecraft.world.level.storage.LevelResource;
 import net.neoforged.bus.api.EventPriority;
 import net.neoforged.bus.api.IEventBus;
@@ -131,10 +129,12 @@ public final class CoreBootstrap {
         bus.addListener(CoreBootstrap::onTickPre);
         bus.addListener(CoreBootstrap::onTickPost);
         bus.addListener(CoreBootstrap::onFrame);
-        // first, before any module reads the keys or the look: undo foreign turns (see setForeignRotationGuard)
-        bus.addListener(EventPriority.HIGHEST, CoreBootstrap::onMovementInput);
-        // shared-control writes: after the module listeners that only read the user's keys (NORMAL)
-        bus.addListener(EventPriority.LOW, sharedControl::onMovementInput);
+        // first, before any module reads the keys or the look: the smoother opens this tick's movement input and
+        // re-aims the keys after a foreign turn (see setForeignRotationGuard); modules may then ask it for a heading
+        // hold (IInputSmoother.holdMoveHeading) from their own listeners
+        bus.addListener(EventPriority.HIGHEST, CoreBootstrap::onMovementInputFirst);
+        // shared-control writes: after the module listeners that only read the user's keys (NORMAL); then closed
+        bus.addListener(EventPriority.LOW, CoreBootstrap::onMovementInputLast);
         bus.addListener((ScreenEvent.Opening e) -> sharedControl.onScreenOpening());
         bus.addListener(CoreBootstrap::onLogin);
         bus.addListener(CoreBootstrap::onLogout);
@@ -222,27 +222,17 @@ public final class CoreBootstrap {
         modState.tick();
     }
 
-    private static void onMovementInput(MovementInputUpdateEvent event) {
+    private static void onMovementInputFirst(MovementInputUpdateEvent event) {
         Minecraft mc = Minecraft.getInstance();
-        if (event.getEntity() != mc.player || !smoother.isForeignRotationGuardOn()) {
-            return;
+        // the smoother works on player.input, the object this event carries for the local player
+        if (event.getEntity() == mc.player && mc.player != null && event.getInput() == mc.player.input) {
+            smoother.beginMoveInput();
         }
-        float heading = smoother.foreignHeading();
-        if (!Float.isNaN(heading)) {
-            // keys were meant along the wanted heading; the camera still looks the old way
-            Input in = event.getInput();
-            double d = Math.toRadians(Mth.wrapDegrees(mc.player.getYRot() - heading));
-            double f = in.forwardImpulse;
-            double s = in.leftImpulse;
-            double cos = Math.cos(d);
-            double sin = Math.sin(d);
-            in.forwardImpulse = (float) (f * cos - s * sin);
-            in.leftImpulse = (float) (s * cos + f * sin);
-            in.up = in.forwardImpulse > 0.05f;
-            in.down = in.forwardImpulse < -0.05f;
-            in.left = in.leftImpulse > 0.05f;
-            in.right = in.leftImpulse < -0.05f;
-        }
+    }
+
+    private static void onMovementInputLast(MovementInputUpdateEvent event) {
+        sharedControl.onMovementInput(event);
+        smoother.endMoveInput();
     }
 
     private static void onFrame(RenderFrameEvent.Pre event) {

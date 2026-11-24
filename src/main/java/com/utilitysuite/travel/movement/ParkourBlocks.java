@@ -10,7 +10,6 @@ import com.utilitysuite.core.api.Services;
 import com.utilitysuite.travel.CameraAim;
 import com.utilitysuite.travel.Packed;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.player.Input;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -232,28 +231,14 @@ final class ParkourBlocks {
     }
 
     /**
-     * While the camera is turned for a placement, keep the keys meaning what they meant at the jump: rotate the
-     * (strafe, forward) impulse from the jump yaw into the current yaw.
+     * While the camera is turned for a placement, keep the keys meaning what they meant at the jump: the core rotates
+     * this tick's (strafe, forward) impulse from the jump yaw into the current yaw, under this placement's lease
+     * ({@link IInputSmoother#holdMoveHeading}). Called from the movement-input listener, every tick of a placement.
      */
-    void compensate(Input in, float cameraYaw) {
+    void compensate() {
         if (phase != Phase.IDLE) {
-            rotateImpulses(in, cameraYaw, heading);
+            Services.input().holdMoveHeading(lease, heading);
         }
-    }
-
-    /** Rotates the (strafe, forward) impulse from yaw {@code heading} into {@code cameraYaw}. */
-    static void rotateImpulses(Input in, float cameraYaw, float heading) {
-        double d = Math.toRadians(net.minecraft.util.Mth.wrapDegrees(cameraYaw - heading));
-        double f = in.forwardImpulse;
-        double s = in.leftImpulse;
-        double cos = Math.cos(d);
-        double sin = Math.sin(d);
-        in.forwardImpulse = (float) (f * cos - s * sin);
-        in.leftImpulse = (float) (s * cos + f * sin);
-        in.up = in.forwardImpulse > 0.05f;
-        in.down = in.forwardImpulse < -0.05f;
-        in.left = in.leftImpulse > 0.05f;
-        in.right = in.leftImpulse < -0.05f;
     }
 
     /** Hotbar slot with a plain full block (no falling blocks), the selected one first; -1 if none. */

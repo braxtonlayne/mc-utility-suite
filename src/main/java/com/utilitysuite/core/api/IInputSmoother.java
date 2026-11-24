@@ -33,6 +33,22 @@ public interface IInputSmoother {
     default void setForeignRotationGuard(boolean on) {
     }
 
+    /**
+     * While {@code lease} has the camera turned away (a block placement, a bucket pour), keeps the user's movement
+     * keys meaning what they meant along {@code headingYaw}: this tick's (strafe, forward) input is rotated from that
+     * heading into the current camera yaw, so the body keeps travelling the way the keys were held for. Needs CAMERA.
+     * <p>
+     * For this tick's movement input only, and only from inside the movement-input event (a module's listener at the
+     * default priority: after the core has opened the input at HIGHEST, before it applies shared-control writes at
+     * LOW). The rotation is applied at once, so the caller and every later listener read the re-aimed keys. Call it
+     * every tick the hold should last: a module that stops calling, or whose lease has ended (Stop-All, the user's
+     * own mouse on a non-emergency lease, a preemption), leaves the input untouched. False when nothing was changed.
+     * Allocation free. The default does nothing.
+     */
+    default boolean holdMoveHeading(ControlLease lease, float headingYaw) {
+        return false;
+    }
+
     // ---- server-visible pose (packet layer) ---------------------------------------------------------------------
 
     /**

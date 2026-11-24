@@ -149,6 +149,8 @@ public final class MovementAssist implements IModule, IConfigurable {
     }
     /** The shared-control grant while the assist writes (null or inactive otherwise). */
     private SharedGrant grant;
+    /** The core's assist grant while "Assist automation" writes next to a job's MOVEMENT lease (else null). */
+    private SharedGrant assistGrant;
     /** The last grant could withhold sprint (what the brain may plan with before the next grant). */
     private boolean withholdCapable;
     /** The grant was begun with {@code wantsYaw}. */
@@ -297,7 +299,7 @@ public final class MovementAssist implements IModule, IConfigurable {
         if (useClutch) {
             // before the skip checks: it runs while sneaking, in water (scooping it back up) and under automation
             clutch.tick(mc, p, now, sign(in.forwardImpulse), sign(in.leftImpulse), voxels);
-            clutch.compensate(in, p.getYRot());
+            clutch.compensate();
             if (clutch.active()) {
                 blocks.release();
             }
@@ -513,16 +515,18 @@ public final class MovementAssist implements IModule, IConfigurable {
                 fwdW = SharedGrant.KEEP;
                 strW = SharedGrant.KEEP;
             }
-            blocks.compensate(in, p.getYRot());
+            blocks.compensate();
         }
         SharedGrant g = applyWrites(jumpW, fwdW, strW, sprintW, withholdW, sneakW, steerW, steerOk, steerRate,
                 steerMax);
         boolean wrote = g != null;
         if (g == null && assistAutomation && foreignMovementLease()) {
             // "Assist automation": a job holds MOVEMENT, so there is no shared grant to take (the job's keys stand).
-            // Layer the assist's jump, sneak and free-axis fills onto this same event's input, as before the grant
-            // existed: the job drives, the assist makes its jumps. Never yaw, never sprint changes here.
-            wrote = writeOntoAutomation(in, jumpW, fwdW, strW, sneakW);
+            // The assist's jump, sneak and free-axis fills go to the core's assist grant, which rides along with the
+            // job's lease: the job drives, the assist makes its jumps. Never yaw, never sprint changes here.
+            wrote = writeOntoAutomation(jumpW, fwdW, strW, sneakW);
+        } else {
+            endAssistGrant();
         }
         if (wrote) {
             if (jumpW == SharedGrant.ON) {
@@ -709,13 +713,17 @@ public final class MovementAssist implements IModule, IConfigurable {
         }
     }
 
-    /** Ends the shared grant (idempotent): nothing is written and MOVEMENT is free for other automation again. */
+    /**
+     * Ends the shared grant and the assist grant (idempotent): nothing is written and MOVEMENT is free for other
+     * automation again.
+     */
     private void endGrant() {
         SharedGrant g = grant;
         if (g != null) {
             g.end();
             grant = null;
         }
+        endAssistGrant();
     }
 
     /** A MOVEMENT lease of other automation (a latched toggle-sprint is the user's own choice, not automation). */
@@ -767,32 +775,43 @@ public final class MovementAssist implements IModule, IConfigurable {
     }
 
     /**
-     * Writes this tick's decisions straight onto the event's input while a job's MOVEMENT lease drives and "Assist
-     * automation" is on. Returns true when anything was written. Allocation free.
+     * Hands this tick's decisions to the core's assist grant while a job's MOVEMENT lease drives and "Assist
+     * automation" is on: the core applies them at {@code EventPriority.LOW} of this same event, like the shared
+     * grant's. Returns true when anything was written (false too when the core refused the grant: a screen, Stop-All,
+     * an EMERGENCY lease). Allocation free.
      */
-    private static boolean writeOntoAutomation(Input in, int jumpW, int fwdW, int strW, boolean sneakW) {
-        boolean any = false;
+    private boolean writeOntoAutomation(int jumpW, int fwdW, int strW, boolean sneakW) {
+        boolean axes = fwdW != SharedGrant.KEEP || strW != SharedGrant.KEEP;
+        if (jumpW == SharedGrant.KEEP && !axes && !sneakW) {
+            return false;
+        }
+        SharedGrant a = assistGrant;
+        if (a == null || !a.isActive()) {
+            a = Services.sharedControl().beginAssist(ID);
+            assistGrant = a;
+            if (a == null) {
+                return false;
+            }
+        }
         if (jumpW != SharedGrant.KEEP) {
-            in.jumping = jumpW == SharedGrant.ON;
-            any = true;
+            a.jump(jumpW);
         }
-        if (fwdW != SharedGrant.KEEP) {
-            in.forwardImpulse = fwdW;
-            in.up = fwdW > 0;
-            in.down = fwdW < 0;
-            any = true;
-        }
-        if (strW != SharedGrant.KEEP) {
-            in.leftImpulse = strW;
-            in.left = strW > 0;
-            in.right = strW < 0;
-            any = true;
+        if (axes) {
+            a.axes(fwdW, strW);
         }
         if (sneakW) {
-            in.shiftKeyDown = true;
-            any = true;
+            a.sneak(true);
         }
-        return any;
+        return true;
+    }
+
+    /** Ends the assist grant (idempotent). The core ends it by itself with the job's lease; this is the tidy end. */
+    private void endAssistGrant() {
+        SharedGrant a = assistGrant;
+        if (a != null) {
+            a.end();
+            assistGrant = null;
+        }
     }
 
     /**

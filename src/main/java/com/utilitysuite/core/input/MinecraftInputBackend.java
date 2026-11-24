@@ -6,6 +6,7 @@ import com.utilitysuite.core.api.SimKey;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.Options;
+import net.minecraft.client.player.Input;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.inventory.ClickType;
@@ -124,6 +125,33 @@ public final class MinecraftInputBackend implements InputBackend {
             return GLFW.glfwGetMouseButton(window, k.getValue()) == GLFW.GLFW_PRESS;
         }
         return false;
+    }
+
+    @Override
+    public boolean readMoveAxes(SharedInputOverlay.MoveFields f) {
+        LocalPlayer p = Minecraft.getInstance().player;
+        if (p == null || p.input == null) {
+            return false;
+        }
+        // the object MovementInputUpdateEvent carries: aiStep ticks player.input and fires the event with it
+        f.forwardImpulse = p.input.forwardImpulse;
+        f.leftImpulse = p.input.leftImpulse;
+        return true;
+    }
+
+    @Override
+    public void writeMoveAxes(SharedInputOverlay.MoveFields f) {
+        LocalPlayer p = Minecraft.getInstance().player;
+        if (p == null || p.input == null) {
+            return;
+        }
+        Input in = p.input;
+        in.forwardImpulse = f.forwardImpulse;
+        in.leftImpulse = f.leftImpulse;
+        in.up = f.up;
+        in.down = f.down;
+        in.left = f.left;
+        in.right = f.right;
     }
 
     @Override

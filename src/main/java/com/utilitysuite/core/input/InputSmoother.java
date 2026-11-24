@@ -42,6 +42,12 @@ public final class InputSmoother implements IInputSmoother, IContainerClicker {
     private long foreignHeadingTick = Long.MIN_VALUE / 2;
     private java.util.function.Supplier<ControlLease> cameraHolderLookup;
 
+    private static final long MOVE_INPUT_CLOSED = Long.MIN_VALUE;
+    /** Smoother tick whose movement input is open for {@link #holdMoveHeading}; {@link #MOVE_INPUT_CLOSED} = none. */
+    private long moveInputTick = MOVE_INPUT_CLOSED;
+    /** Scratch copy of the movement axes being rotated (reused). */
+    private final SharedInputOverlay.MoveFields moveScratch = new SharedInputOverlay.MoveFields();
+
     private static final SimKey[] KEYS = SimKey.all();
     private static final double TICK_SECONDS = 0.05;
     /** A retarget closer than this to the running target bends the running curve instead of restarting it. */
@@ -756,6 +762,69 @@ public final class InputSmoother implements IInputSmoother, IContainerClicker {
 
     public int foreignTurns() {
         return foreignTurns;
+    }
+
+    // ---- movement input of this tick -------------------------------------------------------------------------------
+
+    /**
+     * MovementInputUpdateEvent at HIGHEST, the local player's: this tick's movement input is open for
+     * {@link #holdMoveHeading} until {@link #endMoveInput()}. First, before any module reads the keys: while the
+     * foreign rotation guard holds a wanted heading, the keys (meant along it) are re-aimed from it into the camera
+     * yaw, which still looks the old way.
+     */
+    public void beginMoveInput() {
+        moveInputTick = tick;
+        float heading = foreignHeading();
+        if (!Float.isNaN(heading)) {
+            rotateMoveAxes(heading);
+        }
+    }
+
+    /** MovementInputUpdateEvent at LOW, after the shared-control writes: the movement input of this tick is closed. */
+    public void endMoveInput() {
+        moveInputTick = MOVE_INPUT_CLOSED;
+    }
+
+    /** True between {@link #beginMoveInput()} and {@link #endMoveInput()} of the current tick. */
+    public boolean isMoveInputOpen() {
+        return moveInputTick == tick;
+    }
+
+    @Override
+    public boolean holdMoveHeading(ControlLease lease, float headingYaw) {
+        if (moveInputTick != tick || !valid(lease, ControlChannel.CAMERA) || Float.isNaN(headingYaw)) {
+            return false;
+        }
+        return rotateMoveAxes(headingYaw);
+    }
+
+    /** Rotates this tick's (strafe, forward) impulse from yaw {@code heading} into the camera yaw. */
+    private boolean rotateMoveAxes(float heading) {
+        SharedInputOverlay.MoveFields f = moveScratch;
+        if (!backend.isReady() || !backend.readMoveAxes(f)) {
+            return false;
+        }
+        rotateAxes(f, backend.yaw(), heading);
+        backend.writeMoveAxes(f);
+        return true;
+    }
+
+    /**
+     * Engine-free rotation of the (strafe, forward) impulse of {@code f} from yaw {@code heading} into
+     * {@code cameraYaw}; a direction flag is set where its impulse is past 0.05.
+     */
+    static void rotateAxes(SharedInputOverlay.MoveFields f, float cameraYaw, float heading) {
+        double d = Math.toRadians(wrapDeg(cameraYaw - heading));
+        double fwd = f.forwardImpulse;
+        double str = f.leftImpulse;
+        double cos = Math.cos(d);
+        double sin = Math.sin(d);
+        f.forwardImpulse = (float) (fwd * cos - str * sin);
+        f.leftImpulse = (float) (str * cos + fwd * sin);
+        f.up = f.forwardImpulse > 0.05f;
+        f.down = f.forwardImpulse < -0.05f;
+        f.left = f.leftImpulse > 0.05f;
+        f.right = f.leftImpulse < -0.05f;
     }
 
     private static float wrapDeg(float d) {

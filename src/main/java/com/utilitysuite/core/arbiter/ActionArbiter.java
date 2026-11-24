@@ -48,6 +48,10 @@ import java.util.function.LongSupplier;
  *       start the override pause for others). Stop-All, world unload and a lease that wins MOVEMENT end it through
  *       {@link SharedHolder#onSharedEnded}. Used by {@code core.input.SharedInputOverlay}; not part of
  *       {@link IActionArbiter}.</li>
+ *   <li><b>Assist grant</b> (one at a time, {@link #beginAssist}): rides along with the lease of another module that
+ *       holds MOVEMENT below EMERGENCY, without holding or blocking anything itself. It is bound to that one lease
+ *       and ends with it for the same reason (manual override, preemption, release, timeout, Stop-All, world unload)
+ *       through {@link SharedHolder#onSharedEnded}.</li>
  * </ul>
  * The steady-state {@link #tick()} path allocates nothing.
  */
@@ -80,6 +84,11 @@ public final class ActionArbiter implements IActionArbiter {
     private SharedHolder shared;
     private String sharedModule;
     private ControlPriority sharedPriority;
+
+    /** The live assist grant (null: none), its module and the MOVEMENT lease it rides along with. */
+    private SharedHolder assist;
+    private String assistModule;
+    private Lease assistLease;
 
     private int manualOverridePauseTicks = 20;
     private long nextLeaseId = 1;
@@ -300,6 +309,62 @@ public final class ActionArbiter implements IActionArbiter {
         sharedPriority = null;
     }
 
+    // ---- assist grant -----------------------------------------------------------------------------------------------
+
+    /**
+     * Starts the assist grant for {@code holder}: it rides along with the lease that holds MOVEMENT now and changes
+     * nothing about who holds what. False when automation is stopped, another holder's assist grant is live, no lease
+     * holds MOVEMENT, the lease is the module's own or it is at EMERGENCY or above. True without any change when the
+     * same holder's grant already rides along with that lease. Allocation free.
+     */
+    public boolean beginAssist(String moduleId, SharedHolder holder) {
+        if (stopped || moduleId == null || holder == null) {
+            return false;
+        }
+        if (assist != null && assist != holder) {
+            return false;
+        }
+        Lease h = holders[MOVEMENT];
+        if (h == null || h.moduleId().equals(moduleId) || !ControlPriority.EMERGENCY.outranks(h.priority())) {
+            return false;
+        }
+        assist = holder;
+        assistModule = moduleId;
+        assistLease = h;
+        return true;
+    }
+
+    /** The holder ends its own assist grant (no callback). Idempotent; a stale holder is ignored. */
+    public void endAssist(SharedHolder holder) {
+        if (holder != null && assist == holder) {
+            clearAssist();
+        }
+    }
+
+    /** Module id of the live assist grant, or null. */
+    public String assistModuleId() {
+        return assist == null ? null : assistModule;
+    }
+
+    private void endAssistInvoluntary(LeaseEndReason reason, String by) {
+        SharedHolder h = assist;
+        if (h == null) {
+            return;
+        }
+        clearAssist();
+        try {
+            h.onSharedEnded(reason, by);
+        } catch (RuntimeException e) {
+            LOG.error("Assist grant holder failed in onSharedEnded", e);
+        }
+    }
+
+    private void clearAssist() {
+        assist = null;
+        assistModule = null;
+        assistLease = null;
+    }
+
     // ---- manual override --------------------------------------------------------------------------------------------
 
     @Override
@@ -340,6 +405,7 @@ public final class ActionArbiter implements IActionArbiter {
         stopped = true;
         suspended.clear();
         endSharedInvoluntary(LeaseEndReason.STOP_ALL, BY_STOP_ALL);
+        endAssistInvoluntary(LeaseEndReason.STOP_ALL, BY_STOP_ALL);
         for (int i = 0; i < CHANNELS.length; i++) {
             Lease h = holders[i];
             if (h != null) {
@@ -382,6 +448,7 @@ public final class ActionArbiter implements IActionArbiter {
     public void resetForWorldUnload() {
         suspended.clear();
         endSharedInvoluntary(LeaseEndReason.RELEASED, BY_STOP_ALL);
+        endAssistInvoluntary(LeaseEndReason.RELEASED, BY_STOP_ALL);
         for (int i = 0; i < CHANNELS.length; i++) {
             Lease h = holders[i];
             if (h != null) {
@@ -452,6 +519,10 @@ public final class ActionArbiter implements IActionArbiter {
         }
         if (input != null) {
             input.releaseFor(lease);
+        }
+        if (lease == assistLease) {
+            // the assist grant rode along with this lease: it ends with it, for the same reason
+            endAssistInvoluntary(reason, by);
         }
         post(new SuiteEvent.LeaseEnded(clock.getAsLong(), lease.id(), lease.moduleId(), reason, by));
     }

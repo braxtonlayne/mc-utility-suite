@@ -15,7 +15,6 @@ import com.utilitysuite.core.api.Services;
 import com.utilitysuite.travel.CameraAim;
 import com.utilitysuite.travel.Packed;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.player.Input;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -701,10 +700,14 @@ final class FallClutch {
         return lease != null && lease.isActive() && lease.covers(ch);
     }
 
-    /** While the head is turned for the pour, keep the keys meaning what they meant when the fall was planned. */
-    void compensate(Input in, float cameraYaw) {
+    /**
+     * While the head is turned for the pour, keep the keys meaning what they meant when the fall was planned: the
+     * core re-aims this tick's movement keys under the clutch's lease ({@code IInputSmoother.holdMoveHeading}).
+     * Called from the movement-input listener, every tick.
+     */
+    void compensate() {
         if (phase == Phase.POUR) {
-            ParkourBlocks.rotateImpulses(in, cameraYaw, heading);
+            Services.input().holdMoveHeading(lease, heading);
         }
     }
 
