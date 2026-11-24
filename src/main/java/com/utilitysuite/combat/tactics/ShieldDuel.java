@@ -182,6 +182,11 @@ public final class ShieldDuel {
     public boolean oppShieldUp;
     /** Ticks until the opponent's attack is charged ({@code OpponentModel.attackReadyIn}). */
     public int oppReadyIn;
+    /**
+     * Ticks from the opponent's swing to its damage reaching us ({@code OpponentModel.hitDelay}); the raise lead moves
+     * by its difference from {@link #HIT_LEAD}, which is what the static lead assumed. Clamped to 0..4.
+     */
+    public int oppHitDelay = HIT_LEAD;
 
     // state
     private boolean raised;
@@ -213,7 +218,8 @@ public final class ShieldDuel {
         boolean allowed = blockEnabled && hasShield && !eating && !oppDisables && oppInCone;
         // their charged hit is due inside the raise lead and they can reach us; a raised shield of theirs is no threat
         boolean threat = allowed && oppInReach && !oppShieldUp
-                && oppReadyIn <= RAISE_DELAY + REACTION_MARGIN && rest == 0;
+                && oppReadyIn + (Math.max(0, Math.min(4, oppHitDelay)) - HIT_LEAD) <= RAISE_DELAY + REACTION_MARGIN
+                && rest == 0;
         if (raised && threat && heldTicks >= MAX_HOLD) {
             threat = false; // they never swing into it: drop it for a rest and play the normal game
             rest = REST_TICKS;

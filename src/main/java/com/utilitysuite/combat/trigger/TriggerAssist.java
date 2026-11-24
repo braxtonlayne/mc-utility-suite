@@ -19,6 +19,7 @@ import com.utilitysuite.core.api.SettingSpec;
 import com.utilitysuite.core.api.SimKey;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.decoration.ArmorStand;
@@ -42,6 +43,9 @@ public final class TriggerAssist implements IModule, IConfigurable, LeaseListene
     public static final String PLAYERS = "players";
     public static final String HOSTILES = "hostiles";
     public static final String PASSIVE = "passive";
+    public static final String CRIT_WAIT = "wait_for_crit";
+    /** A target farther than reach minus this is about to leave reach: never defer for a crit then. */
+    static final double EDGE_MARGIN = 0.5;
     static final int REACTION_MEDIAN = 3;
     static final int REACTION_MIN = 1;
     static final int REACTION_MAX = 7;
@@ -55,6 +59,7 @@ public final class TriggerAssist implements IModule, IConfigurable, LeaseListene
     private boolean players = true;
     private boolean hostiles = true;
     private boolean passive;
+    private boolean critWait;
     private ControlLease lease;
     private int releaseIn;
     private int swings;
@@ -85,16 +90,27 @@ public final class TriggerAssist implements IModule, IConfigurable, LeaseListene
         boolean living = false;
         boolean kind = false;
         boolean ally = false;
+        boolean edge = false;
         if (mc.hitResult instanceof EntityHitResult ehr) {
             Entity e = ehr.getEntity();
             id = e.getId();
             living = e instanceof LivingEntity le && le.isAlive() && !le.isRemoved() && !(e instanceof ArmorStand);
             kind = e instanceof Player ? players : (e instanceof Enemy ? hostiles : passive);
             ally = e instanceof Player && roster.isNeverTarget(e.getUUID());
+            if (critWait) {
+                double dx = ehr.getLocation().x - p.getX();
+                double dy = ehr.getLocation().y - (p.getY() + p.getEyeHeight());
+                double dz = ehr.getLocation().z - p.getZ();
+                double near = p.entityInteractionRange() - EDGE_MARGIN;
+                edge = dx * dx + dy * dy + dz * dz > near * near;
+            }
         }
+        boolean canCrit = !p.isInWater() && !p.onClimbable() && !p.isPassenger()
+                && !p.hasEffect(MobEffects.BLINDNESS);
+        boolean hold = gate.critHold(critWait, p.onGround(), canCrit, p.getDeltaMovement().y, p.fallDistance, edge);
         // vanilla only picks entities inside the interaction range, so a crosshair hit is in reach
         boolean valid = TriggerGate.valid(id, living, kind, ally, id >= 0, p.getAttackStrengthScale(0.5f),
-                mc.screen != null, p.isUsingItem(), manual) && !arbiter.isAutomationStopped()
+                mc.screen != null, p.isUsingItem(), manual, hold) && !arbiter.isAutomationStopped()
                 && !arbiter.isHeldBy(ControlChannel.WORLD_INTERACT, CombatAssistant.ID); // the assistant swings itself
         int delay = valid && gate.needsDelay(id)
                 ? Services.humanizer().reactionTicks(REACTION_MEDIAN, REACTION_MIN, REACTION_MAX) : 0;
@@ -176,6 +192,7 @@ public final class TriggerAssist implements IModule, IConfigurable, LeaseListene
         players = profile.getBool(ID, PLAYERS, true);
         hostiles = profile.getBool(ID, HOSTILES, true);
         passive = profile.getBool(ID, PASSIVE, false);
+        critWait = profile.getBool(ID, CRIT_WAIT, false);
     }
 
     @Override
@@ -188,7 +205,10 @@ public final class TriggerAssist implements IModule, IConfigurable, LeaseListene
         return List.of(
                 SettingSpec.bool(PLAYERS, "Players", true, "", "Swing at players under the crosshair (never allies)."),
                 SettingSpec.bool(HOSTILES, "Hostile mobs", true, "", "Swing at hostile mobs under the crosshair."),
-                SettingSpec.bool(PASSIVE, "Passive mobs", false, "", "Also swing at animals and other passive mobs."));
+                SettingSpec.bool(PASSIVE, "Passive mobs", false, "", "Also swing at animals and other passive mobs."),
+                SettingSpec.bool(CRIT_WAIT, "Wait for falling crit", false, "",
+                        "While airborne and still rising, hold the swing until the fall starts so it crits. Capped at "
+                                + TriggerGate.MAX_CRIT_DEFER + " ticks and skipped when the target is at the edge of reach."));
     }
 
     @Override

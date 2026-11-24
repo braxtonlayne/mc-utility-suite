@@ -40,6 +40,31 @@ class TriggerGateTest {
     }
 
     @Test
+    void critHoldWaitsWhileRisingThenReleasesWhenFalling() {
+        TriggerGate g = new TriggerGate();
+        assertFalse(g.critHold(false, false, true, 0.4, 0f, false), "option off");
+        assertFalse(g.critHold(true, true, true, 0.0, 0f, false), "on the ground");
+        assertFalse(g.critHold(true, false, false, 0.4, 0f, false), "no crit possible (water, ladder, ...)");
+        assertTrue(g.critHold(true, false, true, 0.4, 0f, false), "rising");
+        assertTrue(g.critHold(true, false, true, 0.0, 0f, false), "apex, not falling yet");
+        assertFalse(g.critHold(true, false, true, -0.1, 0.2f, false), "falling: crit is live");
+        assertFalse(TriggerGate.valid(5, true, true, false, true, 1f, false, false, false, true) );
+        assertTrue(TriggerGate.valid(5, true, true, false, true, 1f, false, false, false, false));
+    }
+
+    @Test
+    void critHoldIsCappedAndNeverHoldsAtTheEdgeOfReach() {
+        TriggerGate g = new TriggerGate();
+        assertFalse(g.critHold(true, false, true, 0.4, 0f, true), "target near the edge of reach: swing now");
+        for (int i = 0; i < TriggerGate.MAX_CRIT_DEFER; i++) {
+            assertTrue(g.critHold(true, false, true, 0.4, 0f, false), "tick " + i);
+        }
+        assertFalse(g.critHold(true, false, true, 0.4, 0f, false), "cap reached: swings anyway");
+        assertFalse(g.critHold(true, true, true, 0.0, 0f, false), "landed resets the count");
+        assertTrue(g.critHold(true, false, true, 0.4, 0f, false));
+    }
+
+    @Test
     void changingTargetRestartsTheDelay() {
         TriggerGate g = new TriggerGate();
         assertFalse(g.tick(5, true, 2));

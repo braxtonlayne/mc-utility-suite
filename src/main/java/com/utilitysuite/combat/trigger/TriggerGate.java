@@ -11,14 +11,26 @@ public final class TriggerGate {
     /** Full charge, the same threshold as the assistant's swing gate. */
     public static final float READY = 0.95f;
 
+    /** Longest run of ticks a swing is held back waiting for a falling crit; then it swings as it is. */
+    public static final int MAX_CRIT_DEFER = 8;
+
     private int targetId = -1;
     private int delayLeft = -1;
+    private int critDeferred;
 
     /** True when every condition for a swing holds at this instant (no delay). */
     public static boolean valid(int crosshairTargetId, boolean livingAlive, boolean allowedKind, boolean ally,
                                 boolean inReach, float attackStrength, boolean screenOpen, boolean usingItem,
                                 boolean manualAttack) {
-        return crosshairTargetId >= 0 && livingAlive && allowedKind && !ally && inReach && attackStrength >= READY
+        return valid(crosshairTargetId, livingAlive, allowedKind, ally, inReach, attackStrength, screenOpen, usingItem,
+                manualAttack, false);
+    }
+
+    /** As above; {@code critHold} (from {@link #critHold}) defers the swing while a falling crit is still coming. */
+    public static boolean valid(int crosshairTargetId, boolean livingAlive, boolean allowedKind, boolean ally,
+                                boolean inReach, float attackStrength, boolean screenOpen, boolean usingItem,
+                                boolean manualAttack, boolean critHold) {
+        return !critHold && crosshairTargetId >= 0 && livingAlive && allowedKind && !ally && inReach && attackStrength >= READY
                 && !screenOpen && !usingItem && !manualAttack;
     }
 
@@ -49,6 +61,29 @@ public final class TriggerGate {
         return true;
     }
 
+    /**
+     * Wait-for-falling-crit rule: true while the swing should be held back. Holds only when the option is on, a crit
+     * is possible at all (not in water, on a ladder, riding or blind), the player is off the ground and has not yet
+     * started to fall (vy >= 0 or no fall distance), and the target is not near the edge of reach. The wait is
+     * capped at {@value #MAX_CRIT_DEFER} ticks per airtime, so a target leaving reach is never missed; the count
+     * restarts on landing. Call once per tick while enabled.
+     */
+    public boolean critHold(boolean enabled, boolean onGround, boolean canCrit, double vy, float fallDistance,
+                            boolean nearReachEdge) {
+        if (!enabled || onGround || !canCrit) {
+            critDeferred = 0;
+            return false;
+        }
+        if (vy < 0.0 && fallDistance > 0f) {
+            return false; // falling: the crit is live now
+        }
+        if (nearReachEdge || critDeferred >= MAX_CRIT_DEFER) {
+            return false;
+        }
+        critDeferred++;
+        return true;
+    }
+
     /** True when the next valid tick starts a new reaction delay (the caller then supplies one). */
     public boolean needsDelay(int crosshairTargetId) {
         return crosshairTargetId != targetId || delayLeft < 0;
@@ -57,5 +92,6 @@ public final class TriggerGate {
     public void reset() {
         targetId = -1;
         delayLeft = -1;
+        critDeferred = 0;
     }
 }

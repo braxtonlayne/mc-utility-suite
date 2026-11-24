@@ -32,6 +32,10 @@ public final class OpponentModel {
     /** Tick of the last arm swing seen per slot (Long.MIN_VALUE = none) and the cooldown period it started. */
     private final long[] swingTick = new long[MAX_OPPONENTS];
     private final double[] swingPeriod = new double[MAX_OPPONENTS];
+    /** EMA of its swing-to-damage gap in ticks (NaN = none yet) and whether its last swing still awaits a hit. */
+    private final double[] hitDelayEma = new double[MAX_OPPONENTS];
+    private final boolean[] swingUnpaired = new boolean[MAX_OPPONENTS];
+    private final int[] hitDelayCount = new int[MAX_OPPONENTS];
     /** Fight-clock tick until which the opponent's shield is disabled by our axe hit (Long.MIN_VALUE = not known). */
     private final long[] shieldDisabledUntil = new long[MAX_OPPONENTS];
 
@@ -95,6 +99,12 @@ public final class OpponentModel {
     public static final double MIN_ATTACK_SPEED = 0.25;
     public static final double MAX_ATTACK_SPEED = 16.0;
     public static final double DEFAULT_COOLDOWN_TICKS = 12.5;
+    /** Swing-to-damage gaps above this are not one swing and its hit (a miss, then a later hit): ignored. */
+    public static final int HIT_DELAY_SAMPLE_MAX = 6;
+    public static final double HIT_DELAY_ALPHA = 0.3;
+    public static final int MIN_HIT_DELAY_SAMPLES = 2;
+    public static final int MIN_HIT_DELAY = 0;
+    public static final int MAX_HIT_DELAY = 4;
 
     public OpponentModel() {
         clear();
@@ -133,6 +143,9 @@ public final class OpponentModel {
             healAmount[s * HEAL_RING + k] = 0f;
         }
         chaseSpeed[s] = Double.NaN;
+        hitDelayEma[s] = Double.NaN;
+        swingUnpaired[s] = false;
+        hitDelayCount[s] = 0;
         retreatRun[s] = 0;
         retreating[s] = false;
     }
@@ -230,6 +243,15 @@ public final class OpponentModel {
         hitTick[i] = tick;
         hitDamage[i] = damage;
         hitHead[s] = (hitHead[s] + 1) % HIT_RING;
+        if (swingUnpaired[s]) {
+            swingUnpaired[s] = false;
+            long gap = tick - swingTick[s];
+            if (swingTick[s] != Long.MIN_VALUE && gap >= 0 && gap <= HIT_DELAY_SAMPLE_MAX) {
+                double prev = hitDelayEma[s];
+                hitDelayEma[s] = prev != prev ? gap : prev + HIT_DELAY_ALPHA * (gap - prev);
+                hitDelayCount[s]++;
+            }
+        }
     }
 
     public int samples(int id) {
@@ -332,6 +354,7 @@ public final class OpponentModel {
         retreatRun[s] = 0;
         retreating[s] = false; // a swing ends any retreat read
         swingTick[s] = tick;
+        swingUnpaired[s] = true;
         if (attackSpeed != attackSpeed) {
             swingPeriod[s] = DEFAULT_COOLDOWN_TICKS; // NaN
         } else {
@@ -360,6 +383,21 @@ public final class OpponentModel {
         }
         double c = (double) (now - swingTick[s]) / swingPeriod[s];
         return (float) (c < 0.0 ? 0.0 : Math.min(c, 1.0));
+    }
+
+    /**
+     * Its effective hit delay in ticks: the exponential average of the gap from its swing edge to the damage it then
+     * dealt us (ping, its aim and our own latency all included), rounded and clamped to
+     * [{@value #MIN_HIT_DELAY}, {@value #MAX_HIT_DELAY}]. {@code fallback} until {@value #MIN_HIT_DELAY_SAMPLES}
+     * paired samples have been seen. Allocation free.
+     */
+    public int hitDelay(int id, int fallback) {
+        int s = slotOf(id);
+        if (s < 0 || hitDelayEma[s] != hitDelayEma[s] || hitDelayCount[s] < MIN_HIT_DELAY_SAMPLES) {
+            return fallback;
+        }
+        long r = Math.round(hitDelayEma[s]);
+        return (int) Math.max(MIN_HIT_DELAY, Math.min(MAX_HIT_DELAY, r));
     }
 
     /** Its full cooldown period in ticks (20 / attack speed of the last swing seen; 12.5 when unknown). */

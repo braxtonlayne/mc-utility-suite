@@ -165,6 +165,7 @@ public final class ShieldDuelStage implements FightStage {
         d.oppInReach = Math.sqrt(s.reachDistanceSq()) <= OPP_REACH + ShieldDuel.REACH_MARGIN;
         d.oppShieldUp = theirUse > 0 && !disabled;
         d.oppReadyIn = om.attackReadyIn(id, now);
+        d.oppHitDelay = om.hitDelay(id, ShieldDuel.HIT_LEAD);
         boolean up = d.step();
         boolean ownUp = guardStep(s, d, eating, theirUp) || up;
         if (eating) {
