@@ -122,6 +122,11 @@ final class BaritoneBridge implements PathBackend {
     }
 
     @Override
+    public Object currentPathToken() {
+        return baritone().getPathingBehavior().getCurrent();
+    }
+
+    @Override
     public long firstPathPos(LongPredicate test) {
         Optional<IPath> path = baritone().getPathingBehavior().getPath();
         if (path.isEmpty()) {

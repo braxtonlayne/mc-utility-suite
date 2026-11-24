@@ -49,8 +49,8 @@ import java.util.function.LongPredicate;
  * ({@link #cancelAll()}, wired by the jobs bootstrap) cancels every Baritone process unconditionally.
  * <p>
  * Protected areas: Baritone 1.11.3 only offers block-type avoidance lists ({@code blocksToAvoidBreaking}), not
- * positional ones, so every 10 ticks the adapter inspects the planned path and cancels (status FAILED) when it would
- * break a non-air block inside a protected box; the executor then replans.
+ * positional ones, so the adapter inspects the planned path every 10 ticks and on the first tick of each new path
+ * executor (reference compare), and cancels (status FAILED) when it would break a non-air block inside a protected box; the executor then replans.
  */
 public final class BaritoneAdapter implements MiningDriver {
 
@@ -71,6 +71,8 @@ public final class BaritoneAdapter implements MiningDriver {
     private String failure = "";
     private boolean paused;
     private long ticks;
+    /** Last seen path executor identity, for new-path detection. */
+    private Object lastPathToken;
     private long issuedAt;
 
     private List<String> mineBlocks = List.of();
@@ -562,7 +564,9 @@ public final class BaritoneAdapter implements MiningDriver {
             return;
         }
         boolean graceOver = ticks - issuedAt > GRACE_TICKS;
-        if ((ticks % 10) == 0 && updateDimension() && backend.isPathing()) {
+        // A new path executor (reference compare, no allocation) is inspected on its first tick; the 10-tick poll
+        // stays for paths that replan without a new executor.
+        if (pathCheckDue(backend.currentPathToken()) && updateDimension() && backend.isPathing()) {
             long hit = backend.firstPathPos(protectedSolid);
             if (hit != Long.MIN_VALUE) {
                 backend.cancel();
@@ -663,6 +667,13 @@ public final class BaritoneAdapter implements MiningDriver {
     private void fail(String why) {
         status = Status.FAILED;
         failure = why;
+    }
+
+    /** True on every 10th tick and on the first tick a different path executor reference appears. No allocation. */
+    boolean pathCheckDue(Object token) {
+        boolean newPath = token != null && token != lastPathToken;
+        lastPathToken = token;
+        return newPath || (ticks % 10) == 0;
     }
 
     private boolean updateDimension() {

@@ -39,6 +39,14 @@ interface PathBackend {
     long firstPathPos(LongPredicate test);
 
     /**
+     * Identity of the current path executor (null when none). A different reference means a new path started; the
+     * adapter compares it by reference every tick so a new route is checked on its first tick. Must not allocate.
+     */
+    default Object currentPathToken() {
+        return null;
+    }
+
+    /**
      * Legit mining: only ore the player could see, strip-mining at {@code yLevel} to find more. Off: the backend's
      * loaded-chunk scan targets ore anywhere.
      */
