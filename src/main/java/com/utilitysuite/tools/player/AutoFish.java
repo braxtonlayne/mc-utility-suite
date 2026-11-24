@@ -32,8 +32,10 @@ import java.util.Optional;
  * {@link #BITE_RADIUS} blocks of the player's own hook; as a backup, the hook's sharp dip that the client applies when
  * the synced "biting" flag turns on (vertical speed below {@link #DIP_SPEED} after the hook has settled in water). The
  * reel and recast are use-key taps through {@link com.utilitysuite.core.api.IInputSmoother} under a WORLD_INTERACT
- * lease, after humanizer delays. It never switches slots or turns the camera. Stops when the rod is about to break,
- * the inventory is full, the rod leaves the hand, or the user takes over (manual override ends the lease).
+ * lease, after humanizer delays. It never turns the camera. When the rod in hand reaches the minimum durability (hook
+ * reeled in) it selects another hotbar rod above the minimum through a short HOTBAR lease and carries on. Stops when
+ * no such rod is left, the inventory is full, the rod leaves the hand, or the user takes over (manual override ends
+ * the lease).
  */
 public final class AutoFish implements IModule, IConfigurable, LeaseListener, FishingCycle.Delays {
 
@@ -43,6 +45,7 @@ public final class AutoFish implements IModule, IConfigurable, LeaseListener, Fi
     static final double BITE_RADIUS_SQ = 2.0 * 2.0;
     static final double DIP_SPEED = -0.2;
     static final int SETTLE_TICKS = 20;
+    static final int SWAP_RETRIES = 40;
 
     private final FishingCycle cycle = new FishingCycle(this);
     private boolean enabled;
@@ -50,6 +53,9 @@ public final class AutoFish implements IModule, IConfigurable, LeaseListener, Fi
     private boolean stopWhenFull = true;
     private ControlLease lease;
     private LeaseRequest request;
+    private LeaseRequest swapRequest;
+    private final int[] rodUses = new int[9];
+    private int swapTries;
     private int inWaterTicks;
     private boolean announcedStop;
 
@@ -121,11 +127,56 @@ public final class AutoFish implements IModule, IConfigurable, LeaseListener, Fi
             cycle.onBite();
         }
         int usesLeft = holding && rod.isDamageableItem() ? rod.getMaxDamage() - rod.getDamageValue() : Integer.MAX_VALUE;
+        if (holding && usesLeft <= minDurability && cycle.phase() == FishingCycle.Phase.IDLE && swapRod(player)) {
+            return;
+        }
         boolean full = stopWhenFull && player.getInventory().getFreeSlot() < 0;
         FishingCycle.Action a = cycle.tick(holding, inWater, usesLeft, minDurability, full);
         if (a == FishingCycle.Action.USE) {
             Services.input().scheduleKeyTap(lease, SimKey.USE, 1, 3);
         }
+    }
+
+    /**
+     * The rod in hand is at its minimum (the hook is reeled in: the cycle is IDLE). Selects another hotbar rod with more
+     * than the minimum left, through a short HOTBAR lease. True when the swap was made or is still being tried (the
+     * cycle must wait); false when no such rod exists, so the cycle stops as before.
+     */
+    private boolean swapRod(LocalPlayer player) {
+        int current = player.getInventory().selected;
+        for (int i = 0; i < 9; i++) {
+            ItemStack st = player.getInventory().items.get(i);
+            rodUses[i] = st.is(Items.FISHING_ROD)
+                    ? (st.isDamageableItem() ? st.getMaxDamage() - st.getDamageValue() : Integer.MAX_VALUE)
+                    : RodSwap.NO_ROD;
+        }
+        int slot = RodSwap.pick(rodUses, current, minDurability);
+        if (slot < 0 || swapTries > SWAP_RETRIES) {
+            swapTries = 0;
+            return false;
+        }
+        Optional<ControlLease> got = Services.arbiter().request(swapRequest());
+        if (got.isEmpty()) {
+            swapTries++;
+            return true;
+        }
+        ControlLease l = got.get();
+        boolean ok = Services.input().selectHotbarSlot(l, slot);
+        l.close();
+        if (!ok) {
+            swapTries++;
+        } else {
+            swapTries = 0;
+            say("Auto-Fish: switched to the rod in slot " + (slot + 1));
+        }
+        return true;
+    }
+
+    private LeaseRequest swapRequest() {
+        if (swapRequest == null) {
+            swapRequest = new LeaseRequest(ID, ControlPriority.IDLE, EnumSet.of(ControlChannel.HOTBAR), 5, this);
+        }
+        return swapRequest;
     }
 
     /** Game bus: the splash sound near the player's own hook is the bite. */
