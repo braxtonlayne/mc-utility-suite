@@ -14,6 +14,13 @@ public final class CombatSettings {
 
     public enum SprintReset { W_RELEASE, S_TAP, OFF }
 
+    /**
+     * Who drives a fight. TAKEOVER: the assistant holds movement, camera and clicks, and a movement key of yours ends
+     * the fight. CO_PILOT: you keep WASD and the mouse; it adds a light aim nudge, spacing nudges, sprint resets and
+     * (optionally) the swing while your crosshair is on the target ({@link CoPilotPlanner}).
+     */
+    public enum ControlMode { TAKEOVER, CO_PILOT }
+
     public static final String DISENGAGE_RADIUS = "disengage_radius";
     public static final String ALLY_DEFENSE_RANGE = "ally_defense_range";
     public static final String LOS_TIMEOUT_TICKS = "los_timeout_ticks";
@@ -70,6 +77,10 @@ public final class CombatSettings {
     public static final String KEEP_TEMPO = "keep_tempo";
     public static final String BREAK_STALEMATES = "break_stalemates";
     public static final String STALL_SECONDS = "stalemate_seconds";
+    public static final String CONTROL_MODE = "control_mode";
+    public static final String COPILOT_STEER = "copilot_aim_nudge";
+    public static final String COPILOT_SPACING = "copilot_spacing_nudge";
+    public static final String COPILOT_SWING = "copilot_swing";
 
     public TargetSelector.Mode engageMode = TargetSelector.Mode.REACTIVE;
     public TargetSelector.Targets targets = TargetSelector.Targets.HOSTILE;
@@ -140,6 +151,14 @@ public final class CombatSettings {
     public boolean breakStalemates = true;
     /** Seconds without a hit, out of reach and with nobody closing in, before the stalemate breaker acts. */
     public double stallSeconds = 4.0;
+    /** Takeover (default) or co-pilot. */
+    public ControlMode controlMode = ControlMode.TAKEOVER;
+    /** Co-pilot: ease the yaw toward the target (never on the Legit level: the core refuses there). */
+    public boolean copilotSteer = true;
+    /** Co-pilot: hold W back briefly instead of crowding the target or walking into its charged hit. */
+    public boolean copilotSpacing = true;
+    /** Co-pilot: swing at full charge while your own crosshair is on the target in reach. */
+    public boolean copilotSwing = true;
 
     public void read(ProfileConfig p, String id) {
         engageMode = parseEnum(p.getString(id, ENGAGE_MODE, ""), TargetSelector.Mode.REACTIVE);
@@ -197,6 +216,10 @@ public final class CombatSettings {
         keepTempo = p.getBool(id, KEEP_TEMPO, true);
         breakStalemates = p.getBool(id, BREAK_STALEMATES, true);
         stallSeconds = Math.max(2.0, Math.min(15.0, p.getDouble(id, STALL_SECONDS, 4.0)));
+        controlMode = parseEnum(p.getString(id, CONTROL_MODE, ""), ControlMode.TAKEOVER);
+        copilotSteer = p.getBool(id, COPILOT_STEER, true);
+        copilotSpacing = p.getBool(id, COPILOT_SPACING, true);
+        copilotSwing = p.getBool(id, COPILOT_SWING, true);
     }
 
     static <E extends Enum<E>> E parseEnum(String s, E def) {
@@ -223,7 +246,27 @@ public final class CombatSettings {
                         "Reactive: fight back only when you or a defended ally is hit, or you land a hit. Proactive:"
                                 + " also go after valid targets in range on its own (single-player or allow-listed"
                                 + " servers only)."),
-                SettingSpec.choice(TARGETS, "Proactive targets", TargetSelector.Targets.HOSTILE, "Proactive",
+                SettingSpec.choice(CONTROL_MODE, "Control", ControlMode.TAKEOVER, "",
+                        "Takeover (default): the assistant fights for you (movement, camera, clicks) and a movement"
+                                + " key of yours ends the fight. Co-pilot: you keep WASD and the mouse; it eases your"
+                                + " aim toward the target a little (not on the Legit level), holds W back instead of"
+                                + " crowding it or walking into its charged hit, times your sprint resets, and swings"
+                                + " at full charge while your crosshair is on it. Holding the hand-over key still"
+                                + " hands the fight over."),
+                SettingSpec.bool(COPILOT_STEER, "Aim nudge", true, "Co-pilot",
+                        "Ease your view toward the target, only while it is already near your crosshair (within 60"
+                                + " degrees) and close; at most 20 degrees per swing. Move the mouse against it and it"
+                                + " lets go for two seconds. Pitch stays yours. Never on the Legit level."),
+                SettingSpec.bool(COPILOT_SPACING, "Spacing nudge", true, "Co-pilot",
+                        "While you hold W at the target, hold it back for a few ticks instead of crowding it or"
+                                + " walking into its charged hit while your own swing is still charging. Press W again"
+                                + " and it stays yours."),
+                SettingSpec.bool(COPILOT_SWING, "Swing for me", true, "Co-pilot",
+                        "Swing at full charge (waiting for the fall of a hop for a crit) while your own crosshair"
+                                + " is on the target in reach. Never into a raised shield that faces you unless you"
+                                + " hold an axe, never while you use an item, and your own clicks always win. Off"
+                                + " leaves every click to you."),
+                SettingSpec.choice(TARGETS,"Proactive targets", TargetSelector.Targets.HOSTILE, "Proactive",
                         "What proactive mode goes after. Allies on the roster are never targeted; neutral mobs only"
                                 + " once they are angry."),
                 SettingSpec.choice(PRIORITY, "Target priority", TargetSelector.Priority.THREAT, "Proactive",

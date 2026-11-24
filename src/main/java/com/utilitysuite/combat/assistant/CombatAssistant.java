@@ -10,6 +10,7 @@ import com.utilitysuite.combat.tactics.HitTradeSolver;
 import com.utilitysuite.combat.tactics.OpponentModel;
 import com.utilitysuite.combat.tactics.PearlSource;
 import com.utilitysuite.combat.tactics.ReadState;
+import com.utilitysuite.combat.tactics.ShieldDuel;
 import com.utilitysuite.combat.tactics.TacticUtility;
 import com.utilitysuite.core.api.ControlChannel;
 import com.utilitysuite.core.api.ControlLease;
@@ -17,6 +18,7 @@ import com.utilitysuite.core.api.ControlPriority;
 import com.utilitysuite.core.api.IActionArbiter;
 import com.utilitysuite.core.api.IBodySimProvider;
 import com.utilitysuite.core.api.IRouteRunner;
+import com.utilitysuite.core.api.ISharedControl;
 import com.utilitysuite.core.api.IConfigurable;
 import com.utilitysuite.core.api.IContainerClicker;
 import com.utilitysuite.core.api.IInputSmoother;
@@ -25,12 +27,14 @@ import com.utilitysuite.core.api.ISuiteEventBus;
 import com.utilitysuite.core.api.LeaseEndReason;
 import com.utilitysuite.core.api.LeaseListener;
 import com.utilitysuite.core.api.LeaseRequest;
+import com.utilitysuite.core.api.ManualFacts;
 import com.utilitysuite.core.api.ModuleCategory;
 import com.utilitysuite.core.api.ProfileConfig;
 import com.utilitysuite.core.api.RotationMode;
 import com.utilitysuite.core.api.RotationTarget;
 import com.utilitysuite.core.api.Services;
 import com.utilitysuite.core.api.SettingSpec;
+import com.utilitysuite.core.api.SharedGrant;
 import com.utilitysuite.core.api.SimKey;
 import com.utilitysuite.core.api.SuiteEvent;
 import org.slf4j.Logger;
@@ -55,7 +59,7 @@ import java.util.function.LongSupplier;
  *   <li><b>Proactive</b> (engagement mode PROACTIVE, single-player or allow-listed servers only): a few times a second
  *       while dormant it scans for a valid target in the engage range ({@link TargetSelector}: filter, priority, line of
  *       sight) and engages it; when a target dies, escapes or hides it moves on to the next one. It pauses after the
- *       user takes over (movement, cancel key, Stop-All) and never scans while the user is moving.</li>
+ *       user takes over (movement, cancel key, Stop-All) and, in takeover, never scans while the user is moving.</li>
  * </ol>
  * It never targets a roster player with {@code neverTarget} (if one hits the user it stays dormant and logs).
  * It disengages when the target dies or leaves the disengage radius, after losing line of sight for the configured
@@ -64,6 +68,17 @@ import java.util.function.LongSupplier;
  * Control: one COMBAT lease over MOVEMENT + CAMERA + WORLD_INTERACT + HOTBAR (preempting GOAL/TRAVEL, which the arbiter
  * resumes afterwards). Mouse-look or attack/use clicks by the user end the lease; the assistant then waits for the
  * override pause and takes over again. All key, camera, hotbar and container actions go through the lease.
+ * <p>
+ * <b>Co-pilot</b> ({@link CombatSettings.ControlMode#CO_PILOT}; takeover stays the default): the same triggers and
+ * the same reads of the fight, but no fight lease. The user keeps WASD, the mouse and the hotbar; a movement key never
+ * ends the fight. The assistant only adds, through a {@link SharedGrant} held on the ticks it writes
+ * ({@link CoPilotPlanner}): a low-authority yaw co-steer toward the {@link AimSolver} aim point, W held back as a
+ * spacing nudge, sprint withheld for the reset after a hit, and, with "Swing for me", an ATTACK tap under a short
+ * WORLD_INTERACT lease at the swing moment, only while the user's own crosshair is on the target (a user click wins
+ * through the core's override). No stages, routes, sustain, hotbar swaps or pursuit run in co-pilot; USE stays the
+ * user's and the standalone shield reflex's ({@link #stageOwns} is false without the fight lease). Holding the core's
+ * hand-over key turns a co-pilot fight into a takeover until it comes up. Co-pilot stands aside while another
+ * module's lease holds MOVEMENT (a job walks: the user is not driving).
  * <p>
  * Pure Java: the game is reached only through {@link CombatWorld}. {@link #onTick()} allocates nothing in steady state
  * (a new {@link RotationTarget} only when the aim point moved by more than {@value #AIM_RETARGET_DEG} degrees, or
@@ -341,6 +356,25 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
     private int ignoredAttributions;
     private String lastNote = "";
 
+    // co-pilot (ControlMode.CO_PILOT): shared grant, short swing lease, no fight lease
+    /** Module id of the toggle-sprint holder (travel.mobility.MoveToggles), read by id only. */
+    static final String MOVE_TOGGLES_ID = "move_toggles";
+    /** Ticks the swing lease is kept after a tap (pressed and released before it goes). */
+    static final int SWING_LEASE_TICKS = 3;
+    /** Ticks a toggle sprint seen before the grant is kept filled in for while the grant suspends it. */
+    static final int SPRINT_FILL_TICKS = 40;
+    private final CoPilotPlanner copilotPlan = new CoPilotPlanner();
+    private final LeaseRequest swingRequest;
+    /** The style of the running engagement: true = co-pilot. */
+    private boolean copilot;
+    private SharedGrant grant;
+    private double lastSteerAdded;
+    private int sprintFillTicks;
+    private ControlLease swingLease;
+    private int swingRelease;
+    private int copilotSwings;
+    private int copilotGrantTicks;
+
     public CombatAssistant(CombatWorld world, AllyRoster roster, IActionArbiter arbiter, IInputSmoother input,
                            IContainerClicker clicker, LongSupplier clock) {
         this.world = world;
@@ -353,6 +387,8 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
                 EnumSet.of(LEASE_CHANNELS[0], LEASE_CHANNELS[1], LEASE_CHANNELS[2], LEASE_CHANNELS[3]), 0, this);
         this.keeperRequest = new LeaseRequest(ID, ControlPriority.EMERGENCY, EnumSet.of(ControlChannel.HOTBAR),
                 KEEPER_MAX_TICKS, this);
+        this.swingRequest = new LeaseRequest(ID, ControlPriority.COMBAT, EnumSet.of(ControlChannel.WORLD_INTERACT), 0,
+                this);
         this.allyTest = id -> roster.isNeverTarget(world.uuidOf(id));
     }
 
@@ -522,8 +558,10 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         targetHitPending = 0;
         wind.reset();
         spacing.reset();
+        copilotPlan.reset(); // a new opponent: no co-steer window, nudge or swing timing carried over
         state = CombatState.ENGAGED;
         if (fresh) {
+            copilot = wantCoPilot();
             weaponSlot = -1;
             lastHealth = -1f;
             lastHitDamage = 0f;
@@ -535,7 +573,7 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
             lastMovePause = arbiter.isManualOverrideActive(ControlChannel.MOVEMENT);
             engagements++;
         }
-        lastNote = "Engaged " + world.describe(entityId) + " (" + why + ")";
+        lastNote = "Engaged " + world.describe(entityId) + " (" + why + (copilot ? ", co-pilot" : "") + ")";
         LOG.info("Combat assistant: {}", lastNote);
         diagnostic(lastNote);
     }
@@ -567,15 +605,22 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
     }
 
     private void tickEngaged() {
-        // A movement pause that starts while engaged (we were not holding the lease, e.g. after mouse look) is a new
-        // manual movement press. A pause already running at engagement (the user was walking) is not.
-        boolean movePause = arbiter.isManualOverrideActive(ControlChannel.MOVEMENT);
-        if (movePause && !lastMovePause) {
-            lastMovePause = true;
-            disengageNow(DisengageReason.MANUAL_MOVEMENT);
-            return;
+        boolean co = wantCoPilot();
+        if (co != copilot) {
+            switchStyle(co);
         }
-        lastMovePause = movePause;
+        if (!copilot) {
+            // A movement pause that starts while engaged (we were not holding the lease, e.g. after mouse look) is a
+            // new manual movement press. A pause already running at engagement (the user was walking) is not.
+            // In co-pilot the user's movement keys are the plan, never a reason to stop.
+            boolean movePause = arbiter.isManualOverrideActive(ControlChannel.MOVEMENT);
+            if (movePause && !lastMovePause) {
+                lastMovePause = true;
+                disengageNow(DisengageReason.MANUAL_MOVEMENT);
+                return;
+            }
+            lastMovePause = movePause;
+        }
         if (collecting) {
             tickCollect();
             return;
@@ -663,6 +708,10 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
                 GearRead.afterArmor(s.targetAttackDamage, s.ownArmor, s.ownToughness));
         feel.observe(s, settings, opponents, tacticClock,
                 keyDown[SimKey.LEFT.ordinal()] ? 1 : (keyDown[SimKey.RIGHT.ordinal()] ? -1 : 0), tradeAllowJump(s));
+        if (copilot) {
+            coPilotDrive(s);
+            return;
+        }
         if (!holdsLease() && !tryAcquire()) {
             return;
         }
@@ -1742,6 +1791,231 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         }
     }
 
+    // ---- co-pilot -----------------------------------------------------------------------------------------------------
+
+    /** The style a fight should run in now: co-pilot by the setting, takeover while the hand-over key is held. */
+    private boolean wantCoPilot() {
+        return settings.controlMode == CombatSettings.ControlMode.CO_PILOT && !handOverHeld;
+    }
+
+    /**
+     * Switches a running engagement between takeover and co-pilot (the setting changed, or the hand-over key went
+     * down or up). Takeover to co-pilot hands every key, the camera and the hotbar back (lease released, our keys up);
+     * co-pilot to takeover ends the grant and the swing lease, and the next tick requests the fight lease as usual.
+     */
+    private void switchStyle(boolean co) {
+        if (co) {
+            leaveRoute();
+            stalemate.reset(null);
+            if (holdsLease()) {
+                if (eating) {
+                    key(SimKey.USE, false);
+                }
+                move(SpacingController.HOLD, StrafePlanner.NONE, false);
+                input.clearRotation(lease);
+                ControlLease l = lease;
+                lease = null;
+                arbiter.release(l);
+            }
+            swapBackPulled();
+            eating = false;
+            retreating = false;
+            shield.reset();
+            wind.reset();
+            sprintResetTicks = 0;
+            waitingForResume = false;
+            clearKeyCache();
+            for (FightStage st : allStages) {
+                st.reset();
+            }
+            copilotPlan.reset();
+        } else {
+            endCoPilot();
+            // a walk already running is not a fresh movement press for the takeover's "the user moved" check
+            lastMovePause = arbiter.isManualOverrideActive(ControlChannel.MOVEMENT);
+        }
+        copilot = co;
+        lastNote = co ? "Co-pilot: you drive, the assistant assists" : "Takeover: the assistant drives the fight";
+        diagnostic(lastNote);
+    }
+
+    /**
+     * One co-pilot tick: the planner's writes go to the shared grant (taken only on ticks with writes, so MOVEMENT is
+     * free for other automation otherwise), the swing to a short WORLD_INTERACT lease. Allocation free except the
+     * swing lease's request (one per swing, not per tick).
+     */
+    private void coPilotDrive(CombatSnapshot s) {
+        if (foreignMovementLease()) {
+            // a job (or a reflex) walks the player: the user is not driving, there is nothing to co-pilot
+            endGrant();
+            tickSwingLease();
+            return;
+        }
+        ISharedControl shared = Services.sharedControl();
+        ManualFacts mf = shared.manual();
+        SharedGrant g = grant != null && grant.isActive() ? grant : null;
+        if (g != null) {
+            double added = g.coSteerAddedDeg();
+            copilotPlan.noteSteerAdded(added - lastSteerAdded);
+            lastSteerAdded = added;
+        } else if (sprintFillTicks > 0) {
+            sprintFillTicks--;
+        }
+        if (arbiter.isHeldBy(ControlChannel.MOVEMENT, MOVE_TOGGLES_ID)) {
+            sprintFillTicks = SPRINT_FILL_TICKS; // toggle sprint is on: the grant suspends its lease, so fill it in
+        }
+        AimSolver.solve(s, 0.0, aim);
+        CoPilotPlanner cp = copilotPlan;
+        cp.steerOn = settings.copilotSteer;
+        cp.spacingOn = settings.copilotSpacing;
+        cp.swingOn = settings.copilotSwing;
+        cp.sprintReset = settings.sprintReset;
+        cp.critSync = settings.critSync;
+        cp.tick = mf.tick();
+        cp.yaw = s.yaw;
+        cp.aimYaw = aim[0];
+        cp.distance = s.horizontalDistance();
+        cp.spacingMin = settings.spacingMin;
+        cp.spacingMax = settings.spacingMax;
+        cp.lineOfSight = s.lineOfSight;
+        cp.inReach = s.inReach();
+        cp.crosshairOnTarget = s.crosshairOnTarget;
+        cp.attackStrength = s.attackStrength;
+        cp.usingItem = s.usingItem;
+        cp.screenOpen = s.screenOpen;
+        cp.onGround = s.onGround;
+        cp.verticalSpeed = s.pvy;
+        cp.critPossible = !s.sprinting && !s.inWater && !s.climbing;
+        cp.fallingForCrit = s.fallingForCrit();
+        cp.forwardHeld = mf.heldTicks(SimKey.FORWARD) > 0;
+        cp.forwardPressTick = mf.lastPressTick(SimKey.FORWARD);
+        cp.oppCharged = settings.cooldownRead
+                && ProFeelLayer.oppReadyIn(settings, opponents, targetId, tacticClock) == 0 && !oppRetreating();
+        cp.shieldFacing = s.targetBlocking && (s.axeSlot < 0 || s.axeSlot != s.selectedSlot)
+                && ShieldDuel.frontal(s.targetYaw, s.tx, s.tz, s.px, s.pz);
+        cp.manualClick = arbiter.isManualOverrideActive(ControlChannel.WORLD_INTERACT);
+        cp.opposingTotal = g != null ? g.opposingYawDeg() : 0.0;
+        cp.jitter = input.nextGaussianTicks(1.0, 0.6, 0, 2);
+        cp.decide();
+        if (cp.hasWrites()) {
+            g = coPilotGrant(g, shared);
+            if (g != null) {
+                copilotGrantTicks++;
+                if (cp.forward() != SharedGrant.KEEP) {
+                    g.axes(cp.forward(), SharedGrant.KEEP);
+                }
+                if (cp.withholdSprint()) {
+                    g.withholdSprint();
+                } else if (sprintFillTicks > 0 && cp.forwardHeld) {
+                    g.startSprint(); // fill only: vanilla's own conditions, as the suspended toggle would have
+                }
+                if (cp.steer()) {
+                    // the allowance is per window; the core's cap is per grant, so it is the spent part plus this
+                    g.coSteer(cp.steerYaw(), CoPilotPlanner.STEER_DEG_PER_SEC, g.coSteerAddedDeg() + cp.allowance(),
+                            cp.authority());
+                }
+            }
+        } else {
+            endGrant();
+        }
+        if (cp.swing()) {
+            coPilotSwing();
+        }
+        tickSwingLease();
+    }
+
+    /** The live grant, or a new one (null when refused: a screen, Stop-All, another module's grant or lease). */
+    private SharedGrant coPilotGrant(SharedGrant live, ISharedControl shared) {
+        if (live != null) {
+            return live;
+        }
+        SharedGrant g = shared.begin(ID, ControlPriority.COMBAT, true);
+        grant = g;
+        lastSteerAdded = 0.0;
+        if (g != null) {
+            copilotPlan.grantRestarted();
+        }
+        return g;
+    }
+
+    /** Another module's lease holds MOVEMENT (toggle sprint excepted). */
+    private boolean foreignMovementLease() {
+        return arbiter.holderOrNull(ControlChannel.MOVEMENT) != null
+                && !arbiter.isHeldBy(ControlChannel.MOVEMENT, MOVE_TOGGLES_ID);
+    }
+
+    /** The swing: an ATTACK tap under a short WORLD_INTERACT lease (refused while the user's own click has it). */
+    private void coPilotSwing() {
+        ControlLease l = swingLease;
+        if (l == null || !l.isActive()) {
+            swingLease = null;
+            if (arbiter.isAutomationStopped()) {
+                return;
+            }
+            Optional<ControlLease> granted = arbiter.request(swingRequest);
+            if (granted.isEmpty()) {
+                return;
+            }
+            l = granted.get();
+            swingLease = l;
+        }
+        if (input.scheduleKeyTap(l, SimKey.ATTACK, 1, 1)) {
+            swings++;
+            copilotSwings++;
+        }
+        swingRelease = SWING_LEASE_TICKS;
+    }
+
+    private void tickSwingLease() {
+        if (swingLease != null && --swingRelease <= 0) {
+            releaseSwingLease();
+        }
+    }
+
+    private void releaseSwingLease() {
+        ControlLease l = swingLease;
+        swingLease = null;
+        if (l != null && l.isActive()) {
+            arbiter.release(l);
+        }
+    }
+
+    private void endGrant() {
+        SharedGrant g = grant;
+        grant = null;
+        lastSteerAdded = 0.0;
+        if (g != null) {
+            g.end();
+        }
+    }
+
+    /** Ends everything co-pilot holds (grant, swing lease). Idempotent. */
+    private void endCoPilot() {
+        endGrant();
+        releaseSwingLease();
+        sprintFillTicks = 0;
+        copilotPlan.reset();
+    }
+
+    /** True while the running engagement is a co-pilot one (diagnostics, tests). */
+    public boolean coPilotActive() {
+        return copilot && state != CombatState.DORMANT;
+    }
+
+    /** The co-pilot's planner (diagnostics, tests). */
+    public CoPilotPlanner coPilotPlanner() {
+        return copilotPlan;
+    }
+
+    /** Swings the co-pilot sent, and ticks it wrote to the shared grant (diagnostics, tests). */
+    public int coPilotSwings() {
+        return copilotSwings;
+    }
+
+    public int coPilotGrantTicks() {
+        return copilotGrantTicks;
+    }
+
     // ---- hand-over key --------------------------------------------------------------------------------------------
 
     /**
@@ -1845,7 +2119,9 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
             return;
         }
         scanClock = 0;
-        if (arbiter.isAutomationStopped() || arbiter.isManualOverrideActive(ControlChannel.MOVEMENT)
+        // co-pilot: the user always drives, so walking is no reason to hold back a pick (the fight only adds to it)
+        boolean coPilot = settings.controlMode == CombatSettings.ControlMode.CO_PILOT;
+        if (arbiter.isAutomationStopped() || (!coPilot && arbiter.isManualOverrideActive(ControlChannel.MOVEMENT))
                 || world.localPlayerId() < 0) {
             return;
         }
@@ -1861,7 +2137,7 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         if (id >= 0) {
             proactiveEngagements++;
             engage(id, "proactive");
-        } else if (settings.foodObjective && foodNeeded()) {
+        } else if (settings.foodObjective && !coPilot && foodNeeded()) { // a hunt walks the player: takeover only
             int food = TargetSelector.pickFood(candidates, settings.foodRange, settings.engageRequiresLos);
             if (food >= 0) {
                 engage(food, "food objective: no food on you or in nearby chests");
@@ -1967,6 +2243,7 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         sprintResetTicks = 0;
         followUp.reset();
         leaveRoute(); // stop any pursuit or flight before our own keys go up
+        endCoPilot(); // co-pilot: the grant and the swing lease end, the keys were always the user's
         feel.disengage(snap); // combo plan, feints, pearl run, arena read, the read and any rank-dial request end
         lastPositional = TacticUtility.Tactic.FIGHT;
         lastFeintNoted = FeintPlanner.Move.NONE;
@@ -2028,6 +2305,10 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
 
     @Override
     public void onPreempted(ControlLease l, LeaseEndReason reason, String byModuleId) {
+        if (l == swingLease) {
+            swingLease = null; // the user clicked, or a higher priority took WORLD_INTERACT: the next swing asks again
+            return;
+        }
         if (l != lease) {
             return;
         }
@@ -2114,7 +2395,11 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
 
     @Override
     public void onWorldUnload() {
-        lease = null; // the core ended it already
+        lease = null; // the core ended it already (and the shared grant and the swing lease with it)
+        grant = null;
+        swingLease = null;
+        sprintFillTicks = 0;
+        copilotPlan.reset();
         routeMode = ROUTE_NONE;
         keeperLease = null;
         pulledInvSlot = -1;
