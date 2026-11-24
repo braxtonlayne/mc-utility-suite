@@ -121,7 +121,9 @@ public final class GoalEngine implements IGoalEngine, IModule, IConfigurable {
                 warnings.add("Shared errand " + e.key() + " with queued jobs " + e.jobIds());
             }
         }
-        return new PlanPreview(request, interpret(request), steps, plan.missing(), warnings);
+        return new PlanPreview(request, interpret(request), steps, plan.missing(), warnings,
+                com.utilitysuite.jobs.planner.PlanEstimate.seconds(plan.steps()),
+                com.utilitysuite.jobs.planner.PlanEstimate.requiredTools(plan.steps()));
     }
 
     static String interpret(GoalRequest r) {
@@ -225,6 +227,8 @@ public final class GoalEngine implements IGoalEngine, IModule, IConfigurable {
                 ResumeHoldGate.DEFAULT_MAX_HOLD_TICKS / 20);
         s.batchErrands = profile.getBool(ID, "batch_errands", true);
         s.depositAfterGather = profile.getBool(ID, "deposit_after_gather", false);
+        s.minToolDurability = profile.getInt(ID, "min_tool_durability", ToolDurabilityGuard.DEFAULT_MIN_DURABILITY);
+        s.protectEnchantedTools = profile.getBool(ID, "protect_enchanted_tools", true);
         try {
             s.miningStyle = MiningStyle.valueOf(profile.getString(ID, "mining_style", MiningStyle.LIKE_A_PLAYER.name()));
         } catch (IllegalArgumentException e) {
@@ -267,6 +271,11 @@ public final class GoalEngine implements IGoalEngine, IModule, IConfigurable {
                         "Shovel material in one job that makes a shovel worth getting.").asAdvanced(),
                 SettingSpec.integer("axe_after", "Axe from (logs)", 12, 2, 512, "Tools",
                         "Logs in one job that make an axe worth getting.").asAdvanced(),
+                SettingSpec.integer("min_tool_durability", "Swap tool at (uses left)", 5, 0, 100, "Tools",
+                        "Swap a pickaxe or shovel for a backup when it has this many uses left; with no backup the job"
+                                + " pauses. 0 turns it off."),
+                SettingSpec.bool("protect_enchanted_tools", "Never break enchanted tools", true, "Tools",
+                        "Enchanted tools are swapped out (or the job pauses) instead of being used up."),
                 SettingSpec.integer("stuck_seconds", "Stuck timeout (s)", 15, 5, 120, "Replanning",
                         "Seconds without progress before trying an alternative").asAdvanced(),
                 SettingSpec.integer("max_replans", "Replans per step", 3, 1, 10, "Replanning",

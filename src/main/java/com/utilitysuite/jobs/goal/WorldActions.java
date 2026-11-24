@@ -55,6 +55,14 @@ public interface WorldActions {
     /** Fortune level on the best pickaxe carried (0 when none), for yield estimates. */
     int fortuneLevel();
 
+    /**
+     * Checks the selected pickaxe/shovel against {@code minRemaining} uses left and, when it is about to break, swaps in
+     * a backup of the same kind (see {@link ToolDurabilityGuard}). Cheap; the executor calls it every few ticks.
+     */
+    default ToolDurabilityGuard.Decision guardTool(int minRemaining, boolean protectEnchanted, int requiredTier) {
+        return ToolDurabilityGuard.Decision.OK;
+    }
+
     /** Station items placed within reach of the player ("minecraft:crafting_table"). */
     java.util.Set<String> nearbyStations();
 }

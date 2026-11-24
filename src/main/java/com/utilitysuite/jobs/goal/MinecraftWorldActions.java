@@ -645,6 +645,46 @@ public final class MinecraftWorldActions implements WorldActions {
         return dimId;
     }
 
+    private final ToolDurabilityGuard toolGuard = new ToolDurabilityGuard();
+    private ControlLease swapLease;
+
+    @Override
+    public ToolDurabilityGuard.Decision guardTool(int minRemaining, boolean protectEnchanted, int requiredTier) {
+        if (swapLease != null) {
+            if (swapLease.isActive() && Services.clicker().pending() > 0) {
+                return ToolDurabilityGuard.Decision.OK; // the previous swap is still being clicked
+            }
+            swapLease.close();
+            swapLease = null;
+        }
+        LocalPlayer player = Minecraft.getInstance().player;
+        if (player == null) {
+            return ToolDurabilityGuard.Decision.OK;
+        }
+        inv.fillToolGuard(toolGuard);
+        ToolDurabilityGuard.Decision d = toolGuard.decide(minRemaining, protectEnchanted, requiredTier);
+        if (d != ToolDurabilityGuard.Decision.SWAP) {
+            return d;
+        }
+        ControlLease l = Services.arbiter().request(new com.utilitysuite.core.api.LeaseRequest("goal-tool-guard",
+                com.utilitysuite.core.api.ControlPriority.GOAL, java.util.EnumSet.of(ControlChannel.HOTBAR), 40, null))
+                .orElse(null);
+        if (l == null) {
+            return ToolDurabilityGuard.Decision.OK; // retried on the next check
+        }
+        swapLease = l;
+        int slot = toolGuard.swapSlot;
+        if (slot < 9) {
+            Services.input().selectHotbarSlot(l, slot);
+        } else {
+            if (!(player.containerMenu instanceof InventoryMenu)) {
+                player.closeContainer();
+            }
+            Services.clicker().queueClick(l, slot, player.getInventory().selected, IContainerClicker.Click.SWAP);
+        }
+        return d;
+    }
+
     @Override
     public int fortuneLevel() {
         return inv.fortuneOfBestPickaxe();

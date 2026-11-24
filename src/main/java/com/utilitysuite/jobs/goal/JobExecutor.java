@@ -96,6 +96,10 @@ public final class JobExecutor implements LeaseListener {
         public int resumeSettleTicks = ResumeHoldGate.DEFAULT_SETTLE_TICKS;
         /** After an emergency escape: longest wait for a live hazard before the job pauses with a notice. */
         public int resumeMaxHoldTicks = ResumeHoldGate.DEFAULT_MAX_HOLD_TICKS;
+        /** Swap a pickaxe/shovel for a backup when it has this many uses left (0 = off). */
+        public int minToolDurability = ToolDurabilityGuard.DEFAULT_MIN_DURABILITY;
+        /** Never let an enchanted tool break: swap, or pause when there is no backup. */
+        public boolean protectEnchantedTools = true;
     }
 
     enum Phase { START, PLANNING, MINE_CANDIDATE, MINE_SCAN, STRIP, STRIP_ORE, WAIT_DRIVER, WAIT_ACTION, BUILD_WAIT }
@@ -131,6 +135,8 @@ public final class JobExecutor implements LeaseListener {
         final Set<Long> excludedContainers = new HashSet<>();
         /** Paused by the user, Stop-All or an exhausted budget: no automatic resume. */
         boolean holdPaused;
+        /** The no-backup tool pause was already shown for this job (plain tools only). */
+        boolean toolWarned;
         boolean preempted;
         boolean resumeRequested;
         List<WorldObservation> candidates = List.of();
@@ -615,6 +621,10 @@ public final class JobExecutor implements LeaseListener {
             repairTool(j, step);
             return;
         }
+        if (settings.minToolDurability > 0 && now() % ToolDurabilityGuard.CHECK_INTERVAL == 0
+                && !guardTool(j, step)) {
+            return;
+        }
         MiningDriver.Status st = d.status();
         if (j.phase == Phase.STRIP || j.phase == Phase.STRIP_ORE) {
             tickStrip(j, step, progress, st);
@@ -937,6 +947,32 @@ public final class JobExecutor implements LeaseListener {
         }
         int progress = stepCount(deps.inventory().get(), step) - j.baselines.getOrDefault(step, 0);
         alternative(j, step, progress);
+    }
+
+    /**
+     * Swaps a nearly broken pickaxe/shovel for a backup before it breaks. Without a backup the job pauses with a
+     * notice (once per job for plain tools, always for enchanted ones). False when the job was paused.
+     */
+    private boolean guardTool(Job j, PlanStep step) {
+        ToolDurabilityGuard.Decision dec = deps.actions().guardTool(settings.minToolDurability,
+                settings.protectEnchantedTools, step.requiredTier());
+        switch (dec) {
+            case SWAP -> j.toolWarned = false;
+            case NO_BACKUP -> {
+                if (!j.toolWarned) {
+                    j.toolWarned = true;
+                    pauseDiagnostic(j, "Tool is almost broken and there is no backup in the inventory; swap or craft "
+                            + "one, then resume");
+                    return false;
+                }
+            }
+            case NO_BACKUP_ENCHANTED -> {
+                pauseDiagnostic(j, "Enchanted tool is almost broken and there is no backup; swap it out, then resume");
+                return false;
+            }
+            default -> { }
+        }
+        return true;
     }
 
     private void repairTool(Job j, PlanStep step) {

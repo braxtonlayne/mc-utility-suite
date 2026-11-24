@@ -127,6 +127,35 @@ public final class MinecraftInventoryView implements IInventoryView {
         return byId > 0 ? byId : 2;
     }
 
+    /** Fills the guard snapshot from the 36 inventory slots and the selected slot. No allocation after warm-up. */
+    public void fillToolGuard(ToolDurabilityGuard g) {
+        Inventory inv = inventory();
+        g.clear();
+        if (inv == null) {
+            g.selected = -1;
+            return;
+        }
+        g.selected = inv.selected;
+        for (int i = 0; i < 36; i++) {
+            ItemStack s = inv.items.get(i);
+            if (s.isEmpty()) {
+                continue;
+            }
+            Item item = s.getItem();
+            if (item instanceof PickaxeItem p) {
+                g.kind[i] = ToolDurabilityGuard.PICKAXE;
+                g.tier[i] = tierOf(p, s);
+            } else if (item instanceof net.minecraft.world.item.ShovelItem) {
+                g.kind[i] = ToolDurabilityGuard.SHOVEL;
+            } else {
+                continue;
+            }
+            g.remaining[i] = s.isDamageableItem() ? s.getMaxDamage() - s.getDamageValue()
+                    : ToolDurabilityGuard.UNBREAKABLE;
+            g.enchanted[i] = !s.getEnchantments().isEmpty();
+        }
+    }
+
     /** Fortune level on the best pickaxe carried. */
     public int fortuneOfBestPickaxe() {
         Minecraft mc = Minecraft.getInstance();
