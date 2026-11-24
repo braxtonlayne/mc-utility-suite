@@ -28,7 +28,15 @@ public final class RotationCurve {
 
     private final RandomGenerator random;
 
+    /** Minimum yaw span (degrees) for applying a mandatory visible micro-arc orthogonal to the turn. */
+    static final double LONG_TURN_YAW_DEG = 45.0;
+    /** Minimum mid-turn orthogonal arc amplitude (degrees) on long visible turns. */
+    static final double MICRO_ARC_MIN_DEG = 1.5;
+    /** Maximum mid-turn orthogonal arc amplitude (degrees) on long visible turns. */
+    static final double MICRO_ARC_MAX_DEG = 3.5;
+
     // ---- state ------------------------------------------------------------------------------------------------------
+    private boolean microArc = true;
     private boolean active;
     private double elapsed;
     private double mainDuration;
@@ -113,9 +121,19 @@ public final class RotationCurve {
         p0p = fromPitch;
         p3y = targetYaw + ux * overshoot;
         p3p = targetPitch + uy * overshoot;
-        double bend = dist * curvatureFraction * (random.nextDouble() * 2.0 - 1.0);
         double cy = p3y - p0y;
         double cp = p3p - p0p;
+        double bend = dist * curvatureFraction * (random.nextDouble() * 2.0 - 1.0);
+        double yawSpan = Math.abs(wrapDegrees((double) toYaw - fromYaw));
+        if (microArc && yawSpan >= LONG_TURN_YAW_DEG) {
+            // enforce a subtle wrist-arc orthogonal to the turn chord so long sweeps are never ruler-flat
+            double arc = MICRO_ARC_MIN_DEG + random.nextDouble() * (MICRO_ARC_MAX_DEG - MICRO_ARC_MIN_DEG);
+            double minBend = arc / 0.6; // peak mid-turn Bezier weight: b1(0.5) + 0.6 * b2(0.5) = 0.6
+            if (Math.abs(bend) < minBend) {
+                double sign = bend == 0.0 ? (random.nextBoolean() ? 1.0 : -1.0) : Math.signum(bend);
+                bend = sign * minBend;
+            }
+        }
         p1y = p0y + cy * 0.33 + nx * bend;
         p1p = p0p + cp * 0.33 + ny * bend;
         p2y = p0y + cy * 0.67 + nx * bend * 0.6;
@@ -198,6 +216,11 @@ public final class RotationCurve {
 
     public boolean isActive() {
         return active;
+    }
+
+    /** Enables or disables mandatory orthogonal micro-arc on long turns (enabled for VISIBLE, disabled for SILENT). */
+    public void setMicroArc(boolean enabled) {
+        this.microArc = enabled;
     }
 
     public float yaw() {

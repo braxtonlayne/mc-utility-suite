@@ -167,6 +167,11 @@ public final class MinecraftInputBackend implements InputBackend {
     }
 
     @Override
+    public double mouseSensitivity() {
+        return Minecraft.getInstance().options.sensitivity().get();
+    }
+
+    @Override
     public void setRotation(float yaw, float pitch) {
         LocalPlayer p = Minecraft.getInstance().player;
         if (p != null) {

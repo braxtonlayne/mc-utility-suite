@@ -205,4 +205,33 @@ class IntentEstimatorTest {
         assertFalse(e.hasTarget());
         assertEquals(0.0, e.confidence());
     }
+
+    @Test
+    void sharedChainLookaheadReusesScannedColumnsWithSameResult() {
+        Grid g = start()
+                .set(0, FLOOR, 3)
+                .set(0, FLOOR, 6)
+                .set(1, FLOOR, 9);
+        MovementPhysics now = player(0.5, 0.5, 0f, 0.25);
+        ChainLookahead chain = new ChainLookahead();
+        for (int t = 0; t < 20; t++) {
+            chain.update(now, 0f, g);
+        }
+
+        IntentEstimator baseline = new IntentEstimator();
+        assertTrue(baseline.estimate(now, 0f, pitchTo(0.5, 0.5, 0, FLOOR, 3), 1, 0, true, g));
+
+        IntentEstimator shared = new IntentEstimator();
+        shared.setChain(chain);
+        assertTrue(shared.estimate(now, 0f, pitchTo(0.5, 0.5, 0, FLOOR, 3), 1, 0, true, g));
+
+        assertTrue(shared.lastReusedColumns() > 0);
+        assertTrue(shared.lastLookups() < baseline.lastLookups(),
+                "expected fewer lookups with shared chain: shared=" + shared.lastLookups()
+                        + " baseline=" + baseline.lastLookups());
+        assertEquals(baseline.targetX(), shared.targetX());
+        assertEquals(baseline.targetY(), shared.targetY());
+        assertEquals(baseline.targetZ(), shared.targetZ());
+        assertEquals(baseline.confidence(), shared.confidence(), 1.0e-9);
+    }
 }

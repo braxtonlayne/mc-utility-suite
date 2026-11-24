@@ -386,12 +386,26 @@ public final class IntentEstimator {
         groundValid = false;
         candCount = 0;
         lookups = 0;
+        reusedColumns = 0;
         simTicks = 0;
         rolls = 0;
         chTicks = 0;
         for (int i = 0; i < CACHE; i++) {
             cacheUsed[i] = false;
         }
+    }
+
+    private ChainLookahead chain;
+    private int reusedColumns;
+
+    /** Shares the 12-block lookahead corridor so already-scanned columns are reused instead of re-scanned. */
+    public void setChain(ChainLookahead chain) {
+        this.chain = chain;
+    }
+
+    /** Columns served from the shared lookahead cache during the latest {@link #estimate} call. */
+    public int lastReusedColumns() {
+        return reusedColumns;
     }
 
     /**
@@ -409,6 +423,7 @@ public final class IntentEstimator {
         idealYaw = yaw;
         candCount = 0;
         lookups = 0;
+        reusedColumns = 0;
         simTicks = 0;
         rolls = 0;
 
@@ -768,6 +783,7 @@ public final class IntentEstimator {
         int sy = floor(refTop - TOP_EPS); // the cell whose top the player stands on
         int yBot = sy - MAX_DOWN;
         int yTop = sy + MAX_UP;
+        boolean canReuse = chain != null && chain.scanMinY() <= yBot && chain.scanMaxY() >= yTop;
         for (int c = 0; c < COL_DX.length && candCount < MAX_CANDIDATES; c++) {
             if (lookups + COLUMN_RESERVE > MAX_LOOKUPS) {
                 break;
@@ -782,6 +798,30 @@ public final class IntentEstimator {
             }
             if (ex0 * mx + ez0 * mz < CONE_COS * hd0) {
                 continue;
+            }
+            int cachedCol = canReuse ? chain.scannedColumn(bx, bz) : -1;
+            if (cachedCol >= 0) {
+                int cachedN = chain.columnTopCount(cachedCol);
+                if (cachedN < ChainLookahead.TOPS
+                        || (cachedN > 0 && chain.columnTopY(cachedCol, cachedN - 1) <= yBot)) {
+                    reusedColumns++;
+                    for (int k = 0; k < cachedN && candCount < MAX_CANDIDATES; k++) {
+                        int y = chain.columnTopY(cachedCol, k);
+                        if (y > yTop || y < yBot) {
+                            continue;
+                        }
+                        double top = chain.columnTop(cachedCol, k);
+                        if (Double.isNaN(top) || top - refTop > MAX_JUMP_UP) {
+                            continue;
+                        }
+                        acceptCandidate(w, bx, y, bz, top,
+                                chain.columnTopMinX(cachedCol, k), chain.columnTopMinZ(cachedCol, k),
+                                chain.columnTopMaxX(cachedCol, k), chain.columnTopMaxZ(cachedCol, k),
+                                chain.columnTopSurface(cachedCol, k), true, keys, vux, vuz, speed, predX, predZ, gdx,
+                                gdy, gdz);
+                    }
+                    continue;
+                }
             }
             for (int k = 0; k < COL_CELLS; k++) {
                 colCount[k] = w.boxCount(bx, yBot + k, bz);
@@ -799,55 +839,65 @@ public final class IntentEstimator {
                 if (!clear(w, bx, y, bz, top, yBot)) {
                     continue;
                 }
-                double t0x = topMinX; // jumpTarget below reuses the top scratch
-                double t0z = topMinZ;
-                double t1x = topMaxX;
-                double t1z = topMaxZ;
-                double cxm = 0.5 * (t0x + t1x);
-                double czm = 0.5 * (t0z + t1z);
-                double ex = cxm - px;
-                double ez = czm - pz;
-                double hd = Math.sqrt(ex * ex + ez * ez);
-                if (hd < MIN_RANGE || hd > MAX_RANGE || ex * mx + ez * mz < CONE_COS * hd) {
-                    continue;
-                }
-                double reach = tableReach(top - refTop);
-                if (hd > reach + REACH_SOFT) {
-                    continue; // the table pre-filter
-                }
-                byte surf = w.surface(bx, y, bz);
-                lookups++;
-                if (surf == MovementPhysics.SURFACE_HARM || surf == MovementPhysics.SURFACE_NONE
-                        || surf == MovementPhysics.SURFACE_STUCK) {
-                    continue;
-                }
-                int above = floor(top + TOP_EPS);
-                if (above != y) {
-                    byte up = w.surface(bx, above, bz);
-                    lookups++;
-                    if (up == MovementPhysics.SURFACE_HARM || up == MovementPhysics.SURFACE_STUCK) {
-                        continue;
-                    }
-                    if (up == MovementPhysics.SURFACE_UNMODELLED) {
-                        surf = up;
-                    }
-                }
-                if (Math.abs(top - refTop) < 0.01 && !jumpTarget(w, cxm, czm, hd)) {
-                    continue;
-                }
-                int i = candCount++;
-                candX[i] = bx;
-                candY[i] = y;
-                candZ[i] = bz;
-                candTop[i] = top;
-                candMinX[i] = t0x;
-                candMinZ[i] = t0z;
-                candMaxX[i] = t1x;
-                candMaxZ[i] = t1z;
-                candSurface[i] = surf;
-                candBase[i] = score(i, ex, ez, hd, reach, keys, vux, vuz, speed, predX, predZ, gdx, gdy, gdz);
+                acceptCandidate(w, bx, y, bz, top, topMinX, topMinZ, topMaxX, topMaxZ,
+                        MovementPhysics.SURFACE_NONE, false, keys, vux, vuz, speed, predX, predZ, gdx, gdy, gdz);
             }
         }
+    }
+
+    private void acceptCandidate(MovementPhysics.Voxels w, int bx, int y, int bz, double top,
+                                 double t0x, double t0z, double t1x, double t1z, byte cachedSurface,
+                                 boolean useCachedSurface, boolean keys, double vux, double vuz, double speed,
+                                 double predX, double predZ, double gdx, double gdy, double gdz) {
+        double cxm = 0.5 * (t0x + t1x);
+        double czm = 0.5 * (t0z + t1z);
+        double ex = cxm - px;
+        double ez = czm - pz;
+        double hd = Math.sqrt(ex * ex + ez * ez);
+        if (hd < MIN_RANGE || hd > MAX_RANGE || ex * mx + ez * mz < CONE_COS * hd) {
+            return;
+        }
+        double reach = tableReach(top - refTop);
+        if (hd > reach + REACH_SOFT) {
+            return; // the table pre-filter
+        }
+        byte surf = cachedSurface;
+        if (!useCachedSurface) {
+            surf = w.surface(bx, y, bz);
+            lookups++;
+            if (surf == MovementPhysics.SURFACE_HARM || surf == MovementPhysics.SURFACE_NONE
+                    || surf == MovementPhysics.SURFACE_STUCK) {
+                return;
+            }
+            int above = floor(top + TOP_EPS);
+            if (above != y) {
+                byte up = w.surface(bx, above, bz);
+                lookups++;
+                if (up == MovementPhysics.SURFACE_HARM || up == MovementPhysics.SURFACE_STUCK) {
+                    return;
+                }
+                if (up == MovementPhysics.SURFACE_UNMODELLED) {
+                    surf = up;
+                }
+            }
+        } else if (surf == MovementPhysics.SURFACE_HARM || surf == MovementPhysics.SURFACE_NONE
+                || surf == MovementPhysics.SURFACE_STUCK) {
+            return;
+        }
+        if (Math.abs(top - refTop) < 0.01 && !jumpTarget(w, cxm, czm, hd)) {
+            return;
+        }
+        int i = candCount++;
+        candX[i] = bx;
+        candY[i] = y;
+        candZ[i] = bz;
+        candTop[i] = top;
+        candMinX[i] = t0x;
+        candMinZ[i] = t0z;
+        candMaxX[i] = t1x;
+        candMaxZ[i] = t1z;
+        candSurface[i] = surf;
+        candBase[i] = score(i, ex, ez, hd, reach, keys, vux, vuz, speed, predX, predZ, gdx, gdy, gdz);
     }
 
     private double topMinX, topMinZ, topMaxX, topMaxZ;

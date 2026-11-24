@@ -46,6 +46,11 @@ public interface InputBackend {
 
     float pitch();
 
+    /** Normalized mouse sensitivity in [0, 1] (vanilla {@code Options.sensitivity()}), or {@code NaN} when unknown. */
+    default double mouseSensitivity() {
+        return Double.NaN;
+    }
+
     /** Sets the player's real (rendered) rotation. */
     void setRotation(float yaw, float pitch);
 

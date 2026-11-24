@@ -98,6 +98,8 @@ public final class InputSmoother implements IInputSmoother, IContainerClicker {
     private Humanizer humanizer;
     private final MomentumRelease momentum = new MomentumRelease();
     private boolean momentumEnabled = true;
+    private double remMomentumYaw;
+    private double remMomentumPitch;
     private ManualLookAssist manualLook;
     /** Set while the arbiter ends leases for a manual mouse look, so the lease-end path can hand over momentum. */
     private boolean manualLookPreempting;
@@ -253,6 +255,9 @@ public final class InputSmoother implements IInputSmoother, IContainerClicker {
         trackRequested = false;
         tracking = false;
         momentum.cancel(); // automation owns the camera again
+        remMomentumYaw = 0.0;
+        remMomentumPitch = 0.0;
+        curve.setMicroArc(mode == RotationMode.VISIBLE);
         curve.start(fromYaw, fromPitch, target.yaw(), target.pitch(), target.speed(),
                 humanTurnSeconds(lease, target, fromYaw, fromPitch));
         rotationOwner = lease;
@@ -305,6 +310,9 @@ public final class InputSmoother implements IInputSmoother, IContainerClicker {
         double velPitch = moving ? lastVelPitch : 0.0;
         lagging = false;
         momentum.cancel(); // automation owns the camera again
+        remMomentumYaw = 0.0;
+        remMomentumPitch = 0.0;
+        curve.setMicroArc(true);
         tracker.setDriftAmplitude(Math.min(curve.driftAmplitude(), RotationTracker.DEFAULT_DRIFT_DEG));
         tracker.reset(target.yaw(), target.pitch());
         trackSampleTick = tick;
@@ -434,11 +442,13 @@ public final class InputSmoother implements IInputSmoother, IContainerClicker {
         }
         // no-snap rule: whatever the curve or tracker asks for, the camera moves at most the hard cap from where it
         // is now (measured from the live camera, so the user's own mouse is never limited or fought)
-        lagging = !RotationLimits.step(fromYaw, fromPitch, wantYaw, wantPitch,
-                RotationLimits.MAX_DEG_PER_SEC * dt, limited);
+        double maxStep = RotationLimits.MAX_DEG_PER_SEC * dt;
+        lagging = !RotationLimits.step(fromYaw, fromPitch, wantYaw, wantPitch, maxStep, limited);
         if (tracking) {
             lagging = false; // the tracker plans within the cap and runs until cleared; it never trails a finished plan
         }
+        double stepDeg = RotationGcd.stepDeg(backend.mouseSensitivity());
+        RotationGcd.quantizeTarget(fromYaw, fromPitch, limited[0], limited[1], stepDeg, maxStep, limited);
         backend.setRotation(limited[0], limited[1]);
         if (dt > 0.0) {
             lastVelYaw = ((double) limited[0] - fromYaw) / dt;
@@ -450,6 +460,8 @@ public final class InputSmoother implements IInputSmoother, IContainerClicker {
     private void advanceMomentum(double dtSeconds) {
         if (!backend.isReady()) {
             momentum.cancel();
+            remMomentumYaw = 0.0;
+            remMomentumPitch = 0.0;
             return;
         }
         double dt = Math.min(Math.max(dtSeconds, 0.0), 0.1);
@@ -458,9 +470,19 @@ public final class InputSmoother implements IInputSmoother, IContainerClicker {
         userYawSign = 0;
         userPitchSign = 0;
         if (momentum.advance(dt, ys, ps)) {
-            float pitch = (float) (backend.pitch() + momentum.pitchStep());
-            pitch = pitch < -90f ? -90f : (pitch > 90f ? 90f : pitch);
-            backend.setRotation((float) (backend.yaw() + momentum.yawStep()), pitch);
+            double stepDeg = RotationGcd.stepDeg(backend.mouseSensitivity());
+            double dy = RotationGcd.quantizeDelta(momentum.yawStep(), remMomentumYaw, stepDeg);
+            remMomentumYaw = RotationGcd.remainder(momentum.yawStep(), remMomentumYaw, dy);
+            double dp = RotationGcd.quantizeDelta(momentum.pitchStep(), remMomentumPitch, stepDeg);
+            remMomentumPitch = RotationGcd.remainder(momentum.pitchStep(), remMomentumPitch, dp);
+            if (dy != 0.0 || dp != 0.0) {
+                float pitch = (float) (backend.pitch() + dp);
+                pitch = pitch < -90f ? -90f : (pitch > 90f ? 90f : pitch);
+                backend.setRotation((float) (backend.yaw() + dy), pitch);
+            }
+        } else {
+            remMomentumYaw = 0.0;
+            remMomentumPitch = 0.0;
         }
     }
 
@@ -680,6 +702,8 @@ public final class InputSmoother implements IInputSmoother, IContainerClicker {
                     && (curve.isActive() || lagging || trackRequested);
             clearRotationInternal();
             if (handOver) {
+                remMomentumYaw = 0.0;
+                remMomentumPitch = 0.0;
                 momentum.start(lastVelYaw, lastVelPitch, backend.invertMouseY()); // A10: ease out instead of stopping dead
             }
         }
@@ -700,6 +724,8 @@ public final class InputSmoother implements IInputSmoother, IContainerClicker {
         }
         clearRotationInternal();
         momentum.cancel(); // Stop-All and world unload stop the camera at once
+        remMomentumYaw = 0.0;
+        remMomentumPitch = 0.0;
         if (manualLook != null) {
             manualLook.clearAll(); // turn gain requests end with every other automation
         }
@@ -892,8 +918,12 @@ public final class InputSmoother implements IInputSmoother, IContainerClicker {
             } else {
                 curve.advance(TICK_SECONDS);
                 // no-snap rule for the server-visible head: at most the per-tick cap between two packets
-                lagging = !RotationLimits.step(SilentRotation.yaw(), SilentRotation.pitch(), curve.yaw(),
-                        curve.pitch(), RotationLimits.MAX_DEG_PER_TICK, limited);
+                float fromYaw = SilentRotation.yaw();
+                float fromPitch = SilentRotation.pitch();
+                lagging = !RotationLimits.step(fromYaw, fromPitch, curve.yaw(), curve.pitch(),
+                        RotationLimits.MAX_DEG_PER_TICK, limited);
+                RotationGcd.quantizeTarget(fromYaw, fromPitch, limited[0], limited[1],
+                        RotationGcd.stepDeg(backend.mouseSensitivity()), RotationLimits.MAX_DEG_PER_TICK, limited);
                 SilentRotation.set(limited[0], limited[1]);
             }
         }
@@ -906,6 +936,10 @@ public final class InputSmoother implements IInputSmoother, IContainerClicker {
                 silentReturning = false;
                 SilentRotation.clear(); // packets carry the camera angle again; it is where the server head now is
             } else {
+                float fromYaw = SilentRotation.yaw();
+                float fromPitch = SilentRotation.pitch();
+                RotationGcd.quantizeTarget(fromYaw, fromPitch, limited[0], limited[1],
+                        RotationGcd.stepDeg(backend.mouseSensitivity()), RotationLimits.MAX_DEG_PER_TICK, limited);
                 SilentRotation.set(limited[0], limited[1]);
             }
         }

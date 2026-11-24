@@ -164,4 +164,22 @@ class RotationCurveTest {
             prev = v;
         }
     }
+
+    @Test
+    void longVisibleTurnHasOrthogonalMicroArc() {
+        for (int seed = 1; seed <= 25; seed++) {
+            RotationCurve curve = new RotationCurve(new java.util.SplittableRandom(seed));
+            curve.setMicroArc(true);
+            curve.start(0f, 0f, 90f, 0f, 1.0f, 0.35);
+            double maxAbsPitch = 0.0;
+            for (int i = 0; i < 60 && curve.isActive(); i++) {
+                curve.advance(0.01);
+                maxAbsPitch = Math.max(maxAbsPitch, Math.abs(curve.pitch()));
+            }
+            assertTrue(maxAbsPitch >= RotationCurve.MICRO_ARC_MIN_DEG * 0.75,
+                    "seed " + seed + " flat pitch peak " + maxAbsPitch);
+            assertEquals(90.0f, (float) RotationCurve.wrapDegrees(curve.yaw()), 0.1f);
+            assertEquals(0.0f, curve.pitch(), 0.1f);
+        }
+    }
 }

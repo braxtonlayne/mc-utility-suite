@@ -257,6 +257,7 @@ public final class MovementAssist implements IModule, IConfigurable, com.utility
     public MovementAssist(TickWorldShapes world) {
         this.world = world;
         this.voxels = world.shapes();
+        this.intent.setChain(chain);
     }
 
     public void onMovementInput(MovementInputUpdateEvent event) {

@@ -18,6 +18,7 @@ public final class FakeInputBackend implements InputBackend {
     public boolean ready = true;
     public float yaw;
     public float pitch;
+    public double sensitivity = Double.NaN;
     public int rotationWrites;
     public int selectedSlot;
     /** The "player's" movement input of this tick (what {@code MovementInputUpdateEvent} carries). */
@@ -92,6 +93,11 @@ public final class FakeInputBackend implements InputBackend {
     @Override
     public float pitch() {
         return pitch;
+    }
+
+    @Override
+    public double mouseSensitivity() {
+        return sensitivity;
     }
 
     @Override

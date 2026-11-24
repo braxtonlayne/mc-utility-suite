@@ -35,6 +35,9 @@ public final class ManualInputHooks {
     private YawCoSteer coSteer;
     /** Seconds since the previous mouse frame, recorded at the HEAD of {@code turnPlayer}. */
     private double frameSeconds;
+    /** Sub-GCD remainders carried across frames when turn-gain or co-steer alters manual mouse deltas. */
+    private double remTurnYaw;
+    private double remTurnPitch;
 
     public ManualInputHooks(IActionArbiter arbiter, InputSmoother smoother) {
         this.arbiter = arbiter;
@@ -94,6 +97,10 @@ public final class ManualInputHooks {
             if (screenOpen) {
                 f.releaseAll();
             }
+        }
+        if (screenOpen) {
+            remTurnYaw = 0.0;
+            remTurnPitch = 0.0;
         }
     }
 
@@ -158,17 +165,28 @@ public final class ManualInputHooks {
         }
         ManualLookAssist a = h.look;
         if (a == null || !a.hasLivePitchRequest()) {
+            h.remTurnPitch = 0.0;
             return pitchArg;
         }
         Minecraft mc = Minecraft.getInstance();
         net.minecraft.client.player.LocalPlayer p = mc.player;
         if (p == null) {
+            h.remTurnPitch = 0.0;
             return pitchArg;
         }
         boolean blocked = mc.screen != null || p.isSpectator() || p.isPassenger();
+        if (blocked) {
+            h.remTurnPitch = 0.0;
+        }
         double raw = pitchArg * ManualLookAssist.DEG_PER_TURN_UNIT;
         double out = a.onFramePitch(p.getXRot(), raw, h.frameSeconds, blocked);
-        return out == raw ? pitchArg : out / ManualLookAssist.DEG_PER_TURN_UNIT;
+        if (out == raw) {
+            return pitchArg;
+        }
+        double step = RotationGcd.stepDeg(mc.options.sensitivity().get());
+        double q = RotationGcd.quantizeDelta(out, h.remTurnPitch, step);
+        h.remTurnPitch = RotationGcd.remainder(out, h.remTurnPitch, q);
+        return q / ManualLookAssist.DEG_PER_TURN_UNIT;
     }
 
     private double turnYaw(ManualLookAssist a, YawCoSteer cs, boolean steerLive, double yawArg) {
@@ -191,6 +209,9 @@ public final class ManualInputHooks {
         }
         boolean blocked = mc.screen != null || p.isSpectator() || p.isPassenger();
         float yaw = p.getYRot();
+        if (blocked) {
+            remTurnYaw = 0.0;
+        }
         double out = raw;
         if (a != null && raw != 0.0) {
             out = a.onFrameYaw(yaw, raw, frameSeconds, blocked);
@@ -198,7 +219,13 @@ public final class ManualInputHooks {
         if (steerLive) {
             out += cs.onFrame(yaw, raw, out, frameSeconds, blocked || smoother.isAutomatedLookRunning());
         }
-        return out == raw ? yawArg : out / ManualLookAssist.DEG_PER_TURN_UNIT;
+        if (out == raw) {
+            return yawArg;
+        }
+        double step = RotationGcd.stepDeg(mc.options.sensitivity().get());
+        double q = RotationGcd.quantizeDelta(out, remTurnYaw, step);
+        remTurnYaw = RotationGcd.remainder(out, remTurnYaw, q);
+        return q / ManualLookAssist.DEG_PER_TURN_UNIT;
     }
 
     private static boolean inGame(Minecraft mc) {

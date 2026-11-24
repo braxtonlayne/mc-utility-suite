@@ -93,11 +93,16 @@ public final class ChainLookahead {
     private byte[] topCount = new byte[COLS];
     private double[] tops = new double[NODES];
     private int[] topCell = new int[NODES];
+    private byte[] topSurface = new byte[NODES];
+    private double[] topBounds = new double[NODES * 4]; // [minX, minZ, maxX, maxZ] per node
+    private double topMinX, topMinZ, topMaxX, topMaxZ;
     // the previous corridor's columns, kept for reuse when the body only moved a little (swapped in begin)
     private byte[] oldColState = new byte[COLS];
     private byte[] oldTopCount = new byte[COLS];
     private double[] oldTops = new double[NODES];
     private int[] oldTopCell = new int[NODES];
+    private byte[] oldTopSurface = new byte[NODES];
+    private double[] oldTopBounds = new double[NODES * 4];
     private int oldMinX, oldMinZ;
     private int reuseRun;
     private int reusedColumns;
@@ -351,6 +356,12 @@ public final class ChainLookahead {
             int[] is = oldTopCell;
             oldTopCell = topCell;
             topCell = is;
+            bs = oldTopSurface;
+            oldTopSurface = topSurface;
+            topSurface = bs;
+            ds = oldTopBounds;
+            oldTopBounds = topBounds;
+            topBounds = ds;
             oldMinX = minX;
             oldMinZ = minZ;
             reuseRun++;
@@ -399,8 +410,17 @@ public final class ChainLookahead {
                     int n = oldTopCount[oc];
                     topCount[c] = (byte) n;
                     for (int k = 0; k < n; k++) {
-                        tops[c * TOPS + k] = oldTops[oc * TOPS + k];
-                        topCell[c * TOPS + k] = oldTopCell[oc * TOPS + k];
+                        int dst = c * TOPS + k;
+                        int src = oc * TOPS + k;
+                        tops[dst] = oldTops[src];
+                        topCell[dst] = oldTopCell[src];
+                        topSurface[dst] = oldTopSurface[src];
+                        int db = dst * 4;
+                        int sb = src * 4;
+                        topBounds[db] = oldTopBounds[sb];
+                        topBounds[db + 1] = oldTopBounds[sb + 1];
+                        topBounds[db + 2] = oldTopBounds[sb + 2];
+                        topBounds[db + 3] = oldTopBounds[sb + 3];
                     }
                     colState[c] = 2;
                     reusedColumns++;
@@ -471,13 +491,22 @@ public final class ChainLookahead {
                 continue;
             }
             lookups++;
+            byte surf = w.surface(x, y, z);
             // a top that hurts, traps or is not modelled is never part of the course; the one under the feet stays
-            // (the chain still has to start somewhere)
-            if (unsafe(w.surface(x, y, z)) && !(x == ox && z == oz && Math.abs(t - oTop) <= 0.05)) {
+            // (the chain still has to start somewhere). Unmodelled tops stay recorded for IntentEstimator reuse.
+            boolean footCell = x == ox && z == oz && Math.abs(t - oTop) <= 0.05;
+            if ((surf == MovementPhysics.SURFACE_HARM || surf == MovementPhysics.SURFACE_STUCK) && !footCell) {
                 continue;
             }
-            tops[base + n] = t;
-            topCell[base + n] = y;
+            int idx = base + n;
+            tops[idx] = t;
+            topCell[idx] = y;
+            topSurface[idx] = surf;
+            int bIdx = idx * 4;
+            topBounds[bIdx] = topMinX;
+            topBounds[bIdx + 1] = topMinZ;
+            topBounds[bIdx + 2] = topMaxX;
+            topBounds[bIdx + 3] = topMaxZ;
             n++;
         }
         topCount[c] = (byte) n;
@@ -492,9 +521,74 @@ public final class ChainLookahead {
             double t = y + box[4];
             if (!(t <= best + TOP_EPS)) {
                 best = t;
+                topMinX = x + box[0];
+                topMinZ = z + box[2];
+                topMaxX = x + box[3];
+                topMaxZ = z + box[5];
+            } else if (Math.abs(t - best) <= TOP_EPS) {
+                topMinX = Math.min(topMinX, x + box[0]);
+                topMinZ = Math.min(topMinZ, z + box[2]);
+                topMaxX = Math.max(topMaxX, x + box[3]);
+                topMaxZ = Math.max(topMaxZ, z + box[5]);
             }
         }
         return best;
+    }
+
+    // ---- shared scanned-column view (for IntentEstimator) ---------------------------------------------------------
+
+    int scanMinY() {
+        return oy - SCAN_DOWN;
+    }
+
+    int scanMaxY() {
+        return oy + SCAN_UP;
+    }
+
+    /** Returns the internal corridor column index when (x, z) is already scanned, else -1. */
+    int scannedColumn(int x, int z) {
+        if (!started) {
+            return -1;
+        }
+        int rx = x - minX;
+        int rz = z - minZ;
+        if (rx < 0 || rx >= DIM || rz < 0 || rz >= DIM) {
+            return -1;
+        }
+        int c = rx * DIM + rz;
+        return colState[c] == 2 ? c : -1;
+    }
+
+    int columnTopCount(int c) {
+        return topCount[c];
+    }
+
+    int columnTopY(int c, int k) {
+        return topCell[c * TOPS + k];
+    }
+
+    double columnTop(int c, int k) {
+        return tops[c * TOPS + k];
+    }
+
+    byte columnTopSurface(int c, int k) {
+        return topSurface[c * TOPS + k];
+    }
+
+    double columnTopMinX(int c, int k) {
+        return topBounds[(c * TOPS + k) * 4];
+    }
+
+    double columnTopMinZ(int c, int k) {
+        return topBounds[(c * TOPS + k) * 4 + 1];
+    }
+
+    double columnTopMaxX(int c, int k) {
+        return topBounds[(c * TOPS + k) * 4 + 2];
+    }
+
+    double columnTopMaxZ(int c, int k) {
+        return topBounds[(c * TOPS + k) * 4 + 3];
     }
 
     /**
@@ -544,13 +638,17 @@ public final class ChainLookahead {
                     continue;
                 }
                 for (int k = 0; k < topCount[sc]; k++) {
-                    if (Math.abs(tops[sc * TOPS + k] - oTop) > 0.05) {
+                    int node = sc * TOPS + k;
+                    if (Math.abs(tops[node] - oTop) > 0.05) {
+                        continue;
+                    }
+                    if (unsafe(topSurface[node]) && !(dx == 0 && dz == 0)) {
                         continue;
                     }
                     double d = (dx == 0 && dz == 0 ? 0.0 : 1.0) + ex + ez;
                     if (d < bestD) {
                         bestD = d;
-                        startNode = sc * TOPS + k;
+                        startNode = node;
                     }
                 }
             }
@@ -604,7 +702,7 @@ public final class ChainLookahead {
                 }
                 for (int k = 0; k < topCount[cb]; k++) {
                     int b = cb * TOPS + k;
-                    if (settled[b]) {
+                    if (settled[b] || unsafe(topSurface[b])) {
                         continue;
                     }
                     double dy = tops[b] - ta;
