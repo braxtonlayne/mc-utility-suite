@@ -387,7 +387,9 @@ public final class MovementAssist implements IModule, IConfigurable {
         // pick a block below), no placement; the press waits for a catching tick, Takeover makes it on the last one
         boolean climbCarry = auto || TravelKeys.takeoverHeld() || handOverHeld
                 || controlMode.mode == JumpCommit.Mode.CARRY;
-        if (brain.intentAssist && (auto || controlMode.mode != JumpCommit.Mode.NUDGE || climbCarry)) {
+        // (the fall clutch owns a fall it has taken: the catch does not arm under it)
+        if (brain.intentAssist && !clutch.active()
+                && (auto || controlMode.mode != JumpCommit.Mode.NUDGE || climbCarry)) {
             climb.decide(now, yaw, userF > 0 ? yaw : moveYaw(yaw, userF, userS), userF, userS,
                     sprinting || (now.onGround && canStartSprint(p, in)), in.jumping,
                     climbCarry, voxels);
@@ -464,6 +466,11 @@ public final class MovementAssist implements IModule, IConfigurable {
         }
         int fwdW = brain.forward() != MovementAssistBrain.KEEP ? brain.forward() : SharedGrant.KEEP;
         int strW = brain.strafe() != MovementAssistBrain.KEEP ? brain.strafe() : SharedGrant.KEEP;
+        if (climb.steering()) {
+            // an in-air catch steers with keys only (never yaw); with the user's own keys it does not steer
+            fwdW = climb.steerForward();
+            strW = climb.steerStrafe();
+        }
         // takeoff shaping's sprint timing, a fill only (vanilla's own rules end it); a withhold wins in the core
         // a catch is planned with the sprint vanilla would start here (after a landing hold dropped it): fill it in
         boolean sprintW = (brain.sprint() || climb.active()) && canSprint;

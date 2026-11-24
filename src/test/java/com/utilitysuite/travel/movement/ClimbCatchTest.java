@@ -226,4 +226,129 @@ class ClimbCatchTest {
         assertFalse(c.withholdJump());
         assertFalse(c.jump());
     }
+
+    // ---- facing: the real collision box decides which side can be entered ------------------------------------------
+
+    /** A ladder facing away (its slab on the near side, nothing behind it) cannot be entered from that side. */
+    @Test
+    void aLadderWhoseBackIsTowardTheRunnerIsNotCaught() {
+        ShapeGrid g = new ShapeGrid();
+        g.fill(-1, 19, -4, 1, 19, 0);
+        for (int x = -1; x <= 1; x++) {
+            for (int y = 18; y <= 22; y++) {
+                g.boxes(x, y, 3, 0, 0, 0, 1, 1, 3 * S); // slab on the -Z side of the cell: the runner meets its back
+                g.surface(x, y, 3, MovementPhysics.SURFACE_CLIMBABLE);
+            }
+        }
+        ClimbCatch c = new ClimbCatch();
+        c.decide(new MovementPhysics().set(0.5, 20, -1.5, 0, -0.0784, 0.2, true), 0f, 0f, 1, 0, true, true, true, g);
+        assertFalse(c.active(), "no jump from the front of this slab reaches the cell");
+        assertFalse(c.withholdJump());
+        String r = run(g, new MovementPhysics().set(0.5, 20, -3.5, 0, -0.0784, 0, true), Double.NaN, true, true);
+        assertFalse(r.equals("caught"), r);
+    }
+
+    /** A vine has no collision: it is caught from the front, with nothing behind it. */
+    @Test
+    void aVineIsCaught() {
+        ShapeGrid g = new ShapeGrid();
+        g.fill(-1, 19, -4, 1, 19, 0);
+        for (int x = -1; x <= 1; x++) {
+            for (int y = 18; y <= 22; y++) {
+                g.surface(x, y, 3, MovementPhysics.SURFACE_CLIMBABLE); // no boxes
+            }
+        }
+        String r = run(g, new MovementPhysics().set(0.5, 20, -3.5, 0, -0.0784, 0, true), Double.NaN, true, true);
+        assertTrue(r.equals("caught"), r);
+    }
+
+    // ---- in the air ---------------------------------------------------------------------------------------------
+
+    /** Ticks a body in the air with the given keys; the catch's steering overrides them like the assist does. */
+    static String air(ShapeGrid g, MovementPhysics p, int f, int s, boolean auto) {
+        ClimbCatch c = new ClimbCatch();
+        for (int t = 0; t < 60; t++) {
+            c.decide(p, 0f, 0f, f, s, true, false, auto, g);
+            assertTrue(c.simTicks <= ClimbCatch.MAX_SIM_TICKS + ClimbCatch.SIM_TICKS + 1, "budget " + c.simTicks);
+            int kf = c.steering() ? c.steerForward() : f;
+            int ks = c.steering() ? c.steerStrafe() : s;
+            assertFalse(c.jump(), "no jump press in the air");
+            p.tick(kf, ks, 0f, kf > 0, false, g);
+            if (g.surface((int) Math.floor(p.x), (int) Math.floor(p.y), (int) Math.floor(p.z))
+                    == MovementPhysics.SURFACE_CLIMBABLE) {
+                return "caught";
+            }
+            if (p.onGround || p.y < 16) {
+                return String.format("landed at z%.2f y%.2f", p.z, p.y);
+            }
+        }
+        return "stuck";
+    }
+
+    /** Knocked off the pad toward the tower with W held: the user's keys already catch, no steering. */
+    @Test
+    void aBodyFallingOffThePadTowardTheLadderCatchesWithTheUsersKeys() {
+        ShapeGrid g = scene(false, true);
+        ClimbCatch c = new ClimbCatch();
+        MovementPhysics p = new MovementPhysics().set(0.5, 20.5, 0.8, 0, 0.1, 0.25, false);
+        c.decide(p, 0f, 0f, 1, 0, true, false, false, g);
+        assertTrue(c.active());
+        assertFalse(c.steering());
+        String r = air(g, new MovementPhysics().set(0.5, 20.5, 0.8, 0, 0.1, 0.25, false), 1, 0, false);
+        assertTrue(r.equals("caught"), r);
+    }
+
+    /** No key held, drifting: the assist presses W itself (keys only) on a free axis. */
+    @Test
+    void anIdleBodyIsSteeredIntoTheLadderByKeysOnly() {
+        ShapeGrid g = scene(false, true);
+        String r = air(g, new MovementPhysics().set(0.5, 20.5, 0.8, 0, 0.1, 0.2, false), 0, 0, false);
+        assertTrue(r.equals("caught"), r);
+        ClimbCatch c = new ClimbCatch();
+        c.decide(new MovementPhysics().set(0.5, 20.5, 0.8, 0, 0.1, 0.2, false), 0f, 0f, 0, 0, true, false, false, g);
+        assertTrue(c.steering());
+        assertTrue(c.steerForward() == 1 && c.steerStrafe() == 0);
+    }
+
+    /** Manual input wins: the user holding back is not overridden unless the assist may take over. */
+    @Test
+    void theUsersOpposingKeyIsNotOverriddenWithoutTakeover() {
+        ShapeGrid g = scene(false, true);
+        MovementPhysics p = new MovementPhysics().set(0.5, 20.5, 0.8, 0, 0.1, 0.3, false);
+        ClimbCatch c = new ClimbCatch();
+        c.decide(p, 0f, 0f, -1, 0, false, false, false, g);
+        assertFalse(c.steering(), "S held: not steered forward");
+        c.decide(p, 0f, 0f, -1, 0, false, false, true, g);
+        assertTrue(c.active() && c.steering());
+    }
+
+    /** A fall that no key set can bring to the face is not owned: the clutch and the block assist act. */
+    @Test
+    void aFallThatCannotReachAnyFaceIsNotCaught() {
+        ShapeGrid g = scene(false, true);
+        ClimbCatch c = new ClimbCatch();
+        c.decide(new MovementPhysics().set(0.5, 30, -3.5, 0, -0.5, 0, false), 0f, 0f, 1, 0, true, false, true, g);
+        assertFalse(c.active());
+        assertFalse(c.steering());
+        // armed on a catching fall, then knocked far off line: lets go
+        MovementPhysics p = new MovementPhysics().set(0.5, 20.5, 0.8, 0, 0.1, 0.25, false);
+        c.decide(p, 0f, 0f, 1, 0, true, false, true, g);
+        assertTrue(c.active());
+        p.set(0.5, 20.5, -3.5, 0, -0.9, -0.5, false);
+        c.decide(p, 0f, 0f, 1, 0, true, false, true, g);
+        assertFalse(c.active(), "no longer catches: let go");
+    }
+
+    @Test
+    void theInAirCheckAllocatesNothing() {
+        org.junit.jupiter.api.Assumptions.assumeTrue(com.utilitysuite.core.AllocationProbe.supported());
+        ShapeGrid g = scene(false, true);
+        ClimbCatch c = new ClimbCatch();
+        MovementPhysics p = new MovementPhysics().set(0.5, 20.5, 0.8, 0, 0.1, 0.2, false);
+        for (int i = 0; i < 2000; i++) {
+            c.decide(p, 0f, 0f, 0, 0, true, false, true, g);
+        }
+        long bytes = com.utilitysuite.core.AllocationProbe.measure(500, () -> c.decide(p, 0f, 0f, 0, 0, true, false, true, g));
+        assertTrue(bytes < 1024, "in-air decide allocated " + bytes + " bytes");
+    }
 }
