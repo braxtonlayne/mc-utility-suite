@@ -57,6 +57,15 @@ public interface SharedGrant {
     /** Degrees of the user's hand motion that opposed the co-steer during this grant (for override detection). */
     double opposingYawDeg();
 
+    /**
+     * Degrees the co-steer has added to the yaw during this grant, in either direction (the spent part of
+     * {@code maxTotalDeg}; the user's own mouse motion is not counted). 0 when the grant is not active or the
+     * implementation has no co-steer.
+     */
+    default double coSteerAddedDeg() {
+        return 0.0;
+    }
+
     /** Ends the grant. Idempotent. */
     void end();
 }

@@ -423,7 +423,9 @@ class ApproachControlTest {
             g.fill(-6, 5, -12, 6, 5, 14, ShapeGrid.FULL);
             MovementAssistBrain b = brain(JumpCommit.Mode.GUIDE, false);
             b.coSteerAllowed = allowed;
-            MovementPhysics p = new MovementPhysics().set(0.5, 20, -8, 0, -0.0784, 0, true);
+            // 0.6 off the post's line: a turn of the view lands it. (A whole block off it no plan lands, with a turn or
+            // without: nothing is asked for a target out of reach, see CoSteerLandabilityTest.)
+            MovementPhysics p = new MovementPhysics().set(0.9, 20, -8, 0, -0.0784, 0, true);
             int asked = 0;
             for (int t = 0; t < 80 && p.y > 15; t++) {
                 b.setIntentTarget(1, 19, 4, 0.9);

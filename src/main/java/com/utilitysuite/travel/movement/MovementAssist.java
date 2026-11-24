@@ -419,6 +419,8 @@ public final class MovementAssist implements IModule, IConfigurable {
         brain.coSteerAllowed = steerOk;
         brain.coSteerMaxDegPerTick = steerOk ? (float) (steerRate / 20.0) : 0f;
         brain.coSteerMaxTotalDeg = steerOk ? (float) steerMax : 0f;
+        // what the core has really added in this grant (it starts over only with a new grant)
+        brain.setCoSteerSpentDeg(grant != null && grant.isActive() ? grant.coSteerAddedDeg() : 0.0);
         brain.sprintWithholdAvailable = grant != null && grant.isActive() ? grant.canWithholdSprint()
                 : withholdCapable;
         if (auto) {

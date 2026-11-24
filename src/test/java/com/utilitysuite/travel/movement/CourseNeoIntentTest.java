@@ -79,6 +79,7 @@ class CourseNeoIntentTest {
                 us = b.activeScript().strafe[next];
                 agree[0] += us != 0 ? 1 : 0;
             }
+            b.setCoSteerSpentDeg(steer.totalAddedDeg()); // as the module does from its grant
             b.decide(p, yaw, sprint, 1, us, uj, 20f, g);
             if (agree != null && midScript && !b.scriptActive()) {
                 agree[1]++;

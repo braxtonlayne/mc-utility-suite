@@ -207,6 +207,7 @@ class SharedInputOverlayTest {
         assertFalse(steer.isLive());
         assertEquals(0.0, steer.onFrame(0f, 0.0, 0.0, 0.016, false));
         assertEquals(0.0, g.opposingYawDeg());
+        assertEquals(0.0, g.coSteerAddedDeg(), "an ended grant has nothing spent");
     }
 
     @Test

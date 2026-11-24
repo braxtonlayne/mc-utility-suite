@@ -181,6 +181,12 @@ class ParkourLaneReplicaTest {
             if (!b.commit().live()) {
                 steer.reset(); // a new commitment: the allowance starts over (the module begins a new grant)
             }
+            b.setCoSteerSpentDeg(steer.totalAddedDeg()); // as the module does from its grant
+            if (b.commit().live()) {
+                // the brain's count of what is left of the co-steer total, against what the core has added
+                double core = Math.max(0.0, steerMax - steer.totalAddedDeg());
+                r.maxLeftError = Math.max(r.maxLeftError, Math.abs(b.coSteerLeft() - core));
+            }
             b.decide(p, yaw, sprint, 1, us, uj, 20f, g);
             r.committed |= b.commit().live();
             r.maxCommitSim = Math.max(r.maxCommitSim, b.lastCommitSimTicks());
@@ -219,12 +225,6 @@ class ParkourLaneReplicaTest {
             }
             r.maxYawStep = Math.max(r.maxYawStep, Math.abs(yaw - yawUsed));
             r.maxTotalTurn = Math.max(r.maxTotalTurn, steer.totalAddedDeg());
-            if (b.commit().live()) {
-                // the brain's own count of what is left of the co-steer total, against what the core has added
-                double left = b.coSteerLeft(yaw);
-                double core = Math.max(0.0, Math.min(steerMax, b.coSteerTotalDeg()) - steer.totalAddedDeg());
-                r.maxLeftError = Math.max(r.maxLeftError, Math.abs(left - Math.min(core, steerMax)));
-            }
             if (wasGround && !p.onGround && Double.isNaN(r.jumpZ)) {
                 r.jumpZ = p.z;
                 takeoffTick = t;
@@ -561,22 +561,21 @@ class ParkourLaneReplicaTest {
     }
 
     /**
-     * The brain's count of what is left of the co-steer total follows the core's own count through a commitment that
-     * turns the view (within the 1-degree rounding and one tick of frames), and starts over with the next one.
+     * The brain's count of what is left of the co-steer total is the core's own count (the module hands it over every
+     * tick), to the whole degree it is rounded down to, through a commitment that turns the view.
      */
     @Test
     void theBrainKnowsWhatIsLeftOfTheCoSteerTotal() {
         Assumptions.assumeTrue(shapes(), "needs the shape-physics replica");
         MovementAssistBrain fresh = new MovementAssistBrain();
         fresh.coSteerMaxTotalDeg = 25f;
-        assertEquals(25f, fresh.coSteerLeft(0f), 0f);
-        assertEquals(25f, fresh.coSteerLeft(-40f), 0f, "no commitment has asked for a co-steer yet");
+        assertEquals(25f, fresh.coSteerLeft(), 0f, "nothing spent yet");
         // a lane that turns the view under the real (authority-scaled) co-steer: the straight wall-3gap turns under 1
         // degree and the corner-wall now takes a keys-only script
         for (Lane lane : new Lane[] {CORNER_FENCE}) {
             Run r = roll(lane, JumpCommit.Mode.GUIDE, false, REAL);
             assertTrue(r.maxTotalTurn > 2.0, lane.name + ": this lane turns the view (" + r.maxTotalTurn + ")");
-            assertTrue(r.maxLeftError <= 4.0, lane.name + ": the brain's count was off by " + r.maxLeftError);
+            assertTrue(r.maxLeftError <= 1.0 + 1.0e-4, lane.name + ": the brain's count was off by " + r.maxLeftError);
         }
     }
 

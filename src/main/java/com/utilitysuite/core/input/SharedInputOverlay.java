@@ -404,6 +404,11 @@ public final class SharedInputOverlay implements ISharedControl {
         }
 
         @Override
+        public double coSteerAddedDeg() {
+            return active ? steer.totalAddedDeg() : 0.0;
+        }
+
+        @Override
         public void end() {
             if (active) {
                 arbiter.endShared(this);

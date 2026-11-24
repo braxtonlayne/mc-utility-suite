@@ -72,6 +72,7 @@ class FencePostLoopTest {
             if (!b.commit().live()) {
                 steer.reset();
             }
+            b.setCoSteerSpentDeg(steer.totalAddedDeg()); // as the module does from its grant
             b.decide(p, yaw, sprint, 1, 0, uj, 20f, g);
             aborted |= b.commit().phase() == JumpCommit.Phase.ABORT;
             if (b.commit().phase() == JumpCommit.Phase.FLIGHT && !b.commitOwnsLanding()) {

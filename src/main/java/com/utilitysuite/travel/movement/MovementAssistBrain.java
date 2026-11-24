@@ -95,6 +95,8 @@ public final class MovementAssistBrain {
     private final LandingHold hold = new LandingHold();
     private final JumpCommit commit = new JumpCommit();
     private final FlightController flight = new FlightController();
+    /** The brake family rolled at the co-steer's yaw: is a target no plan lands on at this yaw still in reach. */
+    private final FlightController aimFlight = new FlightController();
     /** Region of the top the body landed on (the hold's stability check). */
     private final SupportRegion landRegion = new SupportRegion();
     /** Region of the locked target's real top (flight plan, mark). */
@@ -303,13 +305,6 @@ public final class MovementAssistBrain {
         if (hold.sneak()) {
             sneak = true;
             corrected = true;
-        }
-        // where the view was when this commitment first asked for a co-steer (the allowance is counted from there)
-        if (!commit.live() && !coSteer) {
-            steerBaseSet = false;
-        } else if (coSteer && !steerBaseSet) {
-            steerBaseSet = true;
-            steerBaseYaw = yaw;
         }
         prevAssistedJump = jump && !jumpBuffer.fired();
         simTicks = search.tickCount();
@@ -661,13 +656,28 @@ public final class MovementAssistBrain {
             }
         }
         lastPlanForward = planF == KEEP ? userForward : planF;
-        // co-steer from the flight plan: toward the target's centre when the keys at this yaw do not land it
-        if (coSteerAllowed && targetRegionValid && !(flight.found() && flight.userLands())) {
+        // co-steer from the flight plan: toward the target's centre when the keys at this yaw do not land it.
+        // Never toward a target the body can no longer land on: that request was 100+ degrees off the view while the
+        // body fell past a missed block (live J29 and J32, 2026-11-24). The view is the user's from there. Out of
+        // reach is: falling below the target's top, or no air plan lands at this yaw and none would at the asked yaw
+        // either (the turn is the plan when only the yaw is wrong: the same brake family, rolled at the asked yaw
+        // with what is left of this tick's budget).
+        if (coSteerAllowed && targetRegionValid && !(flight.found() && flight.userLands())
+                && !(now.vy <= 0.0 && now.y < targetRegion.top())) {
             double dx = itx + 0.5 - now.x;
             double dz = itz + 0.5 - now.z;
-            float aim = yaw + wrap((float) Math.toDegrees(Math.atan2(-dx, dz)) - yaw);
-            coSteer = true;
-            coSteerYaw = naturalYaw(aim, now, yaw);
+            float aim = naturalYaw(yaw + wrap((float) Math.toDegrees(Math.atan2(-dx, dz)) - yaw), now, yaw);
+            boolean reachable = lastPlanLands;
+            if (!reachable && airSteer && commitSimTicks < MAX_COMMIT_SIM_TICKS) {
+                aimFlight.simCap = MAX_COMMIT_SIM_TICKS - commitSimTicks;
+                reachable = aimFlight.plan(now, userForward, userStrafe, aim, sprinting,
+                        mode == JumpCommit.Mode.CARRY || userForward == 0, planRegion, w);
+                commitSimTicks += aimFlight.simTicks();
+            }
+            if (reachable) {
+                coSteer = true;
+                coSteerYaw = aim;
+            }
         }
         int f = commit.resolveAxis(0, userForward, planF);
         int s = commit.resolveAxis(1, userStrafe, planS);
@@ -1248,18 +1258,27 @@ public final class MovementAssistBrain {
         hasIdealYaw = idealValid && bestMiss <= 0.0;
     }
 
-    private boolean steerBaseSet;
-    private float steerBaseYaw;
+    /** Degrees the core's co-steer follower has added during the module's current grant (0 with no grant). */
+    private float coSteerSpentDeg;
 
     /**
-     * What is left of the level's co-steer total for this commitment, in whole degrees: the core counts every degree
-     * it has added since the commitment's first request, so a script planned after the view was already turned (a
-     * few ticks of aiming before the line was known to be blocked, an earlier script) may only ask for the rest. A
-     * script that asked for the full total again stopped short of its goal in the client and left its line.
+     * The core's own count of the co-steer degrees added so far in the module's current shared grant
+     * ({@code SharedGrant.coSteerAddedDeg()}); 0 without a grant. Set by the module every tick before {@link #decide}.
+     * The allowance is the core's: it counts every degree it adds, in either direction, and nothing of the user's own
+     * mouse motion, and it starts over only with a new grant.
      */
-    float coSteerLeft(float yaw) {
-        float used = steerBaseSet ? Math.abs(wrap(yaw - steerBaseYaw)) : 0f;
-        return (float) Math.floor(Math.max(0f, coSteerMaxTotalDeg - used));
+    public void setCoSteerSpentDeg(double spentDeg) {
+        coSteerSpentDeg = spentDeg > 0.0 ? (float) spentDeg : 0f; // NaN and negatives: nothing spent
+    }
+
+    /**
+     * What is left of the level's co-steer total, in whole degrees: the core counts every degree it has added since
+     * the grant began, so a script planned after the view was already turned (a few ticks of aiming before the line
+     * was known to be blocked, an earlier script) may only ask for the rest. A script that asked for the full total
+     * again stopped short of its goal in the client and left its line.
+     */
+    float coSteerLeft() {
+        return (float) Math.floor(Math.max(0f, coSteerMaxTotalDeg - coSteerSpentDeg));
     }
 
     private static float wrap(float deg) {
@@ -1326,7 +1345,7 @@ public final class MovementAssistBrain {
         techniqueFirst = false;
         heldPress = 0;
         landedSprinting = false;
-        steerBaseSet = false;
+        coSteerSpentDeg = 0f;
         pendingLook = Double.NaN;
         lastPlanLands = false;
         lastPlanForward = KEEP;
@@ -1502,7 +1521,7 @@ public final class MovementAssistBrain {
                 || commitSimTicks + TechniqueSource.MAX_SIM_TICKS_PER_CALL > MAX_COMMIT_SIM_TICKS) {
             return;
         }
-        techniques.setMaxTurn(coSteerAllowed ? coSteerLeft(yaw) : 0f);
+        techniques.setMaxTurn(coSteerAllowed ? coSteerLeft() : 0f);
         techniques.setAuthority(JumpCommit.armedAuthorityOf(mode), JumpCommit.flightAuthorityOf(mode));
         techniques.setLineBlocked(techniqueFirst);
         // a blocked line (a neo around a pillar) needs the sprint jump: a walking run-up is rolled with the sprint the
