@@ -9,6 +9,7 @@ import com.utilitysuite.core.api.DataSourceMode;
 import com.utilitysuite.core.api.GoalRequest;
 import com.utilitysuite.core.api.HazardKind;
 import com.utilitysuite.core.api.IActionArbiter;
+import com.utilitysuite.core.api.IDangerModel;
 import com.utilitysuite.core.api.IInventoryView;
 import com.utilitysuite.core.api.IStorageIndex;
 import com.utilitysuite.core.api.ISuiteEventBus;
@@ -91,6 +92,10 @@ public final class JobExecutor implements LeaseListener {
         public boolean depositAfterGather = false;
         /** LIKE_A_PLAYER: no predicted or hidden ore targets; the backend mines only what it can see. */
         public MiningStyle miningStyle = MiningStyle.LIKE_A_PLAYER;
+        /** After an emergency escape: ticks every explosion/lava hazard must stay clear before the job resumes. */
+        public int resumeSettleTicks = ResumeHoldGate.DEFAULT_SETTLE_TICKS;
+        /** After an emergency escape: longest wait for a live hazard before the job pauses with a notice. */
+        public int resumeMaxHoldTicks = ResumeHoldGate.DEFAULT_MAX_HOLD_TICKS;
     }
 
     enum Phase { START, PLANNING, MINE_CANDIDATE, MINE_SCAN, STRIP, STRIP_ORE, WAIT_DRIVER, WAIT_ACTION, BUILD_WAIT }
@@ -164,8 +169,19 @@ public final class JobExecutor implements LeaseListener {
     private Job active;
     private ControlLease lease;
     private long nextLeaseAttempt;
-    /** Holds a resume after an EMERGENCY preemption (creeper back-off) until the explosion hazard has cleared. */
+    /** A next step farther than this from the player is not searched for hazards while a resume is held. */
+    static final int STEP_WATCH_RANGE = 32;
+    /** Ticks between searches around the next step while a resume is held. */
+    static final int STEP_PROBE_INTERVAL = 5;
+
+    /**
+     * Holds a resume after an EMERGENCY preemption (creeper back-off, fall clutch) until no explosion or lava hazard
+     * is live near the player or the next step, and pauses the job when one outlasts the maximum wait.
+     */
     private final ResumeHoldGate resumeHold = new ResumeHoldGate();
+    /** Hazards found around the next step by the last search, and when to search again. */
+    private int stepHazards;
+    private long nextStepProbe;
     private long nextJobId = 1;
     private BuildHandler buildHandler;
 
@@ -348,10 +364,7 @@ public final class JobExecutor implements LeaseListener {
             if (!j.resumeRequested) {
                 return;
             }
-            if (resumeHold.pending()
-                    && resumeHold.decide(now(), Services.danger().has(HazardKind.EXPLOSION))
-                    == ResumeHoldGate.Decision.HOLD) {
-                setReason(j, "Waiting for hazard to clear");
+            if (resumeHold.pending() && !hazardHoldAllowsResume(j)) {
                 return;
             }
             if (needsLease(j.current()) && !ensureLease(channelsFor(j.current()))) {
@@ -1377,7 +1390,9 @@ public final class JobExecutor implements LeaseListener {
             return;
         }
         restartPhaseIfAction(j);
-        resumeHold.onPreempted(now(), reason == LeaseEndReason.PREEMPTED && preemptedByEmergency());
+        resumeHold.onPreempted(reason == LeaseEndReason.PREEMPTED && preemptedByEmergency(), hazardsNearPlayer());
+        nextStepProbe = 0;
+        stepHazards = 0;
         if (reason == LeaseEndReason.STOP_ALL) {
             j.holdPaused = true;
             setStatus(j, JobStatus.PAUSED, "Stopped by Stop-All; resume from the job card");
@@ -1394,14 +1409,90 @@ public final class JobExecutor implements LeaseListener {
 
     /**
      * True when the owner that just took the job's lease is an EMERGENCY reflex (the creeper back-off). The new holder
-     * may not be installed yet when the callback runs, so a live explosion hazard also counts.
+     * may not be installed yet when the callback runs, so a live explosion or lava hazard also counts.
      */
     private boolean preemptedByEmergency() {
         Optional<ControlLease> h = deps.arbiter().holder(ControlChannel.MOVEMENT);
         if (h.isPresent() && h.get().priority() == ControlPriority.EMERGENCY) {
             return true;
         }
-        return Services.danger().has(HazardKind.EXPLOSION);
+        return hazardsNearPlayer() != 0;
+    }
+
+    /**
+     * Explosion and lava hazards live near the player, from the danger model (its sources only report what is about
+     * to hurt the player, so a distant fuse or lava pool is never in it).
+     */
+    private static int hazardsNearPlayer() {
+        IDangerModel d = Services.danger();
+        if (!d.any()) {
+            return 0;
+        }
+        return (d.has(HazardKind.EXPLOSION) ? ResumeHoldGate.EXPLOSION : 0)
+                | (d.has(HazardKind.LAVA) ? ResumeHoldGate.LAVA : 0);
+    }
+
+    /** Where the job goes next when it resumes, or {@link PlanStep#NO_POS} when the step has no fixed place. */
+    private static long nextStepPos(Job j) {
+        PlanStep step = j.current();
+        if (step == null) {
+            return PlanStep.NO_POS;
+        }
+        switch (step.kind()) {
+            case RETURN:
+                return j.origin;
+            case FETCH:
+            case TRAVEL:
+                return step.storagePos();
+            case GATHER:
+            case MINE:
+                return j.phase == Phase.MINE_CANDIDATE && j.candidateIdx < j.candidates.size()
+                        ? j.candidates.get(j.candidateIdx).packedPos() : PlanStep.NO_POS;
+            default:
+                return PlanStep.NO_POS;
+        }
+    }
+
+    /**
+     * One tick of the post-escape hold. Looks around the next step only for the hazard kinds this escape has seen,
+     * only when the step is within {@link #STEP_WATCH_RANGE}, and only every {@link #STEP_PROBE_INTERVAL} ticks.
+     *
+     * @return true when the job may resume now; false while it waits, or after it was paused with a notice
+     */
+    private boolean hazardHoldAllowsResume(Job j) {
+        long t = now();
+        int nearPlayer = hazardsNearPlayer();
+        int watch = resumeHold.seen() | nearPlayer;
+        if (watch == 0) {
+            stepHazards = 0;
+        } else if (t >= nextStepProbe) {
+            nextStepProbe = t + STEP_PROBE_INTERVAL;
+            long pos = nextStepPos(j);
+            stepHazards = pos != PlanStep.NO_POS
+                    && PackedPos.distSq(deps.actions().playerPos(), pos) <= (long) STEP_WATCH_RANGE * STEP_WATCH_RANGE
+                    ? deps.actions().hazardsNear(pos, watch) : 0;
+        }
+        resumeHold.configure(settings.resumeMaxHoldTicks, settings.resumeSettleTicks);
+        ResumeHoldGate.Decision d = resumeHold.decide(t, nearPlayer, stepHazards);
+        if (d == ResumeHoldGate.Decision.GO) {
+            return true;
+        }
+        if (d == ResumeHoldGate.Decision.HOLD) {
+            setReason(j, "Waiting for hazard to clear");
+            return false;
+        }
+        // the hazard outlasted the wait: stay paused (the user resumes from the job card) instead of walking back in
+        String what = (resumeHold.blockedBy() & ResumeHoldGate.EXPLOSION) != 0 ? "an explosion hazard" : "lava";
+        String why = what + " is still close after " + settings.resumeMaxHoldTicks / 20
+                + " s; resume from the job card when it is safe";
+        j.preempted = false;
+        j.resumeRequested = false;
+        pauseDiagnostic(j, why);
+        ISuiteEventBus bus = deps.events().get();
+        if (bus != null) {
+            bus.post(new SuiteEvent.Diagnostic(deps.millis().getAsLong(), MODULE_ID, "Job " + j.id + " paused: " + why));
+        }
+        return false;
     }
 
     @Override

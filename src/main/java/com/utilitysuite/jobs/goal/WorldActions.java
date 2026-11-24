@@ -38,6 +38,16 @@ public interface WorldActions {
     /** Block id at the position when its chunk is loaded on the client, else null. */
     String blockAtIfLoaded(String dimension, long packedPos);
 
+    /**
+     * Hazards live around a position in the player's dimension, as a mask of {@link ResumeHoldGate#EXPLOSION} (a
+     * swelling creeper or primed TNT within blast reach) and {@link ResumeHoldGate#LAVA} (lava within two blocks).
+     * Only the kinds in {@code kinds} are looked for. Used while a resume is held, a few times a second, never while
+     * a job runs normally. 0 when the area is not loaded.
+     */
+    default int hazardsNear(long packedPos, int kinds) {
+        return 0;
+    }
+
     long playerPos();
 
     String dimension();

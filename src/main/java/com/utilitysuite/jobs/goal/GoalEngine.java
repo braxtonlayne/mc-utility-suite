@@ -220,6 +220,9 @@ public final class GoalEngine implements IGoalEngine, IModule, IConfigurable {
         s.stuckTicks = 20 * profile.getInt(ID, "stuck_seconds", 15);
         s.maxReplans = profile.getInt(ID, "max_replans", 3);
         s.candidateRadius = profile.getInt(ID, "candidate_radius", 256);
+        s.resumeSettleTicks = profile.getInt(ID, "resume_settle_ticks", ResumeHoldGate.DEFAULT_SETTLE_TICKS);
+        s.resumeMaxHoldTicks = 20 * profile.getInt(ID, "resume_max_wait_seconds",
+                ResumeHoldGate.DEFAULT_MAX_HOLD_TICKS / 20);
         s.batchErrands = profile.getBool(ID, "batch_errands", true);
         s.depositAfterGather = profile.getBool(ID, "deposit_after_gather", false);
         try {
@@ -269,7 +272,15 @@ public final class GoalEngine implements IGoalEngine, IModule, IConfigurable {
                 SettingSpec.integer("max_replans", "Replans per step", 3, 1, 10, "Replanning",
                         "After this many replans the job pauses with a diagnostic").asAdvanced(),
                 SettingSpec.integer("candidate_radius", "Prediction search radius", 256, 32, 1024, "Replanning",
-                        "Radius for simulated ore candidates").asAdvanced());
+                        "Radius for simulated ore candidates").asAdvanced(),
+                SettingSpec.integer("resume_settle_ticks", "Resume after escape: settle (ticks)",
+                        ResumeHoldGate.DEFAULT_SETTLE_TICKS, 0, 200, "Replanning",
+                        "After a reflex escape, explosions and lava must stay clear this long before the job goes"
+                                + " back").asAdvanced(),
+                SettingSpec.integer("resume_max_wait_seconds", "Resume after escape: longest wait (s)",
+                        ResumeHoldGate.DEFAULT_MAX_HOLD_TICKS / 20, 2, 120, "Replanning",
+                        "If the hazard is still there after this long, the job pauses with a notice instead of"
+                                + " walking back in").asAdvanced());
     }
 
     @Override

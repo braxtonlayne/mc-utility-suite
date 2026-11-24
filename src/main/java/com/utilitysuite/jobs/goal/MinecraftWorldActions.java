@@ -17,6 +17,10 @@ import net.minecraft.core.Direction;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.tags.FluidTags;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.item.PrimedTnt;
+import net.minecraft.world.entity.monster.Creeper;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.inventory.AbstractFurnaceMenu;
@@ -28,17 +32,21 @@ import net.minecraft.world.item.crafting.Recipe;
 import net.minecraft.world.item.crafting.RecipeHolder;
 import net.minecraft.world.item.crafting.RecipeType;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.entity.EntityTypeTest;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 
 /**
@@ -557,6 +565,68 @@ public final class MinecraftWorldActions implements WorldActions {
     private String blockAt(Level level, long packedPos) {
         probe.set(BlockPos.getX(packedPos), BlockPos.getY(packedPos), BlockPos.getZ(packedPos));
         return blockId(level.getBlockState(probe).getBlock());
+    }
+
+    /** Blocks around a position searched for a fuse (creeper blast reach plus a margin) and for lava. */
+    private static final int FUSE_WATCH = 8;
+    private static final int LAVA_WATCH = 2;
+    private static final EntityTypeTest<Entity, Entity> ANY_ENTITY = EntityTypeTest.forClass(Entity.class);
+
+    private boolean fuseSeen;
+    /** Flags a fuse and rejects every entity, so the sink list below stays empty. Created once. */
+    private final Predicate<Entity> fuseProbe = e -> {
+        if (e instanceof PrimedTnt || (e instanceof Creeper c && (c.getSwellDir() > 0 || c.isIgnited()))) {
+            this.fuseSeen = true;
+        }
+        return false;
+    };
+    private final ArrayList<Entity> fuseSink = new ArrayList<>(0);
+    /** Search box of the last fuse query; rebuilt only when the position changes (once per held resume). */
+    private long fuseBoxPos = Long.MIN_VALUE;
+    private AABB fuseBox;
+
+    @Override
+    public int hazardsNear(long packedPos, int kinds) {
+        Level level = Minecraft.getInstance().level;
+        if (level == null || kinds == 0) {
+            return 0;
+        }
+        int x = BlockPos.getX(packedPos), y = BlockPos.getY(packedPos), z = BlockPos.getZ(packedPos);
+        probe.set(x, y, z);
+        if (!level.isLoaded(probe)) {
+            return 0;
+        }
+        int found = 0;
+        if ((kinds & ResumeHoldGate.EXPLOSION) != 0) {
+            if (fuseBox == null || fuseBoxPos != packedPos) {
+                fuseBoxPos = packedPos;
+                fuseBox = new AABB(x - FUSE_WATCH, y - FUSE_WATCH, z - FUSE_WATCH,
+                        x + 1 + FUSE_WATCH, y + 1 + FUSE_WATCH, z + 1 + FUSE_WATCH);
+            }
+            fuseSeen = false;
+            level.getEntities(ANY_ENTITY, fuseBox, fuseProbe, fuseSink);
+            if (fuseSeen) {
+                found |= ResumeHoldGate.EXPLOSION;
+            }
+        }
+        if ((kinds & ResumeHoldGate.LAVA) != 0 && lavaWithin(level, x, y, z)) {
+            found |= ResumeHoldGate.LAVA;
+        }
+        return found;
+    }
+
+    private boolean lavaWithin(Level level, int x, int y, int z) {
+        for (int dy = -LAVA_WATCH; dy <= LAVA_WATCH; dy++) {
+            for (int dx = -LAVA_WATCH; dx <= LAVA_WATCH; dx++) {
+                for (int dz = -LAVA_WATCH; dz <= LAVA_WATCH; dz++) {
+                    probe.set(x + dx, y + dy, z + dz);
+                    if (level.getFluidState(probe).is(FluidTags.LAVA)) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
     }
 
     @Override

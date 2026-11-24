@@ -147,6 +147,17 @@ final class Fakes {
         String message = "";
         Map<String, Integer> transferred = Map.of();
         long playerPos = PackedPos.pack(0, 64, 0);
+        /** Hazard mask reported around any position, and the queries made for it. */
+        int hazards;
+        int hazardQueries;
+        long lastHazardPos = PlanStep.NO_POS;
+
+        @Override
+        public int hazardsNear(long packedPos, int kinds) {
+            hazardQueries++;
+            lastHazardPos = packedPos;
+            return hazards & kinds;
+        }
 
         Actions(Inventory inv) {
             this.inv = inv;
