@@ -14,8 +14,13 @@ class CoSteerModelTest {
 
     /** The real follower for one tick: one request, then {@code frames} equal frames with a still mouse. */
     static float real(YawCoSteer s, float yaw, float ideal, double rate, double maxTotal, int frames) {
+        return real(s, yaw, ideal, rate, maxTotal, frames, 1.0);
+    }
+
+    static float real(YawCoSteer s, float yaw, float ideal, double rate, double maxTotal, int frames,
+                      double authority) {
         s.beginTick();
-        s.request(ideal, rate, maxTotal, 1.0);
+        s.request(ideal, rate, maxTotal, authority);
         for (int k = 0; k < frames; k++) {
             yaw += (float) s.onFrame(yaw, 0.0, 0.0, 0.05 / frames, false);
         }
@@ -48,6 +53,34 @@ class CoSteerModelTest {
                     b = model.tick(b, ideal, lv[0], lv[1]);
                     assertEquals(a, b, 1.0e-4f, "rate " + lv[0] + " tick " + t);
                     assertEquals(real.totalAddedDeg(), model.total(), 1.0e-3);
+                }
+            }
+        }
+    }
+
+    /**
+     * The commitment's authority (0.3 / 0.6 Co-pilot, 0.5 / 1 Takeover) scales the core's follower; the model must
+     * scale the same. Before this the model assumed 1 and live scripts drifted about 0.005 a tick off their line
+     * (J32, J36, 2026-11-24).
+     */
+    @Test
+    void sameViewAsTheRealFollowerAtEveryAuthority() {
+        float[][] goals = {{-25f, -25f, -25f, -25f}, {-10f, -10f, -45f, -45f}, {12f, -30f, 70f, 0f}};
+        for (double auth : new double[] {0.3, 0.5, 0.6, 1.0}) {
+            for (double[] lv : new double[][] {{150.0, 25.0}, {240.0, 90.0}}) {
+                for (float[] g : goals) {
+                    YawCoSteer real = new YawCoSteer();
+                    CoSteerModel model = new CoSteerModel();
+                    real.reset();
+                    model.reset();
+                    float a = 0f;
+                    float b = 0f;
+                    for (int t = 0; t < 32; t++) {
+                        float ideal = g[t / 8];
+                        a = real(real, a, ideal, lv[0], lv[1], CoSteerModel.FRAMES_PER_TICK, auth);
+                        b = model.tick(b, ideal, lv[0], lv[1], auth);
+                        assertEquals(a, b, 1.0e-4f, "authority " + auth + " rate " + lv[0] + " tick " + t);
+                    }
                 }
             }
         }

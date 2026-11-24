@@ -86,7 +86,7 @@ class FencePostLoopTest {
             boolean jump = (uj && !b.withholdJump()) || b.jump();
             steer.beginTick();
             if (b.wantsCoSteer()) {
-                steer.request(b.coSteerYaw(), steerRate * 20.0, Math.min(steerMax, b.coSteerTotalDeg()), 1.0);
+                steer.request(b.coSteerYaw(), steerRate * 20.0, Math.min(steerMax, b.coSteerTotalDeg()), b.commit().authority());
             }
             sprint = (sprint || b.sprint()) && !b.sprintOff() && f > 0;
             boolean wasGround = p.onGround;

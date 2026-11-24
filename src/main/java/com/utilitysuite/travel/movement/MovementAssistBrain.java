@@ -1502,6 +1502,7 @@ public final class MovementAssistBrain {
             return;
         }
         techniques.setMaxTurn(coSteerAllowed ? coSteerLeft(yaw) : 0f);
+        techniques.setAuthority(JumpCommit.armedAuthorityOf(mode), JumpCommit.flightAuthorityOf(mode));
         techniques.setLineBlocked(techniqueFirst);
         // a blocked line (a neo around a pillar) needs the sprint jump: a walking run-up is rolled with the sprint the
         // replay fills in for the user where vanilla allows it (live J36, 2026-11-23: the user walked after J35's hold)

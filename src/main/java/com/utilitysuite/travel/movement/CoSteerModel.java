@@ -52,19 +52,28 @@ final class CoSteerModel {
      * @return the view after the frames (the yaw the next tick's physics will use)
      */
     float tick(float yaw, float ideal, double rateDegPerSec, double maxTotalDeg) {
-        if (!Float.isFinite(ideal) || !(rateDegPerSec > 0.0) || !(maxTotalDeg > 0.0)) {
+        return tick(yaw, ideal, rateDegPerSec, maxTotalDeg, 1.0);
+    }
+
+    /**
+     * As {@link #tick(float, float, double, double)} with the commitment's authority: the core scales the
+     * follower's acceleration, rate and gain by it (0.3 before a Co-pilot takeoff), so the view lags much more.
+     */
+    float tick(float yaw, float ideal, double rateDegPerSec, double maxTotalDeg, double authority) {
+        if (!Float.isFinite(ideal) || !(rateDegPerSec > 0.0) || !(maxTotalDeg > 0.0) || !(authority > 0.0)) {
             lapse();
             return yaw;
         }
         double rate = Math.min(rateDegPerSec, IInputSmoother.MAX_TURN_DEG_PER_SEC);
         double dt = TICK_SECONDS / FRAMES_PER_TICK;
         for (int k = 0; k < FRAMES_PER_TICK; k++) {
-            yaw += (float) frame(yaw, ideal, rate, maxTotalDeg, dt);
+            yaw += (float) frame(yaw, ideal, rate, maxTotalDeg, dt, authority);
         }
         return yaw;
     }
 
-    private double frame(float yaw, float ideal, double rate, double maxTotal, double dt) {
+    private double frame(float yaw, float ideal, double rate, double maxTotal, double dt, double authority) {
+        double accel = ACCEL_DEG_PER_S2 * authority;
         double err = wrap((double) ideal - yaw);
         double absErr = Math.abs(err);
         double left = maxTotal - total;
@@ -73,16 +82,16 @@ final class CoSteerModel {
             return 0.0;
         }
         if (absErr <= ON_TARGET_DEG) {
-            double maxDv = ACCEL_DEG_PER_S2 * dt;
+            double maxDv = accel * dt;
             velocity = Math.abs(velocity) <= maxDv ? 0.0 : velocity - Math.signum(velocity) * maxDv;
             return 0.0;
         }
         double reach = Math.min(absErr, left);
-        double brake = ACCEL_DEG_PER_S2 * (Math.sqrt(dt * dt * 0.25 + 2.0 * reach / ACCEL_DEG_PER_S2) - dt * 0.5);
-        double targetSpeed = Math.min(rate, Math.min(OMEGA_PER_SEC * reach, brake));
+        double brake = accel * (Math.sqrt(dt * dt * 0.25 + 2.0 * reach / accel) - dt * 0.5);
+        double targetSpeed = Math.min(rate * authority, Math.min(OMEGA_PER_SEC * authority * reach, brake));
         double target = err > 0.0 ? targetSpeed : -targetSpeed;
         double dv = target - velocity;
-        double maxDv = ACCEL_DEG_PER_S2 * dt;
+        double maxDv = accel * dt;
         velocity += dv > maxDv ? maxDv : (dv < -maxDv ? -maxDv : dv);
         double step = velocity * dt;
         if ((step > 0.0) != (err > 0.0)) {

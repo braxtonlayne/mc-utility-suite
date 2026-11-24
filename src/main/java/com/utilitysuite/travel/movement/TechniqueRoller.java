@@ -40,6 +40,9 @@ final class TechniqueRoller {
 
     private final MovementPhysics body = new MovementPhysics();
     private final CoSteerModel follower = new CoSteerModel();
+    /** The commitment's co-steer share before the takeoff and in the air (live: 0.3 / 0.6 Co-pilot, 0.5 / 1 Takeover). */
+    float armedAuthority = 1f;
+    float flightAuthority = 1f;
     /** The candidates' goals are already capped by the level's total; the model's own allowance is left open. */
     private static final double FOLLOW_TOTAL = 1.0e6;
 
@@ -163,7 +166,8 @@ final class TechniqueRoller {
                 // the co-steer follower of the core, modelled: smooth, so the view lags the goal by several ticks
                 float before = yawNow;
                 if (goal == goal) {
-                    yawNow = follower.tick(yawNow, goal, rate * 20.0, FOLLOW_TOTAL);
+                    yawNow = follower.tick(yawNow, goal, rate * 20.0, FOLLOW_TOTAL,
+                            i <= jumpAt ? armedAuthority : flightAuthority);
                 } else {
                     follower.lapse();
                 }

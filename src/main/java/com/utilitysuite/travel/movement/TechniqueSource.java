@@ -62,6 +62,13 @@ public interface TechniqueSource {
     int lastSimTicks();
 
     /** The most a script may turn the view from where it starts (degrees; the level's co-steer total). */
+    /**
+     * Share of the co-steer the commitment grants before the takeoff ({@code armed}) and in the air ({@code flight}):
+     * the core's follower turns the view that much slower ({@link JumpCommit#authority()}).
+     */
+    default void setAuthority(float armed, float flight) {
+    }
+
     default void setMaxTurn(float degrees) {
     }
 

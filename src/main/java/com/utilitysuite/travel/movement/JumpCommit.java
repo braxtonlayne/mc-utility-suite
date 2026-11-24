@@ -433,7 +433,17 @@ public final class JumpCommit {
     }
 
     private float flightAuthority() {
-        return mode == Mode.CARRY ? 1.0f : 0.6f;
+        return flightAuthorityOf(mode);
+    }
+
+    /** Co-steer share in the air for a mode (the core scales the follower by it). */
+    public static float flightAuthorityOf(Mode m) {
+        return m == Mode.CARRY ? 1.0f : 0.6f;
+    }
+
+    /** Co-steer share while ARMED (on the ground before the takeoff) for a mode. */
+    public static float armedAuthorityOf(Mode m) {
+        return flightAuthorityOf(m) * 0.5f;
     }
 
     /** Share of the control the assist holds, 0..1; ramps down smoothly through RELEASE. */
@@ -442,7 +452,7 @@ public final class JumpCommit {
             case IDLE:
                 return 0f;
             case ARMED:
-                return flightAuthority() * 0.5f;
+                return armedAuthorityOf(mode);
             case ABORT:
                 return releaseFrom;
             case RELEASE: {

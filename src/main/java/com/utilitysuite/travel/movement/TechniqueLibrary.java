@@ -97,6 +97,15 @@ public final class TechniqueLibrary implements TechniqueSource {
     private float maxTurn = TechniqueTemplates.DEFAULT_MAX_TURN;
 
     @Override
+    public void setAuthority(float armed, float flight) {
+        if (armed != roller.armedAuthority || flight != roller.flightAuthority) {
+            roller.armedAuthority = armed;
+            roller.flightAuthority = flight;
+            reset();
+        }
+    }
+
+    @Override
     public void setMaxTurn(float degrees) {
         float v = degrees > 0f ? degrees : 0f;
         if (v != maxTurn) {

@@ -201,7 +201,7 @@ class ParkourLaneReplicaTest {
             // frames AFTER this tick's physics, exactly like MouseHandler.turnPlayer in the client
             steer.beginTick();
             if (b.wantsCoSteer() && steerRate > 0f) {
-                steer.request(b.coSteerYaw(), steerRate * 20.0, Math.min(steerMax, b.coSteerTotalDeg()), 1.0);
+                steer.request(b.coSteerYaw(), steerRate * 20.0, Math.min(steerMax, b.coSteerTotalDeg()), b.commit().authority());
             }
             float yawUsed = yaw;
             if (trace && p.z > 6.0 && r.trace.length() < 6000 && (landedAt < 0 || t - landedAt < 3)) {
@@ -571,7 +571,9 @@ class ParkourLaneReplicaTest {
         fresh.coSteerMaxTotalDeg = 25f;
         assertEquals(25f, fresh.coSteerLeft(0f), 0f);
         assertEquals(25f, fresh.coSteerLeft(-40f), 0f, "no commitment has asked for a co-steer yet");
-        for (Lane lane : new Lane[] {WALL3, CORNER_FENCE}) {
+        // a lane that turns the view under the real (authority-scaled) co-steer: the straight wall-3gap turns under 1
+        // degree and the corner-wall now takes a keys-only script
+        for (Lane lane : new Lane[] {CORNER_FENCE}) {
             Run r = roll(lane, JumpCommit.Mode.GUIDE, false, REAL);
             assertTrue(r.maxTotalTurn > 2.0, lane.name + ": this lane turns the view (" + r.maxTotalTurn + ")");
             assertTrue(r.maxLeftError <= 4.0, lane.name + ": the brain's count was off by " + r.maxLeftError);

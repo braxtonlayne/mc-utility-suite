@@ -68,7 +68,7 @@ class CourseNeoIntentTest {
             boolean jump = (uj && !b.withholdJump()) || b.jump();
             steer.beginTick();
             if (b.wantsCoSteer() && steerRate > 0f) {
-                steer.request(b.coSteerYaw(), steerRate * 20.0, Math.min(steerMax, b.coSteerTotalDeg()), 1.0);
+                steer.request(b.coSteerYaw(), steerRate * 20.0, Math.min(steerMax, b.coSteerTotalDeg()), b.commit().authority());
             }
             if (trace != null) {
                 trace.append(String.format("%n[%d x%.2f z%.2f y%.2f yaw%.1f f%d s%d%s %s blk%s int=%s %s]", t, p.x, p.z,
