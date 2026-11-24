@@ -282,12 +282,30 @@ class CombatAssistantBehaviourTest {
         int clicks = backend.clicks[SimKey.ATTACK.ordinal()];
         engage();
         assertTrue(backend.clicks[SimKey.ATTACK.ordinal()] > clicks || assistant.swings() > 0, "swung");
+        assertTrue(backend.isDown(SimKey.FORWARD), "no reset before the hit registers");
+        world.entities.get(TARGET).health -= 4f; // the hit lands
+        world.entities.get(TARGET).hurtTime = 10;
+        tick(1);
         assertFalse(backend.isDown(SimKey.FORWARD), "W released for the sprint reset");
         assertFalse(backend.isDown(SimKey.SPRINT));
         world.self.attackStrength = 0.2f;
         tick(4);
         assertTrue(backend.isDown(SimKey.FORWARD), "the solver's keys come back after the reset");
         assertTrue(backend.isDown(SimKey.SPRINT));
+    }
+
+    @Test
+    void aMissedSwingKeepsForwardDown() {
+        TradeDriverTest.ScriptedStep step = scripted();
+        assistant.config().critSync = false;
+        world.entities.get(TARGET).x = 3.0;
+        world.self.attackStrength = 1f;
+        step.answer(1, 0, 1.0, 0.0);
+        step.sprint = true;
+        engage();
+        world.self.attackStrength = 0.2f;
+        tick(6);
+        assertTrue(backend.isDown(SimKey.FORWARD), "no confirmed hit, no W release");
     }
 
     @Test

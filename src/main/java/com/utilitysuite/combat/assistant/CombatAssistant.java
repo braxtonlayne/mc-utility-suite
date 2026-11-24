@@ -297,6 +297,8 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
     private int jumpResets;
     private boolean jumpedThisCycle;
     private boolean wasAirborne;
+    /** Hit-confirmed sprint reset and the post-crit landing strafe. */
+    private final HitFollowUp followUp = new HitFollowUp();
     private int critWait;
     private int sprintResetTicks;
     private boolean sprintResetFirst;
@@ -894,6 +896,8 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         if (s.onGround && wasAirborne) {
             jumpedThisCycle = false;
         }
+        followUp.onGround(wasAirborne, s.onGround, s.onGround && wasAirborne && followUp.critPending()
+                ? input.nextGaussianTicks(3.5, 0.5, HitFollowUp.LANDING_TICKS_MIN, HitFollowUp.LANDING_TICKS_MAX) : 0);
         wasAirborne = !s.onGround;
         TacticsPlanner.Tactic tac = s.wantTerrain ? tactics.plan(s, settings.holdGap, settings.edgeKnock)
                 : TacticsPlanner.Tactic.NONE;
@@ -1000,6 +1004,7 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         jumpedThisCycle = false;
         hits.onSwing(); // every swing (planned, shield break, gap ambush) starts the hit cycle over
         // the combo keeper plans the follow-up of a hit sent in reach (its reset replaces the fixed one)
+        followUp.noteSwing(snap.onGround);
         boolean planned = feel.onSwingSent(snap, settings, tacticClock);
         if (settings.sprintReset != CombatSettings.SprintReset.OFF) {
             if (planned) {
@@ -1007,11 +1012,11 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
                 resetKind = kind == ComboKeeper.RESET_S_TAP ? CombatSettings.SprintReset.S_TAP
                         : CombatSettings.SprintReset.W_RELEASE;
                 sprintResetTicks = kind == ComboKeeper.RESET_NONE ? 0 : Math.max(1, feel.comboResetTicks());
-            } else {
-                resetKind = settings.sprintReset;
-                sprintResetTicks = input.nextGaussianTicks(1.5, 0.5, 1, 2);
+                sprintResetFirst = true;
+            } else if (snap.inReach()) {
+                // the fixed reset waits for the hit to register (see observeOpponent): a miss keeps the pressure
+                followUp.armReset(tacticClock);
             }
-            sprintResetFirst = true;
         }
     }
 
@@ -1025,6 +1030,14 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
     /** Feeds the opponent model and the damage-dealt model from this tick's snapshot. Allocation free. */
     private void observeOpponent(CombatSnapshot s) {
         boolean landed = targetId == lastTargetHealthId && s.targetHealth < lastTargetHealth - 0.01f;
+        boolean hurtRose = followUp.hurtRose(targetId, s.targetHurtTime);
+        followUp.expire(tacticClock);
+        if ((landed || hurtRose) && settings.sprintReset != CombatSettings.SprintReset.OFF
+                && followUp.confirmed(tacticClock) && !feel.comboDrives(settings)) {
+            resetKind = settings.sprintReset;
+            sprintResetTicks = input.nextGaussianTicks(1.5, 0.5, 1, 2);
+            sprintResetFirst = true;
+        }
         if (landed) {
             // before the observation: the knockback's lift on this tick is a reaction, not a hop of its own
             opponents.noteOwnHit(targetId, tacticClock);
@@ -1263,6 +1276,16 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         }
         if ((side == StrafePlanner.LEFT && s.hazardLeft) || (side == StrafePlanner.RIGHT && s.hazardRight)) {
             side = StrafePlanner.NONE;
+        }
+        if (followUp.landingActive()) {
+            // soft bias for the first ground ticks after a crit hop: lean to the alternating side, only where no
+            // strafe was chosen, nothing forces a side and the side is safe
+            int ls = followUp.landingSide();
+            if (side == StrafePlanner.NONE && !stageSideForced && !widened && !feel.comboDrives(settings)
+                    && !((ls == StrafePlanner.LEFT && s.hazardLeft) || (ls == StrafePlanner.RIGHT && s.hazardRight))) {
+                side = ls;
+            }
+            followUp.spendLanding();
         }
         sprint = sprint && fwd > 0;
         if (sprintResetTicks > 0) {
@@ -1942,6 +1965,7 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         retreating = false;
         restoreWeaponNextTick = false;
         sprintResetTicks = 0;
+        followUp.reset();
         leaveRoute(); // stop any pursuit or flight before our own keys go up
         feel.disengage(snap); // combo plan, feints, pearl run, arena read, the read and any rank-dial request end
         lastPositional = TacticUtility.Tactic.FIGHT;
