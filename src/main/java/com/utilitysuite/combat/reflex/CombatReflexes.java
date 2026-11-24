@@ -52,7 +52,12 @@ import java.util.Optional;
  * Input: while the assistant is engaged its COMBAT lease is used (no preemption of the fight); otherwise an
  * autopilot chain lease, otherwise a short EMERGENCY lease of only the channels needed. Keys only, through
  * {@link IInputSmoother}. The camera is turned only by the less-legit "turn to block" option, smoothed and capped by
- * the core. Manual input wins: nothing starts while the user holds the channel. Allocation free per tick (a
+ * the core, and never while the assistant is engaged (the aim is the assistant's).
+ * <p>
+ * One owner per key while the assistant is engaged ({@link ShieldOwnership}): the dodge and the back-off stand down
+ * (the assistant owns movement), and so does the shield reflex while a fight stage runs USE (the shield duel's
+ * "Block with shield", {@link CombatAssistant#stageOwns}). With that setting off the reflex still blocks in a fight,
+ * on the assistant's lease. Manual input wins: nothing starts while the user holds the channel. Allocation free per tick (a
  * {@link RotationTarget} only when a turn starts).
  */
 public final class CombatReflexes implements IModule, IConfigurable, LeaseListener {
@@ -187,9 +192,12 @@ public final class CombatReflexes implements IModule, IConfigurable, LeaseListen
             escKey2 = null;
             escSprint = false;
         }
-        tickShield(p, mc, ap, assistantOn, shieldArmed, arbiter);
-        // while the assistant is engaged it owns movement (its spacing/strafe would fight a second key source)
+        // while the assistant is engaged it owns movement (its spacing/strafe would fight a second key source), the
+        // camera, and the shield when one of its stages runs USE (ShieldOwnership: one owner of the key on its lease)
         boolean fighting = assistant.lease() != null;
+        tickShield(p, mc, ap, assistantOn,
+                ShieldOwnership.reflexActs(shieldArmed, fighting, fighting && assistant.stageOwns(SimKey.USE)),
+                ShieldOwnership.reflexMayTurn(shieldTurn, fighting), arbiter);
         tickEscape(p, ap, assistantOn, apEscape, escapeArmed && !fighting, arbiter);
         if (!escaping && !raised && !fighting) {
             tickDodge(p, ap, assistantOn, dodgeArmed, arbiter);
@@ -198,7 +206,7 @@ public final class CombatReflexes implements IModule, IConfigurable, LeaseListen
     }
 
     private void tickShield(LocalPlayer p, Minecraft mc, IAutopilot ap, boolean assistantOn, boolean armed,
-                            IActionArbiter arbiter) {
+                            boolean mayTurn, IActionArbiter arbiter) {
         if (!armed) {
             if (raised) {
                 lowerShield(ap);
@@ -228,7 +236,7 @@ public final class CombatReflexes implements IModule, IConfigurable, LeaseListen
         boolean wantSwing = p.getAttackStrengthScale(0.5f) >= 0.95f && mc.hitResult instanceof EntityHitResult ehr
                 && ehr.getEntity() instanceof LivingEntity le && le.isAlive();
         boolean usable = shieldUsable(p);
-        ShieldDecision.Act act = ShieldDecision.decide(usable, raised, ticks, dmg, rel, frontCone, shieldTurn,
+        ShieldDecision.Act act = ShieldDecision.decide(usable, raised, ticks, dmg, rel, frontCone, mayTurn,
                 wantSwing);
         switch (act) {
             case RAISE, TURN_AND_RAISE -> {

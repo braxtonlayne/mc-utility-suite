@@ -530,7 +530,10 @@ Eleven tasks merged on main, none left on a branch; 1797 unit tests pass. Nothin
 - [ ] Parkour: exact in-flight co-steer yaw (design 6.1 step 3), CHAIN phase, straight-line corner onto a fence
       post, corner lane geometry, techniques in the estimator's reach roll, `intent.targetTopY()` in the jump search.
 - [ ] Replica: climbables and water landings, slime, honey, soul sand, cobweb, powder snow.
-- [ ] Combat: shield reflex stands down while the shield stage blocks; shield disable without the sound;
+- [x] Combat: the shield reflex stands down while the assistant is engaged and the shield duel's "Block with shield"
+      runs USE (`ShieldOwnership`, `CombatAssistant.stageOwns`), and never turns the camera in a fight. Open: the
+      stage only answers its target's melee, so arrows and blasts are not blocked in such a fight.
+- [ ] Combat: shield disable without the sound;
       `FightContext` requests (`takenWeightScale`, `holdGround`, `pullConsumable`, no-kite, hop veto in an escape);
       offhand totem/shield policy, splash healing, ranged opener, weapon choice by enchantments, fight log.
 - [ ] UI: place the `GoalConsole` nodes in `JobsTab`; hero frame for the takeover status line; remove the duplicate

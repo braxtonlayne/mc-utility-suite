@@ -2162,6 +2162,23 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         specsWithStages = null;
     }
 
+    /**
+     * The assistant holds its lease and one of its stages runs {@code key} for this fight ({@link FightStage#ownsKey}).
+     * Asked by the combat reflexes every tick: no allocation.
+     */
+    public boolean stageOwns(SimKey key) {
+        if (!holdsLease()) {
+            return false;
+        }
+        FightStage[] all = allStages;
+        for (int i = 0; i < all.length; i++) {
+            if (all[i].ownsKey(key)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** The context stages act through (tests drive a stage against the real assistant with it). */
     public FightContext stageContext() {
         return stageCtx;

@@ -2,6 +2,7 @@ package com.utilitysuite.combat.assistant;
 
 import com.utilitysuite.core.api.ProfileConfig;
 import com.utilitysuite.core.api.SettingSpec;
+import com.utilitysuite.core.api.SimKey;
 
 import java.util.List;
 
@@ -49,6 +50,15 @@ public interface FightStage {
 
     /** The fight ended, the world unloaded or Stop-All ran: drop all state. Keys are released by the assistant. */
     default void reset() {
+    }
+
+    /**
+     * This stage runs {@code key} for the whole fight (its setting is on), whether or not it holds the key right now.
+     * A key has one owner while the assistant is engaged: other sources of the same key stand down
+     * ({@link CombatAssistant#stageOwns}). Field reads only, no allocation.
+     */
+    default boolean ownsKey(SimKey key) {
+        return false;
     }
 
     /** Appends this stage's settings. Keys must be unique in the Combat Assistant module. */

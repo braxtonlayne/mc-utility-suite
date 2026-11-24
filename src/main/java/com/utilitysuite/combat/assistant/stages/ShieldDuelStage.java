@@ -197,6 +197,12 @@ public final class ShieldDuelStage implements FightStage {
         }
     }
 
+    /** Our shield is this stage's while "Block with shield" is on: the shield reflex stands down for the fight. */
+    @Override
+    public boolean ownsKey(SimKey key) {
+        return key == SimKey.USE && enabled && blockEnabled;
+    }
+
     @Override
     public void onEngage(FightContext ctx) {
         lowerOwn(ctx);
