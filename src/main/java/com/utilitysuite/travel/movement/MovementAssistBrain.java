@@ -1079,6 +1079,14 @@ public final class MovementAssistBrain {
             // body walked off (course J23, Takeover, 2026-11-23 17:55)
             return;
         }
+        if (intentSet && rty == ity && (rtx != itx || rtz != itz) && targetRegionValid
+                && targetRegion.contains(rtx + 0.5, rtz + 0.5)) {
+            // another cell of the same top (the strip behind the neo's pillar: the pick walks z4 -> z5 -> z6 as the
+            // body runs up) is the same landing: the plan and its script stay (CourseNeoIntentTest, pitch 15)
+            intentConfidence = rawConfidence;
+            lineBlocked |= rawBlocked;
+            return;
+        }
         if (!intentSet || rtx != itx || rty != ity || rtz != itz) {
             idealValid = false;
             yawCursor = 0;
