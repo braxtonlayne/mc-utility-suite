@@ -192,6 +192,8 @@ public final class SuiteMenuScreen extends Screen {
     private int contentHeight;
     private float scrollCur;
     private int scrollTarget;
+    /** Bumped by every {@link #init()}: a click handler that rebuilt the screen left its node behind. */
+    private int buildGeneration;
     private boolean scrollDragging;
     private long lastFrame;
     private Tab builtTab;
@@ -340,6 +342,7 @@ public final class SuiteMenuScreen extends Screen {
 
     @Override
     protected void init() {
+        buildGeneration++;
         textFieldKeys.clear();
         chrome.clear();
         focusNode = null;
@@ -835,7 +838,9 @@ public final class SuiteMenuScreen extends Screen {
             }
             refreshFooter();
             String sig = signature();
-            if (!sig.equals(signature)) {
+            // Never rebuild under a held control (a slider mid-drag): the rebuild would drop it. The changed
+            // signature is picked up on the first refresh after the release.
+            if (!sig.equals(signature) && dragNode == null && !scrollDragging) {
                 rebuildKeepingFocus();
             }
         }
@@ -978,6 +983,27 @@ public final class SuiteMenuScreen extends Screen {
         scrollCur = scrollTarget;
     }
 
+    /**
+     * Playtest harness: scrolls a content node into view and returns the GUI-px point to click so the click goes
+     * through {@link #mouseClicked} like a real one, or null when the node is not on this tab or cannot be shown.
+     *
+     * @param fraction 0..1 across the node's width (0.5 = centre; near 0 = a slider's low end)
+     */
+    public double[] revealForHarness(UiNode n, double fraction) {
+        if (!nodes.contains(n)) {
+            return null;
+        }
+        scrollTarget = n.y + n.h / 2 - viewH / 2;
+        clampScroll();
+        scrollCur = scrollTarget;
+        double vx = contentSx(n) + Math.max(1, Math.min(n.w - 1, n.w * fraction));
+        double vy = contentSy(n) + n.h / 2.0;
+        if (!inView(vx, vy)) {
+            return null;
+        }
+        return new double[] {MenuScale.toGui(vx, guiScale()), MenuScale.toGui(vy, guiScale())};
+    }
+
     // ---- input ------------------------------------------------------------------------------------------------------
 
     private boolean inView(double mx, double my) {
@@ -1016,11 +1042,16 @@ public final class SuiteMenuScreen extends Screen {
         if (!n.interactive()) {
             return false;
         }
+        int gen = buildGeneration;
         if (n.onClick(mx, my, button, sx, sy)) {
             setFocused(null);
-            focus(n.focusable() ? n : null);
-            dragNode = n;
-            dragInContent = content;
+            // A click that rebuilt the screen (a tab, a module row, the autopilot bar) replaced n: never keep the
+            // discarded node as the drag or focus target.
+            if (gen == buildGeneration) {
+                focus(n.focusable() ? n : null);
+                dragNode = n;
+                dragInContent = content;
+            }
             minecraft.getSoundManager().play(SimpleSoundInstance.forUI(SoundEvents.UI_BUTTON_CLICK, 1.0F));
             return true;
         }
@@ -1042,7 +1073,7 @@ public final class SuiteMenuScreen extends Screen {
             for (int i = listNodes.size() - 1; i >= 0; i--) {
                 UiNode n = listNodes.get(i);
                 int sx = listSx(n);
-                int sy = listSy(n);
+                int sy = listDrawY(n); // hit-test where the row is drawn (it may still be settling after a reflow)
                 if (n.contains(mx, my, sx, sy) && click(n, mx, my, button, sx, sy, false)) {
                     dragNode = null; // rows act on press; nothing to drag
                     return true;

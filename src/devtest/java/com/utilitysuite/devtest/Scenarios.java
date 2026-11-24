@@ -33,6 +33,7 @@ final class Scenarios {
         add(q, "CombatScenario", CombatScenario::build);
         add(q, "ToolsScenario", ToolsScenario::build);
         add(q, "ModulesScenario", ModulesScenario::build);
+        add(q, "ControlsScenario", ControlsScenario::build);
         add(q, "PerfScenario", PerfScenario::build);
     }
 
