@@ -1,10 +1,10 @@
 package com.utilitysuite.tools.inventory;
 
 import com.mojang.blaze3d.platform.InputConstants;
+import com.utilitysuite.core.input.ScreenTextEntry;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.components.Button;
-import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
@@ -83,7 +83,7 @@ public final class ContainerButtons {
         }
         Screen s = event.getScreen();
         if (!(s instanceof AbstractContainerScreen<?> screen) || !SmartInventory.isStorageMenu(screen.getMenu())
-                || s.getFocused() instanceof EditBox) {
+                || ScreenTextEntry.isActive(s)) {
             return;
         }
         run(Screen.hasShiftDown());

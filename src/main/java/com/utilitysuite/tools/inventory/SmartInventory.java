@@ -13,9 +13,8 @@ import com.utilitysuite.core.api.ProfileConfig;
 import com.utilitysuite.core.api.Services;
 import com.utilitysuite.core.api.SettingSpec;
 import com.utilitysuite.core.input.ScreenMovementPassthrough;
+import com.utilitysuite.core.input.ScreenTextEntry;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.components.EditBox;
-import net.minecraft.client.gui.components.events.GuiEventListener;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.client.gui.screens.inventory.AnvilScreen;
@@ -189,22 +188,14 @@ public final class SmartInventory implements IModule, IConfigurable, LeaseListen
 
     /**
      * Inventory and container screens only; never chat, signs, books (not container screens), anvils or any screen
-     * whose text box has focus (creative search, recipe book search).
+     * the user is typing into (creative search, recipe book search, nested or overlay text fields: see
+     * {@link ScreenTextEntry}).
      */
     static boolean qualifiesForMenuMovement(Screen screen) {
         if (!(screen instanceof AbstractContainerScreen<?>) || screen instanceof AnvilScreen) {
             return false;
         }
-        if (screen.getFocused() instanceof EditBox) {
-            return false;
-        }
-        List<? extends GuiEventListener> children = screen.children();
-        for (int i = 0; i < children.size(); i++) {
-            if (children.get(i) instanceof EditBox box && box.isFocused()) {
-                return false;
-            }
-        }
-        return true;
+        return !ScreenTextEntry.isActive(screen);
     }
 
     private boolean safeForArmor(LocalPlayer player) {

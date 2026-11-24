@@ -11,6 +11,7 @@
     "combat.ClientPacketListenerDamageMixin",
     "combat.ClientPacketListenerTotemPopMixin",
     "input.LocalPlayerSprintWithholdMixin",
+    "input.RecipeBookComponentAccessor",
     "travel.ClientPacketListenerCorrectionMixin",
     "travel.ClientPacketListenerVelocityMixin",
     "travel.LiquidBlockSolidSurfaceMixin",

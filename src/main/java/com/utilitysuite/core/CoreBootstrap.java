@@ -16,6 +16,7 @@ import com.utilitysuite.core.input.InputSmoother;
 import com.utilitysuite.core.input.PrimitiveRandom;
 import com.utilitysuite.core.input.KeybindManager;
 import com.utilitysuite.core.input.ManualInputHooks;
+import com.utilitysuite.core.input.ScreenTextEntry;
 import com.utilitysuite.core.input.ManualLookAssist;
 import com.utilitysuite.core.input.ManualFactsTracker;
 import com.utilitysuite.core.input.MinecraftInputBackend;
@@ -140,6 +141,9 @@ public final class CoreBootstrap {
         bus.addListener(manualInput::onKey);
         bus.addListener(manualInput::onMouseButton);
         bus.addListener(manualInput::onScroll);
+        // typed characters a text field (or another mod's overlay, by cancelling) consumed: see TextEntryGuard
+        bus.addListener(EventPriority.HIGHEST, true, ScreenTextEntry::onCharTypedPre);
+        bus.addListener(ScreenTextEntry::onCharTypedPost);
     }
 
     /** Re-reads the core settings from {@code global.json} (also after the UI changes one). */
@@ -202,6 +206,7 @@ public final class CoreBootstrap {
         }
         boolean screenOpen = mc.screen != null;
         manualInput.beginTick(screenOpen);
+        ScreenTextEntry.tick(screenOpen);
         sharedControl.beginTick(screenOpen);
         smoother.preTick();
     }
