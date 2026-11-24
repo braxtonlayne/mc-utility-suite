@@ -45,6 +45,8 @@ public final class AutoReconnect implements IModule, IConfigurable {
     public static final String K_ATTEMPTS = "max_attempts";
     public static final String K_RESUME = "resume_job";
     static final int SETTLE_TICKS = 100;
+    static final int HOLD_RECHECK_TICKS = 20;
+    static final int MAX_HOLD_CHECKS = 60;
 
     private final ReconnectPolicy policy = new ReconnectPolicy();
     private boolean enabled;
@@ -57,6 +59,7 @@ public final class AutoReconnect implements IModule, IConfigurable {
     private int countdown = -1;
     private String resumeLabel;
     private int settle = -1;
+    private int holdChecks;
 
     @Override
     public String id() {
@@ -99,6 +102,7 @@ public final class AutoReconnect implements IModule, IConfigurable {
         attempts = 0;
         countdown = -1;
         countingOn = null;
+        holdChecks = 0;
         settle = enabled && resumeJob && resumeLabel != null ? SETTLE_TICKS : -1;
     }
 
@@ -183,11 +187,28 @@ public final class AutoReconnect implements IModule, IConfigurable {
 
     private void resume() {
         String label = resumeLabel;
-        resumeLabel = null;
         IGoalEngine goals = Services.goalsOrNull();
         if (label == null || goals == null || goals.activeJob().isPresent()) {
+            resumeLabel = null;
             return;
         }
+        String unsafe = unsafeNow();
+        if (unsafe != null) {
+            // Keep the job paused and look again every second for up to a minute; then drop it.
+            if (++holdChecks > MAX_HOLD_CHECKS) {
+                resumeLabel = null;
+                holdChecks = 0;
+                say("Job '" + label + "' not resumed: still " + unsafe, true);
+                return;
+            }
+            if (holdChecks == 1) {
+                say("Job '" + label + "' paused: " + unsafe + ". Resumes when it is safe.", true);
+            }
+            settle = HOLD_RECHECK_TICKS;
+            return;
+        }
+        holdChecks = 0;
+        resumeLabel = null;
         ParseResult r = goals.parse(label);
         if (r.isOk()) {
             long id = goals.submit(r.request());
@@ -195,6 +216,20 @@ public final class AutoReconnect implements IModule, IConfigurable {
         } else {
             say("Could not resume '" + label + "': " + r.error(), true);
         }
+    }
+
+    /** Reason the player is not safe to resume the job (see {@link ReconnectSafety}), or null. */
+    private static String unsafeNow() {
+        net.minecraft.client.player.LocalPlayer p = Minecraft.getInstance().player;
+        if (p == null) {
+            return "no player";
+        }
+        boolean airborne = !p.onGround() && !p.isInWater() && !p.onClimbable() && !p.getAbilities().flying
+                && !p.isFallFlying();
+        boolean falling = airborne && p.getDeltaMovement().y < -0.1;
+        int sinceHurt = p.getLastHurtByMob() != null || p.hurtTime > 0
+                ? p.tickCount - p.getLastHurtByMobTimestamp() : Integer.MAX_VALUE;
+        return ReconnectSafety.unsafeReason(p.isInLava(), falling, sinceHurt, Services.danger().any());
     }
 
     public void cancel() {
