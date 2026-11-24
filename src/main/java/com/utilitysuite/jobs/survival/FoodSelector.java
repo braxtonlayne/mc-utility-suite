@@ -5,7 +5,11 @@ import java.util.Set;
 /** Auto-Eat decisions: when to eat and which safe food wastes the least. Allocation-free. */
 public final class FoodSelector {
 
-    /** Foods with harmful side effects that are never auto-eaten. */
+    /**
+     * Foods with harmful side effects (or too valuable to eat for hunger) that are never auto-eaten. Golden apples are
+     * the one exception: the urgent {@link #choose(String[], int[], float[], int, boolean, boolean, boolean)} may pick
+     * them when the "eat golden apples in danger" setting is on.
+     */
     public static final Set<String> UNSAFE = Set.of("minecraft:rotten_flesh", "minecraft:spider_eye",
             "minecraft:poisonous_potato", "minecraft:pufferfish", "minecraft:suspicious_stew",
             "minecraft:chorus_fruit", "minecraft:chicken", "minecraft:raw_chicken", "minecraft:golden_apple",
@@ -80,6 +84,72 @@ public final class FoodSelector {
             }
         }
         return best;
+    }
+
+    /** Golden apples: in {@link #UNSAFE} (never eaten for hunger), allowed only in danger behind their own setting. */
+    public static final String GOLDEN_APPLE = "minecraft:golden_apple";
+    public static final String ENCHANTED_GOLDEN_APPLE = "minecraft:enchanted_golden_apple";
+
+    /** Urgent-score bonus that puts golden apples above any ordinary food (Regeneration + Absorption beat food). */
+    private static final double GOLDEN_BONUS = 1000.0;
+    /** The enchanted apple ranks just under the plain one: it is the rarer item, so the plain one goes first. */
+    private static final double ENCHANTED_BONUS = 900.0;
+
+    /** True for the golden and enchanted golden apple. */
+    public static boolean isGolden(String id) {
+        return GOLDEN_APPLE.equals(id) || ENCHANTED_GOLDEN_APPLE.equals(id);
+    }
+
+    /**
+     * Danger-aware choice. Not urgent: exactly {@link #choose(String[], int[], float[], int, boolean)}. Urgent (health
+     * low or a threat active): the food that heals the most wins (nutrition plus saturation, overfill ignored: the
+     * saturation still feeds fast regeneration), and with {@code allowGolden} the golden apple, then the enchanted
+     * one, rank above everything. At full hunger only golden apples can be eaten, so only they are considered. Other
+     * unsafe foods stay excluded. Between equal scores a hotbar slot wins. Allocation free.
+     */
+    public static int choose(String[] ids, int[] nutrition, float[] saturation, int hunger, boolean preferSaturation,
+                             boolean urgent, boolean allowGolden) {
+        if (!urgent) {
+            return choose(ids, nutrition, saturation, hunger, preferSaturation);
+        }
+        int best = -1;
+        double bestScore = Double.NEGATIVE_INFINITY;
+        for (int i = 0; i < ids.length; i++) {
+            String id = ids[i];
+            if (id == null || nutrition[i] <= 0) {
+                continue;
+            }
+            boolean golden = isGolden(id);
+            if (golden ? !allowGolden : (UNSAFE.contains(id) || hunger >= 20)) {
+                continue;
+            }
+            double score = healScore(id, nutrition[i], saturation[i]) - (i >= HOTBAR ? PULL_PENALTY : 0.0);
+            if (score > bestScore) {
+                bestScore = score;
+                best = i;
+            }
+        }
+        return best;
+    }
+
+    /** How much one food heals when it matters: nutrition plus saturation, golden apples on top. */
+    public static double healScore(String id, int nutrition, float saturation) {
+        double base = nutrition + saturation;
+        if (GOLDEN_APPLE.equals(id)) {
+            return GOLDEN_BONUS + base;
+        }
+        if (ENCHANTED_GOLDEN_APPLE.equals(id)) {
+            return ENCHANTED_BONUS + base;
+        }
+        return base;
+    }
+
+    /**
+     * Whether a hazard forbids starting to eat: standing in lava, burning next to lava, or an explosion about to go
+     * off. Eating roots the player for 1.6 s at walking-slow speed; getting out comes first.
+     */
+    public static boolean eatingBlocked(boolean inLava, boolean onFire, boolean lavaAdjacent, boolean explosion) {
+        return inLava || (onFire && lavaAdjacent) || explosion;
     }
 
     /**

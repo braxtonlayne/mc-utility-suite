@@ -17,6 +17,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.LayeredDraw;
 import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.world.item.Items;
 
 /**
  * The coach's cues around the crosshair. Two halves:
@@ -28,11 +29,14 @@ import net.minecraft.client.player.LocalPlayer;
  *   <li>the HUD element ({@link #draw}, slot CROSSHAIR) draws through the canvas in tokens: a cooldown arc around
  *       the crosshair that fills as the attack recharges and flashes when it is ready (WARN when a swing would
  *       crit), a three-segment range bar under it (too close / in range / too far), "AXE" when a shield-break swap
- *       is possible and "BACK" when the retreat rule fires. Without the tracker positions ({@link #useThreats}) the
+ *       is possible, "BACK" when the retreat rule fires, a thin red inner arc for the part of the opponent's
+ *       estimated attack recharge still to go, and "SH n" under the bar while our shield is disabled (n ticks).
+ *       Without the tracker positions ({@link #useThreats}) the
  *       old "!" cue is drawn on a ring instead.</li>
  * </ul>
  * Draws and publishes nothing when the coach is disabled or idle, with the GUI hidden or a screen open (marks are
- * cleared then); Clean-Screen is handled by the HUD host. Allocation free (constant strings).
+ * cleared then); Clean-Screen is handled by the HUD host. Allocation free (constant strings; the shield text is rebuilt
+ * only when its tick count changes).
  */
 public final class FightCoachHud implements LayeredDraw.Layer, HudElement {
 
@@ -52,6 +56,12 @@ public final class FightCoachHud implements LayeredDraw.Layer, HudElement {
     static final float SEG_H = 2f;
     static final float SEG_GAP = 1f;
     static final float BAR_OFFSET = 14f;
+    /** Opponent cooldown: a thin inner arc, the part of its recharge still to go (gone = it can hit at full). */
+    static final float OPP_ARC_RADIUS = ARC_RADIUS - 3f;
+    static final float OPP_ARC_WIDTH = 1f;
+    /** Length of a shield disable by an axe hit (vanilla: 100 ticks); the cooldown percent is scaled by it. */
+    static final int SHIELD_DISABLE_TICKS = 100;
+    private static final String SHIELD_PREFIX = "SH ";
     private static final float DANGER_RING = 22f;
     private static final String AXE = "AXE";
     private static final String BACK = "BACK";
@@ -71,6 +81,9 @@ public final class FightCoachHud implements LayeredDraw.Layer, HudElement {
     private boolean hosted;
     private float lastCharge;
     private long readyAtMs = Long.MIN_VALUE / 2;
+    /** Shield text, rebuilt only when the tick count changes (not per frame). */
+    private int shieldTextTicks = -1;
+    private String shieldText = "";
 
     public FightCoachHud(FightCoach coach) {
         this(coach::isEnabled, coach.readout(), FightCoachHud::screenOrGuiHidden);
@@ -111,6 +124,8 @@ public final class FightCoachHud implements LayeredDraw.Layer, HudElement {
         LocalPlayer p = Minecraft.getInstance().player;
         if (p != null) {
             readout.charge01 = clamp01(p.getAttackStrengthScale(0f));
+            float shield = p.getCooldowns().getCooldownPercent(Items.SHIELD, 0f);
+            readout.shieldDisabledTicks = shield > 0f ? (int) Math.ceil(shield * SHIELD_DISABLE_TICKS - 1.0e-3f) : 0;
         }
         ThreatTracker t = tracker;
         if (t != null) {
@@ -139,6 +154,10 @@ public final class FightCoachHud implements LayeredDraw.Layer, HudElement {
     public void draw(IHoloCanvas c, float x, float y, float alpha) {
         CoachReadout r = readout;
         drawArc(c, r, x, y, alpha);
+        float opp = clamp01(r.oppCharge01);
+        if (opp < 0.99f) {
+            c.arc(x, y, OPP_ARC_RADIUS, 0f, 360f * (1f - opp), OPP_ARC_WIDTH, HoloToken.DANGER, alpha * 0.8f);
+        }
 
         // Range bar: three 6x2 segments under the arc; the active one carries the meaning.
         float bx = x - (SEG_W * 3f + SEG_GAP * 2f) * 0.5f;
@@ -149,6 +168,10 @@ public final class FightCoachHud implements LayeredDraw.Layer, HudElement {
                 t = i == 0 ? HoloToken.DANGER : (i == 1 ? HoloToken.ALLY : HoloToken.WARN);
             }
             c.plate(bx + i * (SEG_W + SEG_GAP), by, SEG_W, SEG_H, t, t == HoloToken.LINE ? alpha * 0.6f : alpha);
+        }
+        if (r.shieldDisabledTicks > 0) {
+            String t = shieldText(r.shieldDisabledTicks);
+            c.text(TextRole.MICRO, t, x - c.width(TextRole.MICRO, t) * 0.5f, by + SEG_H + 2f, HoloToken.WARN, alpha);
         }
         if (r.shieldBreak) {
             c.text(TextRole.MICRO, AXE, x + ARC_RADIUS + 4f, y - c.lineHeight(TextRole.MICRO) * 0.5f, HoloToken.WARN,
@@ -191,6 +214,15 @@ public final class FightCoachHud implements LayeredDraw.Layer, HudElement {
         if (charge > 0.01f) {
             c.arc(x, y, ARC_RADIUS, 0f, 360f * charge, ARC_WIDTH, HoloToken.ACCENT, alpha);
         }
+    }
+
+    /** "SH 87": ticks the shield stays disabled; the string is rebuilt only when the count changes. */
+    String shieldText(int ticks) {
+        if (ticks != shieldTextTicks) {
+            shieldTextTicks = ticks;
+            shieldText = SHIELD_PREFIX + ticks;
+        }
+        return shieldText;
     }
 
     private static float clamp01(float v) {

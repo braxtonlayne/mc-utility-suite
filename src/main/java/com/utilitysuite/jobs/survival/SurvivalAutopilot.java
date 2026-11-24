@@ -6,8 +6,10 @@ import com.utilitysuite.core.api.ControlPriority;
 import com.utilitysuite.core.api.CostProfile;
 import com.utilitysuite.core.api.DataSourceMode;
 import com.utilitysuite.core.api.GoalRequest;
+import com.utilitysuite.core.api.HazardKind;
 import com.utilitysuite.core.api.IConfigurable;
 import com.utilitysuite.core.api.IContainerClicker;
+import com.utilitysuite.core.api.IDangerModel;
 import com.utilitysuite.core.api.IGoalEngine;
 import com.utilitysuite.core.api.IModule;
 import com.utilitysuite.core.api.ISuiteEventBus;
@@ -72,7 +74,9 @@ import java.util.Set;
  * <ul>
  *   <li>Auto-Tool: on block attack start, select the fastest valid hotbar tool that keeps the desired drop.</li>
  *   <li>Durability protection: valuable tools under the threshold are never auto-selected; warns when no spare.</li>
- *   <li>Auto-Eat: below the hunger threshold, briefly preempt GOAL work and eat the least wasteful safe food.</li>
+ *   <li>Auto-Eat: below the hunger threshold, briefly preempt GOAL work and eat the least wasteful safe food. Never
+ *       starts in lava, while burning next to lava or with an explosion pending (danger model); with low health or a
+ *       live threat the most healing food wins, golden apples included only behind their own setting.</li>
  *   <li>Hazard guard: lava next to the feet while automation walks: preempt movement and sneak briefly.</li>
  *   <li>Inventory pressure: drop junk-list stacks, optionally queue 9-to-1 compaction crafts.</li>
  *   <li>Protected areas: PROTECTED_NO_MINE boxes consumed by the Baritone adapter and the job executor.</li>
@@ -127,6 +131,8 @@ public final class SurvivalAutopilot implements IModule, IConfigurable, LeaseLis
     private final FoodSelector.SwapBack swapBack = new FoodSelector.SwapBack();
     private boolean useInventoryFood = true;
     private boolean swapBackFood = true;
+    /** Golden / enchanted golden apples may be eaten when health is low or a threat is active (default off). */
+    private boolean goldenInDanger = false;
     private long hazardUntil;
     private long hazardCooldown;
     private boolean warnedDurability;
@@ -292,11 +298,26 @@ public final class SurvivalAutopilot implements IModule, IConfigurable, LeaseLis
     private void maybeStartEating(Minecraft mc, LocalPlayer player) {
         int food = player.getFoodData().getFoodLevel();
         boolean longLeg = Services.arbiter().isHeldBy(ControlChannel.MOVEMENT, GoalEngine.ID);
-        if (!FoodSelector.shouldEat(food, player.getHealth(), player.getMaxHealth(), hungerThreshold, healthThreshold,
-                longLeg) || player.isUsingItem() || mc.screen != null || player.isCreative()
+        float health = player.getHealth();
+        boolean lowHealth = health < player.getMaxHealth() * healthThreshold;
+        // Golden apples can be eaten at full hunger: with the setting on, low health alone is reason enough.
+        boolean wantGolden = goldenInDanger && lowHealth;
+        boolean hungry = FoodSelector.shouldEat(food, health, player.getMaxHealth(), hungerThreshold, healthThreshold,
+                longLeg);
+        if (!(hungry || wantGolden) || player.isUsingItem() || mc.screen != null || player.isCreative()
                 || player.containerMenu != player.inventoryMenu) {
             return;
         }
+        IDangerModel danger = Services.danger();
+        boolean onFire = player.isOnFire();
+        if (FoodSelector.eatingBlocked(player.isInLava(), onFire,
+                onFire && (danger.has(HazardKind.LAVA) || lavaAdjacent(mc.level, player)),
+                danger.has(HazardKind.EXPLOSION))) {
+            return; // get out of the lava / away from the blast first; eating roots the player
+        }
+        boolean threat = danger.has(HazardKind.LOW_HEALTH) || danger.has(HazardKind.MELEE)
+                || danger.has(HazardKind.PROJECTILE) || danger.has(HazardKind.FIRE);
+        boolean urgent = lowHealth || threat;
         Inventory inv = player.getInventory();
         int scan = useInventoryFood ? 36 : 9;
         for (int i = 0; i < 36; i++) {
@@ -306,9 +327,10 @@ public final class SurvivalAutopilot implements IModule, IConfigurable, LeaseLis
             foodNutrition[i] = fp == null ? 0 : fp.nutrition();
             foodSaturation[i] = fp == null ? 0 : fp.saturation();
         }
-        int slot = FoodSelector.choose(foodIds, foodNutrition, foodSaturation, food, longLeg);
-        if (slot < 0 || targetsInteractiveBlock(mc)) {
-            return;
+        int slot = FoodSelector.choose(foodIds, foodNutrition, foodSaturation, food, longLeg, urgent,
+                goldenInDanger && urgent);
+        if (slot < 0 || (!hungry && !FoodSelector.isGolden(foodIds[slot])) || targetsInteractiveBlock(mc)) {
+            return; // not hungry: only a golden apple (low health, setting on) is worth eating
         }
         boolean pull = slot >= FoodSelector.HOTBAR;
         if (pull && !FoodSelector.canPull(mc.screen != null, mc.gameMode != null && mc.gameMode.isDestroying())) {
@@ -497,6 +519,21 @@ public final class SurvivalAutopilot implements IModule, IConfigurable, LeaseLis
     }
 
     // ---- hazards ----------------------------------------------------------------------------------------------------
+
+    /** Lava in the 3x3 around the feet and the layer below (18 fluid reads, reused cursor). Only called when burning. */
+    private boolean lavaAdjacent(Level level, LocalPlayer player) {
+        int fx = player.getBlockX(), fy = player.getBlockY(), fz = player.getBlockZ();
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dz = -1; dz <= 1; dz++) {
+                for (int dy = -1; dy <= 0; dy++) {
+                    if (level.getFluidState(probe.set(fx + dx, fy + dy, fz + dz)).is(FluidTags.LAVA)) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
 
     private void checkLava(Minecraft mc, LocalPlayer player) {
         if (!Services.arbiter().isHeldBy(ControlChannel.MOVEMENT, GoalEngine.ID)) {
@@ -750,6 +787,7 @@ public final class SurvivalAutopilot implements IModule, IConfigurable, LeaseLis
         hungerThreshold = p.getInt(ID, "hunger_threshold", 14);
         useInventoryFood = p.getBool(ID, "use_inventory_food", true);
         swapBackFood = p.getBool(ID, "eat_swap_back", true);
+        goldenInDanger = p.getBool(ID, "eat_golden_in_danger", false);
         healthThreshold = p.getInt(ID, "health_percent", 50) / 100f;
         hazardGuard = p.getBool(ID, "hazard_guard", true);
         pressure = p.getBool(ID, "inventory_pressure", true);
@@ -816,6 +854,8 @@ public final class SurvivalAutopilot implements IModule, IConfigurable, LeaseLis
                         "Pull the best food from the pack into the hotbar when the hotbar has none"),
                 SettingSpec.bool("eat_swap_back", "Swap back", true, "Auto-Eat",
                         "Put the hotbar item back after eating food pulled from the pack"),
+                SettingSpec.bool("eat_golden_in_danger", "Eat golden apples when in danger", false, "Auto-Eat",
+                        "Allow golden and enchanted golden apples, only when health is low or a threat is active"),
                 SettingSpec.integer("health_percent", "Top up below health (%)", 50, 10, 100, "Auto-Eat", "")
                         .asAdvanced(),
                 SettingSpec.bool("hazard_guard", "Lava guard", true, "Safety",

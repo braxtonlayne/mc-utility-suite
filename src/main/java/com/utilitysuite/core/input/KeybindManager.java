@@ -96,6 +96,53 @@ public final class KeybindManager {
         return m != null && !m.isUnbound() && m.isDown();
     }
 
+    /**
+     * Every registered mapping in the suite's category (this class's and the ones modules register), in Controls-screen
+     * order. Menu build time only; allocates a list.
+     */
+    public static java.util.List<KeyMapping> suiteMappings() {
+        java.util.List<KeyMapping> out = new java.util.ArrayList<>();
+        net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
+        if (mc == null || mc.options == null) {
+            return out;
+        }
+        for (KeyMapping m : mc.options.keyMappings) {
+            if (CATEGORY.equals(m.getCategory())) {
+                out.add(m);
+            }
+        }
+        return out;
+    }
+
+    /** True when another mapping that can be active at the same time is bound to the same key. */
+    public static boolean hasConflict(KeyMapping m) {
+        net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
+        if (m == null || m.isUnbound() || mc == null || mc.options == null) {
+            return false;
+        }
+        for (KeyMapping o : mc.options.keyMappings) {
+            if (o != m && m.same(o) && (m.getKeyConflictContext().conflicts(o.getKeyConflictContext())
+                    || o.getKeyConflictContext().conflicts(m.getKeyConflictContext()))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Rebinds a mapping from the suite menu (the same calls the Controls screen makes) and saves options.txt.
+     * {@link InputConstants#UNKNOWN} unbinds it.
+     */
+    public static void rebind(KeyMapping m, InputConstants.Key key) {
+        net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
+        if (m == null || mc == null || mc.options == null) {
+            return;
+        }
+        mc.options.setKey(m, key);
+        KeyMapping.resetMapping();
+        mc.options.save();
+    }
+
     /** Mod-bus listener. */
     public static void onRegisterKeyMappings(RegisterKeyMappingsEvent event) {
         for (KeyId id : IDS) {

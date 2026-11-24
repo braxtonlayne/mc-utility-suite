@@ -17,9 +17,12 @@ import com.utilitysuite.world.render.RenderContext;
 import com.utilitysuite.world.render.WorldRenderKit;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.screens.ReceivingLevelScreen;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
+import net.minecraft.world.level.block.Blocks;
 import org.joml.Matrix4f;
 
 import java.nio.charset.StandardCharsets;
@@ -27,7 +30,8 @@ import java.util.List;
 
 /**
  * Waypoints: groups (Bases, Mines, Portals, Death Sites) with tags, overworld/nether 8:1 conversion, an automatic
- * Death Site when the player dies, in-world beacons with name and distance (hidden in Clean-Screen), and a breadcrumb
+ * Death Site when the player dies, automatic Portals waypoints on overworld/nether portal trips, in-world beacons
+ * with name and distance (hidden in Clean-Screen), and a breadcrumb
  * trail with "Take Me Back" (hands the reversed trail to the navigator when one is installed).
  * <p>
  * Saved per world/server in {@code config/utilitysuite/world/<profile>.waypoints.json}.
@@ -36,6 +40,10 @@ public final class WaypointsModule extends WorldModule {
 
     public static final String ID = "waypoints";
     private static final int SAVE_CHECK_INTERVAL = 100;
+    /** A dimension change counts as a portal trip only if the player stood in a portal this recently (ticks). */
+    private static final int PORTAL_RECENT_TICKS = 40;
+    /** Ticks (after the arrival chunk is loaded) to look for the arrival portal before using the player position. */
+    private static final int ARRIVAL_WINDOW_TICKS = 20;
 
     private final BreadcrumbTrail trail = new BreadcrumbTrail(512, 4);
     private final WaypointStore store = new WaypointStore(() -> trail);
@@ -48,6 +56,17 @@ public final class WaypointsModule extends WorldModule {
     private String profileId;
     private boolean wasDead;
     private int ticks;
+
+    // Portal recording: last position inside a portal block (old dimension) and a pending arrival in the new one.
+    private final BlockPos.MutableBlockPos probe = new BlockPos.MutableBlockPos();
+    private boolean recordPortals;
+    private String lastDim;
+    private boolean portalSeen;
+    private int lastPortalTick;
+    private int lastPortalX;
+    private int lastPortalY;
+    private int lastPortalZ;
+    private int arrivalTicksLeft;
 
     // Render cache, rebuilt when the store version or the dimension changes.
     private Waypoint[] shown = new Waypoint[0];
@@ -95,7 +114,10 @@ public final class WaypointsModule extends WorldModule {
                 SettingSpec.integer("breadcrumb_capacity", "Breadcrumb points", 512, 16, 8192, "Breadcrumbs",
                         "Oldest points are dropped beyond this."),
                 SettingSpec.bool("death_sites", "Mark death sites", true, "Groups",
-                        "Adds a Death Sites waypoint where you die."));
+                        "Adds a Death Sites waypoint where you die."),
+                SettingSpec.bool("record_portals", "Record portals automatically", true, "Groups",
+                        "Adds a Portals waypoint at the portal you leave and the one you arrive at when travelling "
+                                + "between the Overworld and the Nether (skipped within 16 blocks of an existing one)."));
     }
 
     private boolean deathSites;
@@ -108,6 +130,10 @@ public final class WaypointsModule extends WorldModule {
         trail.setMinSpacing(integer(p, "breadcrumb_spacing"));
         trail.setCapacity(integer(p, "breadcrumb_capacity"));
         deathSites = bool(p, "death_sites");
+        recordPortals = bool(p, "record_portals");
+        if (!recordPortals) {
+            arrivalTicksLeft = 0;
+        }
         if (!"global".equals(p.profileId()) && !p.profileId().equals(profileId)) {
             save(false);
             profileId = p.profileId();
@@ -127,6 +153,13 @@ public final class WaypointsModule extends WorldModule {
         }
         String dim = WorldIds.dimension(level);
         boolean dead = player.isDeadOrDying();
+        if (dim != lastDim && !dim.equals(lastDim)) { // WorldIds caches one String per dimension: usually identical
+            onDimensionChanged(player, lastDim, dim);
+            lastDim = dim;
+        }
+        if (recordPortals && !dead) {
+            tickPortals(mc, player, level, dim);
+        }
         if (dead && !wasDead && deathSites) {
             ISuiteEventBus events = Services.eventsOrNull();
             SuiteEvent.PlayerDied e = new SuiteEvent.PlayerDied(System.currentTimeMillis(),
@@ -149,6 +182,53 @@ public final class WaypointsModule extends WorldModule {
         }
         if (++ticks % SAVE_CHECK_INTERVAL == 0) {
             save(true);
+        }
+    }
+
+    // ---- portals ------------------------------------------------------------------------------------------------
+
+    private void onDimensionChanged(LocalPlayer player, String from, String to) {
+        arrivalTicksLeft = 0;
+        // Respawning after a death (or a teleport) also changes dimension: only count trips that began in a portal.
+        if (!recordPortals || wasDead || !PortalWaypoints.isPortalTransition(from, to)
+                || !portalSeen || ticks - lastPortalTick > PORTAL_RECENT_TICKS) {
+            return;
+        }
+        portalSeen = false;
+        Waypoint w = store.addPortal(lastPortalX, lastPortalY, lastPortalZ, from);
+        if (w != null) {
+            message(player, "Waypoint added: " + w.name());
+        }
+        arrivalTicksLeft = ARRIVAL_WINDOW_TICKS;
+    }
+
+    /** Two block-state reads per tick into a reused mutable position; no allocation. */
+    private void tickPortals(Minecraft mc, LocalPlayer player, ClientLevel level, String dim) {
+        int x = player.getBlockX();
+        int y = player.getBlockY();
+        int z = player.getBlockZ();
+        boolean inPortal = level.getBlockState(probe.set(x, y, z)).is(Blocks.NETHER_PORTAL)
+                || level.getBlockState(probe.set(x, y + 1, z)).is(Blocks.NETHER_PORTAL);
+        if (inPortal) {
+            portalSeen = true;
+            lastPortalTick = ticks;
+            lastPortalX = x;
+            lastPortalY = y;
+            lastPortalZ = z;
+        }
+        if (arrivalTicksLeft <= 0) {
+            return;
+        }
+        // The arrival position is not final until the new level's chunk at the player has arrived.
+        if (mc.screen instanceof ReceivingLevelScreen || !level.getChunkSource().hasChunk(x >> 4, z >> 4)) {
+            return;
+        }
+        if (inPortal || --arrivalTicksLeft == 0) {
+            arrivalTicksLeft = 0;
+            Waypoint w = store.addPortal(x, y, z, dim);
+            if (w != null) {
+                message(player, "Waypoint added: " + w.name());
+            }
         }
     }
 
@@ -192,6 +272,9 @@ public final class WaypointsModule extends WorldModule {
         trail.clear();
         profileId = null;
         wasDead = false;
+        lastDim = null;
+        portalSeen = false;
+        arrivalTicksLeft = 0;
         shownVersion = -1;
         shownCount = 0;
     }

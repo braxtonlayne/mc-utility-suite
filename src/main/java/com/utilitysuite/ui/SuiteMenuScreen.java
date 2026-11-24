@@ -1175,6 +1175,10 @@ public final class SuiteMenuScreen extends Screen {
         if (openKeyReleased || openKey == null || !openKey.matches(keyCode, scanCode)) {
             boot.skip(); // any input skips the boot, except the key-repeat of the press that opened the menu
         }
+        if (KeyRebind.onKey(keyCode, scanCode, this::setStatus)) { // a hotkey row is waiting for its new key
+            requestRebuild();
+            return true;
+        }
         if (keyCode == 256) {
             onClose();
             return true;
@@ -1249,6 +1253,7 @@ public final class SuiteMenuScreen extends Screen {
     public void removed() {
         super.removed();
         lastClosedAt = Util.getMillis();
+        KeyRebind.cancel();
         drainOpenKeyClicks();
     }
 

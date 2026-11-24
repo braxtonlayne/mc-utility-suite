@@ -103,6 +103,17 @@ public final class WaypointStore implements IWaypointService {
         return add("Death " + n, GROUP_DEATHS, x, y, z, dimension);
     }
 
+    /**
+     * Adds an automatic "Portals" waypoint, or returns null when a Portals waypoint in the same dimension is within
+     * {@link PortalWaypoints#DEDUPE_RADIUS} blocks.
+     */
+    public synchronized Waypoint addPortal(int x, int y, int z, String dimension) {
+        if (PortalWaypoints.hasNearby(byId.values(), dimension, x, y, z)) {
+            return null;
+        }
+        return add(PortalWaypoints.nextName(byId.values(), dimension), GROUP_PORTALS, x, y, z, dimension);
+    }
+
     @Override
     public synchronized void remove(String id) {
         if (byId.remove(id) != null) {

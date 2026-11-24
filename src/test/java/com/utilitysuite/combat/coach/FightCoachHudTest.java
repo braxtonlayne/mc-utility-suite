@@ -142,10 +142,46 @@ class FightCoachHudTest {
     }
 
     @Test
+    void opponentArcShowsRechargeStillToGo() {
+        readout.visible = true;
+        readout.charge01 = 0.5f;
+        readout.oppCharge01 = 0.25f;
+        List<Arc> arcs = new ArrayList<>();
+        hud.draw(arcRecorder(arcs), 0f, 0f, 1f);
+        assertEquals(3, arcs.size(), "track, our fill, the opponent's arc");
+        assertEquals(HoloToken.DANGER, arcs.get(2).token());
+        assertEquals(270f, arcs.get(2).sweep(), 1e-3f);
+
+        arcs.clear();
+        readout.oppCharge01 = 1f;
+        hud.draw(arcRecorder(arcs), 0f, 0f, 1f);
+        assertEquals(2, arcs.size(), "opponent ready (or unread): no arc");
+    }
+
+    @Test
+    void shieldTextOnlyWhileDisabledAndCached() {
+        readout.visible = true;
+        readout.charge01 = 0.5f;
+        RecordingCanvas c = new RecordingCanvas();
+        hud.draw(c, 0f, 0f, 1f);
+        assertEquals(0, c.textRuns);
+        readout.shieldDisabledTicks = 87;
+        c.reset();
+        hud.draw(c, 0f, 0f, 1f);
+        assertEquals(1, c.textRuns);
+        String a = hud.shieldText(87);
+        assertEquals("SH 87", a);
+        assertTrue(a == hud.shieldText(87), "same count: the cached string");
+        assertEquals("SH 86", hud.shieldText(86));
+    }
+
+    @Test
     void drawingAllocatesNothing() {
         assumeTrue(AllocationProbe.supported());
         readout.visible = true;
         readout.charge01 = 0.6f;
+        readout.oppCharge01 = 0.3f;
+        readout.shieldDisabledTicks = 42;
         readout.shieldBreak = true;
         readout.retreat = true;
         RecordingCanvas c = new RecordingCanvas();

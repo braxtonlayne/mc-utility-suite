@@ -502,24 +502,34 @@ public final class ToolsTab {
     // ---- hotkeys + core ---------------------------------------------------------------------------------------------
 
     private static void hotkeys(Panel p) {
-        p.card("Hotkeys", "Options > Controls > Key Binds > Utility Suite");
-        hotkey(p, "Open this menu", KeybindManager.mapping(KeybindManager.KeyId.OPEN_MENU));
-        hotkey(p, "Stop-All (stops every automation at once)", KeybindManager.mapping(KeybindManager.KeyId.STOP_ALL));
-        hotkey(p, "Clean-Screen (hides overlays and the HUD pill)",
-                KeybindManager.mapping(KeybindManager.KeyId.CLEAN_SCREEN));
-        hotkey(p, "Hand over (hold: the autopilot takes the whole body)",
-                KeybindManager.mapping(KeybindManager.KeyId.HAND_OVER));
-        if (ToolsBootstrap.containerButtons() != null) {
-            hotkey(p, "Quick deposit in a chest (Shift = dump all)",
-                    ToolsBootstrap.containerButtons().quickDepositKey());
+        p.card("Hotkeys", "click a key, then press the new one (Esc cancels, Delete unbinds)");
+        java.util.List<KeyMapping> all = KeybindManager.suiteMappings();
+        if (all.isEmpty()) {
+            p.text("Key bindings are not registered yet.", Panel.DIM);
+            return;
+        }
+        for (KeyMapping m : all) {
+            hotkey(p, m);
         }
     }
 
-    private static void hotkey(Panel p, String what, KeyMapping key) {
+    /** One suite key: its name and a button showing the bound key; click it to rebind (conflicts in the warning style). */
+    private static void hotkey(Panel p, KeyMapping key) {
         int w = p.width();
-        com.utilitysuite.ui.kit.ChipNode cap = com.utilitysuite.ui.kit.ChipNode.keycap(p.font(), keyName(key));
-        p.rowLabel(what, 0, w - cap.w - 10, Panel.WHITE);
-        p.place(cap, w - cap.w);
+        int bw = Math.min(110, Math.max(70, w / 3));
+        boolean listening = com.utilitysuite.ui.KeyRebind.listening() == key;
+        boolean conflict = KeybindManager.hasConflict(key);
+        String label = listening ? "> press a key <" : key.isUnbound() ? "Unbound" : keyName(key);
+        String what = net.minecraft.network.chat.Component.translatable(key.getName()).getString();
+        p.rowLabel(what, 0, w - bw - 10, Panel.WHITE);
+        p.button(label, conflict ? "Another key uses this too; click to change it."
+                        : "Click, then press the new key. Esc cancels, Delete unbinds.", w - bw, bw,
+                listening ? PillButton.Style.PRIMARY : conflict ? PillButton.Style.DANGER_SOFT
+                        : PillButton.Style.OUTLINE,
+                b -> {
+                    com.utilitysuite.ui.KeyRebind.toggle(key);
+                    p.rebuild();
+                });
         p.nextRow();
     }
 
