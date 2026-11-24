@@ -82,6 +82,7 @@ public final class ToolsBootstrap {
         Services.modules().register(autoFish);
         Services.modules().register(autoRespawn);
         Services.modules().register(autoReconnect);
+        Services.modules().register(quickPearl);
 
         modBus.addListener(quickPearl::onRegisterKeys);
 

@@ -39,7 +39,9 @@ import java.util.Optional;
  * open or the player is using an item. With the module off it still acts for the opt-in autopilot when
  * {@code allows(Reflex.OFFHAND)}, limited to the totem rules. Inventory scans are budgeted (every
  * {@link #SCAN_INTERVAL} ticks, or at once when health or gliding changes); the ranged-threat scan runs every
- * {@link #THREAT_INTERVAL} ticks.
+ * {@link #THREAT_INTERVAL} ticks. When the local player's totem pops ({@link #onLocalTotemPop}, entity event 35
+ * forwarded by {@code mixin.combat}) the next ticks scan without waiting for the interval ({@link OffhandScanGate});
+ * the refill still starts after the usual reaction delay.
  */
 public final class OffhandManager implements IModule, IConfigurable, LeaseListener {
 
@@ -64,6 +66,7 @@ public final class OffhandManager implements IModule, IConfigurable, LeaseListen
     private int cooldownSetting = 10;
 
     private int clock;
+    private final OffhandScanGate scanGate = new OffhandScanGate();
     private float lastHealth = -1;
     private boolean lastGliding;
     private boolean rangedNear;
@@ -143,7 +146,7 @@ public final class OffhandManager implements IModule, IConfigurable, LeaseListen
             }
             return;
         }
-        if (!changed && clock % SCAN_INTERVAL != 0) {
+        if (!scanGate.due(changed, clock)) {
             return;
         }
         fill(mc, player);
@@ -155,8 +158,17 @@ public final class OffhandManager implements IModule, IConfigurable, LeaseListen
             return;
         }
         planned = w;
+        scanGate.clear();
         int median = w == OffhandRules.Want.TOTEM ? 3 : 6;
         plannedDelay = Services.humanizer().reactionTicks(median, 1, median * 3);
+    }
+
+    /**
+     * The local player's totem of undying was used (entity event 35). Client thread. Only makes the next ticks scan;
+     * what is swapped in, and after which reaction delay, is decided as on any other scan.
+     */
+    public void onLocalTotemPop() {
+        scanGate.popped();
     }
 
     private void perform(Minecraft mc, LocalPlayer player, IAutopilot ap) {
@@ -305,6 +317,7 @@ public final class OffhandManager implements IModule, IConfigurable, LeaseListen
 
     private void reset() {
         planned = OffhandRules.Want.KEEP;
+        scanGate.clear();
         if (lease != null) {
             Services.clicker().cancel(lease);
         }
@@ -314,6 +327,7 @@ public final class OffhandManager implements IModule, IConfigurable, LeaseListen
     @Override
     public void onStopAll() {
         planned = OffhandRules.Want.KEEP;
+        scanGate.clear();
         lease = null;
         actingForAutopilot = false;
     }

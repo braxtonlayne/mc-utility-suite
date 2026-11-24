@@ -5,23 +5,33 @@ import com.utilitysuite.core.api.ControlChannel;
 import com.utilitysuite.core.api.ControlLease;
 import com.utilitysuite.core.api.ControlPriority;
 import com.utilitysuite.core.api.IActionArbiter;
+import com.utilitysuite.core.api.IConfigurable;
 import com.utilitysuite.core.api.IContainerClicker;
+import com.utilitysuite.core.api.IModule;
 import com.utilitysuite.core.api.LeaseEndReason;
 import com.utilitysuite.core.api.LeaseListener;
 import com.utilitysuite.core.api.LeaseRequest;
+import com.utilitysuite.core.api.ModuleCategory;
+import com.utilitysuite.core.api.ProfileConfig;
 import com.utilitysuite.core.api.Services;
+import com.utilitysuite.core.api.SettingSpec;
 import com.utilitysuite.core.api.SimKey;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.level.ClipContext;
+import net.minecraft.world.phys.HitResult;
+import net.minecraft.world.phys.Vec3;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
 import net.neoforged.neoforge.client.event.RegisterKeyMappingsEvent;
 import net.neoforged.neoforge.client.settings.KeyConflictContext;
 
 import java.util.EnumSet;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -35,18 +45,80 @@ import java.util.Optional;
  * click ends the lease and with it the throw (a notice says so); nothing is reselected against the user. A stack that
  * was swapped into the hotbar by then is swapped back under a new lease once the user's input pause has passed, if the
  * inventory still looks the way this module left it.
+ *
+ * <p>Blocked-throw check (setting {@link #K_BLOCKED_CHECK}, on by default): once per key press, before anything is
+ * selected or swapped, the throw is simulated ({@link PearlPathCheck}). A pearl that would hit a block within
+ * {@link PearlPathCheck#BLOCKED_RANGE} of the eyes is not thrown and a notice says so.
+ *
+ * <p>A module so the setting has a place in the menu. On by default (the key itself is unbound by default); while off
+ * the key does nothing, and a swap back that is still owed is paid all the same.
  */
-public final class QuickPearl implements LeaseListener {
+public final class QuickPearl implements IModule, IConfigurable, LeaseListener {
 
     public static final String KEY_QUICK_PEARL = "key.utilitysuite.quick_pearl";
-    static final String OWNER = "quick_pearl";
+    public static final String ID = "quick_pearl";
+    public static final String K_BLOCKED_CHECK = "blocked_check";
+    static final String MSG_BLOCKED = "message.utilitysuite.quick_pearl.blocked";
+    static final String OWNER = ID;
     static final int STEP_TIMEOUT = 20;
 
+    private boolean enabled = true;
+    private boolean blockedCheck = true;
     private KeyMapping key;
     private final PearlPlan plan = new PearlPlan();
     private final PearlThrow seq = new PearlThrow(plan, () -> Services.humanizer().reactionTicks(2, 1, 3));
+    private final PearlPathCheck pathCheck = new PearlPathCheck();
+    private final LevelCollisionVoxels voxels = new LevelCollisionVoxels();
     private ControlLease lease;
     private LeaseRequest request;
+
+    @Override
+    public String id() {
+        return ID;
+    }
+
+    @Override
+    public ModuleCategory category() {
+        return ModuleCategory.TOOLS;
+    }
+
+    @Override
+    public boolean isEnabled() {
+        return enabled;
+    }
+
+    /** A run in progress finishes (so the hotbar is put back); only new key presses are ignored while off. */
+    @Override
+    public void setEnabled(boolean enabled) {
+        this.enabled = enabled;
+    }
+
+    @Override
+    public void onTick() {
+        // driven by onClientTick: an owed swap back is paid while the module is off as well
+    }
+
+    @Override
+    public void onProfileLoaded(ProfileConfig p) {
+        blockedCheck = p.getBool(ID, K_BLOCKED_CHECK, true);
+    }
+
+    @Override
+    public String displayName() {
+        return "Quick Pearl";
+    }
+
+    @Override
+    public List<SettingSpec> settings() {
+        return List.of(SettingSpec.bool(K_BLOCKED_CHECK, "Hold a blocked throw", true, "Throw",
+                "Does not throw when the pearl would hit a block within 1.5 blocks of your eyes. Turn off for "
+                        + "intentional close throws (up into a ceiling gap, a wall clip)."));
+    }
+
+    @Override
+    public void onSettingChanged(String settingKey) {
+        onProfileLoaded(Services.modState().profile());
+    }
 
     /** Mod bus. Unbound by default; active in game only. */
     public void onRegisterKeys(RegisterKeyMappingsEvent event) {
@@ -77,7 +149,7 @@ public final class QuickPearl implements LeaseListener {
             }
             if (seq.owesSwapBack()) {
                 settle(mc, player); // the swapped stack goes back before anything new starts
-            } else if (pressed && player != null && mc.screen == null) {
+            } else if (pressed && enabled && player != null && mc.screen == null) {
                 begin(player);
             }
             return;
@@ -105,6 +177,10 @@ public final class QuickPearl implements LeaseListener {
             say("No ender pearl");
             return;
         }
+        if (blockedCheck && throwBlocked(player)) {
+            say(Component.translatable(MSG_BLOCKED).getString());
+            return;
+        }
         Optional<ControlLease> got = Services.arbiter().request(request());
         if (got.isEmpty()) {
             say("Pearl key: controls are busy");
@@ -121,6 +197,26 @@ public final class QuickPearl implements LeaseListener {
             return;
         }
         seq.start();
+    }
+
+    /**
+     * Once per key press, never per tick. The cell-based simulation decides first (no allocation, and nearly every
+     * throw ends here); a blocked answer is then confirmed with one vanilla collision ray over the same
+     * {@link PearlPathCheck#BLOCKED_RANGE}, so a slab, pane or ladder cell the pearl would really pass does not hold
+     * the throw. That ray allocates (two vectors and a context), on a blocked key press only.
+     */
+    private boolean throwBlocked(LocalPlayer player) {
+        Vec3 motion = player.getDeltaMovement();
+        if (!pathCheck.blocked(player.getX(), player.getEyeY(), player.getZ(), player.getYRot(), player.getXRot(),
+                motion.x, player.onGround() ? 0.0 : motion.y, motion.z, voxels)) {
+            return false;
+        }
+        double r = PearlPathCheck.BLOCKED_RANGE;
+        Vec3 from = new Vec3(pathCheck.startX(), pathCheck.startY(), pathCheck.startZ());
+        Vec3 to = new Vec3(from.x + pathCheck.dirX() * r, from.y + pathCheck.dirY() * r,
+                from.z + pathCheck.dirZ() * r);
+        return player.level().clip(new ClipContext(from, to, ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE,
+                player)).getType() == HitResult.Type.BLOCK;
     }
 
     private void advance(LocalPlayer player) {
