@@ -77,8 +77,22 @@ public final class WorldTab {
     /** Direct controls for the World features that also have (unbound by default) keys. */
     private static void quickActions(Panel p) {
         p.card("Quick actions", "freecam, overlays, minimap, waypoints");
+        if (Services.modState().isCleanScreen()) {
+            // Clean-Screen silently hides overlays, xray and notices; say so where people switch them on
+            net.minecraft.client.KeyMapping key = com.utilitysuite.core.input.KeybindManager.mapping(
+                    com.utilitysuite.core.input.KeybindManager.KeyId.CLEAN_SCREEN);
+            String keyName = key == null ? "its key" : key.getTranslatedKeyMessage().getString();
+            p.text("Clean-Screen is on: overlays, xray, the minimap and notices stay hidden until it is off.",
+                    com.utilitysuite.ui.holo.HoloTheme.argb(com.utilitysuite.core.api.visual.HoloToken.WARN));
+            QuickActions.actionRow(p, "Clean-Screen (" + keyName + ")",
+                    "Same as the CLEAN switch in the top bar.", "Turn off", PillButton.Style.PRIMARY, () -> {
+                        Services.modState().setCleanScreen(false);
+                        p.toast("Clean-Screen off");
+                        p.rebuild();
+                    });
+        }
         Services.modules().find(ScoutCameraModule.class).ifPresent(cam -> QuickActions.switchRow(p, "Freecam",
-                "Detaches the camera so you can look around; your player stays put. Also on the Scout Camera key.",
+                "Detaches the camera so you can look around; your player stays put. Also on the Toggle Freecam key (Right Alt by default).",
                 cam.isFreecamActive(), cam::toggleFreecam));
         Services.modules().find(WorldOverlaysModule.class).ifPresent(o -> QuickActions.moduleSwitch(p, o,
                 "Show world overlays", "Ore / block outlines and markers (same as the World Overlays card switch)."));

@@ -176,6 +176,7 @@ public final class SuiteMenuScreen extends Screen {
     private int profilePillW;
     private int titleW;
     private String cleanLabel = "";
+    private boolean cleanOn;
     private int cleanLabelX;
 
     private String versionText = "";
@@ -426,11 +427,13 @@ public final class SuiteMenuScreen extends Screen {
                 UtilitySuiteMod.LOGGER.warn("Clean-Screen toggle failed", e);
             }
         }).animKey("chrome.clean");
-        clean.tooltip("Clean-Screen hides every overlay and the HUD pill.");
+        clean.tooltip(cleanScreen() ? "Clean-Screen is ON: overlays, xray, the minimap and notices are hidden."
+                : "Clean-Screen hides every overlay and the HUD pill.");
         clean.x = stop.x - 12 - ToggleSwitch.W;
         clean.y = wy + (UiTheme.TOP_BAR_H - ToggleSwitch.H) / 2;
         chrome.add(clean);
-        cleanLabel = "CLEAN"; // short caption so the switch is never unlabeled, even in a narrow window
+        cleanOn = cleanScreen();
+        cleanLabel = cleanOn ? "CLEAN ON" : "CLEAN"; // never unlabeled; louder while it hides things
         cleanLabelW = f.width(cleanLabel);
         cleanLabelX = clean.x - 6 - cleanLabelW;
         titleTextW = f.width(TITLE);
@@ -1677,7 +1680,8 @@ public final class SuiteMenuScreen extends Screen {
             g.fill(px + 5, py + 6, px + 8, py + 9, HoloTheme.argb(HoloToken.ACCENT, 0.8f));
             UiRenderUtils.text(g, font, profileText, px + 12, py + 3, HoloTheme.argb(HoloToken.TEXT_SECONDARY));
         }
-        UiRenderUtils.text(g, font, cleanLabel, cleanLabelX, ty, HoloTheme.argb(HoloToken.TEXT_MUTED));
+        UiRenderUtils.text(g, font, cleanLabel, cleanLabelX, ty,
+                HoloTheme.argb(cleanOn ? HoloToken.WARN : HoloToken.TEXT_MUTED));
         if (goalField != null) { // FIELD inset under the goal console (the kit field draws its own edge on top)
             g.fill(goalField.x, goalField.y, goalField.x + goalField.w, goalField.y + goalField.h,
                     HoloTheme.argb(HoloToken.FIELD));

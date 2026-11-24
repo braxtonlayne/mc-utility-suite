@@ -29,7 +29,7 @@ public final class KeybindManager {
         CLEAN_SCREEN("clean_screen", GLFW.GLFW_KEY_F10),
         TOGGLE_TERRAIN_SURFACE("toggle_terrain_surface", InputConstants.UNKNOWN.getValue()),
         TOGGLE_WORLD_OVERLAYS("toggle_world_overlays", InputConstants.UNKNOWN.getValue()),
-        TOGGLE_SCOUT_CAMERA("toggle_scout_camera", InputConstants.UNKNOWN.getValue()),
+        TOGGLE_SCOUT_CAMERA("toggle_scout_camera", GLFW.GLFW_KEY_RIGHT_ALT), // freecam (Freelook holds Left Alt)
         TOGGLE_AUTOPILOT("toggle_autopilot", InputConstants.UNKNOWN.getValue()),
         /** Hold to hand the whole body to the autopilot (read with {@link #isHeld}; unbound by default). */
         HAND_OVER("hand_over", InputConstants.UNKNOWN.getValue());

@@ -5,7 +5,7 @@
   "key.utilitysuite.clean_screen": "Toggle Clean Screen",
   "key.utilitysuite.toggle_terrain_surface": "Toggle Terrain Assist (Surface)",
   "key.utilitysuite.toggle_world_overlays": "Toggle World Overlays",
-  "key.utilitysuite.toggle_scout_camera": "Toggle Scout Camera",
+  "key.utilitysuite.toggle_scout_camera": "Toggle Freecam",
   "key.utilitysuite.toggle_autopilot": "Toggle Autopilot",
   "key.utilitysuite.hand_over": "Hand over: hold to give the autopilot control",
   "message.utilitysuite.autopilot_on": "Autopilot on",
