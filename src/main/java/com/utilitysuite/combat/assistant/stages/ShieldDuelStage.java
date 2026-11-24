@@ -30,6 +30,11 @@ import java.util.List;
  *   <li>Other threats to us (arrows, blasts, a second attacker): the shield reflex stands down while this stage owns
  *   USE and reports them through {@link #threatFeed()}; the stage raises the same shield for them
  *   ({@link #guardStep}), so the key keeps one writer.</li>
+ *   <li>The axe swap: the target drawing an axe (or a mob that disables shields) is acted on
+ *   {@link ShieldDuel#REACTION_MARGIN} ticks after it shows while our shield is up ({@link #seesDisabler}), the same
+ *   margin the raise uses; then the shield comes down and stays down against its melee until the axe is put away
+ *   (believed after the same margin). A single big impact from the feed may still be blocked
+ *   ({@link #worthADisable}).</li>
  *   <li>The trade solver hears both shield states through {@link TradeDriver#shieldFeed()}.</li>
  * </ol>
  * {@link #step} is allocation free; the "off" path is two field reads and a release check.
@@ -65,6 +70,22 @@ public final class ShieldDuelStage implements FightStage {
     private int guardRest;
     /** Ticks since the guard came down (0 on the lowering tick, -1 while up); large when it was never up. */
     private int sinceGuard = 1 << 20;
+
+    /**
+     * Expected damage of a single impact (arrow, blast) above which the shield is used with an axe in reach: more
+     * than the axe's own hit (9 for a stone, iron or diamond axe), see {@link #worthADisable}.
+     */
+    static final float AXE_HIT_DAMAGE = 9f;
+
+    // ---- the target's shield-disabling main hand as we have reacted to it (one target at a time) ----
+    /** Target id the three fields below describe; -1 for none. */
+    private int axeId = -1;
+    /** What the facts said last tick. */
+    private boolean axeRaw;
+    /** What we act on: {@link #axeRaw} once the reaction margin has run. */
+    private boolean axeSeen;
+    /** Ticks until {@link #axeSeen} follows {@link #axeRaw}. */
+    private int axeWait;
 
     private boolean enabled = true;
     private boolean blockEnabled = true;
@@ -139,7 +160,7 @@ public final class ShieldDuelStage implements FightStage {
         d.blockEnabled = blockEnabled;
         d.hasShield = f.ownShieldReady();
         d.eating = eating;
-        d.oppDisables = f.targetHoldsAxe() || s.targetHeavyHitter;
+        d.oppDisables = seesDisabler(id, f.targetHoldsAxe() || s.targetHeavyHitter);
         d.oppInCone = ShieldDuel.inFrontCone(s.yaw, s.px, s.pz, s.tx, s.tz, ShieldDuel.FRONT_CONE_DEG);
         d.oppInReach = Math.sqrt(s.reachDistanceSq()) <= OPP_REACH + ShieldDuel.REACH_MARGIN;
         d.oppShieldUp = theirUse > 0 && !disabled;
@@ -219,7 +240,8 @@ public final class ShieldDuelStage implements FightStage {
         }
         // one take per step keeps the feed's freshness count honest, whatever the gates below say
         if (threats.take() && guardRest == 0) {
-            boolean can = blockEnabled && d.hasShield && !eating && !(d.oppDisables && d.oppInReach);
+            boolean can = blockEnabled && d.hasShield && !eating
+                    && (!(d.oppDisables && d.oppInReach) || worthADisable(s));
             // a single impact is blocked through; an attacker standing in reach is blocked between our swings (and
             // there is no swing to lower for while the target's own shield would eat it)
             boolean wantSwing = threats.standing() && !theirUp && SwingGate.ready(s.attackStrength) && s.inReach()
@@ -243,6 +265,57 @@ public final class ShieldDuelStage implements FightStage {
         }
         guard = up;
         return up;
+    }
+
+    /**
+     * The target's shield-disabling main hand as we act on it, from this tick's fact. A change is believed
+     * {@link ShieldDuel#REACTION_MARGIN} ticks after it shows (a person's reaction, the margin the raise lead already
+     * carries), so the shield is not dropped on the very tick of the swap and not raised again on the tick the axe is
+     * put away (a quick axe-sword-axe flick never baits it up). An axe that shows while our shield is down is believed
+     * at once: nothing visible happens, the shield just stays down. State is per target id; a new id starts from "no
+     * axe seen" and goes through the same rule.
+     */
+    private boolean seesDisabler(int id, boolean now) {
+        if (id != axeId) {
+            axeId = id;
+            axeRaw = false;
+            axeSeen = false;
+            axeWait = 0;
+        }
+        if (now != axeRaw) {
+            axeRaw = now;
+            axeWait = now && !holdingUse ? 0 : ShieldDuel.REACTION_MARGIN;
+        } else if (axeWait > 0) {
+            axeWait--;
+        }
+        if (axeWait == 0) {
+            axeSeen = axeRaw;
+        }
+        return axeSeen;
+    }
+
+    /**
+     * With an axe in reach, is the fed threat worth the shield? Holding it there costs the shield for
+     * {@link ShieldDuel#DISABLE_TICKS} ticks on the axe's next hit, and that is what the swap is for: disable, draw
+     * the sword again, and hit for five seconds with nothing to block with. So the shield is spent only on a single
+     * impact (an arrow, a blast; never an attacker that stays in reach, which would pin it up for the axe) that
+     * <ul>
+     *   <li>is the bigger hit: expected damage above the axe's own ({@value #AXE_HIT_DAMAGE}), or at least half of
+     *   what health we have left, and</li>
+     *   <li>the shield can still stop: it is up already, or the impact is at least the raise delay away (a raise that
+     *   cannot block in time would only hand the axe a free disable).</li>
+     * </ul>
+     * An ordinary arrow is taken instead: it costs less than the shield does. The hold ends when the impact has
+     * landed (the feed goes quiet), and the usual hold cap applies.
+     */
+    private boolean worthADisable(CombatSnapshot s) {
+        if (threats.standing()) {
+            return false;
+        }
+        float dmg = threats.damage();
+        float left = s.health + s.absorption;
+        boolean big = dmg > AXE_HIT_DAMAGE || (left > 0f && dmg >= left * 0.5f);
+        return big && (holdingUse || threats.ticksToImpact() >= ShieldDuel.RAISE_DELAY);
     }
 
     private void lowerOwn(FightContext ctx) {
@@ -283,6 +356,10 @@ public final class ShieldDuelStage implements FightStage {
     private void clearState() {
         duel.reset();
         clearGuard();
+        axeId = -1;
+        axeRaw = false;
+        axeSeen = false;
+        axeWait = 0;
         theirUpBefore = false;
         lastSide = ShieldDuel.LEFT;
         TradeDriver.shieldFeed().clear();
@@ -356,6 +433,11 @@ public final class ShieldDuelStage implements FightStage {
      */
     public ShieldThreatFeed threatFeed() {
         return threats;
+    }
+
+    /** The target's axe (or a shield-disabling mob) has been seen and is acted on: no shield against its melee. */
+    public boolean disablerSeen() {
+        return axeSeen;
     }
 
     /** Ticks a swing was held back by a frontal shield. */
