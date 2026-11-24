@@ -114,7 +114,8 @@ final class JumpTrace {
                 s.append(" plan f").append(sc.forward[i]).append(" s").append(sc.strafe[i])
                         .append(sc.sprint[i] ? " spr" : "").append(sc.jump[i] ? " J" : "")
                         .append(" exp ").append(fmt(sc.x[i] - (p.getX() - x))).append(' ')
-                        .append(fmt(sc.y[i] - (p.getY() - y))).append(' ').append(fmt(sc.z[i] - (p.getZ() - z))).append(" land@").append(sc.landIndex);
+                        .append(fmt(sc.y[i] - (p.getY() - y))).append(' ').append(fmt(sc.z[i] - (p.getZ() - z)))
+                        .append(" yaw ").append(fmt(sc.yaw[i])).append(" land@").append(sc.landIndex);
             }
         }
         if (b.wantsCoSteer()) {
