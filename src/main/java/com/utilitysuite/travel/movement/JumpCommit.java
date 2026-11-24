@@ -59,6 +59,8 @@ public final class JumpCommit {
     private int backTicks;
     private int axisOverrides; // bit 0 forward axis, bit 1 strafe axis
     private OverrideClassifier.Kind lastKind = OverrideClassifier.Kind.NOISE;
+    private int notedF = KEEP; // the plan's keys of the last tick (notePlan), KEEP when none
+    private int notedS = KEEP;
     private boolean overrideThisTick;
     private boolean hardThisTick;
     private int releaseLeft;
@@ -70,6 +72,19 @@ public final class JumpCommit {
     private int choiceF = KEEP;
     private int choiceS = KEEP;
     private int choiceAge;
+
+    /**
+     * The keys the plan (a technique script, the flight plan) pressed on this tick, per axis (-1, 0, 1, or
+     * {@link #KEEP} for no opinion). Call after {@link #tick}; the next tick judges the user's keys against them and
+     * then forgets them. A fresh key equal to the plan's own key on its axis is the user going along with the jump,
+     * not taking the axis (course J34, 2026-11-23: the user held the strafe key the corner script was already
+     * playing, it counted as an axis override after three ticks and the script was dropped in the air). A key that
+     * differs from the plan's still takes its axis, from the tick after the plan stops pressing it too.
+     */
+    public void notePlan(int planForward, int planStrafe) {
+        notedF = planForward;
+        notedS = planStrafe;
+    }
 
     /**
      * One tick of the state machine. Call before {@link #resolve}.
@@ -92,6 +107,10 @@ public final class JumpCommit {
         overrideThisTick = false;
         hardThisTick = false;
         touchdownPassed = false;
+        int agreedF = notedF;
+        int agreedS = notedS;
+        notedF = KEEP;
+        notedS = KEEP;
         trackKeys(keys);
         if (mode == Mode.NUDGE) {
             phase = Phase.IDLE;
@@ -127,7 +146,9 @@ public final class JumpCommit {
                         i == 0 && !down && (prevKeys & bit) != 0);
                 if (kk == OverrideClassifier.Kind.AXIS_OVERRIDE && (phase == Phase.FLIGHT || phase == Phase.TAKEOFF)) {
                     int axis = i < 2 ? 1 : 2;
-                    if ((axisOverrides & axis) == 0) {
+                    // the key the plan pressed too: no override (keys 0 and 2 are the +1 side of their axis)
+                    boolean agrees = (i < 2 ? agreedF : agreedS) == ((i & 1) == 0 ? 1 : -1);
+                    if (!agrees && (axisOverrides & axis) == 0) {
                         axisOverrides |= axis;
                         overrideThisTick = true;
                         lastKind = kk;
@@ -262,6 +283,8 @@ public final class JumpCommit {
         hardAbort = false;
         clearJump();
         prevKeys = 0;
+        notedF = KEEP;
+        notedS = KEEP;
         for (int i = 0; i < 4; i++) {
             held[i] = 0;
             upTicks[i] = 0;

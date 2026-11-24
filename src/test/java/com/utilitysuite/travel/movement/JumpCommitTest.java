@@ -192,6 +192,43 @@ class JumpCommitTest {
         assertEquals(Phase.ABORT, e.phase(), "both axes taken on the third tick");
     }
 
+    /** A fresh key that agrees with the plan's key on its axis is not an override; one that differs still is. */
+    @Test
+    void aFreshKeyThatAgreesWithThePlanIsNotAnOverride() {
+        for (Mode mode : new Mode[] {Mode.GUIDE, Mode.CARRY}) {
+            JumpCommit c = inFlight(mode);
+            for (int t = 0; t < 6; t++) {
+                c.notePlan(1, 1);
+                air(c, FORWARD | LEFT, true);
+                assertFalse(c.overrideThisTick(), mode + ": the plan presses left too (tick " + t + ")");
+            }
+            assertEquals(Phase.FLIGHT, c.phase());
+            assertNotEquals(KEEP, c.resolveAxis(1, 0, 1), mode + ": no axis was taken");
+            // the plan let the key go on the last tick and the user keeps it: the axis is the user's
+            c.notePlan(1, 0);
+            air(c, FORWARD | LEFT, true);
+            assertTrue(c.overrideThisTick(), mode + ": the key now differs from the plan");
+            assertEquals(KEEP, c.resolveAxis(1, 0, 1), mode + ": the strafe axis is the user's");
+
+            JumpCommit o = inFlight(mode);
+            boolean taken = false;
+            for (int t = 0; t < 3; t++) {
+                o.notePlan(1, -1);
+                air(o, FORWARD | LEFT, true);
+                taken |= o.overrideThisTick();
+            }
+            assertTrue(taken, mode + ": a key against the plan takes its axis");
+
+            JumpCommit n = inFlight(mode);
+            taken = false;
+            for (int t = 0; t < 3; t++) {
+                air(n, FORWARD | LEFT, true); // no plan noted: as before
+                taken |= n.overrideThisTick();
+            }
+            assertTrue(taken, mode + ": without a plan a held fresh key takes its axis");
+        }
+    }
+
     @Test
     void guideNeverOutputsAgainstAFreshKey() {
         JumpCommit c = inFlight(Mode.GUIDE);

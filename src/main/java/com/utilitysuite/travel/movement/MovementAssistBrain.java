@@ -674,6 +674,7 @@ public final class MovementAssistBrain {
         commit.limit(f, s, userForward, userStrafe);
         forward = commit.limitedForward();
         strafe = commit.limitedStrafe();
+        commit.notePlan(planF, planS);
         if (forward != KEEP || strafe != KEEP) {
             int af = forward != KEEP ? forward : userForward;
             int as = strafe != KEEP ? strafe : userStrafe;
@@ -1538,6 +1539,7 @@ public final class MovementAssistBrain {
             forward = commit.limitedForward();
             strafe = commit.limitedStrafe();
         }
+        commit.notePlan(sf, ss); // a held key equal to the script's own is not an override (J34)
         boolean wantSprint = script.sprint[i];
         if (!wantSprint && sprintKey && sf > 0 && sprintWithholdAvailable) {
             sprintOff = true;

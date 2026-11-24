@@ -27,6 +27,16 @@ class CourseNeoIntentTest {
     /** {@code viewOff}: the user's view this far off the line (degrees); {@code sprintKey}: sprinting at the start. */
     static String loop(JumpCommit.Mode mode, double startX, double startZ, float pitch, float viewOff, boolean sprintKey,
                        StringBuilder trace) {
+        return loop(mode, startX, startZ, pitch, viewOff, sprintKey, null, trace);
+    }
+
+    /**
+     * {@code agree}: when not null, the user holds in the air the strafe key the script plays on that tick (a fresh
+     * key that agrees with the plan); {@code agree[0]} counts those ticks, {@code agree[1]} the scripts dropped in the
+     * air before their landing tick.
+     */
+    static String loop(JumpCommit.Mode mode, double startX, double startZ, float pitch, float viewOff, boolean sprintKey,
+                       int[] agree, StringBuilder trace) {
         ShapeGrid g = TechniqueLibraryTest.courseNeoScene();
         SupportRegion top = TechniqueLibraryTest.top(g, 0, 19, 5);
         MovementAssistBrain b = new MovementAssistBrain();
@@ -62,9 +72,19 @@ class CourseNeoIntentTest {
             if (!b.commit().live()) {
                 steer.reset();
             }
-            b.decide(p, yaw, sprint, 1, 0, uj, 20f, g);
+            int us = 0;
+            int next = b.scriptIndex() + 1;
+            boolean midScript = b.scriptActive() && !p.onGround && next < b.activeScript().landIndex;
+            if (agree != null && midScript) {
+                us = b.activeScript().strafe[next];
+                agree[0] += us != 0 ? 1 : 0;
+            }
+            b.decide(p, yaw, sprint, 1, us, uj, 20f, g);
+            if (agree != null && midScript && !b.scriptActive()) {
+                agree[1]++;
+            }
             int f = b.forward() == MovementAssistBrain.KEEP ? 1 : b.forward();
-            int s = b.strafe() == MovementAssistBrain.KEEP ? 0 : b.strafe();
+            int s = b.strafe() == MovementAssistBrain.KEEP ? us : b.strafe();
             boolean jump = (uj && !b.withholdJump()) || b.jump();
             steer.beginTick();
             if (b.wantsCoSteer() && steerRate > 0f) {
@@ -148,6 +168,23 @@ class CourseNeoIntentTest {
         }
         System.out.println("NEO LIVE " + landed + "/" + tried + out);
         assertTrue(landed == tried, landed + " of " + tried + out);
+    }
+
+    /**
+     * Live trace of 2026-11-23 (J34 corner-wall): the user held the strafe key the script was already playing; after
+     * three ticks the key counted as an axis override and the script was dropped in the air. A key that agrees with
+     * the script is not an override: the script goes on and the jump lands.
+     */
+    @Test
+    void aHeldStrafeKeyThatAgreesWithTheScriptKeepsIt() {
+        for (JumpCommit.Mode mode : new JumpCommit.Mode[] {JumpCommit.Mode.GUIDE, JumpCommit.Mode.CARRY}) {
+            int[] agree = new int[2];
+            StringBuilder trace = new StringBuilder();
+            String r = loop(mode, 0.5, -0.5, 20f, 0f, true, agree, trace);
+            assertTrue(agree[1] == 0, mode + ": script dropped in the air under an agreeing key" + trace);
+            assertTrue(agree[0] >= 4, mode + ": the script strafes in the air for " + agree[0] + " ticks" + trace);
+            assertTrue(r.equals("landed"), mode + ": " + r + trace);
+        }
     }
 
     @Test
