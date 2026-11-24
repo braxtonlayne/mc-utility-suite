@@ -106,6 +106,16 @@ final class JumpTrace {
         if (b.scriptActive()) {
             s.append(" script ").append(b.activeScript().name).append('@').append(b.scriptIndex()).append('/')
                     .append(b.activeScript().takeoffIndex).append(b.activeScript().usesYaw ? " yaw" : "");
+            // the script's own keys and predicted position after this tick: tells a planned coast from a limiter
+            // hold-back, and the next line's pos minus this "exp" is the open-loop drift
+            com.utilitysuite.travel.movement.FlightScript sc = b.activeScript();
+            int i = b.scriptIndex();
+            if (i >= 0 && i < sc.length) {
+                s.append(" plan f").append(sc.forward[i]).append(" s").append(sc.strafe[i])
+                        .append(sc.sprint[i] ? " spr" : "").append(sc.jump[i] ? " J" : "")
+                        .append(" exp ").append(fmt(sc.x[i] - (p.getX() - x))).append(' ')
+                        .append(fmt(sc.y[i] - (p.getY() - y))).append(' ').append(fmt(sc.z[i] - (p.getZ() - z))).append(" land@").append(sc.landIndex);
+            }
         }
         if (b.wantsCoSteer()) {
             s.append(" costeer ").append(fmt(b.coSteerYaw()));
