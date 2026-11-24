@@ -60,6 +60,7 @@ final class ElytraDriver {
     private final SolidQuery tall = new SolidQuery(STEP_HEIGHT);
     private final UnloadedTerrainHold hold = new UnloadedTerrainHold();
     private final BounceGuard bounceGuard = new BounceGuard();
+    private final FlightRestockHands restock = new FlightRestockHands();
 
     private Phase phase = Phase.TAKEOFF;
     private int ticksSinceRocket = 1000;
@@ -98,6 +99,7 @@ final class ElytraDriver {
         unloadedAhead = false;
         hold.reset();
         bounceGuard.reset();
+        restock.reset();
         search.cancel();
         keys.reset();
         aim.reset();
@@ -148,11 +150,13 @@ final class ElytraDriver {
         switch (phase) {
             case TAKEOFF -> tickTakeoff(player, input, lease, rocketCount);
             case CRUISE -> {
-                FlightReserve.Decision d = FlightReserve.evaluate(rocketCount, reserveRockets, durabilityLeft,
-                        minDurability);
+                FlightReserve.Decision d = restock.adjust(player, lease, FlightReserve.evaluate(rocketCount,
+                        reserveRockets, durabilityLeft, minDurability));
                 if (d != FlightReserve.Decision.CONTINUE) {
                     TravelMessages.status(d == FlightReserve.Decision.ABORT_LOW_ROCKETS
                             ? "message.utilitysuite.autopilot.reserve_rockets"
+                            : restock.hasSpareElytra(player, durabilityLeft)
+                            ? "message.utilitysuite.autopilot.reserve_durability_spare"
                             : "message.utilitysuite.autopilot.reserve_durability");
                     beginSearchAhead(player);
                 } else {
@@ -416,6 +420,7 @@ final class ElytraDriver {
         keys.releaseAll(input, lease);
         aim.reset();
         search.cancel();
+        restock.cancel(lease);
         pendingRocketSlot = -1;
     }
 

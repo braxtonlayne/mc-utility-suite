@@ -44,6 +44,7 @@
   "message.utilitysuite.autopilot.low_food": "Autopilot: food low, stopping",
   "message.utilitysuite.autopilot.reserve_rockets": "Autopilot: rocket reserve reached, landing",
   "message.utilitysuite.autopilot.reserve_durability": "Autopilot: elytra worn, landing",
+  "message.utilitysuite.autopilot.reserve_durability_spare": "Autopilot: elytra worn, landing (a healthier elytra is in your inventory)",
   "message.utilitysuite.autopilot.searching_site": "Autopilot: looking for a landing site",
   "message.utilitysuite.autopilot.landing_site": "Autopilot: landing at %s %s %s",
   "message.utilitysuite.autopilot.landed": "Autopilot: landed",
