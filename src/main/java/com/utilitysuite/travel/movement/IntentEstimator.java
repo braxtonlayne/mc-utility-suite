@@ -24,6 +24,10 @@ import com.utilitysuite.travel.Packed;
  *       whether a further jump is possible from them; a dead end loses.</li>
  *   <li><b>Commit threshold by mode</b> ({@link #setCommitThreshold}); hysteresis keeps the incumbent unless a
  *       challenger leads by {@link #HYSTERESIS} on {@link #CHALLENGE_TICKS} consecutive ticks.</li>
+ *   <li><b>Heading corridor</b> (item 2.3). Slow and at a shallow pitch, part of the look term comes from a corridor
+ *       along the view's yaw (the along-heading distance only within the pitch noise), weighted by the rolls'
+ *       feasibility. A reachable incumbent yields to a top in the same direction only on {@link #HYSTERESIS_ALONG}
+ *       held {@link #CHALLENGE_TICKS_ALONG} ticks, and such a top is not a rival for the confidence.</li>
  * </ul>
  * Work per call is bounded by {@link #MAX_CANDIDATES}, {@link #MAX_LOOKUPS} block reads and {@link #MAX_SIM_TICKS}
  * simulated ticks. Engine-free and allocation free after construction.
@@ -93,6 +97,44 @@ public final class IntentEstimator {
     public static final int CHALLENGE_TICKS = 2;
     /** Weight of the newest look hit in the gaze average (about a 6-tick average). */
     public static final double GAZE_ALPHA = 0.25;
+
+    /*
+     * Heading corridor (item 2.3, standing-start target flicker). At a shallow downward pitch the look ray meets the
+     * ground far ahead, and one degree of pitch moves that point half a block along the heading, while the yaw places
+     * it across the heading to a few hundredths of a block. So the gaze says reliably which LINE the user means and
+     * only roughly HOW FAR along it. When slow (a standing start, the first run-up ticks) the look term is blended
+     * with a corridor term: across the heading from the yaw, along it from the gaze within the pitch noise, and
+     * weighted by the cached jump feasibility. A feasible incumbent is only given up for a top in the same direction
+     * after a larger lead held for more ticks.
+     */
+    /** Pitch noise (degrees) the corridor's along-heading tolerance is sized for. */
+    public static final double GAZE_PITCH_NOISE_DEG = 2.0;
+    /** Half width (blocks) of the corridor across the heading, at which the corridor term reaches 0. */
+    public static final double CORRIDOR_HALF = 1.0;
+    /** Blocks beyond the along-heading tolerance at which the corridor term reaches 0. */
+    public static final double CORRIDOR_LONG_ZERO = 2.5;
+    /** Largest along-heading tolerance (blocks; a level or raised view says nothing about the distance). */
+    public static final double CORRIDOR_SIGMA_MAX = 3.0;
+    /** Share of the look term the corridor takes at full weight (slow, shallow pitch). */
+    public static final double CORRIDOR_BLEND = 0.6;
+    /** Below this horizontal speed the corridor has full weight; it fades out by {@link #CORRIDOR_FADE_SPEED}. */
+    public static final double CORRIDOR_SLOW_SPEED = 0.08;
+    public static final double CORRIDOR_FADE_SPEED = 0.16;
+    /** Pitch (degrees down) up to which the corridor has full weight; it fades out by {@link #CORRIDOR_STEEP_DEG}. */
+    public static final double CORRIDOR_SHALLOW_DEG = 20.0;
+    public static final double CORRIDOR_STEEP_DEG = 35.0;
+    /** Corridor term lost per {@link #MAX_RANGE} along the heading: of tops the gaze cannot tell apart, the nearer. */
+    public static final double CORRIDOR_NEAR_BIAS = 0.05;
+    /** Corridor weight of a top not rolled yet (a rolled feasible or blocked top weighs 1). */
+    public static final double CORRIDOR_UNKNOWN = 0.8;
+    /** Two tops whose bearings from the body differ by at most this (degrees) lie in the same direction. */
+    public static final double SAME_DIRECTION_DEG = 12.0;
+    /** Lead a same-direction challenger needs over a feasible incumbent ... */
+    public static final double HYSTERESIS_ALONG = 0.08;
+    /** ... on this many consecutive ticks. */
+    public static final int CHALLENGE_TICKS_ALONG = 5;
+    private static final double SAME_DIRECTION_COS = Math.cos(Math.toRadians(SAME_DIRECTION_DEG));
+    private static final double PITCH_NOISE_RAD = Math.toRadians(GAZE_PITCH_NOISE_DEG);
 
     /** Half-angle of the candidate cone around the movement direction, as a cosine (60 degrees). */
     private static final double CONE_COS = 0.5;
@@ -207,7 +249,13 @@ public final class IntentEstimator {
     private final double[] candBase = new double[MAX_CANDIDATES];
     private final double[] candScore = new double[MAX_CANDIDATES];
     private final int[] candCache = new int[MAX_CANDIDATES];
+    /** The look term, the factor the weighted sum was scaled by, and the corridor term (before feasibility). */
+    private final double[] candLook = new double[MAX_CANDIDATES];
+    private final double[] candMul = new double[MAX_CANDIDATES];
+    private final double[] candCorr = new double[MAX_CANDIDATES];
     private int candCount;
+    // corridor of this call: heading unit vector, the gaze's distance along it, its tolerance and the blend weight
+    private double corrHX, corrHZ, corrGazeAlong, corrSigma, corrK;
     private int lookups;
     private int simTicks;
     private int rolls;
@@ -462,6 +510,7 @@ public final class IntentEstimator {
             gdz /= glen;
         }
 
+        setCorridor(sinY, cosY, pitch, speed);
         scanColumns(w, keys, vux, vuz, speed, predX, predZ, gdx, gdy, gdz);
         if (candCount == 0) {
             prevValid = false;
@@ -488,7 +537,9 @@ public final class IntentEstimator {
             }
         }
 
-        // hysteresis: the incumbent stays unless a challenger leads by the margin on consecutive ticks
+        // hysteresis: the incumbent stays unless a challenger leads by the margin on consecutive ticks; a feasible
+        // incumbent is given up for a top in the same direction only on a larger lead held longer (the look point
+        // slides along the heading with the body or with pitch wobble: course J36 picked z4 -> z5 -> z6 on the run-up)
         int chosen = best;
         if (prevValid) {
             int inc = -1;
@@ -499,7 +550,10 @@ public final class IntentEstimator {
                 }
             }
             if (inc >= 0 && candScore[inc] > 0.0 && inc != best) {
-                if (candScore[best] > candScore[inc] + HYSTERESIS) {
+                boolean along = viable(inc) && sameDirection(inc, best);
+                double margin = along ? HYSTERESIS_ALONG : HYSTERESIS;
+                int need = along ? CHALLENGE_TICKS_ALONG : CHALLENGE_TICKS;
+                if (candScore[best] > candScore[inc] + margin) {
                     if (chTicks > 0 && candX[best] == chX && candY[best] == chY && candZ[best] == chZ) {
                         chTicks++;
                     } else {
@@ -508,7 +562,7 @@ public final class IntentEstimator {
                         chZ = candZ[best];
                         chTicks = 1;
                     }
-                    chosen = chTicks >= CHALLENGE_TICKS ? best : inc;
+                    chosen = chTicks >= need ? best : inc;
                 } else {
                     chosen = inc;
                     chTicks = 0;
@@ -525,12 +579,18 @@ public final class IntentEstimator {
         int bz = candZ[chosen];
         double bs = candScore[chosen];
         double rival = 0.0;
+        boolean chosenViable = viable(chosen);
         for (int i = 0; i < candCount; i++) {
             if (i == chosen) {
                 continue;
             }
             // neighbours of the winner are the same landing area, not a rival
             if (Math.abs(candX[i] - bx) <= 1 && Math.abs(candZ[i] - bz) <= 1) {
+                continue;
+            }
+            // nor is a top further along the same line from a reachable winner: the direction is the user's, how far
+            // along it the gaze cannot tell (the hysteresis above keeps the winner)
+            if (chosenViable && sameDirection(chosen, i)) {
                 continue;
             }
             if (candScore[i] > rival) {
@@ -919,19 +979,75 @@ public final class IntentEstimator {
         double reachTerm = hd <= reach ? 1.0 : clamp01(1.0 - (hd - reach) / REACH_SOFT);
 
         double sum = W_LOOK * look + W_KEYS * keyTerm + W_VELOCITY * velTerm + W_LINE * lineTerm + W_REACH * reachTerm;
-        double s = sum * (0.5 + 0.5 * reachTerm);
+        double mul = 0.5 + 0.5 * reachTerm;
         double course = coursePenalty(i);
-        s *= course;
+        mul *= course;
         if (course < 1.0) {
             candKey[i] = 0.0; // a platform already visited never gets the sole-candidate floor
         }
         if (candSurface[i] == MovementPhysics.SURFACE_UNMODELLED) {
-            s *= UNMODELLED_FACTOR;
+            mul *= UNMODELLED_FACTOR;
         }
         if (hintSet && candX[i] == hintX && candZ[i] == hintZ && Math.abs(top - hintTop) < 0.05) {
-            s *= CHAIN_BONUS; // of two plausible tops, the one the chain goes on from
+            mul *= CHAIN_BONUS; // of two plausible tops, the one the chain goes on from
         }
-        return s;
+        candLook[i] = look;
+        candMul[i] = mul;
+        candCorr[i] = corrK > 0.0 ? corridorTerm(ex, ez) : 0.0;
+        return sum * mul;
+    }
+
+    // ---- heading corridor -----------------------------------------------------------------------------------------
+
+    /** The corridor of this call: along the view's yaw, its tolerance from the pitch, its weight from speed and pitch. */
+    private void setCorridor(double sinY, double cosY, float pitch, double speed) {
+        corrHX = -sinY;
+        corrHZ = cosY;
+        double slow = clamp01((CORRIDOR_FADE_SPEED - speed) / (CORRIDOR_FADE_SPEED - CORRIDOR_SLOW_SPEED));
+        double shallow = clamp01((CORRIDOR_STEEP_DEG - pitch) / (CORRIDOR_STEEP_DEG - CORRIDOR_SHALLOW_DEG));
+        corrK = CORRIDOR_BLEND * slow * shallow;
+        if (corrK <= 0.0) {
+            return;
+        }
+        double along = (gazeX - px) * corrHX + (gazeZ - pz) * corrHZ;
+        corrGazeAlong = along;
+        // a ground point at distance d seen at pitch p moves by d * dp / (sin p cos p) for a pitch change dp
+        double p = Math.toRadians(pitch);
+        double sc = Math.sin(p) * Math.cos(p);
+        corrSigma = sc > 1.0e-3 && along > 0.0
+                ? Math.min(CORRIDOR_SIGMA_MAX, along * PITCH_NOISE_RAD / sc) : CORRIDOR_SIGMA_MAX;
+    }
+
+    /** 0..1: a top centre on the heading line within the gaze's along-heading tolerance scores 1. */
+    private double corridorTerm(double ex, double ez) {
+        double along = ex * corrHX + ez * corrHZ;
+        if (along <= 0.0) {
+            return 0.0;
+        }
+        double across = Math.abs(-ex * corrHZ + ez * corrHX);
+        double lat = clamp01(1.0 - across / CORRIDOR_HALF);
+        double off = Math.max(0.0, Math.abs(along - corrGazeAlong) - corrSigma);
+        // tops the gaze cannot tell apart: the nearer one is the next jump (the first lock no longer depends on where
+        // in its wobble the pitch was on the first tick)
+        double near = 1.0 - CORRIDOR_NEAR_BIAS * clamp01(along / MAX_RANGE);
+        return lat * clamp01(1.0 - off / CORRIDOR_LONG_ZERO) * near;
+    }
+
+    /** The cached roll found the top reachable, straight or (blocked) around a wall. */
+    private boolean viable(int i) {
+        int c = candCache[i];
+        return c >= 0 && (cacheFeasible[c] == YES || cacheFeasible[c] == BLOCKED);
+    }
+
+    /** The two tops' centres lie within {@link #SAME_DIRECTION_DEG} of each other as seen from the body. */
+    private boolean sameDirection(int a, int b) {
+        double ax = 0.5 * (candMinX[a] + candMaxX[a]) - px;
+        double az = 0.5 * (candMinZ[a] + candMaxZ[a]) - pz;
+        double bx = 0.5 * (candMinX[b] + candMaxX[b]) - px;
+        double bz = 0.5 * (candMinZ[b] + candMaxZ[b]) - pz;
+        double la = Math.sqrt(ax * ax + az * az);
+        double lb = Math.sqrt(bx * bx + bz * bz);
+        return la > 1.0e-6 && lb > 1.0e-6 && ax * bx + az * bz >= SAME_DIRECTION_COS * la * lb;
     }
 
     /** The platform just left (latest landing, last takeoff) and older ring platforms are penalised. */
@@ -966,6 +1082,12 @@ public final class IntentEstimator {
         for (int i = 0; i < candCount; i++) {
             double s = candBase[i];
             int c = candCache[i];
+            if (corrK > 0.0) {
+                // slow and at a shallow pitch: part of the look term comes from the heading corridor, weighted by what
+                // the rolls know (a top not rolled yet weighs less than one known reachable)
+                double fw = c >= 0 && cacheFeasible[c] != UNKNOWN ? 1.0 : CORRIDOR_UNKNOWN;
+                s += W_LOOK * corrK * (candCorr[i] * fw - candLook[i]) * candMul[i];
+            }
             if (c >= 0) {
                 if (cacheFeasible[c] == NO) {
                     s = -1.0;
