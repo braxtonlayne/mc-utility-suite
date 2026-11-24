@@ -640,15 +640,18 @@ public final class MinecraftWorldActions implements WorldActions {
                     int x = c.getX() + dx;
                     int z = c.getZ() + dz;
                     int y = level.getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z);
+                    // one reused position: each state is judged at its own block before the position moves on
                     probe.set(x, y, z);
                     BlockState feet = level.getBlockState(probe);
+                    if (!feet.getCollisionShape(level, probe).isEmpty() || !feet.getFluidState().isEmpty()) {
+                        continue;
+                    }
                     probe.set(x, y + 1, z);
-                    BlockState head = level.getBlockState(probe);
+                    if (!level.getBlockState(probe).getCollisionShape(level, probe).isEmpty()) {
+                        continue;
+                    }
                     probe.set(x, y - 1, z);
-                    BlockState floor = level.getBlockState(probe);
-                    if (feet.getCollisionShape(level, probe).isEmpty() && feet.getFluidState().isEmpty()
-                            && head.getCollisionShape(level, probe).isEmpty()
-                            && floor.isFaceSturdy(level, probe, Direction.UP)) {
+                    if (level.getBlockState(probe).isFaceSturdy(level, probe, Direction.UP)) {
                         return BlockPos.asLong(x, y, z);
                     }
                 }

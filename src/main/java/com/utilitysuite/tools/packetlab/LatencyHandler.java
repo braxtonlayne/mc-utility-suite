@@ -3,6 +3,7 @@ package com.utilitysuite.tools.packetlab;
 import io.netty.channel.ChannelDuplexHandler;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelPromise;
+import io.netty.util.ReferenceCountUtil;
 
 import java.util.SplittableRandom;
 import java.util.concurrent.TimeUnit;
@@ -19,6 +20,7 @@ import java.util.concurrent.TimeUnit;
 final class LatencyHandler extends ChannelDuplexHandler {
 
     static final String NAME = "utilitysuite_latency_sim";
+    private static final java.nio.channels.ClosedChannelException CLOSED = new java.nio.channels.ClosedChannelException();
 
     private final LatencyScheduler scheduler = new LatencyScheduler(new SplittableRandom());
     private volatile int latencyMs;
@@ -60,7 +62,11 @@ final class LatencyHandler extends ChannelDuplexHandler {
         pending++;
         ctx.executor().schedule(() -> {
             pending--;
-            ctx.fireChannelRead(msg);
+            if (ctx.isRemoved() || !ctx.channel().isActive()) {
+                ReferenceCountUtil.release(msg); // the connection closed while it waited: nobody reads it any more
+            } else {
+                ctx.fireChannelRead(msg);
+            }
             removeIfIdle(ctx);
         }, due - now, TimeUnit.NANOSECONDS);
     }
@@ -81,7 +87,12 @@ final class LatencyHandler extends ChannelDuplexHandler {
         pending++;
         ctx.executor().schedule(() -> {
             pending--;
-            ctx.writeAndFlush(msg, promise);
+            if (ctx.isRemoved() || !ctx.channel().isActive()) {
+                ReferenceCountUtil.release(msg); // closed while it waited: fail the write instead of leaking it
+                promise.tryFailure(CLOSED);
+            } else {
+                ctx.writeAndFlush(msg, promise);
+            }
             removeIfIdle(ctx);
         }, due - now, TimeUnit.NANOSECONDS);
     }

@@ -125,7 +125,11 @@ final class ElytraDriver {
         int rocketCount = countRockets(player.getInventory());
 
         if (pendingRocketSlot >= 0) {
-            fireSelectedRocket(player, input, lease);
+            if (phase == Phase.TAKEOFF || phase == Phase.CRUISE) {
+                fireSelectedRocket(player, input, lease);
+            } else {
+                pendingRocketSlot = -1; // a rocket held back for the crosshair is not owed to a landing search
+            }
         }
 
         switch (phase) {
