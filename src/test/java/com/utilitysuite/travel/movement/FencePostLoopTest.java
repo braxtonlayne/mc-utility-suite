@@ -15,6 +15,14 @@ class FencePostLoopTest {
     static boolean debug;
     /** Flight ticks of the last {@link #loop} where the commitment did not own the landing (block assist could start). */
     static int flightNotOwned;
+    /**
+     * The scripted user of the first version of this harness: the one jump press waits for a ground tick past the
+     * edge mark. When the assist takes off before that mark (the approach takes off a tick earlier under a planned
+     * reaction delay of 3 or 4 ticks), that press comes on the touchdown tick on the post: a jump off the post, the
+     * user's own, which the landing hold never stops. Off by default; only
+     * {@link #aJumpPressOnThePostIsTheUsersJumpNotASlide} sets it.
+     */
+    static boolean pressWaitsForGround;
 
     /** The takeoff strip (z -8..0), 2 air, a fence post at z 3 (top 20.5), 4 air, a pad at z 8..10. */
     static ShapeGrid scene() {
@@ -51,8 +59,11 @@ class FencePostLoopTest {
         boolean aborted = false;
         flightNotOwned = 0;
         for (int t = 0; t < 90; t++) {
-            boolean uj = !pressed && p.onGround && p.z >= 0.75;
+            // the planned press comes where the finger planned it, also when the assist already took the jump (as in
+            // ParkourLaneReplicaTest.roll): in the air it does nothing
+            boolean uj = !pressed && p.z >= 0.75 && (p.onGround || !pressWaitsForGround);
             pressed |= uj;
+            boolean pressOnPost = uj && onPost > 0;
             if (glance != 0 && airborne >= 0 && t - airborne >= 3 && t - airborne <= 10) {
                 pitch = Math.min(80f, pitch + 9f);
                 yaw += 3f * glance; // 24 degrees over 8 ticks
@@ -104,6 +115,9 @@ class FencePostLoopTest {
                     return aborted ? "held after an abort" : "held";
                 }
             } else if (onPost > 0) {
+                if (pressOnPost && jump) {
+                    return "jumped off the post (the user's press)";
+                }
                 return String.format("slid off the post at x%.2f z%.2f (%s)", p.x, p.z, b.commit().phase());
             }
             if (p.y < 18) {
@@ -135,6 +149,45 @@ class FencePostLoopTest {
                 }
                 System.out.println("FENCE LOOP " + mode + (glance != 0 ? " glance " + glance + " " : " ") + held + "/" + tried + out);
                 assertTrue(held * 10 >= tried * 9, mode + (glance != 0 ? " glance " + glance + ": " : ": ") + held + " of " + tried + out);
+            }
+        }
+    }
+
+    /**
+     * What looked like Co-pilot sliding off the post at the LEGIT key limits with a reaction delay of 3 or 4 ticks
+     * (12 of 18 runs) was the scripted user's press: the assist took off before the press mark, the press came on the
+     * touchdown tick, and a jump key down at the touchdown is the user's next jump (no hold, by design: manual input
+     * wins). With the press where the finger planned it (in the air, where it does nothing) the same runs hold.
+     */
+    @Test
+    void aJumpPressOnThePostIsTheUsersJumpNotASlide() {
+        for (int reaction = 3; reaction <= 4; reaction++) {
+            LevelUnderTest.legit(reaction);
+            try {
+                int jumped = 0;
+                for (double x = 0.3; x <= 0.71; x += 0.2) {
+                    for (double z = -6.0; z <= -4.9; z += 0.5) {
+                        for (float pitch : new float[] {10f, 25f}) {
+                            pressWaitsForGround = true;
+                            String late = loop(JumpCommit.Mode.GUIDE, x, z, pitch, 0);
+                            pressWaitsForGround = false;
+                            String planned = loop(JumpCommit.Mode.GUIDE, x, z, pitch, 0);
+                            String at = String.format("reaction %d x%.1f z%.1f p%.0f", reaction, x, z, pitch);
+                            assertTrue(late.equals("held") || late.startsWith("jumped off the post"),
+                                    at + ", press on a ground tick: " + late);
+                            assertTrue(planned.equals("held"), at + ", press at the edge mark: " + planned);
+                            if (!late.equals("held")) {
+                                jumped++;
+                            }
+                        }
+                    }
+                }
+                System.out.println("FENCE LOOP legit reaction " + reaction + ", press waits for the ground: " + jumped
+                        + "/18 presses came on the post and jumped off it");
+                assertTrue(jumped > 0, "reaction " + reaction + ": no press came on the post");
+            } finally {
+                pressWaitsForGround = false;
+                LevelUnderTest.balanced();
             }
         }
     }

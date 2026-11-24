@@ -25,9 +25,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * Known limits these tests do not hide (open items, not the planner's):
  * <ul>
  * <li>The course neo needs the view at every level: none keys only.</li>
- * <li>Co-pilot on the lone fence post with a planned reaction delay of 3 or 4 ticks: the brake starts late, ends
- * before the touchdown and the landing hold does not take over (12 of 18 slide off; Takeover holds all).</li>
  * </ul>
+ * Closed 2026-11-24, no change to the assist: Co-pilot on the lone fence post at a reaction delay of 3 or 4 ticks
+ * read 6 of 18. The approach takes off a tick earlier there (the brake comes later), before the harness's press mark,
+ * and the scripted user's one press then came on the touchdown tick on the post: the user's own jump off it, which
+ * no hold stops ({@link FencePostLoopTest#aJumpPressOnThePostIsTheUsersJumpNotASlide}). With the press where the
+ * finger planned it the hold starts on every run: 18 of 18 at every delay, asserted below.
  */
 class LegitLevelLoopTest {
 
@@ -147,7 +150,7 @@ class LegitLevelLoopTest {
 
     /**
      * LEGIT as the module runs it (keys only), at each reaction delay it varies over: the straight lanes land and
-     * stay, Takeover holds the fence post, Co-pilot holds it at the shortest delay, and no script is ever flown with
+     * stay, Takeover and Co-pilot hold the fence post on every run, and no script is ever flown with
      * other keys than its own. The corner lanes land with the planned strafe key down with the jump: 12 of 16 at a
      * delay of 2 and 3 (what keys alone land with no delay at all; the four misses are the run-up phase 0.71, the
      * known limit of {@link ParkourLaneReplicaTest#theCornersDoNotDependOnTheTiming}), 8 of 16 at a delay of 4.
@@ -168,8 +171,8 @@ class LegitLevelLoopTest {
                         + "/24, corner lanes " + corners + "/16, fence post takeover " + takeover + "/18, co-pilot "
                         + coPilot + "/18, script air ticks " + LevelUnderTest.scriptAirTicks + ", key mismatches "
                         + LevelUnderTest.scriptKeyMismatches + misses);
-                if (straight != 24 || corners < (reaction == 4 ? 8 : 12) || takeover != 18
-                        || (reaction == 2 && coPilot != 18) || LevelUnderTest.scriptKeyMismatches != 0) {
+                if (straight != 24 || corners < (reaction == 4 ? 8 : 12) || takeover != 18 || coPilot != 18
+                        || LevelUnderTest.scriptKeyMismatches != 0) {
                     fails.append("reaction ").append(reaction).append(": straight ").append(straight)
                             .append("/24, corners ").append(corners).append("/16, fence post takeover ").append(takeover).append("/18, co-pilot ")
                             .append(coPilot).append("/18, key mismatches ")
