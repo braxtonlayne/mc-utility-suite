@@ -206,6 +206,7 @@ public final class ActionArbiter implements IActionArbiter {
     }
 
     /** Allocation-free variant of {@link #holder}: the holder or null. */
+    @Override
     public ControlLease holderOrNull(ControlChannel channel) {
         return holders[channel.ordinal()];
     }

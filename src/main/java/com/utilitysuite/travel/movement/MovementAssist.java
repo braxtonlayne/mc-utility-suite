@@ -194,6 +194,8 @@ public final class MovementAssist implements IModule, IConfigurable {
     private double groundX, groundZ;
     private final JumpReach reach = new JumpReach();
     private final MovementPhysics now = new MovementPhysics();
+    /** Reused for the block under the feet in {@link #fillNow}. */
+    private final BlockPos.MutableBlockPos belowScratch = new BlockPos.MutableBlockPos();
     /** The tick's exact-shape view, shared with the body sims and the pursuit runner (begun once per client tick). */
     private final TickWorldShapes world;
     private final LevelShapes voxels;
@@ -719,7 +721,7 @@ public final class MovementAssist implements IModule, IConfigurable {
     /** A MOVEMENT lease of other automation (a latched toggle-sprint is the user's own choice, not automation). */
     private static boolean foreignMovementLease() {
         var arbiter = Services.arbiter();
-        return arbiter.holder(ControlChannel.MOVEMENT).isPresent()
+        return arbiter.holderOrNull(ControlChannel.MOVEMENT) != null
                 && !arbiter.isHeldBy(ControlChannel.MOVEMENT, com.utilitysuite.travel.mobility.MoveToggles.ID);
     }
 
@@ -749,16 +751,21 @@ public final class MovementAssist implements IModule, IConfigurable {
         now.speed = p.isSprinting() ? attr / 1.3 : attr; // the attribute already carries the sprint modifier
         now.jumpBoost = p.getJumpBoostPower();
         now.fallDistance = p.fallDistance;
-        BlockPos below = p.getBlockPosBelowThatAffectsMyMovement();
+        // Entity.getBlockPosBelowThatAffectsMyMovement without its new BlockPos: the supporting block's column when
+        // the body has one, else the floored position, at the Y vanilla's offset gives
+        BlockPos.MutableBlockPos below = belowScratch;
+        java.util.Optional<BlockPos> support = p.mainSupportingBlockPos; // the entity's own field: nothing allocated
+        int belowY = VanillaBodyRules.movementBlockY(p.getY());
+        if (support.isPresent()) {
+            BlockPos s = support.get();
+            below.set(s.getX(), belowY, s.getZ());
+        } else {
+            below.set(MovementPhysics.floor(p.getX()), belowY, MovementPhysics.floor(p.getZ()));
+        }
         now.slipperiness = mc.level.getBlockState(below).getBlock().getFriction();
         world.forTick(mc.level); // the first reader of the tick clears the shared cell cache
     }
 
-    /**
-     * Vanilla's conditions for starting a sprint ({@code LocalPlayer.canStartSprinting} plus the forward impulse), from
-     * public state: on foot, forward held hard enough, food above 6 (or may fly), no item in use, not blind, not
-     * gliding, not sneaking or crawling.
-     */
     /**
      * Writes this tick's decisions straight onto the event's input while a job's MOVEMENT lease drives and "Assist
      * automation" is on. Returns true when anything was written. Allocation free.
@@ -788,11 +795,16 @@ public final class MovementAssist implements IModule, IConfigurable {
         return any;
     }
 
+    /**
+     * Vanilla's conditions for starting a sprint with the sprint key, from public state (see
+     * {@link VanillaBodyRules#sprintStart}): in the air too, as vanilla and the shared input overlay allow. Passengers
+     * never get here ({@link #skip}), so a vehicle is simply refused.
+     */
     private static boolean canStartSprint(LocalPlayer p, Input in) {
-        return in.forwardImpulse >= 0.8f && !in.shiftKeyDown && p.onGround()
-                && (p.getFoodData().getFoodLevel() > 6 || p.mayFly())
-                && !p.isUsingItem() && !p.hasEffect(MobEffects.BLINDNESS) && !p.isFallFlying() && !p.isMovingSlowly()
-                && !p.isPassenger() && !p.isInWater();
+        return VanillaBodyRules.sprintStart(p.isSprinting(), in.forwardImpulse, p.isUnderWater(), p.isInWater(),
+                p.canStartSwimming(), p.getFoodData().getFoodLevel(), p.isPassenger(), p.mayFly(), p.isUsingItem(),
+                p.hasEffect(MobEffects.BLINDNESS), !p.isPassenger(), p.isFallFlying(),
+                p.horizontalCollision && !p.minorHorizontalCollision);
     }
 
     /** Direction the keys move the body: strafe +1 (left) travels toward the yaw - 90 side. */
@@ -881,8 +893,8 @@ public final class MovementAssist implements IModule, IConfigurable {
 
     /** A lease at EMERGENCY or above holds MOVEMENT (fall clutch): the commitment yields at once. */
     private static boolean emergencyMovementLease() {
-        var h = Services.arbiter().holder(ControlChannel.MOVEMENT);
-        return h.isPresent() && h.get().priority().level() >= ControlPriority.EMERGENCY.level();
+        com.utilitysuite.core.api.ControlLease h = Services.arbiter().holderOrNull(ControlChannel.MOVEMENT);
+        return h != null && h.priority().level() >= ControlPriority.EMERGENCY.level();
     }
 
     /**

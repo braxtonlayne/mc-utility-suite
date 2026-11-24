@@ -21,6 +21,14 @@ public interface IActionArbiter {
     /** Current holder of a channel, if any. */
     Optional<ControlLease> holder(ControlChannel channel);
 
+    /**
+     * Current holder of a channel, or null. For per-tick callers: implementations override it so nothing is allocated
+     * (the default goes through {@link #holder}).
+     */
+    default ControlLease holderOrNull(ControlChannel channel) {
+        return holder(channel).orElse(null);
+    }
+
     /** True when the module currently owns this channel. */
     boolean isHeldBy(ControlChannel channel, String moduleId);
 
