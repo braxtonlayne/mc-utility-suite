@@ -241,7 +241,8 @@ public final class WaypointsModule extends WorldModule {
 
     /** "Take Me Back": follow the breadcrumbs newest-first through the navigator, if one is installed. */
     public void takeMeBack(LocalPlayer player) {
-        long[] path = trail.reversed();
+        long[] full = trail.reversed();
+        long[] path = TrailPruner.prune(full); // a cave loop is walked once, not retraced
         if (path.length < 2) {
             message(player, "No breadcrumbs recorded yet");
             return;
@@ -255,7 +256,8 @@ public final class WaypointsModule extends WorldModule {
             message(player, "Take Me Back: movement is busy or automation is stopped");
             return;
         }
-        message(player, "Taking you back along " + path.length + " breadcrumbs");
+        message(player, "Taking you back along " + path.length + " breadcrumbs"
+                + (path.length < full.length ? " (" + (full.length - path.length) + " skipped by loop shortcuts)" : ""));
     }
 
     private void message(LocalPlayer player, String text) {

@@ -350,6 +350,7 @@ public final class WorldTab {
         for (int i = 0; i < crumbs.length; i++) {
             back[i] = crumbs[crumbs.length - 1 - i];
         }
+        back = com.utilitysuite.world.waypoints.TrailPruner.prune(back); // loops walked once, not retraced
         if (nav.followPathLeased(NAV_OWNER, ControlPriority.TRAVEL, back).isEmpty()) {
             p.toast("Movement is busy or automation is stopped");
             return;
