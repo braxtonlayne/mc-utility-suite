@@ -384,7 +384,8 @@ public final class MovementAssist implements IModule, IConfigurable {
         boolean climbCarry = auto || TravelKeys.takeoverHeld() || handOverHeld
                 || controlMode.mode == JumpCommit.Mode.CARRY;
         if (brain.intentAssist && (auto || controlMode.mode != JumpCommit.Mode.NUDGE || climbCarry)) {
-            climb.decide(now, yaw, userF > 0 ? yaw : moveYaw(yaw, userF, userS), userF, userS, sprinting, in.jumping,
+            climb.decide(now, yaw, userF > 0 ? yaw : moveYaw(yaw, userF, userS), userF, userS,
+                    sprinting || (now.onGround && canStartSprint(p, in)), in.jumping,
                     climbCarry, voxels);
         } else {
             climb.reset();
@@ -458,7 +459,8 @@ public final class MovementAssist implements IModule, IConfigurable {
         int fwdW = brain.forward() != MovementAssistBrain.KEEP ? brain.forward() : SharedGrant.KEEP;
         int strW = brain.strafe() != MovementAssistBrain.KEEP ? brain.strafe() : SharedGrant.KEEP;
         // takeoff shaping's sprint timing, a fill only (vanilla's own rules end it); a withhold wins in the core
-        boolean sprintW = brain.sprint() && canSprint;
+        // a catch is planned with the sprint vanilla would start here (after a landing hold dropped it): fill it in
+        boolean sprintW = (brain.sprint() || climb.active()) && canSprint;
         boolean withholdW = brain.sprintOff();
         // the landing hold's sneak guard (the user is not sneaking: that returned above)
         boolean sneakW = brain.sneak();

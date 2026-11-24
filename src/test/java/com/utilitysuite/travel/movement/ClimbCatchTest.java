@@ -47,7 +47,7 @@ class ClimbCatchTest {
             boolean jump = down;
             if (assist) {
                 c.decide(p, 0f, 0f, 1, 0, true, down, auto, g);
-                assertTrue(c.simTicks <= 1200,
+                assertTrue(c.simTicks <= ClimbCatch.MAX_SIM_TICKS + ClimbCatch.SIM_TICKS + 1,
                         "budget " + c.simTicks);
                 jump = c.jump() || (down && !c.withholdJump());
             }
@@ -133,20 +133,74 @@ class ClimbCatchTest {
         assertTrue(caught * 10 >= tried * 9, caught + " of " + tried + out);
     }
 
-    /** The lookahead reaches 12 blocks: an early press far from the face is held, not wasted. */
+    /** Far from the face the user's jumps are theirs: a press 8 blocks out is not held (no 2-second delayed jump). */
     @Test
-    void aPressTenBlocksOutIsHeldForTheCatch() {
-        ShapeGrid g = new ShapeGrid();
-        g.fill(-1, 19, -12, 1, 19, 0);
+    void aPressFarFromTheFaceIsNotHeld() {
         ShapeGrid s = scene(false, true);
         for (int z = -12; z <= -5; z++) {
             for (int x = -1; x <= 1; x++) {
                 s.cube(x, 19, z);
             }
         }
-        String r = run(s, new MovementPhysics().set(0.5, 20, -11.5, 0, -0.0784, 0, true), -8.0, false, true);
-        System.out.println("CLIMB FAR " + r);
+        ClimbCatch c = new ClimbCatch();
+        c.decide(new MovementPhysics().set(0.5, 20, -6.0, 0, -0.0784, 0.28, true), 0f, 0f, 1, 0, true, true, false, s);
+        assertFalse(c.withholdJump(), "a press 8 blocks out goes through");
+        assertFalse(c.active());
+    }
+
+    /** Walking into a wall below an unreachable ladder: the walk stops at the wall, the budget holds. */
+    @Test
+    void aWallUnderAnUnreachableLadderStaysInBudget() {
+        ShapeGrid g = new ShapeGrid();
+        g.fill(-1, 19, -12, 1, 19, 2);
+        g.fill(-1, 20, 3, 1, 21, 3); // a 2-high wall right ahead
+        for (int x = -1; x <= 1; x++) {
+            g.boxes(x, 22, 3, 0, 0, 13 * S, 1, 1, 1);
+            g.surface(x, 22, 3, MovementPhysics.SURFACE_CLIMBABLE);
+        }
+        ClimbCatch c = new ClimbCatch();
+        for (double z = -8; z <= 2.2; z += 0.5) {
+            c.decide(new MovementPhysics().set(0.5, 20, z, 0, -0.0784, 0.28, true), 0f, 0f, 1, 0, true, false, true, g);
+            assertTrue(c.simTicks <= ClimbCatch.MAX_SIM_TICKS + ClimbCatch.SIM_TICKS + 1, "z " + z + ": " + c.simTicks);
+        }
+    }
+
+    /** A ladder face two blocks below the takeoff is seen and caught. */
+    @Test
+    void aLadderBelowTheTakeoffIsCaught() {
+        ShapeGrid g = new ShapeGrid();
+        g.fill(-1, 19, -4, 1, 19, 0); // pad, top 20
+        g.fill(-1, 13, 4, 1, 18, 4); // tower, top 19
+        for (int x = -1; x <= 1; x++) {
+            for (int y = 14; y <= 18; y++) {
+                g.boxes(x, y, 3, 0, 0, 13 * S, 1, 1, 1);
+                g.surface(x, y, 3, MovementPhysics.SURFACE_CLIMBABLE);
+            }
+        }
+        String r = run(g, new MovementPhysics().set(0.5, 20, -3.5, 0, -0.0784, 0, true), Double.NaN, true, true);
+        System.out.println("CLIMB BELOW " + r);
         assertTrue(r.equals("caught"), r);
+    }
+
+    /** A jump that will not catch any more lets go in the air, so the block assist and the clutch can act. */
+    @Test
+    void aMissedCatchLetsGoInTheAir() {
+        ShapeGrid g = scene(false, true);
+        ClimbCatch c = new ClimbCatch();
+        MovementPhysics p = new MovementPhysics().set(0.5, 20, -0.5, 0, -0.0784, 0.28, true);
+        boolean wasActive = false;
+        for (int t = 0; t < 40 && p.y > 16; t++) {
+            c.decide(p, 0f, 0f, 1, 0, true, false, true, g);
+            wasActive |= c.active();
+            boolean jump = c.jump();
+            // the user lets go of W right after the takeoff: the flight falls short
+            int f = p.onGround ? 1 : 0;
+            p.tick(f, 0, 0f, f > 0, jump, g);
+            if (!p.onGround && wasActive && p.vy < 0 && !c.active()) {
+                return; // let go while falling
+            }
+        }
+        assertTrue(false, "the catch never let go of a falling body that cannot catch");
     }
 
     @Test
