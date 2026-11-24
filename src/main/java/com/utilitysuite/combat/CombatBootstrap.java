@@ -78,7 +78,9 @@ public final class CombatBootstrap {
 
         // fight stages (settings must be in the module's list before it is registered)
         assistant.addStage(new ThreatFightStage(new McNearbyThreats())); // PRE_AIM
-        assistant.addStage(new ShieldDuelStage(new McShieldFacts()));    // PRE_SWING
+        ShieldDuelStage shieldDuel = new ShieldDuelStage(new McShieldFacts());
+        assistant.addStage(shieldDuel);                                  // PRE_SWING
+        reflexes.feedShieldStage(shieldDuel.threatFeed()); // one USE owner in a fight; the reflex keeps sensing
         assistant.addStage(new HealWindowStage(new McHealFacts()));
         assistant.addStage(new ComboEscapeStage());                      // MOVEMENT
         Services.modules().register(assistant);

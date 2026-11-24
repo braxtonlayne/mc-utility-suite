@@ -6,6 +6,7 @@ import com.utilitysuite.combat.assistant.FightContext;
 import com.utilitysuite.combat.assistant.FightStage;
 import com.utilitysuite.combat.assistant.SwingGate;
 import com.utilitysuite.combat.assistant.TradeDriver;
+import com.utilitysuite.combat.reflex.ShieldDecision;
 import com.utilitysuite.combat.tactics.HitPlanner;
 import com.utilitysuite.combat.tactics.OpponentModel;
 import com.utilitysuite.combat.tactics.ShieldDuel;
@@ -26,6 +27,9 @@ import java.util.List;
  *   {@link OpponentModel#noteShieldDisabled}; for the window, crits and no feints every tick.</li>
  *   <li>Our shield (setting {@value #KEY_BLOCK}): block-and-answer against a sword or bare hand, never into an axe,
  *   never while eating, only with the opponent in our front cone; USE goes through {@link FightContext#hold}.</li>
+ *   <li>Other threats to us (arrows, blasts, a second attacker): the shield reflex stands down while this stage owns
+ *   USE and reports them through {@link #threatFeed()}; the stage raises the same shield for them
+ *   ({@link #guardStep}), so the key keeps one writer.</li>
  *   <li>The trade solver hears both shield states through {@link TradeDriver#shieldFeed()}.</li>
  * </ol>
  * {@link #step} is allocation free; the "off" path is two field reads and a release check.
@@ -53,6 +57,14 @@ public final class ShieldDuelStage implements FightStage {
 
     private final ShieldFacts facts;
     private final ShieldDuel duel = new ShieldDuel();
+    private final ShieldThreatFeed threats = new ShieldThreatFeed();
+    /** Our shield is up against a fed threat. */
+    private boolean guard;
+    /** Ticks the guard has been up without a break (capped at {@link ShieldDuel#MAX_HOLD}), and the rest after. */
+    private int guardHeld;
+    private int guardRest;
+    /** Ticks since the guard came down (0 on the lowering tick, -1 while up); large when it was never up. */
+    private int sinceGuard = 1 << 20;
 
     private boolean enabled = true;
     private boolean blockEnabled = true;
@@ -94,6 +106,7 @@ public final class ShieldDuelStage implements FightStage {
     public boolean step(CombatSnapshot s, FightContext ctx) {
         if (!enabled) {
             lowerOwn(ctx);
+            clearGuard();
             return false;
         }
         int id = ctx.targetId();
@@ -132,9 +145,10 @@ public final class ShieldDuelStage implements FightStage {
         d.oppShieldUp = theirUse > 0 && !disabled;
         d.oppReadyIn = om.attackReadyIn(id, now);
         boolean up = d.step();
+        boolean ownUp = guardStep(s, d, eating, theirUp) || up;
         if (eating) {
             holdingUse = false; // the sustain layer owns USE now and releases it when it is done
-        } else if (up) {
+        } else if (ownUp) {
             ctx.hold(SimKey.USE, true); // cached in the assistant: repeated holds cost nothing
             holdingUse = true;
         } else {
@@ -142,7 +156,8 @@ public final class ShieldDuelStage implements FightStage {
         }
 
         // ---- swing control ----
-        if (d.vetoSwing()) {
+        boolean ownVeto = d.vetoSwing() || sinceGuard <= ShieldDuel.LOWER_GAP;
+        if (ownVeto) {
             ctx.vetoSwing(); // attack clicks are eaten while our shield is up (Minecraft.handleKeybinds)
             ctx.vetoJump();
         }
@@ -168,7 +183,7 @@ public final class ShieldDuelStage implements FightStage {
                 }
             }
             vetoes++;
-        } else if (theirUpBefore && !d.vetoSwing() && SwingGate.ready(s.attackStrength) && s.inReach()
+        } else if (theirUpBefore && !ownVeto && SwingGate.ready(s.attackStrength) && s.inReach()
                 && s.crosshairOnTarget) {
             // they lowered it (to swing, or it was disabled): our charged hit goes in on this tick
             ctx.tapAttack();
@@ -184,8 +199,50 @@ public final class ShieldDuelStage implements FightStage {
             ctx.hitPolicy(HitPlanner.Policy.CRITS);
             ctx.pressAdvantage();
         }
-        TradeDriver.shieldFeed().set(now, up && !eating, theirUp);
+        TradeDriver.shieldFeed().set(now, ownUp && !eating, theirUp);
         return false;
+    }
+
+    /**
+     * One tick of the guard against what the shield reflex reports ({@link ShieldThreatFeed}): the reflex's own rule
+     * ({@link ShieldDecision}: front cone only, raised {@link ShieldDecision#RAISE_TICKS} plus a reaction margin
+     * before the impact), never turning, never into an axe in reach. An arrow or a blast is blocked until it has
+     * landed; an attacker standing in reach is blocked between our swings (lowered for a charged swing at the
+     * target). The duel's hold cap applies, so a threat that never lands does not pin us behind the shield.
+     *
+     * @return the shield should be up for such a threat this tick
+     */
+    private boolean guardStep(CombatSnapshot s, ShieldDuel d, boolean eating, boolean theirUp) {
+        boolean up = false;
+        if (guardRest > 0) {
+            guardRest--;
+        }
+        // one take per step keeps the feed's freshness count honest, whatever the gates below say
+        if (threats.take() && guardRest == 0) {
+            boolean can = blockEnabled && d.hasShield && !eating && !(d.oppDisables && d.oppInReach);
+            // a single impact is blocked through; an attacker standing in reach is blocked between our swings (and
+            // there is no swing to lower for while the target's own shield would eat it)
+            boolean wantSwing = threats.standing() && !theirUp && SwingGate.ready(s.attackStrength) && s.inReach()
+                    && s.crosshairOnTarget;
+            ShieldDecision.Act act = ShieldDecision.decide(can, guard, threats.ticksToImpact(), threats.damage(),
+                    threats.relYawDeg(), threats.frontConeDeg(), false, wantSwing);
+            up = act == ShieldDecision.Act.RAISE || act == ShieldDecision.Act.HOLD;
+        }
+        if (up && guardHeld >= ShieldDuel.MAX_HOLD) {
+            up = false;
+            guardRest = ShieldDuel.REST_TICKS;
+        }
+        if (up) {
+            guardHeld++;
+            sinceGuard = -1;
+        } else {
+            guardHeld = 0;
+            if (sinceGuard <= ShieldDuel.LOWER_GAP) {
+                sinceGuard++; // 0 on the lowering tick, as ShieldDuel counts its own
+            }
+        }
+        guard = up;
+        return up;
     }
 
     private void lowerOwn(FightContext ctx) {
@@ -195,6 +252,13 @@ public final class ShieldDuelStage implements FightStage {
                 ctx.hold(SimKey.USE, false);
             }
         }
+    }
+
+    private void clearGuard() {
+        guard = false;
+        guardHeld = 0;
+        guardRest = 0;
+        sinceGuard = 1 << 20;
     }
 
     /** Our shield is this stage's while "Block with shield" is on: the shield reflex stands down for the fight. */
@@ -218,6 +282,7 @@ public final class ShieldDuelStage implements FightStage {
 
     private void clearState() {
         duel.reset();
+        clearGuard();
         theirUpBefore = false;
         lastSide = ShieldDuel.LEFT;
         TradeDriver.shieldFeed().clear();
@@ -278,6 +343,19 @@ public final class ShieldDuelStage implements FightStage {
     /** USE is held by this stage. */
     public boolean holdingUse() {
         return holdingUse;
+    }
+
+    /** The shield is up against a threat from {@link #threatFeed()} (not the target's own swing). */
+    public boolean guarding() {
+        return guard;
+    }
+
+    /**
+     * Where the shield reflex reports arrows, blasts and other attackers while this stage owns USE
+     * ({@link #ownsKey}); the stage blocks them with the same key it already runs.
+     */
+    public ShieldThreatFeed threatFeed() {
+        return threats;
     }
 
     /** Ticks a swing was held back by a frontal shield. */

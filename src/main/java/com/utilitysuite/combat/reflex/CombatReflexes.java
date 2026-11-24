@@ -1,6 +1,7 @@
 package com.utilitysuite.combat.reflex;
 
 import com.utilitysuite.combat.assistant.CombatAssistant;
+import com.utilitysuite.combat.assistant.stages.ShieldThreatFeed;
 import com.utilitysuite.combat.assistant.mc.MinecraftCombatWorld;
 import com.utilitysuite.combat.coach.ThreatTracker;
 import com.utilitysuite.core.api.ControlChannel;
@@ -56,8 +57,9 @@ import java.util.Optional;
  * <p>
  * One owner per key while the assistant is engaged ({@link ShieldOwnership}): the dodge and the back-off stand down
  * (the assistant owns movement), and so does the shield reflex while a fight stage runs USE (the shield duel's
- * "Block with shield", {@link CombatAssistant#stageOwns}). With that setting off the reflex still blocks in a fight,
- * on the assistant's lease. Manual input wins: nothing starts while the user holds the channel. Allocation free per tick (a
+ * "Block with shield", {@link CombatAssistant#stageOwns}); for that time it reports its threats to the stage
+ * ({@link ShieldThreatFeed}), which blocks arrows, blasts and a second attacker with the shield it runs.
+ * With that setting off the reflex still blocks in a fight, on the assistant's lease. Manual input wins: nothing starts while the user holds the channel. Allocation free per tick (a
  * {@link RotationTarget} only when a turn starts).
  */
 public final class CombatReflexes implements IModule, IConfigurable, LeaseListener {
@@ -104,6 +106,9 @@ public final class CombatReflexes implements IModule, IConfigurable, LeaseListen
     private boolean shieldTurn;
     private double frontCone = ShieldDecision.DEFAULT_FRONT_CONE_DEG;
 
+    /** Where threats go while a fight stage owns the shield ({@link #feedShieldStage}); null: nobody listens. */
+    private ShieldThreatFeed stageFeed;
+
     private ControlLease ownInteract;
     private ControlLease ownMove;
     private ControlLease shieldLease;
@@ -133,6 +138,14 @@ public final class CombatReflexes implements IModule, IConfigurable, LeaseListen
                 EnumSet.of(ControlChannel.WORLD_INTERACT, ControlChannel.CAMERA), 0, this);
         this.moveRequest = new LeaseRequest(MOVE_LEASE_ID, ControlPriority.EMERGENCY, EnumSet.of(ControlChannel.MOVEMENT), 0,
                 this);
+    }
+
+    /**
+     * The shield stage's threat input (start-up). While that stage owns USE in a fight the reflex reports arrows,
+     * blasts and other attackers there instead of pressing the key itself.
+     */
+    public void feedShieldStage(ShieldThreatFeed feed) {
+        this.stageFeed = feed;
     }
 
     // =================================================================================================================
@@ -195,9 +208,19 @@ public final class CombatReflexes implements IModule, IConfigurable, LeaseListen
         // while the assistant is engaged it owns movement (its spacing/strafe would fight a second key source), the
         // camera, and the shield when one of its stages runs USE (ShieldOwnership: one owner of the key on its lease)
         boolean fighting = assistant.lease() != null;
-        tickShield(p, mc, ap, assistantOn,
-                ShieldOwnership.reflexActs(shieldArmed, fighting, fighting && assistant.stageOwns(SimKey.USE)),
+        boolean stageShield = fighting && assistant.stageOwns(SimKey.USE);
+        tickShield(p, mc, ap, assistantOn, ShieldOwnership.reflexActs(shieldArmed, fighting, stageShield),
                 ShieldOwnership.reflexMayTurn(shieldTurn, fighting), arbiter);
+        // standing down for the stage, the reflex still senses for it: arrows, blasts and a second attacker go to
+        // the stage, which raises the shield it runs. A feed left alone goes stale by itself
+        ShieldThreatFeed toStage = stageFeed;
+        if (toStage != null && ShieldOwnership.reportsToStage(shieldArmed, fighting, stageShield,
+                stageShield && arbiter.isManualOverrideActive(ControlChannel.WORLD_INTERACT))) {
+            ThreatTracker t = threats;
+            ShieldOwnership.reportToStage(toStage, p.getYRot(), frontCone, t.projTicks, t.projDamage, t.projBearing,
+                    t.blastTicks, t.blastDamage, t.blastBearing, t.meleeTicks, t.meleeDamage, t.meleeBearing,
+                    t.meleeEntityId, assistant.targetId());
+        }
         tickEscape(p, ap, assistantOn, apEscape, escapeArmed && !fighting, arbiter);
         if (!escaping && !raised && !fighting) {
             tickDodge(p, ap, assistantOn, dodgeArmed, arbiter);

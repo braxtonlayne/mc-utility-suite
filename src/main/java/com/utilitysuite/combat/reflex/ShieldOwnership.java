@@ -1,5 +1,7 @@
 package com.utilitysuite.combat.reflex;
 
+import com.utilitysuite.combat.assistant.stages.ShieldThreatFeed;
+
 /**
  * Who runs the user's shield. Pure and allocation free.
  * <p>
@@ -7,6 +9,10 @@ package com.utilitysuite.combat.reflex;
  * the shield reflex stands down, like the dodge and the fuse back-off: two sources with separate "raised" state on
  * one lease would lower each other's shield. While it is engaged the assistant also owns the camera, so the
  * "turn to block" option never turns during a fight.
+ * <p>
+ * Standing down is not going blind: for that time the reflex reports what it sees to the stage
+ * ({@link #reportToStage}), and the stage raises the shield it already runs. Sensing and the reflex's settings stay
+ * here, the key keeps one writer.
  */
 final class ShieldOwnership {
 
@@ -21,6 +27,36 @@ final class ShieldOwnership {
      */
     static boolean reflexActs(boolean armed, boolean fighting, boolean stageOwnsUse) {
         return armed && !(fighting && stageOwnsUse);
+    }
+
+    /**
+     * The reflex reports its threats to the stage instead of acting: exactly when it stands down for the stage, and
+     * not while the user's own right click has the key (manual input wins).
+     */
+    static boolean reportsToStage(boolean armed, boolean fighting, boolean stageOwnsUse, boolean manualUse) {
+        return armed && fighting && stageOwnsUse && !manualUse;
+    }
+
+    /**
+     * One tick's report to the stage: the arrow and the blast as single impacts, the melee attacker as a standing
+     * threat unless it is the duel target itself (the stage's block-and-answer reads that one's cooldown, and knows
+     * about its axe). Ticks of {@code Integer.MAX_VALUE} mean "none" for a kind.
+     *
+     * @param viewYawDeg the player's yaw
+     * @param targetId   the assistant's current target, -1 for none
+     */
+    static void reportToStage(ShieldThreatFeed feed, float viewYawDeg, double frontConeDeg,
+                              int projTicks, float projDamage, float projBearing,
+                              int blastTicks, float blastDamage, float blastBearing,
+                              int meleeTicks, float meleeDamage, float meleeBearing, int meleeEntityId,
+                              int targetId) {
+        feed.begin(viewYawDeg, frontConeDeg);
+        feed.offer(projTicks, projDamage, projBearing, false);
+        feed.offer(blastTicks, blastDamage, blastBearing, false);
+        if (meleeEntityId != targetId || targetId < 0) {
+            feed.offer(meleeTicks, meleeDamage, meleeBearing, true);
+        }
+        feed.publish();
     }
 
     /** The reflex may turn the camera toward a threat: only with the option on and outside a fight. */

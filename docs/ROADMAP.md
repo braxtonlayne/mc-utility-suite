@@ -531,8 +531,14 @@ Eleven tasks merged on main, none left on a branch; 1797 unit tests pass. Nothin
       post, corner lane geometry, techniques in the estimator's reach roll, `intent.targetTopY()` in the jump search.
 - [ ] Replica: climbables and water landings, slime, honey, soul sand, cobweb, powder snow.
 - [x] Combat: the shield reflex stands down while the assistant is engaged and the shield duel's "Block with shield"
-      runs USE (`ShieldOwnership`, `CombatAssistant.stageOwns`), and never turns the camera in a fight. Open: the
-      stage only answers its target's melee, so arrows and blasts are not blocked in such a fight.
+      runs USE (`ShieldOwnership`, `CombatAssistant.stageOwns`), and never turns the camera in a fight.
+- [x] Combat: in such a fight the reflex keeps sensing and reports to the stage (`ShieldThreatFeed`,
+      `ShieldOwnership.reportToStage`); the stage, still the one writer of USE, raises the shield for arrows and
+      blasts (held until they land) and for a second attacker in front (between our swings), with the reflex's
+      cone and raise lead, never into an axe in reach, never turning (`ShieldDuelStage.guardStep`).
+- [ ] Combat, in game: the fed guard against a skeleton and a creeper during a duel, and in a two-mob fight (does
+      blocking between swings cost too much movement; the second attacker's timing is a standing estimate, and
+      only the nearest facing attacker is seen, so one hidden behind the target is not blocked).
 - [ ] Combat: shield disable without the sound;
       `FightContext` requests (`takenWeightScale`, `holdGround`, `pullConsumable`, no-kite, hop veto in an escape);
       offhand totem/shield policy, splash healing, ranged opener, weapon choice by enchantments, fight log.
