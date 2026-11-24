@@ -379,4 +379,106 @@ class ChainLookaheadTest {
         assertTrue(c.ready());
         assertEquals(3, c.length(), "the way off the magma is planned");
     }
+
+    /** A long floor with scattered pillars and steps: plenty of tops per column and plenty of choices. */
+    static Grid scatter() {
+        Grid g = new Grid();
+        g.fill(-3, 9, -4, 3, 9, 120);
+        java.util.Random r = new java.util.Random(7);
+        for (int i = 0; i < 160; i++) {
+            int x = r.nextInt(25) - 12;
+            int z = r.nextInt(120);
+            int y = 6 + r.nextInt(6);
+            g.fill(x, y, z, x, y, z);
+        }
+        for (int i = 0; i < 40; i++) {
+            int px = r.nextInt(7) - 3;
+            int pz = 6 + r.nextInt(110);
+            g.fill(px, 10, pz, px, 10, pz);
+        }
+        return g;
+    }
+
+    static void assertSamePlan(ChainLookahead a, ChainLookahead b, String at) {
+        assertEquals(b.ready(), a.ready(), at);
+        assertEquals(b.length(), a.length(), at + " length");
+        for (int i = 0; i < b.length(); i++) {
+            assertEquals(b.linkX(i), a.linkX(i), at + " x" + i);
+            assertEquals(b.linkZ(i), a.linkZ(i), at + " z" + i);
+            assertEquals(b.linkBlockY(i), a.linkBlockY(i), at + " y" + i);
+            assertEquals(b.linkTop(i), a.linkTop(i), 0.0, at + " top" + i);
+            assertEquals(b.linkJump(i), a.linkJump(i), at + " jump" + i);
+        }
+    }
+
+    @Test
+    void anIncrementallyMovedCorridorPlansLikeAFreshOne() {
+        Grid g = scatter();
+        ChainLookahead inc = new ChainLookahead();
+        int reusedTotal = 0;
+        long incLookups = 0;
+        long freshLookups = 0;
+        double z = 0.5;
+        double x = 0.5;
+        int step = 0;
+        int compared = 0;
+        while (z < 70) {
+            // a slow weave: heading within a few degrees, a block or two a move
+            float yaw = (float) (6.0 * Math.sin(step * 0.7));
+            MovementPhysics at = standing(x, 10, z);
+            int restartsBefore = inc.restarts();
+            long l0 = incLookups;
+            int t = 0;
+            do {
+                inc.update(at, yaw, g);
+                incLookups += inc.lastLookups();
+                if (t++ == 0 && inc.restarts() != restartsBefore) {
+                    reusedTotal += inc.reusedColumns();
+                }
+            } while (inc.busy() && t < 400);
+            if (inc.restarts() != restartsBefore) { // a restart this step: it must plan like a fresh corridor
+                ChainLookahead fresh = new ChainLookahead();
+                t = 0;
+                do {
+                    fresh.update(at, yaw, g);
+                    freshLookups += fresh.lastLookups();
+                } while (fresh.busy() && ++t < 400);
+                assertSamePlan(inc, fresh, "step " + step + " z " + z);
+                compared++;
+            } else {
+                incLookups = l0; // no restart, no scan: not part of the comparison
+            }
+            step++;
+            double d = 1.0 + (step % 2); // 1 and 2 blocks
+            z += d * Math.cos(Math.toRadians(yaw));
+            x -= d * Math.sin(Math.toRadians(yaw));
+        }
+        assertTrue(compared >= 10, "restarts compared " + compared);
+        assertTrue(reusedTotal > 0, "columns were reused");
+        assertTrue(incLookups < freshLookups, "lookups " + incLookups + " vs fresh " + freshLookups);
+        System.out.println("ChainLookahead walk: incremental " + incLookups + " lookups, fresh " + freshLookups
+                + ", reused columns " + reusedTotal + ", restarts compared " + compared);
+    }
+
+    @Test
+    void movingTheCorridorAllocatesNothing() {
+        Assumptions.assumeTrue(AllocationProbe.supported());
+        Grid g = scatter();
+        ChainLookahead c = new ChainLookahead();
+        MovementPhysics a = standing(0.5, 10, 0.5);
+        MovementPhysics b = standing(0.5, 10, 3.5);
+        MovementPhysics d = standing(1.5, 10, 6.5);
+        for (int i = 0; i < 20; i++) { // warm
+            c.update(a, 0f, g);
+            c.update(b, 4f, g);
+            c.update(d, 8f, g);
+        }
+        long bytes = AllocationProbe.measure(40, () -> {
+            c.update(a, 0f, g);
+            c.update(b, 4f, g);
+            c.update(d, 8f, g);
+            c.update(b, 4f, g);
+        });
+        assertTrue(bytes < 1_024, "update allocated " + bytes + " bytes");
+    }
 }

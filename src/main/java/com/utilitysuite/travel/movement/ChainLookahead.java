@@ -54,6 +54,12 @@ public final class ChainLookahead {
     static final double REBUILD_TURN = 25.0;
     /** Blocks walked on one top before the corridor starts from the body again. */
     static final double REBUILD_WALK = 3.0;
+    /** A restart this much (degrees) or less off the built heading, on the same level, reuses the scanned columns. */
+    static final double REUSE_TURN = 15.0;
+    /** ... and this many columns (per axis) or less from the built start. */
+    static final int REUSE_SHIFT = 6;
+    /** Consecutive reuses before a full rescan (picks up world changes under reused columns). */
+    static final int REUSE_RUN = 6;
     /** Longest kept path. */
     public static final int MAX_PATH = 64;
 
@@ -83,10 +89,21 @@ public final class ChainLookahead {
     private final int[] order = new int[COLS];
     private int orderCount;
     private int scanCursor;
-    private final byte[] colState = new byte[COLS]; // 0 outside, 1 pending, 2 scanned
-    private final byte[] topCount = new byte[COLS];
-    private final double[] tops = new double[NODES];
-    private final int[] topCell = new int[NODES];
+    private byte[] colState = new byte[COLS]; // 0 outside, 1 pending, 2 scanned
+    private byte[] topCount = new byte[COLS];
+    private double[] tops = new double[NODES];
+    private int[] topCell = new int[NODES];
+    // the previous corridor's columns, kept for reuse when the body only moved a little (swapped in begin)
+    private byte[] oldColState = new byte[COLS];
+    private byte[] oldTopCount = new byte[COLS];
+    private double[] oldTops = new double[NODES];
+    private int[] oldTopCell = new int[NODES];
+    private int oldMinX, oldMinZ;
+    private int reuseRun;
+    private int reusedColumns;
+    private int pendingColumns;
+    private int restarts;
+    private boolean deferScan;
     private final int[] bucket = new int[LENGTH + 3];
 
     // ---- search -----------------------------------------------------------------------------------------------------
@@ -288,11 +305,15 @@ public final class ChainLookahead {
             }
         }
         wasOnGround = now.onGround;
-        if (building) {
-            scan(w);
-        }
-        if (solving) {
-            solve(w);
+        if (deferScan) {
+            deferScan = false; // a mostly reused corridor must not replace the plan on the very tick it restarts
+        } else {
+            if (building) {
+                scan(w);
+            }
+            if (solving) {
+                solve(w);
+            }
         }
         if (ready && !building && !solving && gazeMoved()) {
             finish(); // the corridor still holds the search: only the end and its path change
@@ -310,6 +331,36 @@ public final class ChainLookahead {
     }
 
     private void begin(int sx, int by, int sz, double feetY, float yaw, double bodyX, double bodyZ) {
+        // columns scanned for the previous start stay valid when the scan window (start level) is the same: a column's
+        // tops depend only on its position and that window, except the start column's own exemption (rescanned)
+        boolean reuse = started && by == oy && reuseRun < REUSE_RUN
+                && Math.abs(wrap(yaw - builtYaw)) <= REUSE_TURN
+                && Math.abs(sx - ox) <= REUSE_SHIFT && Math.abs(sz - oz) <= REUSE_SHIFT;
+        int oldOx = ox;
+        int oldOz = oz;
+        if (reuse) {
+            byte[] bs = oldColState;
+            oldColState = colState;
+            colState = bs;
+            bs = oldTopCount;
+            oldTopCount = topCount;
+            topCount = bs;
+            double[] ds = oldTops;
+            oldTops = tops;
+            tops = ds;
+            int[] is = oldTopCell;
+            oldTopCell = topCell;
+            topCell = is;
+            oldMinX = minX;
+            oldMinZ = minZ;
+            reuseRun++;
+            deferScan = true;
+        } else {
+            reuseRun = 0;
+        }
+        reusedColumns = 0;
+        pendingColumns = 0;
+        restarts++;
         ox = sx;
         oz = sz;
         oy = by;
@@ -334,6 +385,28 @@ public final class ChainLookahead {
             colState[c] = (byte) (b < 0 ? 0 : 1);
             if (b >= 0) {
                 bucket[b]++;
+                int x = minX + c / DIM;
+                int z = minZ + c % DIM;
+                int oc = -1;
+                if (reuse && !(x == ox && z == oz) && !(x == oldOx && z == oldOz)) {
+                    int rx = x - oldMinX;
+                    int rz = z - oldMinZ;
+                    if (rx >= 0 && rx < DIM && rz >= 0 && rz < DIM) {
+                        oc = rx * DIM + rz;
+                    }
+                }
+                if (oc >= 0 && oldColState[oc] == 2) {
+                    int n = oldTopCount[oc];
+                    topCount[c] = (byte) n;
+                    for (int k = 0; k < n; k++) {
+                        tops[c * TOPS + k] = oldTops[oc * TOPS + k];
+                        topCell[c * TOPS + k] = oldTopCell[oc * TOPS + k];
+                    }
+                    colState[c] = 2;
+                    reusedColumns++;
+                } else {
+                    pendingColumns++;
+                }
             }
         }
         int sum = 0;
@@ -371,7 +444,10 @@ public final class ChainLookahead {
 
     private void scan(MovementPhysics.Voxels w) {
         while (scanCursor < orderCount && lookups < LOOKUPS_PER_TICK) {
-            scanColumn(order[scanCursor++], w);
+            int c = order[scanCursor++];
+            if (colState[c] != 2) { // reused columns are already there
+                scanColumn(c, w);
+            }
         }
         if (scanCursor >= orderCount) {
             building = false;
@@ -787,6 +863,21 @@ public final class ChainLookahead {
             }
         }
         return -1;
+    }
+
+    /** Columns the last restart took over from the previous corridor (0 after a full rebuild). */
+    int reusedColumns() {
+        return reusedColumns;
+    }
+
+    /** Corridor restarts so far (full or incremental). */
+    int restarts() {
+        return restarts;
+    }
+
+    /** Columns the last restart left to scan. */
+    int pendingColumns() {
+        return pendingColumns;
     }
 
     /** Voxel lookups of the last update (budget check). */
