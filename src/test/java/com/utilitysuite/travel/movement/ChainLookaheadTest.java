@@ -68,7 +68,7 @@ class ChainLookaheadTest {
     void theChainStaysOnTheCourseOverALowerRunway() {
         // a wide floor 3 below runs the whole corridor: walking it is legal, but the drop costs more than the jumps
         Grid g = row(4, 9);
-        g.fill(-6, 6, 2, 6, 6, 40);
+        g.fill(-6, 6, 2, 6, 6, 32); // ends with the course: the longer corridor would rightly prefer a floor that goes on
         ChainLookahead c = new ChainLookahead();
         settle(c, standing(0.5, 10, 0.5), 0f, g);
         for (int i = 0; i < c.length(); i++) {
@@ -158,7 +158,7 @@ class ChainLookaheadTest {
     void updatingAllocatesNothing() {
         Assumptions.assumeTrue(AllocationProbe.supported());
         Grid g = row(4, 9);
-        g.fill(-6, 6, 2, 6, 6, 40);
+        g.fill(-6, 6, 2, 6, 6, 32); // ends with the course: the longer corridor would rightly prefer a floor that goes on
         ChainLookahead c = new ChainLookahead();
         MovementPhysics a = standing(0.5, 10, 0.5);
         MovementPhysics b = standing(0.5, 10, 4.5);

@@ -16,16 +16,16 @@ package com.utilitysuite.travel.movement;
 public final class ChainLookahead {
 
     /** Corridor length along the heading (blocks). */
-    public static final int LENGTH = 32;
+    public static final int LENGTH = 48;
     /** Corridor half width across the heading (blocks). */
-    public static final int HALF_WIDTH = 6;
+    public static final int HALF_WIDTH = 12;
     /** Cells scanned above and below the start top for standable tops. */
     public static final int SCAN_UP = 6;
     public static final int SCAN_DOWN = 8;
     /** Tops kept per column (highest first). */
     public static final int TOPS = 3;
-    public static final int LOOKUPS_PER_TICK = 2048;
-    public static final int POPS_PER_TICK = 256;
+    public static final int LOOKUPS_PER_TICK = 4096;
+    public static final int POPS_PER_TICK = 512;
     /** Most a link may drop (the estimator's {@link IntentEstimator#MAX_DOWN}); deeper is never part of the course. */
     public static final double MAX_DROP = 4.5;
     /** Most a link may rise (a jump onto a block one up; fence posts from a slab included). */

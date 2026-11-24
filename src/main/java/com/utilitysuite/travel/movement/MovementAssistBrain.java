@@ -380,7 +380,7 @@ public final class MovementAssistBrain {
     /** The view must point within this of a link down the chain (yaw and pitch, degrees) to count as going on. */
     static final double CHAIN_LOOK_DEG = 15.0;
     /** Links past the next one the view may be on (a fast player looks two or three jumps ahead). */
-    static final int CHAIN_LOOK_LINKS = 3;
+    static final int CHAIN_LOOK_LINKS = 5;
 
     public void setChain(ChainLookahead c) {
         chain = c;

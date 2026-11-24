@@ -109,7 +109,7 @@ public final class IntentEstimator {
     private static final double BODY = MovementPhysics.HEIGHT;
     private static final double HALF = MovementPhysics.HALF_WIDTH;
     private static final double TOP_EPS = 1.0e-3;
-    private static final double GAZE_RANGE = 8.0;
+    private static final double GAZE_RANGE = 12.0;
     private static final double UNMODELLED_FACTOR = 0.8;
     /** A cached roll is re-done when the player moved more than this (blocks) or the speed changed by more. */
     private static final double STANCE_POS = 1.0;
