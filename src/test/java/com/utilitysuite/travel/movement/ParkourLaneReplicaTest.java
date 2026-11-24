@@ -119,7 +119,7 @@ class ParkourLaneReplicaTest {
         b.landingHold = true;
         b.sprintWithholdAvailable = true;
         b.setTechniques(new TechniqueLibrary());
-        b.setKeyChangeLimits(6, 2, 0); // BALANCED, as the module sets them
+        LevelUnderTest.apply(b); // BALANCED unless a test switches the level
         IntentEstimator intent = new IntentEstimator();
         if (HISTORY) {
             // the jumps of the lanes run before this one (other lanes, 8 blocks apart): the line of recent jumps
@@ -128,7 +128,7 @@ class ParkourLaneReplicaTest {
             intent.noteJump(116.5, 10.3, 116.5, FLOOR + 1.0, 12.6);
         }
         boolean carry = mode == JumpCommit.Mode.CARRY;
-        float steerRate = mode == JumpCommit.Mode.NUDGE ? 0f : carry ? 12f : 7.5f; // BALANCED, deg per tick
+        float steerRate = LevelUnderTest.steerRate(mode == JumpCommit.Mode.NUDGE ? 0f : carry ? 12f : 7.5f); // BALANCED, deg per tick
         float steerMax = carry ? 90f : 25f;
 
         MovementPhysics p = new MovementPhysics().set(lane.startX, FLOOR + 1, START_Z, 0, -0.0784, 0, true);
@@ -188,6 +188,7 @@ class ParkourLaneReplicaTest {
                 r.maxLeftError = Math.max(r.maxLeftError, Math.abs(b.coSteerLeft() - core));
             }
             b.decide(p, yaw, sprint, 1, us, uj, 20f, g);
+            LevelUnderTest.afterDecide(b, p.onGround, 1, us);
             r.committed |= b.commit().live();
             r.maxCommitSim = Math.max(r.maxCommitSim, b.lastCommitSimTicks());
             if (!p.onGround && p.vy < 0.0 && landedAt < 0) {

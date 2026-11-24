@@ -209,7 +209,9 @@ public final class MovementAssistBrain {
         commit.narrowTarget = targetOn && targetRegionValid
                 && (targetRegion.topBound(2) - targetRegion.topBound(0) < NARROW_TOP
                 || targetRegion.topBound(3) - targetRegion.topBound(1) < NARROW_TOP);
-        commit.reactionTicks = baseReactionTicks <= 0 ? 0 : baseReactionTicks - 1 + jumpsSeen % 3;
+        // the coming jump's reaction delay (varies around the level's from jump to jump). The commitment fixes it at
+        // the takeoff, so the approach and the technique search plan on the ground with the delay the flight really has
+        commit.reactionTicks = baseReactionTicks <= 0 ? 0 : baseReactionTicks - 1 + (jumpsSeen + 1) % 3;
         boolean planOnGround = now.onGround && targetOn && targetSafe;
         commit.tick(now.onGround, tookOff, touchedDown, keys, userSneak, yaw, yawRate,
                 now.onGround ? planOnGround : lastPlanLands && targetSafe, hold.startedThisTick(), hold.active(),
@@ -1523,6 +1525,8 @@ public final class MovementAssistBrain {
         }
         techniques.setMaxTurn(coSteerAllowed ? coSteerLeft() : 0f);
         techniques.setAuthority(JumpCommit.armedAuthorityOf(mode), JumpCommit.flightAuthorityOf(mode));
+        // planned under the limits the replay flies under (ARMED: this reaction delay is the coming jump's)
+        techniques.setKeyLimits(commit.maxKeyChanges, commit.minHoldTicks(), commit.reactionTicks);
         techniques.setLineBlocked(techniqueFirst);
         // a blocked line (a neo around a pillar) needs the sprint jump: a walking run-up is rolled with the sprint the
         // replay fills in for the user where vanilla allows it (live J36, 2026-11-23: the user walked after J35's hold)
@@ -1549,6 +1553,7 @@ public final class MovementAssistBrain {
         if (now.onGround) {
             forward = sf == userForward ? KEEP : sf;
             strafe = ss == userStrafe ? KEEP : ss;
+            commit.noteGroundKeys(forward, strafe); // held into the takeoff they are no key change of the jump
             jump = script.jump[i];
             withholdJump = userJumpNow && !jump; // the takeoff is a few ticks later: the press waits for it
         } else {

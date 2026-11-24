@@ -69,6 +69,17 @@ public interface TechniqueSource {
     default void setAuthority(float armed, float flight) {
     }
 
+    /**
+     * The commitment's key-change limits for the coming jump (the legit level's): scripts are planned with the air
+     * keys those limits let out, so the replay, which applies them, flies the planned line.
+     *
+     * @param maxChanges    departures from the user's keys per jump (0 = unlimited)
+     * @param minHoldTicks  ticks a key choice is kept at least
+     * @param reactionTicks air ticks before the first new key change
+     */
+    default void setKeyLimits(int maxChanges, int minHoldTicks, int reactionTicks) {
+    }
+
     default void setMaxTurn(float degrees) {
     }
 

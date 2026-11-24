@@ -43,6 +43,16 @@ final class TechniqueRoller {
     /** The commitment's co-steer share before the takeoff and in the air (live: 0.3 / 0.6 Co-pilot, 0.5 / 1 Takeover). */
     float armedAuthority = 1f;
     float flightAuthority = 1f;
+    /**
+     * The commitment's key-change limits for the coming jump (the level's, see {@link KeyChangeLimiter}): the air keys
+     * of a roll go through the same limiter the replay's go through ({@link JumpCommit#limit}), so the script holds
+     * the keys the replay really delivers and its line is the line the body flies. A candidate that only lands with a
+     * key change inside the reaction delay is simply rolled with that change late, and is valid or not as it comes out.
+     */
+    int keyMaxChanges;
+    int keyMinHold = 1;
+    int keyReaction;
+    private final KeyChangeLimiter limiter = new KeyChangeLimiter();
     /** The candidates' goals are already capped by the level's total; the model's own allowance is left open. */
     private static final double FOLLOW_TOTAL = 1.0e6;
 
@@ -87,6 +97,11 @@ final class TechniqueRoller {
         boolean sprintKept = sprinting;
         double maxFall = 0.0;
         int land = -1;
+        // the run-up strafe held into the takeoff (the replay notes the same to the commitment)
+        int heldStrafe = KeyChangeLimiter.KEEP;
+        int heldAge = 0;
+        limiter.maxKeyChanges = keyMaxChanges;
+        limiter.start(KeyChangeLimiter.KEEP, KeyChangeLimiter.KEEP, 0);
         for (int i = 0; i < FlightScript.MAX_TICKS; i++) {
             int strafe;
             int forward = 1;
@@ -102,6 +117,15 @@ final class TechniqueRoller {
                     }
                     jump = true;
                 }
+                if (strafe == userStrafe) {
+                    heldAge = 0;
+                } else {
+                    heldAge = heldAge > 0 && strafe == heldStrafe ? heldAge + 1 : 1;
+                    heldStrafe = strafe;
+                }
+                if (i == jumpAt) {
+                    limiter.start(KeyChangeLimiter.KEEP, heldStrafe, heldAge);
+                }
             } else {
                 int a = i - jumpAt - 1;
                 int k = 0;
@@ -112,6 +136,20 @@ final class TechniqueRoller {
                 forward = c.segForward[k];
                 strafe = c.segStrafe[k];
                 goal = c.segYaw[k];
+                // the keys as the commitment lets them out (the user holds forward and the strafe of the run-up)
+                int wantF = forward == 1 ? KeyChangeLimiter.KEEP : forward;
+                int wantS = strafe == userStrafe ? KeyChangeLimiter.KEEP : strafe;
+                int d = limiter.decide(wantF, wantS, keyMinHold, i - jumpAt - 1 < keyReaction);
+                if (d == KeyChangeLimiter.HOLD) {
+                    wantF = limiter.choiceF;
+                    wantS = limiter.choiceS;
+                } else if (d == KeyChangeLimiter.NONE) {
+                    wantF = KeyChangeLimiter.KEEP;
+                    wantS = KeyChangeLimiter.KEEP;
+                }
+                limiter.settle(wantF, wantS);
+                forward = wantF == KeyChangeLimiter.KEEP ? 1 : wantF;
+                strafe = wantS == KeyChangeLimiter.KEEP ? userStrafe : wantS;
             }
             float step = 0f;
             if (follow) {

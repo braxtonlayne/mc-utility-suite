@@ -67,11 +67,15 @@ public final class JumpCommit {
     private int releaseTotal;
     private float releaseFrom;
     private int airTicks;
-    // key-change limiter / choice keeping
-    private int changes;
-    private int choiceF = KEEP;
-    private int choiceS = KEEP;
-    private int choiceAge;
+    /** The reaction delay of the jump in the air, fixed at its takeoff (the level's value varies from jump to jump). */
+    private int flightReaction;
+    // key-change limiter / choice keeping (shared with the technique planner, which rolls scripts under the same rules)
+    private final KeyChangeLimiter limiter = new KeyChangeLimiter();
+    // the departure the assist held on the ground on the last tick (a script's run-up keys), carried into the jump
+    private int groundF = KEEP;
+    private int groundS = KEEP;
+    private int groundAge;
+    private boolean groundNoted;
 
     /**
      * The keys the plan (a technique script, the flight plan) pressed on this tick, per axis (-1, 0, 1, or
@@ -111,6 +115,10 @@ public final class JumpCommit {
         int agreedS = notedS;
         notedF = KEEP;
         notedS = KEEP;
+        if (!groundNoted) {
+            groundAge = 0; // nothing was held on the ground on the last tick
+        }
+        groundNoted = false;
         trackKeys(keys);
         if (mode == Mode.NUDGE) {
             phase = Phase.IDLE;
@@ -232,10 +240,29 @@ public final class JumpCommit {
         axisOverrides = 0;
         backTicks = 0;
         airTicks = 0;
-        changes = 0;
-        choiceF = KEEP;
-        choiceS = KEEP;
-        choiceAge = 0;
+        flightReaction = reactionTicks;
+        limiter.start(groundF, groundS, groundAge);
+        groundAge = 0;
+    }
+
+    /**
+     * The departure from the user's keys the assist applies on this ground tick (a script's run-up keys; each
+     * {@link #KEEP} or a value). Call after {@link #tick}. Held through the takeoff it is no key change of the jump:
+     * it goes on through the reaction delay, and its hold time counts from the ground.
+     */
+    public void noteGroundKeys(int f, int s) {
+        if (f == KEEP && s == KEEP) {
+            return;
+        }
+        groundAge = groundAge > 0 && f == groundF && s == groundS ? groundAge + 1 : 1;
+        groundF = f;
+        groundS = s;
+        groundNoted = true;
+    }
+
+    /** Ticks a key choice is kept at least: the level's hold time, and GUIDE's minimum choice time. */
+    public int minHoldTicks() {
+        return Math.max(minChangeHoldTicks, mode == Mode.GUIDE ? GUIDE_MIN_CHOICE_TICKS : 1);
     }
 
     private void touchdown(boolean narrow, boolean holdActive) {
@@ -349,46 +376,40 @@ public final class JumpCommit {
 
     /**
      * Applies the per-level key-change limits (at most {@link #maxKeyChanges} departures per jump, each kept at least
-     * {@link #minChangeHoldTicks}, none before {@link #reactionTicks} air ticks) and GUIDE's minimum choice time to a
-     * resolved pair (each {@link #KEEP} or a value). Read {@link #limitedForward()} / {@link #limitedStrafe()} after.
-     * A kept earlier choice is re-resolved, so a fresh key still wins.
+     * {@link #minChangeHoldTicks}, no new one before the jump's reaction delay, counted from the first air tick) and
+     * GUIDE's minimum choice time to a resolved pair (each {@link #KEEP} or a value). Read {@link #limitedForward()} /
+     * {@link #limitedStrafe()} after. A kept earlier choice is re-resolved, so a fresh key still wins. The rules are
+     * {@link KeyChangeLimiter}'s, which the technique planner rolls its scripts under too.
      */
     public void limit(int f, int s, int userF, int userS) {
-        boolean depart = f != KEEP || s != KEEP;
-        int minHold = Math.max(minChangeHoldTicks, mode == Mode.GUIDE ? GUIDE_MIN_CHOICE_TICKS : 1);
-        if (!depart && (choiceF != KEEP || choiceS != KEEP) && choiceAge < minHold) {
+        limiter.maxKeyChanges = maxKeyChanges;
+        boolean inReaction = airTicks < flightReaction && (phase == Phase.FLIGHT || phase == Phase.TAKEOFF);
+        int choiceF = limiter.choiceF;
+        int choiceS = limiter.choiceS;
+        f = sameKey(f, userF, choiceF);
+        s = sameKey(s, userS, choiceS);
+        int d = limiter.decide(f, s, minHoldTicks(), inReaction);
+        if (d == KeyChangeLimiter.HOLD) {
             // keep the earlier choice a little longer, re-resolved so a fresh key still wins
-            f = resolveAxis(0, userF, choiceF);
-            s = resolveAxis(1, userS, choiceS);
-            depart = f != KEEP || s != KEEP;
-        } else if (depart && airTicks < reactionTicks && phase == Phase.FLIGHT) {
-            f = KEEP; // the reaction delay of the level: nothing changes this early in the flight
+            f = sameKey(resolveAxis(0, userF, choiceF), userF, choiceF);
+            s = sameKey(resolveAxis(1, userS, choiceS), userS, choiceS);
+        } else if (d == KeyChangeLimiter.NONE) {
+            f = KEEP;
             s = KEEP;
-            depart = false;
-        } else if (depart && (f != choiceF || s != choiceS)) {
-            if (choiceAge < minHold && (choiceF != KEEP || choiceS != KEEP)) {
-                f = resolveAxis(0, userF, choiceF);
-                s = resolveAxis(1, userS, choiceS);
-            } else if (maxKeyChanges > 0 && changes >= maxKeyChanges) {
-                f = KEEP;
-                s = KEEP;
-                depart = false;
-            } else {
-                changes++;
-                choiceAge = 0;
-            }
         }
-        if (depart) {
-            choiceF = f;
-            choiceS = s;
-            choiceAge++;
-        } else {
-            choiceF = KEEP;
-            choiceS = KEEP;
-            choiceAge = 0;
-        }
-        outF = f;
-        outS = s;
+        limiter.settle(f, s);
+        outF = f == userF ? KEEP : f;
+        outS = s == userS ? KEEP : s;
+    }
+
+    /**
+     * The user pressing the very key the assist's choice holds changes nothing about that key: the choice goes on
+     * (its hold time and the change count with it), though nothing has to be written while the user holds it. Without
+     * this a tap on that key ended the choice, and going on after the tap counted as a new change: held back by the
+     * minimum hold, the key dropped out for the ticks after the tap.
+     */
+    private static int sameKey(int resolved, int user, int choice) {
+        return resolved == KEEP && choice != KEEP && user == choice ? choice : resolved;
     }
 
     private int outF = KEEP;
@@ -452,7 +473,7 @@ public final class JumpCommit {
     }
 
     public int keyChanges() {
-        return changes;
+        return limiter.changes;
     }
 
     private float flightAuthority() {

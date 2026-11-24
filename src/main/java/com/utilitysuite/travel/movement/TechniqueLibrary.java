@@ -106,6 +106,18 @@ public final class TechniqueLibrary implements TechniqueSource {
     }
 
     @Override
+    public void setKeyLimits(int maxChanges, int minHoldTicks, int reactionTicks) {
+        int hold = Math.max(1, minHoldTicks);
+        int reaction = Math.max(0, reactionTicks);
+        if (maxChanges != roller.keyMaxChanges || hold != roller.keyMinHold || reaction != roller.keyReaction) {
+            roller.keyMaxChanges = maxChanges;
+            roller.keyMinHold = hold;
+            roller.keyReaction = reaction;
+            reset(); // the kept script was rolled under other limits
+        }
+    }
+
+    @Override
     public void setMaxTurn(float degrees) {
         float v = degrees > 0f ? degrees : 0f;
         if (v != maxTurn) {

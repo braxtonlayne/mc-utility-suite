@@ -36,10 +36,10 @@ class FencePostLoopTest {
         b.landingHold = true;
         b.sprintWithholdAvailable = true;
         b.setTechniques(new TechniqueLibrary());
-        b.setKeyChangeLimits(6, 2, 0);
+        LevelUnderTest.apply(b);
         IntentEstimator intent = new IntentEstimator();
         boolean carry = mode == JumpCommit.Mode.CARRY;
-        float steerRate = carry ? 12f : 7.5f;
+        float steerRate = LevelUnderTest.steerRate(carry ? 12f : 7.5f);
         float steerMax = carry ? 90f : 25f;
         com.utilitysuite.core.input.YawCoSteer steer = new com.utilitysuite.core.input.YawCoSteer();
         MovementPhysics p = new MovementPhysics().set(startX, 20, startZ, 0, -0.0784, 0, true);
@@ -66,7 +66,7 @@ class FencePostLoopTest {
             } else {
                 b.clearIntentTarget();
             }
-            b.coSteerAllowed = true;
+            b.coSteerAllowed = steerRate > 0f;
             b.coSteerMaxDegPerTick = steerRate;
             b.coSteerMaxTotalDeg = steerMax;
             if (!b.commit().live()) {
@@ -74,6 +74,7 @@ class FencePostLoopTest {
             }
             b.setCoSteerSpentDeg(steer.totalAddedDeg()); // as the module does from its grant
             b.decide(p, yaw, sprint, 1, 0, uj, 20f, g);
+            LevelUnderTest.afterDecide(b, p.onGround, 1, 0);
             aborted |= b.commit().phase() == JumpCommit.Phase.ABORT;
             if (b.commit().phase() == JumpCommit.Phase.FLIGHT && !b.commitOwnsLanding()) {
                 flightNotOwned++;
@@ -86,7 +87,7 @@ class FencePostLoopTest {
             int s = b.strafe() == MovementAssistBrain.KEEP ? 0 : b.strafe();
             boolean jump = (uj && !b.withholdJump()) || b.jump();
             steer.beginTick();
-            if (b.wantsCoSteer()) {
+            if (b.wantsCoSteer() && steerRate > 0f) {
                 steer.request(b.coSteerYaw(), steerRate * 20.0, Math.min(steerMax, b.coSteerTotalDeg()), b.commit().authority());
             }
             sprint = (sprint || b.sprint()) && !b.sprintOff() && f > 0;

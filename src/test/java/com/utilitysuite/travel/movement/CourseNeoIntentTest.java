@@ -44,10 +44,10 @@ class CourseNeoIntentTest {
         b.landingHold = true;
         b.sprintWithholdAvailable = true;
         b.setTechniques(new TechniqueLibrary());
-        b.setKeyChangeLimits(6, 2, 0);
+        LevelUnderTest.apply(b);
         IntentEstimator intent = new IntentEstimator();
         boolean carry = mode == JumpCommit.Mode.CARRY;
-        float steerRate = mode == JumpCommit.Mode.NUDGE ? 0f : carry ? 12f : 7.5f;
+        float steerRate = LevelUnderTest.steerRate(mode == JumpCommit.Mode.NUDGE ? 0f : carry ? 12f : 7.5f);
         float steerMax = carry ? 90f : 25f;
         com.utilitysuite.core.input.YawCoSteer steer = new com.utilitysuite.core.input.YawCoSteer();
         MovementPhysics p = new MovementPhysics().set(startX, 20, startZ, 0, -0.0784, 0, true);
@@ -81,6 +81,7 @@ class CourseNeoIntentTest {
             }
             b.setCoSteerSpentDeg(steer.totalAddedDeg()); // as the module does from its grant
             b.decide(p, yaw, sprint, 1, us, uj, 20f, g);
+            LevelUnderTest.afterDecide(b, p.onGround, 1, us);
             if (agree != null && midScript && !b.scriptActive()) {
                 agree[1]++;
             }
