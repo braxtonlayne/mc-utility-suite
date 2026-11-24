@@ -78,7 +78,7 @@ public final class TravelBootstrap {
         NeoForge.EVENT_BUS.addListener(terrain::onRenderLevel);
         NeoForge.EVENT_BUS.addListener(terrain::onMovementInput);
         movement.setSafeWalk(terrain::isSafeWalkActive);
-        terrain.setParkourJumping(movement::jumpingThisTick);
+        Services.registerPlannedJump(movement); // SafeWalk (and other edge guards) yield to its jumps and run-ups
         NeoForge.EVENT_BUS.addListener(movement::onMovementInput);
         NeoForge.EVENT_BUS.addListener(movement::onRenderLevel);
         NeoForge.EVENT_BUS.addListener(TravelBootstrap::onTickPost);

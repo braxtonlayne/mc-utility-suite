@@ -111,9 +111,12 @@ public final class WorldBootstrap {
         });
 
         // Mixin hooks.
+        BlockChangeFeed blockFeed = new BlockChangeFeed();
+        Services.registerBlockChanges(blockFeed); // other modules (the route runner) watch cells through core.api
         WorldHooks.setBlockChangeListener((pos, o, n) -> {
             runtime.onBlockChanged(pos, o, n);
             lightOverlay.onBlockChanged(pos, o, n);
+            blockFeed.publish(pos.asLong());
         });
         WorldHooks.setTurnRedirect((yRot, xRot) -> camera.turn(yRot, xRot) || freelook.turn(yRot, xRot));
 

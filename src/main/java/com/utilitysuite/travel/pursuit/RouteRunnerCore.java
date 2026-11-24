@@ -19,6 +19,13 @@ import com.utilitysuite.travel.Packed;
  * follower judges; flee: the escape planner). Inside the range the planner is never asked. Replans are throttled: at
  * most every {@link #MIN_REPLAN_TICKS}, on target drift, an off-route follower, a finished route or the cadence.
  * <p>
+ * Obstruction: the next {@link #WATCH_CELLS} route cells ahead of the body are watched against what they were when they
+ * came into view (feet and head clear, floor present, through a {@link CellProbe}). A cell that turns solid or loses its
+ * floor replans at once (pursuit / flee; a caller's {@link #follow} route is the caller's), without waiting for the
+ * cadence, and drops the held route meanwhile. Rechecks are event driven: {@link #onBlockChanged} marks the watch dirty
+ * when a change touches a watched cell; without a block-change feed they run every {@link #POLL_TICKS}. Obstruction
+ * replans are debounced ({@link #OBSTRUCTION_DEBOUNCE_TICKS}) so a flickering block cannot start a replan storm.
+ * <p>
  * Allocation free per tick, except a new {@code RotationTarget} when the wanted yaw changed by more than
  * {@link #YAW_RESEND_DEG} (the record is the API's currency; this is bounded by the turn rate, not every tick).
  */
@@ -29,6 +36,12 @@ public final class RouteRunnerCore {
     public static final int CADENCE_TICKS = 30;
     public static final double DRIFT_BLOCKS = 3.0;
     public static final float YAW_RESEND_DEG = 4.0f;
+    /** Route cells ahead of the body watched for obstruction. */
+    public static final int WATCH_CELLS = 4;
+    /** Least ticks between two obstruction replans. */
+    public static final int OBSTRUCTION_DEBOUNCE_TICKS = 10;
+    /** Recheck interval of the watched cells while no block-change feed is bound. */
+    public static final int POLL_TICKS = 5;
     private static final double RESUME_HYSTERESIS = 0.5;
     private static final int MODE_PURSUE = 1;
     private static final int MODE_FLEE = 2;
@@ -39,6 +52,7 @@ public final class RouteRunnerCore {
     private final BodySource body;
     private final Steering steer;
     private final LocalFlee flee;
+    private final CellProbe probe;
     private final long[] buf = new long[256];
     private final boolean[] held = new boolean[KEYS.length];
 
@@ -62,10 +76,57 @@ public final class RouteRunnerCore {
     private boolean followingPlannerRoute;
     private int lastSerial = -1;
 
+    // obstruction watch (see the class doc); two buffers swapped per update, so it allocates nothing
+    private long[] watchCell = new long[WATCH_CELLS];
+    private int[] watchBits = new int[WATCH_CELLS];
+    private long[] nextCell = new long[WATCH_CELLS];
+    private int[] nextBits = new int[WATCH_CELLS];
+    private int watchCount;
+    private boolean watchDirty;
+    private boolean feedBound;
+    private int lastPollTick;
+    private boolean obstructed;
+    private int lastObstructionReplan = -OBSTRUCTION_DEBOUNCE_TICKS;
+    private int obstructionReplans;
+
     public RouteRunnerCore(BodySource body, Steering steer, LocalFlee flee) {
+        this(body, steer, flee, null);
+    }
+
+    /** @param probe reads route cells for the obstruction watch; null = no watch */
+    public RouteRunnerCore(BodySource body, Steering steer, LocalFlee flee, CellProbe probe) {
         this.body = body;
         this.steer = steer;
         this.flee = flee;
+        this.probe = probe;
+    }
+
+    /** A block-change feed calls {@link #onBlockChanged}: the watch is rechecked on changes only, never polled. */
+    public void setBlockFeedBound(boolean bound) {
+        feedBound = bound;
+    }
+
+    /**
+     * A client block change. Marks the watch dirty when it touches a watched cell (its feet, head or floor block);
+     * the recheck runs on the next {@link #tick()}. A few compares, allocation free.
+     */
+    public void onBlockChanged(long packedPos) {
+        if (watchCount == 0 || idle()) {
+            return;
+        }
+        int x = Packed.x(packedPos);
+        int y = Packed.y(packedPos);
+        int z = Packed.z(packedPos);
+        for (int k = 0; k < watchCount; k++) {
+            long c = watchCell[k];
+            if (Packed.x(c) == x && Packed.z(c) == z) {
+                int dy = y - Packed.y(c);
+                if (dy >= -1 && dy <= 1) {
+                    watchDirty = true;
+                    return;
+                }
+            }
+        }
     }
 
     /** Late binding of the services (they may be registered after this object is built). */
@@ -183,6 +244,7 @@ public final class RouteRunnerCore {
         releaseKeys();
         cancelPlan();
         steer.clear();
+        clearWatch();
         state = IRouteRunner.State.IDLE;
         lease = null;
     }
@@ -191,6 +253,7 @@ public final class RouteRunnerCore {
         releaseKeys();
         cancelPlan();
         steer.clear();
+        clearWatch();
         havePlan = false;
         state = IRouteRunner.State.ARRIVED;
     }
@@ -199,6 +262,7 @@ public final class RouteRunnerCore {
         releaseKeys();
         cancelPlan();
         steer.clear();
+        clearWatch();
         havePlan = false;
         state = IRouteRunner.State.FAILED;
     }
@@ -283,6 +347,7 @@ public final class RouteRunnerCore {
             return;
         }
         consumePlannerResult();
+        updateWatch();
         if (shouldReplan() && !replan(bx, by, bz, h)) {
             fail();
             return;
@@ -321,6 +386,9 @@ public final class RouteRunnerCore {
         if (!havePlan) {
             return true;
         }
+        if (obstructed && now - lastObstructionReplan >= OBSTRUCTION_DEBOUNCE_TICKS) {
+            return true; // a cell ahead turned solid or lost its floor: at once, not on the cadence
+        }
         int since = now - lastPlanTick;
         if (since < MIN_REPLAN_TICKS) {
             return false;
@@ -338,7 +406,15 @@ public final class RouteRunnerCore {
         plannedX = tx;
         plannedZ = tz;
         boolean far = mode == MODE_PURSUE ? h > LOCAL_RANGE : range - h > LOCAL_RANGE;
-        boolean keepRoute = followingPlannerRoute && steer.hasRoute() && !steer.offRoute() && !steer.finished();
+        boolean blocked = obstructed;
+        if (blocked) {
+            obstructed = false;
+            lastObstructionReplan = now;
+            obstructionReplans++;
+        }
+        // an obstructed route is not walked on while the fresh one is planned
+        boolean keepRoute = !blocked && followingPlannerRoute && steer.hasRoute() && !steer.offRoute()
+                && !steer.finished();
         if (far && planner != null && planner.isAvailable()) {
             boolean started = mode == MODE_PURSUE
                     ? planner.planTo(floor(tx), floor(ty), floor(tz), 1)
@@ -377,6 +453,69 @@ public final class RouteRunnerCore {
             return true;
         }
         return false;
+    }
+
+    /**
+     * Refreshes the watched window (the next {@link #WATCH_CELLS} route cells ahead of the body). A cell coming into
+     * view is read once as its baseline; on a dirty watch (or the poll without a feed) every watched cell is read again
+     * and one that lost CLEAR or FLOOR against its baseline marks the run obstructed. The baseline then follows the
+     * cell, so a replan onto the same cells does not trigger again.
+     */
+    private void updateWatch() {
+        if (probe == null || !steer.hasRoute()) {
+            watchCount = 0;
+            watchDirty = false;
+            return;
+        }
+        boolean recheck = watchDirty || (!feedBound && now - lastPollTick >= POLL_TICKS);
+        int from = Math.max(0, steer.progressIndex() + 1);
+        int len = steer.length();
+        int n = 0;
+        for (int i = from; i < len && n < WATCH_CELLS; i++) {
+            long c = steer.cell(i);
+            int base = -1;
+            for (int k = 0; k < watchCount; k++) {
+                if (watchCell[k] == c) {
+                    base = watchBits[k];
+                    break;
+                }
+            }
+            if (base < 0) {
+                base = probe.cellBits(c);
+            } else if (recheck) {
+                int cur = probe.cellBits(c);
+                if (((base & CellProbe.CLEAR) != 0 && (cur & CellProbe.CLEAR) == 0)
+                        || ((base & CellProbe.FLOOR) != 0 && (cur & CellProbe.FLOOR) == 0)) {
+                    obstructed = true;
+                }
+                base = cur;
+            }
+            nextCell[n] = c;
+            nextBits[n] = base;
+            n++;
+        }
+        long[] tc = watchCell;
+        watchCell = nextCell;
+        nextCell = tc;
+        int[] tb = watchBits;
+        watchBits = nextBits;
+        nextBits = tb;
+        watchCount = n;
+        if (recheck) {
+            watchDirty = false;
+            lastPollTick = now;
+        }
+    }
+
+    private void clearWatch() {
+        watchCount = 0;
+        watchDirty = false;
+        obstructed = false;
+    }
+
+    /** Obstruction replans so far (tests, notes). */
+    public int obstructionReplans() {
+        return obstructionReplans;
     }
 
     private boolean applyKeys() {

@@ -1,9 +1,11 @@
 package com.utilitysuite.travel.pursuit;
 
 import com.utilitysuite.core.api.ControlLease;
+import com.utilitysuite.core.api.IBlockChangeFeed;
 import com.utilitysuite.core.api.IBodySimProvider;
 import com.utilitysuite.core.api.IRouteRunner;
 import com.utilitysuite.core.api.Services;
+import com.utilitysuite.travel.Packed;
 import com.utilitysuite.travel.movement.EscapePlanner;
 import com.utilitysuite.travel.movement.LevelVoxels;
 import com.utilitysuite.travel.movement.MovementPhysics;
@@ -51,8 +53,12 @@ public final class MinecraftRouteRunner implements IRouteRunner {
             }
             return n;
         };
-        core = new RouteRunnerCore(body, steering, localFlee);
+        core = new RouteRunnerCore(body, steering, localFlee, new VoxelCellProbe(body));
+        blockListener = core::onBlockChanged; // built once: subscribing never allocates per change
     }
+
+    private final IBlockChangeFeed.Listener blockListener;
+    private IBlockChangeFeed feed;
 
     /** True while the run walks a route (read-only, for overlays). */
     public boolean isFollowingRoute() {
@@ -78,12 +84,20 @@ public final class MinecraftRouteRunner implements IRouteRunner {
         if (core.idle()) {
             return;
         }
-        core.bind(Services.input(), Services.routePlannerOrNull());
+        bind();
         core.tick();
     }
 
     private void bind() {
         core.bind(Services.input(), Services.routePlannerOrNull());
+        if (feed == null) {
+            // the world module's block changes wake the watch of the next route cells (no polling while it is there)
+            feed = Services.blockChangesOrNull();
+            if (feed != null) {
+                feed.subscribe(blockListener);
+                core.setBlockFeedBound(true);
+            }
+        }
     }
 
     @Override
@@ -264,6 +278,46 @@ public final class MinecraftRouteRunner implements IRouteRunner {
         @Override
         public boolean offRoute() {
             return f.offRoute();
+        }
+
+        @Override
+        public int progressIndex() {
+            return f.progressIndex();
+        }
+
+        @Override
+        public int length() {
+            return f.length();
+        }
+
+        @Override
+        public long cell(int i) {
+            return f.cell(i);
+        }
+    }
+
+    /** Reads a route cell from this tick's view of the body (cubes or exact shapes, whichever the run uses). */
+    private static final class VoxelCellProbe implements CellProbe {
+        private final Body body;
+
+        VoxelCellProbe(Body body) {
+            this.body = body;
+        }
+
+        @Override
+        public int cellBits(long cell) {
+            MovementPhysics.Voxels w = body.voxels;
+            int x = Packed.x(cell);
+            int y = Packed.y(cell);
+            int z = Packed.z(cell);
+            int bits = 0;
+            if (!w.solid(x, y, z) && !w.solid(x, y + 1, z)) {
+                bits |= CLEAR;
+            }
+            if (w.solid(x, y - 1, z)) {
+                bits |= FLOOR;
+            }
+            return bits;
         }
     }
 }

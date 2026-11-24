@@ -51,7 +51,7 @@ import java.util.List;
  * Off while the user sneaks, swims, climbs, flies, glides or rides, after Stop-All, and (unless "Assist automation" is
  * on) while an automation lease drives MOVEMENT. Pure client-side input, like a player's own reflexes; no packets.
  */
-public final class MovementAssist implements IModule, IConfigurable {
+public final class MovementAssist implements IModule, IConfigurable, com.utilitysuite.core.api.IPlannedJump {
 
     /** NATURAL: automated looks stay along the way you move. FREE: look wherever the job needs (less legit). */
     public enum LookStyle { NATURAL, FREE }
@@ -232,6 +232,8 @@ public final class MovementAssist implements IModule, IConfigurable {
     /** SafeWalk is guarding edges: only jumps that cost no health are valid (the user can still jump themselves). */
     private java.util.function.BooleanSupplier safeWalk = () -> false;
     private boolean jumpingThisTick;
+    /** Ticks to the takeoff of the verified plan driven this tick, -1 without one ({@link #ticksToPlannedTakeoff}). */
+    private int plannedTakeoffIn = -1;
 
     // overlay state (client thread)
     private boolean showLanding;
@@ -259,6 +261,7 @@ public final class MovementAssist implements IModule, IConfigurable {
 
     public void onMovementInput(MovementInputUpdateEvent event) {
         jumpingThisTick = false;
+        plannedTakeoffIn = -1;
         // the autopilot runs the reflexes it is allowed even while this module is off (no overlays then)
         IAutopilot core = Services.autopilotOrNull();
         // the core's hand-over key: Takeover for the jump in progress and the ones after it, every reflex armed
@@ -543,6 +546,8 @@ public final class MovementAssist implements IModule, IConfigurable {
             if (jumpW == SharedGrant.ON) {
                 jumpingThisTick = true;
             }
+            // only a plan this module drives (its grant holds the jump key): SafeWalk lets the step-off move through
+            plannedTakeoffIn = climb.active() || blockJump || blocks.active() ? -1 : brain.plannedTakeoffIn();
             if (brainJump && userF > 0 && now.onGround) {
                 if (brain.sprintHop && !brain.search().shouldEdgeJump(now, p.getYRot(), sprinting, health, voxels)) {
                     hops++;
@@ -1475,8 +1480,15 @@ public final class MovementAssist implements IModule, IConfigurable {
     }
 
     /** True when this tick's input carries an edge jump or hop from the assist (SafeWalk yields to it). */
+    @Override
     public boolean jumpingThisTick() {
-        return enabled && jumpingThisTick;
+        return jumpingThisTick;
+    }
+
+    /** Ticks to the takeoff of the verified plan this module drives this tick (0 = now), -1 without one. */
+    @Override
+    public int ticksToPlannedTakeoff() {
+        return plannedTakeoffIn;
     }
 
     public void setSafeWalk(java.util.function.BooleanSupplier safeWalk) {

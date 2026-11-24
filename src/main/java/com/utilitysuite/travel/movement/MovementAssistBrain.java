@@ -160,6 +160,7 @@ public final class MovementAssistBrain {
                        boolean userJump, float health, MovementPhysics.Voxels w) {
         search.resetTickCount();
         jump = false;
+        armedRunUp = false;
         earlyJump = false;
         forward = KEEP;
         strafe = KEEP;
@@ -243,6 +244,8 @@ public final class MovementAssistBrain {
         boolean armed = mode != JumpCommit.Mode.NUDGE && now.onGround && commit.phase() == JumpCommit.Phase.ARMED
                 && targetOn && targetRegionValid && targetSafe && userForward > 0 && hold.latched() == 0;
         userJumpNow = userJump;
+        // the run-up SafeWalk lets through: ARMED onto a top the assist may jump to (no fall damage under SafeWalk)
+        armedRunUp = armed && (!safeOnly || planRegion.top() >= now.y - SAFE_DROP);
         // a target whose straight line is blocked (a corner): no plain takeoff plan can land it, so the technique
         // search gets the approach ticks and the budget from the first ARMED tick
         techniqueFirst = armed && lineBlocked && techniques != TechniqueSource.NONE;
@@ -1392,6 +1395,26 @@ public final class MovementAssistBrain {
 
     public boolean jump() {
         return jump;
+    }
+
+    /** This decision was an ARMED ground tick onto a safe top (see {@link #plannedTakeoffIn()}). */
+    private boolean armedRunUp;
+
+    /**
+     * Ticks from this decision to the takeoff of the verified plan the ARMED commitment runs (0 = this tick): the
+     * replayed technique script's takeoff, else the approach controller's planned takeoff. -1 when there is no such
+     * plan, the commitment is not ARMED on the ground, or (SafeWalk on) the target top costs fall damage. Read after
+     * {@link #decide}.
+     */
+    public int plannedTakeoffIn() {
+        if (!armedRunUp) {
+            return -1;
+        }
+        if (scriptOn) {
+            int i = scriptIndex - 1; // the script tick this decision applied
+            return i >= 0 && script.takeoffIndex >= i ? script.takeoffIndex - i : -1;
+        }
+        return approach.hasPlan() ? approach.ticksToTakeoff() : -1;
     }
 
     /**

@@ -28,6 +28,8 @@ public final class Services {
     private static volatile IManualLookAssist manualLook;
     private static volatile ISharedControl sharedControl;
     private static volatile IVisuals visuals;
+    private static volatile IPlannedJump plannedJump;
+    private static volatile IBlockChangeFeed blockChanges;
 
     private Services() {
     }
@@ -85,6 +87,15 @@ public final class Services {
         return v != null ? v : IVisuals.NONE;
     }
 
+    /** The movement layer's jump and planned run-up. Never null: {@link IPlannedJump#NONE} until it registers. */
+    public static IPlannedJump plannedJump() {
+        IPlannedJump p = plannedJump;
+        return p != null ? p : IPlannedJump.NONE;
+    }
+
+    /** Client block changes, or null before the world module registered its feed. */
+    public static IBlockChangeFeed blockChangesOrNull() { return blockChanges; }
+
     /** Null until the Shell registered its drawing services. */
     public static IVisuals visualsOrNull() { return visuals; }
 
@@ -107,13 +118,15 @@ public final class Services {
     public static void registerManualLook(IManualLookAssist s) { manualLook = s; }
     public static void registerSharedControl(ISharedControl s) { sharedControl = s; }
     public static void registerVisuals(IVisuals s) { visuals = s; }
+    public static void registerPlannedJump(IPlannedJump s) { plannedJump = s; }
+    public static void registerBlockChanges(IBlockChangeFeed s) { blockChanges = s; }
 
     /** Test hook: clears every registration. */
     public static void resetForTests() {
         arbiter = null; input = null; clicker = null; modState = null; modules = null; events = null; goals = null;
         navigator = null; worldKnowledge = null; storage = null; waypoints = null; autopilot = null; humanizer = null;
         bodySims = null; routePlanner = null; routeRunner = null; manualLook = null;
-        sharedControl = null; visuals = null;
+        sharedControl = null; visuals = null; plannedJump = null; blockChanges = null;
     }
 
     private static <T> T require(T value, String name) {

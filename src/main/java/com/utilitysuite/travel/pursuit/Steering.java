@@ -27,4 +27,19 @@ public interface Steering {
     boolean finished();
 
     boolean offRoute();
+
+    /** Index of the route cell the body has reached (-1: none; then nothing ahead is watched). */
+    default int progressIndex() {
+        return -1;
+    }
+
+    /** Cells in the route. */
+    default int length() {
+        return 0;
+    }
+
+    /** Packed feet cell {@code i} of the route. */
+    default long cell(int i) {
+        return 0L;
+    }
 }

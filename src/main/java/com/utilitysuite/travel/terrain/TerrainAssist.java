@@ -89,8 +89,6 @@ public final class TerrainAssist implements IModule, IConfigurable {
     private boolean safeWalk = true;
     private double minDrop = 1.5;
     private boolean edgeJump;
-    /** Movement Assist is jumping this tick (parkour takes priority over SafeWalk). */
-    private java.util.function.BooleanSupplier parkourJumping = () -> false;
     private boolean step;
     private double stepHeight = 1.0;
     private boolean noSlowdown;
@@ -324,11 +322,6 @@ public final class TerrainAssist implements IModule, IConfigurable {
         return enabled && safeWalk;
     }
 
-    public void setParkourJumping(java.util.function.BooleanSupplier jumping) {
-        this.parkourJumping = jumping;
-    }
-
-
     /** Returns the clamped movement, or null to keep the game's own result. Client thread, once per player move. */
     public Vec3 backOffFromEdge(Player self, Vec3 movement, MoverType mover) {
         if (!enabled || !safeWalk) {
@@ -343,8 +336,12 @@ public final class TerrainAssist implements IModule, IConfigurable {
         if (edgeJump && self.isSprinting()) {
             return null; // Edge Jump owns sprinting edges
         }
-        if (parkourJumping.getAsBoolean()) {
-            return null; // a valid parkour jump goes first; SafeWalk only guards edges with no jump
+        com.utilitysuite.core.api.IPlannedJump planned = Services.plannedJump();
+        if (planned.jumpingThisTick() || planned.runningUpToPlannedJump()) {
+            // a valid parkour jump goes first; SafeWalk only guards edges with no jump. That includes the run-up: a
+            // planned takeoff may come on the tick after the body stepped past the edge (onGround still true), and a
+            // clamped step-off move would cut the jump short. Only no-damage plans are reported while SafeWalk is on.
+            return null;
         }
         AABB bb = self.getBoundingBox();
         probe.configure(view.bind(self.level()), bb.minX, bb.minY, bb.minZ, bb.maxX, bb.maxZ, minDrop);
