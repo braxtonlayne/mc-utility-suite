@@ -65,6 +65,23 @@ public interface FightContext {
         return -1L;
     }
 
+    // ---- second attacker (multi-attacker positioning) -----------------------------------------------------------
+
+    /** A second hostile is in melee range this tick (set by a stage through {@link #secondThreat}). */
+    default boolean secondThreatValid() {
+        return false;
+    }
+
+    /** World X of the second attacker's feet; meaningful only while {@link #secondThreatValid()}. */
+    default double secondThreatX() {
+        return 0.0;
+    }
+
+    /** World Z of the second attacker's feet; meaningful only while {@link #secondThreatValid()}. */
+    default double secondThreatZ() {
+        return 0.0;
+    }
+
     // ---- actions (this tick) ------------------------------------------------------------------------------------
 
     /** Smoothed aim at the target with the configured lead. */
@@ -118,6 +135,13 @@ public interface FightContext {
 
     /** Moves the spacing band out by this many blocks this tick (keep out of a blast or a reach). */
     void widenSpacing(double blocks);
+
+    /**
+     * One-tick request: a second hostile stands in melee range at this world position. The built-in strafe then
+     * prefers the side that keeps the target between us and it (a soft bias, see {@link FlankGuard}).
+     */
+    default void secondThreat(double x, double z) {
+    }
 
     /** No feints this tick (the opponent's shield is disabled, a kill window). */
     void pressAdvantage();

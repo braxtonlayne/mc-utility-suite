@@ -30,6 +30,8 @@ import java.util.List;
  *       dodge stands down while the assistant holds movement; this is its replacement inside a fight.</li>
  *   <li><b>Pack handling</b>: {@link #PACK_SIZE} or more melee mobs in reach: the band widens so they string out and
  *       the hit choice is AUTO (the hit planner sweeps on its own when two stand together).</li>
+ *   <li><b>Second attacker</b>: another hostile melee mob in reach: its position goes to the context and the
+ *       strafe circles so the target stays between us and it (soft; hazards, forced sides, retreat and escape win).</li>
  *   <li><b>Mob playbook</b> ({@link MobPlaybook}) of the current target, every tick: its hit policy, extra spacing,
  *       and rule (no crit hops on a spider or a baby zombie, close a skeleton on a strafe, rush a witch).</li>
  * </ol>
@@ -45,6 +47,8 @@ public final class ThreatFightStage implements FightStage {
     /** A bow drawn at us counts from this far. */
     public static final double DRAW_RANGE = 24.0;
     public static final int PACK_SIZE = 3;
+    /** A second hostile melee mob this close (horizontal) steers the strafe to keep the target between us. */
+    public static final double SECOND_RANGE = 4.5;
     /** Melee mobs inside this horizontal distance count toward a pack. */
     public static final double PACK_RANGE = 4.0;
     /** Extra blocks of spacing while a pack is on us. */
@@ -152,6 +156,14 @@ public final class ThreatFightStage implements FightStage {
             ctx.forceSide(awaySide);
         }
 
+        // ---- (c2) second attacker: circle so the target stays between us and it --------------------------------
+        if (!ctx.eating()) {
+            int second = secondAttacker(t, ctx, clock, target);
+            if (second >= 0) {
+                ctx.secondThreat(t.x[second], t.z[second]);
+            }
+        }
+
         // ---- (d) pack handling --------------------------------------------------------------------------------
         boolean rush = playbook && row.rule() == MobPlaybook.Rule.RUSH;
         if (countPack(t, s, target, tRow) >= PACK_SIZE) {
@@ -227,6 +239,29 @@ public final class ThreatFightStage implements FightStage {
             }
             if (!t.has(i, ThreatRank.HOSTILE) && !(attackerFresh && t.ids[i] == attacker)) {
                 continue;
+            }
+            if (best < 0 || t.distance[i] < t.distance[best]) {
+                best = i;
+            }
+        }
+        return best;
+    }
+
+    /**
+     * The nearest hostile melee mob other than the target inside {@link #SECOND_RANGE} (a swelling creeper is the
+     * fuse answer's business), or -1.
+     */
+    private static int secondAttacker(NearbyThreats t, FightContext ctx, long clock, int target) {
+        int attacker = ctx.lastAttackerId();
+        boolean attackerFresh = attacker >= 0 && clock - ctx.lastAttackerAt() <= ATTACKER_MEMORY;
+        int best = -1;
+        for (int i = 0; i < t.size; i++) {
+            if (t.ids[i] == target || t.distance[i] > SECOND_RANGE || t.has(i, ThreatRank.RANGED)
+                    || t.has(i, ThreatRank.SWELLING)) {
+                continue;
+            }
+            if (!t.has(i, ThreatRank.HOSTILE) && !(attackerFresh && t.ids[i] == attacker)) {
+                continue; // the reactive rule: only a mob already attacking us
             }
             if (best < 0 || t.distance[i] < t.distance[best]) {
                 best = i;

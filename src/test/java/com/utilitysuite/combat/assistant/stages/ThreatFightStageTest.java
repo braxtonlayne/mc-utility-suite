@@ -125,6 +125,67 @@ class ThreatFightStageTest {
         assertFalse(stage.packMode(), "a bystander does not make a pack");
     }
 
+    private int[] sideTicks(int ticks) {
+        int right = 0;
+        int left = 0;
+        for (int i = 0; i < ticks; i++) {
+            rig.tick(1);
+            right += rig.down(SimKey.RIGHT) ? 1 : 0;
+            left += rig.down(SimKey.LEFT) ? 1 : 0;
+        }
+        return new int[] {left, right};
+    }
+
+    @Test
+    void aSecondAttackerOnTheLeftKeepsTheStrafeToTheRight() {
+        rig.world.add(ZOMBIE, "Zombie", 3.0, 64, 0); // facing +x: left is -z
+        rig.world.add(CREEPER, "Zombie", 1.0, 64, -3.0);
+        threats.row(ZOMBIE, "minecraft:zombie", 3.0, 0, 20f, HOSTILE | LOS | MELEE_IN_RANGE);
+        threats.row(CREEPER, "minecraft:zombie", 1.0, -3.0, 20f, HOSTILE | LOS | MELEE_IN_RANGE);
+        rig.engage(ZOMBIE);
+        int[] lr = sideTicks(120);
+        assertTrue(lr[1] > 3 * lr[0], "target stays between: left=" + lr[0] + " right=" + lr[1]);
+        assertTrue(rig.assistant.stageContext().secondThreatValid());
+    }
+
+    @Test
+    void aSecondAttackerOnTheRightMirrorsIt() {
+        rig.world.add(ZOMBIE, "Zombie", 3.0, 64, 0);
+        rig.world.add(CREEPER, "Zombie", 1.0, 64, 3.0);
+        threats.row(ZOMBIE, "minecraft:zombie", 3.0, 0, 20f, HOSTILE | LOS | MELEE_IN_RANGE);
+        threats.row(CREEPER, "minecraft:zombie", 1.0, 3.0, 20f, HOSTILE | LOS | MELEE_IN_RANGE);
+        rig.engage(ZOMBIE);
+        int[] lr = sideTicks(120);
+        assertTrue(lr[0] > 3 * lr[1], "left=" + lr[0] + " right=" + lr[1]);
+    }
+
+    @Test
+    void aBystanderOrADistantMobIsNoSecondAttacker() {
+        rig.world.add(ZOMBIE, "Zombie", 3.0, 64, 0);
+        rig.world.add(BYSTANDER, "Zombie", 1.0, 64, -3.0);
+        rig.world.add(CREEPER, "Zombie", 6.0, 64, -6.0);
+        threats.row(ZOMBIE, "minecraft:zombie", 3.0, 0, 20f, HOSTILE | LOS | MELEE_IN_RANGE);
+        threats.row(BYSTANDER, "minecraft:zombie", 1.0, -3.0, 20f, LOS | MELEE_IN_RANGE); // not hostile
+        threats.row(CREEPER, "minecraft:zombie", 6.0, -6.0, 20f, HOSTILE | LOS); // out of reach
+        rig.engage(ZOMBIE);
+        rig.tick(10);
+        assertFalse(rig.assistant.stageContext().secondThreatValid());
+    }
+
+    @Test
+    void aForcedDodgeSideStillBeatsTheFlankBias() {
+        rig.world.add(ZOMBIE, "Zombie", 3.0, 64, 0);
+        rig.world.add(CREEPER, "Zombie", 1.0, 64, -3.0); // flank bias says RIGHT
+        rig.world.add(SKELETON, "Skeleton", 3.0, 64, 12.0); // bow from the right: the dodge goes LEFT
+        threats.row(ZOMBIE, "minecraft:zombie", 3.0, 0, 20f, HOSTILE | LOS | MELEE_IN_RANGE);
+        threats.row(CREEPER, "minecraft:zombie", 1.0, -3.0, 20f, HOSTILE | LOS | MELEE_IN_RANGE);
+        threats.row(SKELETON, "minecraft:skeleton", 3.0, 12.0, 20f, HOSTILE | LOS | DRAWING | RANGED);
+        rig.engage(ZOMBIE);
+        rig.tick(2);
+        assertTrue(rig.down(SimKey.LEFT), "the dodge owns the side");
+        assertFalse(rig.down(SimKey.RIGHT));
+    }
+
     @Test
     void aBowDrawnFromTheLeftForcesAStrafeToTheRight() {
         rig.world.add(ZOMBIE, "Zombie", 3.0, 64, 0); // facing +x: left is -z

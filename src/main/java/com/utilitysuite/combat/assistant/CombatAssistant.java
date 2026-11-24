@@ -245,6 +245,10 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
     private HitPlanner.Policy stagePolicy;
     private boolean stageSideForced;
     private int stageSide;
+    private boolean secondValid;
+    private double secondX;
+    private double secondZ;
+    private final FlankGuard flank = new FlankGuard();
     private double stageSpacing;
     private boolean stagePress;
     private int stageTarget = -1;
@@ -709,6 +713,7 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         stageVetoJump = false;
         stagePolicy = null;
         stageSideForced = false;
+        secondValid = false;
         stageSpacing = 0.0;
         stagePress = false;
         if (routeRetry > 0) {
@@ -1176,6 +1181,13 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         // crit sync owns the hops while it waits for or rides one; no solver hops at the lip of a gap or a low roof
         boolean allowJump = tradeAllowJump(s);
         int withDir = feel.withDir();
+        double withStr = feel.withStrength();
+        if (secondValid && !eating && flank.plan(s.px, s.pz, s.tx, s.tz, secondX, secondZ)
+                && flank.strength() > StrafePlanner.WITH_THRESHOLD) {
+            // a second attacker in reach: circle so the target stays between us and it (soft, over the move-with read)
+            withDir = flank.side();
+            withStr = flank.strength();
+        }
         if (!widened && feel.comboDrives(settings)) {
             // ---- combo keeper: steer for the next hit on the predicted knockback arc ----
             if (t != null) {
@@ -1213,7 +1225,7 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
                     s.hazardBack);
             if (settings.strafe && d <= settings.spacingMax + 1.0) {
                 side = strafe.update(s.hazardLeft, s.hazardRight, input.nextGaussianTicks(30, 8, 15, 50),
-                        settings.tacticUtility ? opponents.strafeBias(targetId) : 0.0, withDir, feel.withStrength());
+                        settings.tacticUtility ? opponents.strafeBias(targetId) : 0.0, withDir, withStr);
             }
             sprint = fwd == SpacingController.FORWARD && d > settings.spacingMax + 0.5;
         }
@@ -2333,6 +2345,28 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         @Override
         public void hitPolicy(HitPlanner.Policy policy) {
             stagePolicy = policy;
+        }
+
+        @Override
+        public boolean secondThreatValid() {
+            return secondValid;
+        }
+
+        @Override
+        public double secondThreatX() {
+            return secondX;
+        }
+
+        @Override
+        public double secondThreatZ() {
+            return secondZ;
+        }
+
+        @Override
+        public void secondThreat(double x, double z) {
+            secondValid = true;
+            secondX = x;
+            secondZ = z;
         }
 
         @Override
