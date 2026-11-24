@@ -59,6 +59,19 @@ final class ShieldOwnership {
         feed.publish();
     }
 
+    /**
+     * The dodge stands down for an arrow the shield reflex will block: blocking and strafing at once is one answer
+     * too many. True when the reflex is armed, has a usable shield, and the arrow comes from inside the front cone
+     * (or the reflex may turn to it). An arrow from behind without turning is not covered, so the dodge keeps it.
+     */
+    static boolean shieldCoversArrow(boolean shieldArmed, boolean shieldUsable, boolean mayTurn, float relYawDeg,
+                                     double frontConeDeg) {
+        if (!shieldArmed || !shieldUsable || Float.isNaN(relYawDeg)) {
+            return false;
+        }
+        return mayTurn || Math.abs(relYawDeg) <= frontConeDeg;
+    }
+
     /** The reflex may turn the camera toward a threat: only with the option on and outside a fight. */
     static boolean reflexMayTurn(boolean turnOption, boolean fighting) {
         return turnOption && !fighting;

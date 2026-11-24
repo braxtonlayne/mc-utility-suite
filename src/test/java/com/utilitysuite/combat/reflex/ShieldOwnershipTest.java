@@ -114,4 +114,18 @@ class ShieldOwnershipTest {
         });
         assertTrue(bytes < 1_024, "ownership checks allocated " + bytes + " bytes");
     }
+
+    @Test
+    void theDodgeYieldsToTheShieldOnlyForAnArrowItCanBlock() {
+        // armed, usable, from the front: shield handles it
+        assertTrue(ShieldOwnership.shieldCoversArrow(true, true, false, 20f, 70.0));
+        // from behind without turning: the dodge keeps it
+        assertFalse(ShieldOwnership.shieldCoversArrow(true, true, false, 170f, 70.0));
+        // from behind but the reflex may turn to it
+        assertTrue(ShieldOwnership.shieldCoversArrow(true, true, true, 170f, 70.0));
+        // no shield in hand, or the reflex is off: dodge
+        assertFalse(ShieldOwnership.shieldCoversArrow(true, false, true, 0f, 70.0));
+        assertFalse(ShieldOwnership.shieldCoversArrow(false, true, true, 0f, 70.0));
+        assertFalse(ShieldOwnership.shieldCoversArrow(true, true, true, Float.NaN, 70.0));
+    }
 }

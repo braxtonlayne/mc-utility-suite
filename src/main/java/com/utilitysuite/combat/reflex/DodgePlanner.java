@@ -29,6 +29,13 @@ public final class DodgePlanner {
     public static final int MAX_TAP = 8;
     /** Projectiles arriving later than this are re-planned next tick instead of acted on. */
     public static final int HORIZON_TICKS = 30;
+    /** The strafe tap is only started this close to impact (ticks), so the shooter cannot track and re-aim. */
+    public static final int TRIGGER_TICKS = 8;
+    /** ...and only when the arrow's ray passes this close to the player's box (blocks). */
+    public static final double BOX_TRIGGER = 0.55;
+    /** Player box half extents around the body centre. */
+    private static final double BOX_HALF_W = 0.3;
+    private static final double BOX_HALF_H = 0.9;
     /** A key is used when its direction is within ~65 degrees of the wanted direction. */
     private static final double KEY_ALIGN = 0.42;
 
@@ -41,6 +48,42 @@ public final class DodgePlanner {
     private int arrivalTick;
     private double missDistance;
     private boolean reachable;
+    private boolean imminent;
+    private double boxMiss;
+
+    /**
+     * Closest approach (blocks) of the ray {@code r + v t}, t from 0 to its pass of the body centre and a little
+     * beyond, to the player's box (half width 0.3, half height 0.9) centred on the origin. The distance to a box is
+     * convex along a line, so a ternary search finds it. Pure, allocation free.
+     */
+    public static double boxMissDistance(double rx, double ry, double rz, double vx, double vy, double vz) {
+        double vv = vx * vx + vy * vy + vz * vz;
+        if (vv < 1.0e-9) {
+            return boxDistance(rx, ry, rz);
+        }
+        double tc = -(rx * vx + ry * vy + rz * vz) / vv;
+        double hi = Math.max(0.0, tc) + 2.0 / Math.sqrt(vv);
+        double lo = 0.0;
+        for (int i = 0; i < 30; i++) {
+            double m1 = lo + (hi - lo) / 3.0;
+            double m2 = hi - (hi - lo) / 3.0;
+            if (boxDistance(rx + vx * m1, ry + vy * m1, rz + vz * m1)
+                    <= boxDistance(rx + vx * m2, ry + vy * m2, rz + vz * m2)) {
+                hi = m2;
+            } else {
+                lo = m1;
+            }
+        }
+        double t = (lo + hi) * 0.5;
+        return boxDistance(rx + vx * t, ry + vy * t, rz + vz * t);
+    }
+
+    private static double boxDistance(double x, double y, double z) {
+        double dx = Math.max(Math.abs(x) - BOX_HALF_W, 0.0);
+        double dy = Math.max(Math.abs(y) - BOX_HALF_H, 0.0);
+        double dz = Math.max(Math.abs(z) - BOX_HALF_W, 0.0);
+        return Math.sqrt(dx * dx + dy * dy + dz * dz);
+    }
 
     /**
      * Plans a dodge against one projectile.
@@ -67,6 +110,8 @@ public final class DodgePlanner {
         double mz = rz + vz * t;
         missDistance = Math.sqrt(mx * mx + my * my + mz * mz);
         arrivalTick = (int) Math.ceil(t);
+        boxMiss = boxMissDistance(rx, ry, rz, vx, vy, vz);
+        imminent = arrivalTick <= TRIGGER_TICKS && boxMiss <= BOX_TRIGGER;
         if (missDistance > HIT_RADIUS) {
             return false; // already misses
         }
@@ -202,6 +247,21 @@ public final class DodgePlanner {
         arrivalTick = 0;
         missDistance = 0;
         reachable = false;
+        imminent = false;
+        boxMiss = Double.MAX_VALUE;
+    }
+
+    /**
+     * The last dodge plan is due now: the arrow is {@value #TRIGGER_TICKS} ticks or less out and its ray passes within
+     * {@value #BOX_TRIGGER} blocks of the player's box. Tapping earlier lets the shooter track the strafe and re-aim.
+     */
+    public boolean imminent() {
+        return imminent;
+    }
+
+    /** Closest approach of the arrow's ray to the player's box in the last dodge plan. */
+    public double boxMiss() {
+        return boxMiss;
     }
 
     /** Main movement key of the last plan, or null. */

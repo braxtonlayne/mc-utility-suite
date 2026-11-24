@@ -36,6 +36,12 @@ public final class ThreatTracker implements ThreatSource {
     private static final double TNT_POWER = 4.0;
 
     private final Entity[] tracked = new Entity[CAPACITY];
+    /** Per tracked entity: the game tick it joined and the velocity first seen (a launch record, set once). */
+    private final long[] spawnTick = new long[CAPACITY];
+    private final double[] spawnVx = new double[CAPACITY];
+    private final double[] spawnVy = new double[CAPACITY];
+    private final double[] spawnVz = new double[CAPACITY];
+    private final boolean[] spawnVSet = new boolean[CAPACITY];
     private int size;
     private final LivingEntity[] melee = new LivingEntity[MELEE_CAPACITY];
     private int meleeSize;
@@ -47,6 +53,9 @@ public final class ThreatTracker implements ThreatSource {
     /** Most imminent projectile on a hit course. */
     public int projTicks = Integer.MAX_VALUE;
     public float projDamage;
+    /** That projectile's age in ticks since it joined the level, and the velocity it was first seen with. */
+    public int projAgeTicks;
+    public double projSpawnVx, projSpawnVy, projSpawnVz;
     /** World yaw from the player toward the source (Minecraft convention). */
     public float projBearing;
     /** That projectile's position relative to the player's body centre and its velocity. */
@@ -68,6 +77,8 @@ public final class ThreatTracker implements ThreatSource {
         }
         Entity e = event.getEntity();
         if ((e instanceof Projectile || e instanceof Creeper || e instanceof PrimedTnt) && size < CAPACITY) {
+            spawnTick[size] = e.level().getGameTime();
+            spawnVSet[size] = false;
             tracked[size++] = e;
         }
         if ((e instanceof Monster || e instanceof Player) && !(e instanceof Creeper) && meleeSize < MELEE_CAPACITY
@@ -117,6 +128,7 @@ public final class ThreatTracker implements ThreatSource {
     private void resetDanger() {
         projTicks = Integer.MAX_VALUE;
         projDamage = 0f;
+        projAgeTicks = 0;
         blastTicks = Integer.MAX_VALUE;
         blastDamage = 0f;
         meleeTicks = Integer.MAX_VALUE;
@@ -156,6 +168,11 @@ public final class ThreatTracker implements ThreatSource {
     private void removeAt(int i) {
         tracked[i] = tracked[--size];
         tracked[size] = null;
+        spawnTick[i] = spawnTick[size];
+        spawnVx[i] = spawnVx[size];
+        spawnVy[i] = spawnVy[size];
+        spawnVz[i] = spawnVz[size];
+        spawnVSet[i] = spawnVSet[size];
     }
 
     @Override
@@ -191,6 +208,12 @@ public final class ThreatTracker implements ThreatSource {
                     continue;
                 }
                 Vec3 v = pr.getDeltaMovement();
+                if (!spawnVSet[i] && (v.x != 0.0 || v.y != 0.0 || v.z != 0.0)) {
+                    spawnVx[i] = v.x;
+                    spawnVy[i] = v.y;
+                    spawnVz[i] = v.z;
+                    spawnVSet[i] = true;
+                }
                 if (ThreatMath.incoming(rx, ry, rz, v.x, v.y, v.z)) {
                     kind = PROJECTILE;
                     double vv = v.x * v.x + v.y * v.y + v.z * v.z;
@@ -199,6 +222,10 @@ public final class ThreatTracker implements ThreatSource {
                         projTicks = ticks;
                         projDamage = projectileDamage(pr, Math.sqrt(vv));
                         projBearing = ThreatMath.worldYaw(rx, rz);
+                        projAgeTicks = (int) Math.max(0L, p.level().getGameTime() - spawnTick[i]);
+                        projSpawnVx = spawnVx[i];
+                        projSpawnVy = spawnVy[i];
+                        projSpawnVz = spawnVz[i];
                         projRx = rx;
                         projRy = ry;
                         projRz = rz;

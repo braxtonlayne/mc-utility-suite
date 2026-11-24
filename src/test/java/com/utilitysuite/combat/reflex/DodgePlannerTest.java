@@ -177,4 +177,43 @@ class DodgePlannerTest {
         assertNull(p.key2());
         assertFalse(p.sprint());
     }
+
+    @Test
+    void anArrowNineTicksOutIsNotYetImminent() {
+        // speed 2 along -Z from 18 blocks: t = 9, aimed straight at the player
+        assertTrue(p.planDodge(0.0, 0, 18, 0, 0, -2, 0f, false, false, false, false));
+        assertEquals(9, p.arrivalTick());
+        assertFalse(p.imminent());
+    }
+
+    @Test
+    void anArrowEightTicksOutOnTheBoxIsImminent() {
+        assertTrue(p.planDodge(0.0, 0, 16, 0, 0, -2, 0f, false, false, false, false));
+        assertEquals(8, p.arrivalTick());
+        assertTrue(p.imminent());
+        assertEquals(0.0, p.boxMiss(), 1e-9);
+    }
+
+    @Test
+    void anArrowPassingWideOfTheBoxIsNotImminentEvenWhenClose() {
+        // passes 1.0 to the side: inside the old 1.2 hit radius, 0.7 from the box edge (> 0.55)
+        assertTrue(p.planDodge(1.0, 0, 10, 0, 0, -2, 0f, false, false, false, false));
+        assertFalse(p.imminent());
+        // passes 0.8 to the side: 0.5 from the box edge
+        assertTrue(p.planDodge(0.8, 0, 10, 0, 0, -2, 0f, false, false, false, false));
+        assertTrue(p.imminent());
+    }
+
+    @Test
+    void boxMissIsZeroForARayThroughTheBoxAndMeasuresTheGapOtherwise() {
+        assertEquals(0.0, DodgePlanner.boxMissDistance(0.1, 0.5, 10, 0, 0, -2), 1e-9);
+        assertEquals(0.7, DodgePlanner.boxMissDistance(1.0, 0, 10, 0, 0, -2), 1e-6);
+        // above the head: 0.9 half height
+        assertEquals(0.6, DodgePlanner.boxMissDistance(0, 1.5, 10, 0, 0, -2), 1e-6);
+    }
+
+    @Test
+    void aFallingArrowEntersTheBoxFromAbove() {
+        assertEquals(0.0, DodgePlanner.boxMissDistance(0, 5, 0.1, 0, -1, 0), 1e-9);
+    }
 }

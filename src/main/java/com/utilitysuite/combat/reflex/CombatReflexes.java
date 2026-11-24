@@ -223,7 +223,7 @@ public final class CombatReflexes implements IModule, IConfigurable, LeaseListen
         }
         tickEscape(p, ap, assistantOn, apEscape, escapeArmed && !fighting, arbiter);
         if (!escaping && !raised && !fighting) {
-            tickDodge(p, ap, assistantOn, dodgeArmed, arbiter);
+            tickDodge(p, ap, assistantOn, dodgeArmed, shieldArmed, arbiter);
         }
         releaseIdleLeases();
     }
@@ -424,16 +424,26 @@ public final class CombatReflexes implements IModule, IConfigurable, LeaseListen
         escapeForJob = false;
     }
 
-    private void tickDodge(LocalPlayer p, IAutopilot ap, boolean assistantOn, boolean armed, IActionArbiter arbiter) {
+    private void tickDodge(LocalPlayer p, IAutopilot ap, boolean assistantOn, boolean armed, boolean shieldArmed,
+                           IActionArbiter arbiter) {
         if (!armed || dodgeCooldown > 0 || threats.projTicks == Integer.MAX_VALUE
                 || threats.projDamage < ShieldDecision.MIN_DAMAGE
                 || arbiter.isManualOverrideActive(ControlChannel.MOVEMENT)) {
             return;
         }
         float yaw = p.getYRot();
+        // late trigger: the tap starts close to impact only, never at bow-draw or first sight (see DodgePlanner)
+        if (threats.projTicks > DodgePlanner.TRIGGER_TICKS) {
+            return;
+        }
+        // an arrow the shield reflex blocks is not also dodged (one answer per arrow)
+        if (ShieldOwnership.shieldCoversArrow(shieldArmed, shieldUsable(p), shieldTurn,
+                wrap(threats.projBearing - yaw), frontCone)) {
+            return;
+        }
         if (!probeHazards(yaw) || !planner.planDodge(threats.projRx, threats.projRy, threats.projRz,
                 threats.projVx, threats.projVy, threats.projVz, yaw, hazF, hazB, hazL, hazR)
-                || planner.startInTicks() > 0) {
+                || !planner.imminent() || planner.startInTicks() > 0) {
             return;
         }
         boolean viaAp = !assistantOn;
