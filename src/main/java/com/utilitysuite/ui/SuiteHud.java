@@ -70,6 +70,7 @@ public final class SuiteHud implements IModule, IConfigurable, LayeredDraw.Layer
     private final HudPill.Badge clean = new HudPill.Badge("clean_badge", "Clean-Screen", false, 80);
     private final InfoStrip infoStrip = new InfoStrip();
     private final ModuleListHud moduleList = new ModuleListHud();
+    private final ControlStatusHud controlStatus = new ControlStatusHud();
     private final HudHost host = new HudHost();
     private final Visuals visuals = new Visuals(host);
     private final AutopilotHud autopilotHud = new AutopilotHud(System::currentTimeMillis, visuals::notices);
@@ -93,6 +94,7 @@ public final class SuiteHud implements IModule, IConfigurable, LayeredDraw.Layer
     private int infoTicks;
 
     public static final String K_MODULE_LIST = "module_list";
+    public static final String K_CONTROL_STATUS = "control_status";
     public static final String K_INFO = "info_strip";
     public static final String K_INFO_POSITION = "info_position";
     public static final String K_INFO_COORDS = "info_coords";
@@ -110,6 +112,7 @@ public final class SuiteHud implements IModule, IConfigurable, LayeredDraw.Layer
         host.register(infoStrip);
         host.register(moduleList);
         host.register(autopilotHud);
+        host.register(controlStatus);
         host.setInstant(stopped, true);
         host.setInstant(autopilotHud, true); // it times itself; a takeover never waits on a fade
         host.allowInCleanScreen(clean, true);
@@ -371,6 +374,11 @@ public final class SuiteHud implements IModule, IConfigurable, LayeredDraw.Layer
                         "List of the modules that are on, top-right, longest name first, with a category colour"
                                 + " bar. The autopilot heads it while it is on; a module acting right now is"
                                 + " marked. Hidden with F1, F3 and Clean-Screen."),
+                SettingSpec.bool(K_CONTROL_STATUS, "Control status (why did it stop?)", false, "",
+                        "Right side, only while something acts: who holds which controls, the phase of Movement"
+                                + " Assist, the Combat Assistant and the travel autopilot, and for 10 s after it"
+                                + " happened the last override, refusal or preemption with who caused it. Hidden"
+                                + " with F1 and Clean-Screen."),
                 SettingSpec.bool(K_INFO, "Info strip", false, INFO_GROUP,
                         "Compact strip with coordinates, biome, TPS, ping and durability. Hidden with F1, F3, "
                                 + "open screens and Clean-Screen."),
@@ -410,6 +418,7 @@ public final class SuiteHud implements IModule, IConfigurable, LayeredDraw.Layer
         clean.slot = slot;
         moduleList.enabled = p.getBool(ID, K_MODULE_LIST, false);
         moduleList.invalidate();
+        controlStatus.enabled = p.getBool(ID, K_CONTROL_STATUS, false);
         InfoStrip s = infoStrip;
         s.enabled = p.getBool(ID, K_INFO, false);
         try {

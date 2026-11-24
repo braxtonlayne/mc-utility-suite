@@ -25,6 +25,15 @@ public interface IModule {
     default void onWorldUnload() {
     }
 
+    /**
+     * What the module is doing right now, for diagnostics HUDs: a short constant string (never built per call, e.g. an
+     * enum's {@code name()} or a {@code static final} label), or null while it is idle or off. Client/render thread;
+     * allocation free.
+     */
+    default String phase() {
+        return null;
+    }
+
     /** The profile was (re)loaded; read settings from it. */
     default void onProfileLoaded(ProfileConfig profile) {
     }

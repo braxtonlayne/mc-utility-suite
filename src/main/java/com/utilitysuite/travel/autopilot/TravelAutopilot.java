@@ -169,6 +169,19 @@ public final class TravelAutopilot implements IModule, IConfigurable {
         return run.name();
     }
 
+    /**
+     * The elytra driver's phase while an elytra or bounce run is active ({@code ELYTRA_CRUISE}, {@code BOUNCE}, ...),
+     * the run kind otherwise ({@code OVERLAND}, {@code BOAT}); null when idle. Constant strings.
+     */
+    @Override
+    public String phase() {
+        Run r = run;
+        if (r == Run.IDLE) {
+            return null;
+        }
+        return r == Run.ELYTRA || r == Run.BOUNCE ? elytra.phaseLabel() : r.name();
+    }
+
     /** Key handler: starts the configured route, or stops a running one. */
     public void toggle() {
         if (run != Run.IDLE) {

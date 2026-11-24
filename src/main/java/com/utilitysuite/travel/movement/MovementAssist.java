@@ -177,6 +177,10 @@ public final class MovementAssist implements IModule, IConfigurable {
     private boolean autopilotActing;
     /** One of the STATUS_* constants while a commitment or a hold is live, else null. */
     private String parkourStatus;
+    /** {@link #phase()}: the commitment's phase name, or an edge-hold / landing-hold constant; null when idle. */
+    private String livePhase;
+    private static final String PHASE_EDGE_HOLD = "EDGE_HOLD";
+    private static final String PHASE_LANDING = "LANDING_HOLD";
     private final SupportRegion landingTop = new SupportRegion();
     private double topX0, topZ0, topX1, topZ1;
     private final IntentEstimator intent = new IntentEstimator();
@@ -958,6 +962,7 @@ public final class MovementAssist implements IModule, IConfigurable {
                 : c.phase() == JumpCommit.Phase.RELEASE || c.phase() == JumpCommit.Phase.ABORT ? STATUS_YOURS
                 : STATUS_LOCKED;
         status = parkourStatus;
+        livePhase = h.latched() != 0 ? PHASE_EDGE_HOLD : h.active() ? PHASE_LANDING : c.phase().name();
         boolean locked = c.live() && brain.targetRegionValid() && !auto;
         if (locked && markSlot == -2) {
             markSlot = Services.visuals().marks().claim(ID);
@@ -985,6 +990,7 @@ public final class MovementAssist implements IModule, IConfigurable {
         }
         markShown = false;
         parkourStatus = null;
+        livePhase = null;
         if (ap != null && autopilotActing) {
             ap.noteDone(IAutopilot.Reflex.PARKOUR);
             autopilotActing = false;
@@ -1359,6 +1365,15 @@ public final class MovementAssist implements IModule, IConfigurable {
      */
     public String parkourStatus() {
         return enabled ? parkourStatus : null;
+    }
+
+    /**
+     * The live parkour commitment's phase ({@code TAKEOFF}, {@code FLIGHT}, ... as the enum's constant name), or
+     * {@code EDGE_HOLD} / {@code LANDING_HOLD}; null when idle or off. Constant strings.
+     */
+    @Override
+    public String phase() {
+        return enabled && parkourStatus != null ? livePhase : null;
     }
 
     public ControlMode controlMode() {

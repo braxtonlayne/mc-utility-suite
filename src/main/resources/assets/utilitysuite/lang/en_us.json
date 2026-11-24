@@ -148,6 +148,8 @@
   "setting.utilitysuite.appearance.hud_opacity.tooltip": "Multiplies the opacity of everything the suite draws on the in-game HUD. The menu ignores it.",
   "setting.utilitysuite.appearance.hud_scale": "HUD scale (%)",
   "setting.utilitysuite.appearance.hud_scale.tooltip": "Size of the suite's in-game HUD on top of the game's GUI scale. The menu keeps its own scale.",
+  "setting.utilitysuite.suite_hud.control_status": "Control status (why did it stop?)",
+  "setting.utilitysuite.suite_hud.control_status.tooltip": "Right side, only while something acts: who holds which controls, the phase of Movement Assist, the Combat Assistant and the travel autopilot, and for 10 s after it happened the last override, refusal or preemption with who caused it. Hidden with F1 and Clean-Screen.",
   "setting.utilitysuite.suite_hud.module_list.tooltip": "List of the modules that are on, top-right, longest name first, with a category colour bar. The autopilot heads it while it is on; a module acting right now is marked. Hidden with F1, F3 and Clean-Screen.",
   "hud.utilitysuite.automation_stopped": "Automation stopped",
   "hud.utilitysuite.clean_screen": "Clean-Screen",

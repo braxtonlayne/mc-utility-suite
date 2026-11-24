@@ -42,7 +42,22 @@ final class ElytraDriver {
 
     enum Result { RUNNING, LANDED, FAILED }
 
-    private enum Phase { TAKEOFF, CRUISE, SEARCH, APPROACH, BOUNCE }
+    private enum Phase {
+        TAKEOFF("ELYTRA_TAKEOFF"), CRUISE("ELYTRA_CRUISE"), SEARCH("ELYTRA_SEARCH"), APPROACH("ELYTRA_APPROACH"),
+        BOUNCE("BOUNCE");
+
+        /** Constant status label (diagnostics HUD). */
+        final String label;
+
+        Phase(String label) {
+            this.label = label;
+        }
+    }
+
+    /** Constant label of the current phase (diagnostics HUD); allocation free. */
+    String phaseLabel() {
+        return phase.label;
+    }
 
     static final double GLIDE_RATIO = 8.0;
     private static final int BOOST_TICKS = 20;

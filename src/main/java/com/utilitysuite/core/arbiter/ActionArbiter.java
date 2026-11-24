@@ -1,9 +1,12 @@
 package com.utilitysuite.core.arbiter;
 
+import com.utilitysuite.core.api.ArbiterEventKind;
 import com.utilitysuite.core.api.ControlChannel;
 import com.utilitysuite.core.api.ControlLease;
 import com.utilitysuite.core.api.ControlPriority;
 import com.utilitysuite.core.api.IActionArbiter;
+import com.utilitysuite.core.api.IArbiterHistory;
+import com.utilitysuite.core.api.LeaseDenial;
 import com.utilitysuite.core.api.IInputSmoother;
 import com.utilitysuite.core.api.IModule;
 import com.utilitysuite.core.api.IModuleRegistry;
@@ -53,7 +56,9 @@ import java.util.function.LongSupplier;
  *       and ends with it for the same reason (manual override, preemption, release, timeout, Stop-All, world unload)
  *       through {@link SharedHolder#onSharedEnded}.</li>
  * </ul>
- * The steady-state {@link #tick()} path allocates nothing.
+ * Every grant, preemption (manual overrides included), denial and end is recorded in a fixed ring buffer
+ * ({@link #history()}, {@link ArbiterHistory}) without allocating. The shared and assist grants are not leases and are
+ * not recorded; a lease they preempt is. The steady-state {@link #tick()} path allocates nothing.
  */
 public final class ActionArbiter implements IActionArbiter {
 
@@ -91,6 +96,9 @@ public final class ActionArbiter implements IActionArbiter {
     private String assistModule;
     private Lease assistLease;
 
+    /** Last grants, preemptions, denials and ends (5.4); fixed arrays, written allocation free. */
+    private final ArbiterHistory history = new ArbiterHistory(IArbiterHistory.CAPACITY, true);
+
     private int manualOverridePauseTicks = 20;
     private long nextLeaseId = 1;
     private long tickCounter;
@@ -124,10 +132,16 @@ public final class ActionArbiter implements IActionArbiter {
 
     @Override
     public Optional<ControlLease> request(LeaseRequest request) {
+        String moduleId = request.moduleId();
         if (stopped) {
+            int all = 0;
+            for (ControlChannel c : request.channels()) {
+                all |= 1 << c.ordinal();
+            }
+            history.record(tickCounter, ArbiterEventKind.DENIED, moduleId, all, null, LeaseDenial.AUTOMATION_STOPPED,
+                    BY_STOP_ALL);
             return Optional.empty();
         }
-        String moduleId = request.moduleId();
         ControlPriority priority = request.priority();
         boolean emergency = priority.level() >= ControlPriority.EMERGENCY.level();
         int mask = 0;
@@ -135,14 +149,20 @@ public final class ActionArbiter implements IActionArbiter {
             int i = c.ordinal();
             mask |= 1 << i;
             if (pauseTicks[i] > 0 && !emergency) {
+                history.record(tickCounter, ArbiterEventKind.DENIED, moduleId, 1 << i, null,
+                        LeaseDenial.OVERRIDE_PAUSE, BY_MANUAL);
                 return Optional.empty();
             }
             Lease h = holders[i];
             if (h != null && !h.moduleId().equals(moduleId) && !priority.outranks(h.priority())) {
+                history.record(tickCounter, ArbiterEventKind.DENIED, moduleId, 1 << i, null,
+                        LeaseDenial.HIGHER_HOLDER, h.moduleId());
                 return Optional.empty();
             }
             if (i == MOVEMENT && shared != null && !sharedModule.equals(moduleId)
                     && !emergency && !priority.outranks(sharedPriority)) {
+                history.record(tickCounter, ArbiterEventKind.DENIED, moduleId, 1 << i, null,
+                        LeaseDenial.SHARED_GRANT, sharedModule);
                 return Optional.empty();
             }
         }
@@ -190,6 +210,7 @@ public final class ActionArbiter implements IActionArbiter {
                 holders[i] = lease;
             }
         }
+        history.record(tickCounter, ArbiterEventKind.GRANTED, moduleId, lease.mask, null, null, "");
         post(new SuiteEvent.LeaseGranted(clock.getAsLong(), lease.id(), moduleId, priority));
         for (int v = 0; v < victimCount; v++) {
             Lease victim = victims[v];
@@ -215,6 +236,12 @@ public final class ActionArbiter implements IActionArbiter {
     @Override
     public Optional<ControlLease> holder(ControlChannel channel) {
         return Optional.ofNullable(holders[channel.ordinal()]);
+    }
+
+    /** Lease history (5.4): the same instance every call, allocation free. */
+    @Override
+    public IArbiterHistory history() {
+        return history;
     }
 
     /** Allocation-free variant of {@link #holder}: the holder or null. */
@@ -495,6 +522,7 @@ public final class ActionArbiter implements IActionArbiter {
     @Override
     public void tick() {
         tickCounter++;
+        history.setNow(tickCounter);
         boolean pauseEnded = false;
         for (int i = 0; i < CHANNELS.length; i++) {
             if (pauseTicks[i] > 0 && --pauseTicks[i] == 0) {
@@ -552,6 +580,10 @@ public final class ActionArbiter implements IActionArbiter {
         if (input != null) {
             input.releaseFor(lease);
         }
+        history.record(tickCounter,
+                reason == LeaseEndReason.PREEMPTED || reason == LeaseEndReason.MANUAL_OVERRIDE
+                        ? ArbiterEventKind.PREEMPTED : ArbiterEventKind.ENDED,
+                lease.moduleId(), lease.mask, reason, null, by);
         if (lease == assistLease) {
             // the assist grant rode along with this lease: it ends with it, for the same reason
             endAssistInvoluntary(reason, by);

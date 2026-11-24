@@ -51,4 +51,13 @@ public interface IActionArbiter {
 
     /** Advances timeouts and override pauses. Called once per client tick by the core. */
     void tick();
+
+    /**
+     * The last {@link IArbiterHistory#CAPACITY} lease grants, preemptions, denials and ends (newest first), plus the
+     * last event that stopped automation ({@link IArbiterHistory#lastStop}). Read-only and allocation free; the same
+     * instance every call. {@link IArbiterHistory#EMPTY} for arbiters that do not record.
+     */
+    default IArbiterHistory history() {
+        return IArbiterHistory.EMPTY;
+    }
 }

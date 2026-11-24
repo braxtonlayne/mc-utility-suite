@@ -2473,6 +2473,16 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         return state;
     }
 
+    /**
+     * {@code ENGAGED} or {@code DISENGAGING} (the state's constant name); null while dormant. Not gated on the toggle:
+     * the autopilot's hand-over can engage it while it is off.
+     */
+    @Override
+    public String phase() {
+        CombatState s = state;
+        return s != CombatState.DORMANT ? s.name() : null;
+    }
+
     /** Current target entity id, or -1. */
     public int targetId() {
         return targetId;
