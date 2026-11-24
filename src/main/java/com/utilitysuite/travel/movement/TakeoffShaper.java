@@ -253,7 +253,7 @@ public final class TakeoffShaper {
         }
         double maxFall = 0.0;
         boolean airborne = !body.onGround;
-        double targetTop = search.targetY() + 1;
+        double targetTop = search.targetTop(); // the real top: a bottom slab's is half a block below the cube's
         for (int t = 0; t < AIR_TICKS; t++) {
             if (body.onGround && airborne) {
                 break;
@@ -294,10 +294,9 @@ public final class TakeoffShaper {
             return -miss;
         }
         double lo = MovementPhysics.HALF_WIDTH - 1.0e-3;
-        int tx = search.targetX();
-        int tz = search.targetZ();
-        double mx = Math.min(x - (tx - lo), (tx + 1 + lo) - x);
-        double mz = Math.min(z - (tz - lo), (tz + 1 + lo) - z);
+        // against the target's real top face (a post or pane is far narrower than its cell), as missDistance does
+        double mx = Math.min(x - (search.targetTopMinX() - lo), (search.targetTopMaxX() + lo) - x);
+        double mz = Math.min(z - (search.targetTopMinZ() - lo), (search.targetTopMaxZ() + lo) - z);
         return Math.min(mx, mz);
     }
 

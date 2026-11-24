@@ -84,6 +84,23 @@ public final class JumpSearch {
         return topY;
     }
 
+    /** Horizontal extent of the target's top face, world coordinates (the cube's unless {@link #setTargetTop}). */
+    public double targetTopMinX() {
+        return topX0;
+    }
+
+    public double targetTopMinZ() {
+        return topZ0;
+    }
+
+    public double targetTopMaxX() {
+        return topX1;
+    }
+
+    public double targetTopMaxZ() {
+        return topZ1;
+    }
+
     public void clearTarget() {
         hasTarget = false;
     }

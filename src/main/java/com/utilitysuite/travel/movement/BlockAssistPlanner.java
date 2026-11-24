@@ -386,13 +386,57 @@ public final class BlockAssistPlanner {
         int from;
         int tick;
 
+        /** The placed block occupies this cell at the current rollout tick. */
+        private boolean placed(int x, int y, int z) {
+            return extra != Long.MIN_VALUE && tick >= from && Packed.x(extra) == x && Packed.y(extra) == y
+                    && Packed.z(extra) == z;
+        }
+
         @Override
         public boolean solid(int x, int y, int z) {
-            if (extra != Long.MIN_VALUE && tick >= from && Packed.x(extra) == x && Packed.y(extra) == y
-                    && Packed.z(extra) == z) {
-                return true;
+            return placed(x, y, z) || base.solid(x, y, z);
+        }
+
+        @Override
+        public boolean fullBlock(int x, int y, int z) {
+            return placed(x, y, z) || base.fullBlock(x, y, z);
+        }
+
+        // exact shapes: the rollout must see the base grid's real boxes (as the trajectory trace does); the placed
+        // block is a plain full cube
+
+        @Override
+        public boolean shaped() {
+            return base.shaped();
+        }
+
+        @Override
+        public int boxCount(int x, int y, int z) {
+            return placed(x, y, z) ? 1 : base.boxCount(x, y, z);
+        }
+
+        @Override
+        public void box(int x, int y, int z, int i, float[] out, int off) {
+            if (placed(x, y, z)) {
+                out[off] = 0f;
+                out[off + 1] = 0f;
+                out[off + 2] = 0f;
+                out[off + 3] = 1f;
+                out[off + 4] = 1f;
+                out[off + 5] = 1f;
+                return;
             }
-            return base.solid(x, y, z);
+            base.box(x, y, z, i, out, off);
+        }
+
+        @Override
+        public byte surface(int x, int y, int z) {
+            return placed(x, y, z) ? MovementPhysics.SURFACE_NORMAL : base.surface(x, y, z);
+        }
+
+        @Override
+        public float slipperiness(int x, int y, int z) {
+            return placed(x, y, z) ? (float) MovementPhysics.DEFAULT_SLIPPERINESS : base.slipperiness(x, y, z);
         }
     }
 
