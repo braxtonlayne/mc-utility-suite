@@ -32,8 +32,14 @@ import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
 
+import com.utilitysuite.jobs.schematic.plan.RestockCollector;
+import com.utilitysuite.jobs.schematic.plan.SupportFaceRanker;
+import net.minecraft.core.registries.BuiltInRegistries;
+
 import java.util.BitSet;
 import java.util.EnumSet;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -118,6 +124,42 @@ public final class BuildAssist implements LeaseListener {
     private boolean stalledLastTick;
     private LocalPlayer walkPlayer;
 
+    // Support face choice: valid faces ranked by how close they sit to the current look direction.
+    private final SupportFaceRanker faceRanker = new SupportFaceRanker();
+
+    // Material restock. Per-tick "item on hand" cache by palette index (last slot: scaffold), stamped with the tick.
+    /** Placements per restock round are capped at this many stacks of each item (inventory room). */
+    static final int RESTOCK_STACKS_PER_ITEM = 4;
+    /** Plan steps looked at when collecting the next missing items (once per restock request, not per tick). */
+    private static final int RESTOCK_SCAN_STEPS = 16384;
+    /** After "nothing stored", ask again only this much later (the storage index may learn new chests). */
+    private static final int RESTOCK_RETRY_TICKS = 200;
+    private int[] haveStamp = new int[0];
+    private boolean[] haveItem = new boolean[0];
+    private final RestockCollector restock = new RestockCollector();
+    private RestockHook restockHook;
+    private boolean sweepMissing;
+    private boolean sweepUsable;
+    private boolean restockQueued;
+    private int restockRetryAt;
+    private String restockNotice;
+
+    /**
+     * Called once when the build has run out of materials: nothing in the look-ahead window is placeable with what the
+     * inventory holds, and some of it needs items the inventory lacks. Client thread, from inside {@link #tick}: the
+     * hook must not stop Build Assist synchronously (defer the hand-over to the next job-status poll).
+     */
+    public interface RestockHook {
+        /**
+         * @param wanted     item id to count, the next missing palette items in plan order (at most
+         *                   {@link RestockCollector#DEFAULT_CAPACITY})
+         * @param fromPacked the player's block position, packed
+         * @param dimension  the player's dimension id
+         * @return true when a fetch round was queued; false when nothing wanted is stored nearby
+         */
+        boolean requestRestock(Map<String, Integer> wanted, long fromPacked, String dimension);
+    }
+
     public BuildAssist(String ownerId) {
         this(ownerId, ownerId + ".walk");
     }
@@ -160,6 +202,16 @@ public final class BuildAssist implements LeaseListener {
         this.swapSlot = swapSlot;
     }
 
+    /** Hook asked to fetch materials when the build runs out (null: just stall, as before). */
+    public void setRestockHook(RestockHook hook) {
+        restockHook = hook;
+    }
+
+    /** Card notice about restocking (out of materials with nothing stored, or a fetch queued), or null. */
+    public String restockNotice() {
+        return restockNotice;
+    }
+
     /** Installs (or refreshes) the plan. Keeps the progress cursor when the plan belongs to the same scan. */
     public void install(BuildPlan plan, PlacementScan scan, McWorldProbe probe, Item[] items, Item scaffoldItem) {
         boolean sameProject = this.scan == scan;
@@ -174,9 +226,22 @@ public final class BuildAssist implements LeaseListener {
             placements = 0;
             blockedCells.clear(); // cell indices belong to the scan; a refreshed plan for the same scan keeps them
             walker.reset();
+            resetRestock();
         }
+        if (haveStamp.length != items.length + 1) {
+            haveStamp = new int[items.length + 1];
+            haveItem = new boolean[items.length + 1];
+        }
+        java.util.Arrays.fill(haveStamp, Integer.MIN_VALUE);
+        startSweep();
         stalledLastTick = false;
         clearTarget();
+    }
+
+    private void resetRestock() {
+        restockQueued = false;
+        restockRetryAt = 0;
+        restockNotice = null;
     }
 
     public boolean hasPlan() {
@@ -207,6 +272,7 @@ public final class BuildAssist implements LeaseListener {
         probe = null;
         items = null;
         pausedByPreemption = false;
+        resetRestock();
         clearTarget();
     }
 
@@ -331,32 +397,44 @@ public final class BuildAssist implements LeaseListener {
         }
         if (searchPos < firstOpen || searchPos >= Math.min(size, firstOpen + LOOKAHEAD)) {
             searchPos = firstOpen;
+            startSweep();
         }
         int end = Math.min(size, firstOpen + LOOKAHEAD);
+        Inventory inv = player.getInventory();
         for (int n = 0; n < SEARCH_PER_TICK && searchPos < end; n++, searchPos++) {
             int step = searchPos;
             byte kind = plan.kind(step);
             if (kind == BuildPlan.REMOVE_SCAFFOLD && step != firstOpen) {
                 continue; // scaffolds come down only after everything before them is done
             }
-            if (blockedCells.get(plan.cell(step)) || isStepDone(step)) {
+            int cell = plan.cell(step);
+            if (isStepDone(step)) { // also sets the target coordinates
                 continue;
             }
-            int cell = plan.cell(step);
-            if (!setTargetCoords(cell) || !withinReach(player, reach)) {
+            if (kind != BuildPlan.REMOVE_SCAFFOLD) {
+                int key = itemKey(kind, cell);
+                if (key < 0) {
+                    continue; // no item for this block
+                }
+                if (!hasItem(inv, key)) {
+                    sweepMissing = true;
+                    continue;
+                }
+                if (!sweepUsable && scan.status(cell) != PlacementStatus.WRONG && supportMask() != 0) {
+                    sweepUsable = true; // something is placeable with what is on hand (maybe after a walk)
+                }
+            } else {
+                sweepUsable = true;
+            }
+            if (blockedCells.get(cell) || !withinReach(player, reach)) {
                 continue;
             }
             if (kind != BuildPlan.REMOVE_SCAFFOLD) {
                 if (scan.status(cell) == PlacementStatus.WRONG || intersectsPlayer(player)) {
                     continue;
                 }
-                int face = findSupportFace();
+                int face = findSupportFace(player);
                 if (face < 0) {
-                    continue;
-                }
-                Item need = kind == BuildPlan.SCAFFOLD ? scaffoldItem
-                        : items[scan.volume().paletteIndex(cell)];
-                if (need == null || findItem(player.getInventory(), need, 0, 36) < 0) {
                     continue;
                 }
                 targetFace = face;
@@ -369,9 +447,108 @@ public final class BuildAssist implements LeaseListener {
             return true;
         }
         if (searchPos >= end) {
+            endSweep(player);
             searchPos = firstOpen;
+            startSweep();
         }
         return false;
+    }
+
+    // ---- material restock -----------------------------------------------------------------------------------------
+
+    private void startSweep() {
+        sweepMissing = false;
+        sweepUsable = false;
+    }
+
+    /** End of a pass over the look-ahead window: out of materials when only steps without items were left. */
+    private void endSweep(LocalPlayer player) {
+        if (sweepUsable || !sweepMissing) {
+            if (sweepUsable && !restockQueued) {
+                restockNotice = null; // materials on hand again
+            }
+            return;
+        }
+        if (restockQueued || tick < restockRetryAt) {
+            return;
+        }
+        restockRetryAt = tick + RESTOCK_RETRY_TICKS;
+        Map<String, Integer> wanted = collectRestock(player.getInventory());
+        if (wanted.isEmpty()) {
+            return;
+        }
+        RestockHook hook = restockHook;
+        boolean queued = hook != null && hook.requestRestock(wanted, player.blockPosition().asLong(),
+                player.level().dimension().location().toString());
+        if (queued) {
+            restockQueued = true;
+            restockNotice = "Out of materials: fetching " + wanted.size() + " item type(s) from storage";
+        } else {
+            restockNotice = "Out of " + String.join(", ", wanted.keySet()) + ": none in remembered storage nearby";
+        }
+    }
+
+    /**
+     * The next missing palette items (plan order, at most {@link RestockCollector#DEFAULT_CAPACITY}) with the count
+     * the remaining steps need, capped to {@link #RESTOCK_STACKS_PER_ITEM} stacks. Runs once per restock request.
+     */
+    private Map<String, Integer> collectRestock(Inventory inv) {
+        restock.reset();
+        int end = (int) Math.min(plan.size(), (long) firstOpen + RESTOCK_SCAN_STEPS);
+        for (int step = firstOpen; step < end; step++) {
+            byte kind = plan.kind(step);
+            if (kind == BuildPlan.REMOVE_SCAFFOLD) {
+                continue;
+            }
+            int cell = plan.cell(step);
+            int key = itemKey(kind, cell);
+            if (key < 0 || hasItem(inv, key)) {
+                continue;
+            }
+            if (kind == BuildPlan.PLACE) {
+                byte s = scan.status(cell);
+                if (!PlacementStatus.needsPlacing(s) || s == PlacementStatus.WRONG) {
+                    continue;
+                }
+            } else {
+                setTargetCoords(cell);
+                int w = probe.probe(targetX, targetY, targetZ, -1);
+                if (w != PlacementStatus.W_EMPTY && w != PlacementStatus.W_FLUID) {
+                    continue;
+                }
+            }
+            restock.add(key);
+        }
+        clearTarget();
+        Map<String, Integer> out = new LinkedHashMap<>();
+        for (int i = 0; i < restock.size(); i++) {
+            Item item = itemOf(restock.key(i));
+            int cap = Math.max(1, item.getDefaultMaxStackSize()) * RESTOCK_STACKS_PER_ITEM;
+            out.merge(BuiltInRegistries.ITEM.getKey(item).toString(), Math.min(restock.count(i), cap), Integer::sum);
+        }
+        return out;
+    }
+
+    /** Cache key of the item a step needs: its palette index, {@code items.length} for scaffold, -1 for none. */
+    private int itemKey(byte kind, int cell) {
+        if (kind == BuildPlan.SCAFFOLD) {
+            return scaffoldItem == null ? -1 : items.length;
+        }
+        int p = scan.volume().paletteIndex(cell);
+        return p < 0 || p >= items.length || items[p] == null ? -1 : p;
+    }
+
+    private Item itemOf(int key) {
+        return key == items.length ? scaffoldItem : items[key];
+    }
+
+    /** Whether the inventory holds the item; looked up at most once per item per tick (allocation-free). */
+    private boolean hasItem(Inventory inv, int key) {
+        if (haveStamp[key] != tick) {
+            haveStamp[key] = tick;
+            haveItem[key] = findItem(inv, itemOf(key), 0, 36) >= 0;
+        }
+        return haveItem[key];
     }
 
     private boolean isStepDone(int step) {
@@ -408,16 +585,38 @@ public final class BuildAssist implements LeaseListener {
         return true;
     }
 
-    /** First neighbor with a solid block to click against, as a direction index from the target, or -1. */
-    private int findSupportFace() {
+    /** Bit {@code d} set when the neighbour in direction {@code d} of the target is solid to click against. */
+    private int supportMask() {
+        int mask = 0;
         for (int d = 0; d < DIRS.length; d++) {
             Direction dir = DIRS[d];
             int w = probe.probe(targetX + dir.getStepX(), targetY + dir.getStepY(), targetZ + dir.getStepZ(), -1);
             if (w == PlacementStatus.W_OTHER) {
-                return d;
+                mask |= 1 << d;
             }
         }
-        return -1;
+        return mask;
+    }
+
+    /**
+     * Support face to click, as a direction index from the target, or -1: of the solid neighbours, the one whose face
+     * lies closest to the current look direction, so the camera turns least. Line of sight is checked per face when
+     * aiming ({@link #chooseVisibleAim}), in the same order.
+     */
+    private int findSupportFace(LocalPlayer p) {
+        int mask = supportMask();
+        if (mask == 0) {
+            return -1;
+        }
+        rankFaces(p, mask);
+        return faceRanker.best();
+    }
+
+    private int rankFaces(LocalPlayer p, int mask) {
+        float yaw = p.getYRot(), pitch = p.getXRot();
+        return faceRanker.rank(targetX, targetY, targetZ, p.getX(), p.getEyeY(), p.getZ(),
+                SupportFaceRanker.lookX(yaw, pitch), SupportFaceRanker.lookY(pitch),
+                SupportFaceRanker.lookZ(yaw, pitch), mask);
     }
 
     private boolean withinReach(LocalPlayer p, double reach) {
@@ -524,18 +723,13 @@ public final class BuildAssist implements LeaseListener {
         Level level = player.level();
         Vec3 eye = player.getEyePosition();
         double r2 = reach * reach;
-        for (int pass = 0; pass < DIRS.length; pass++) {
-            // try the planned face first, then every other solid neighbour
-            int d = pass == 0 ? targetFace : (pass <= targetFace ? pass - 1 : pass);
-            if (d < 0) {
-                continue;
-            }
+        // Solid neighbours, closest to the look direction first: the first one with a clear line of sight wins.
+        int faces = rankFaces(player, supportMask());
+        for (int pass = 0; pass < faces; pass++) {
+            int d = faceRanker.face(pass);
             Direction toSupport = DIRS[d];
             int sx = targetX + toSupport.getStepX(), sy = targetY + toSupport.getStepY();
             int sz = targetZ + toSupport.getStepZ();
-            if (probe.probe(sx, sy, sz, -1) != PlacementStatus.W_OTHER) {
-                continue;
-            }
             Direction clicked = toSupport.getOpposite();
             double cx = targetX + 0.5 + toSupport.getStepX() * 0.5;
             double cy = targetY + 0.5 + toSupport.getStepY() * 0.5;
@@ -716,7 +910,7 @@ public final class BuildAssist implements LeaseListener {
                 if (kind == BuildPlan.REMOVE_SCAFFOLD || skip.get(cell) || isStepDone(step)) {
                     continue; // isStepDone also sets the target coordinates
                 }
-                if (scan.status(cell) == PlacementStatus.WRONG || findSupportFace() < 0) {
+                if (scan.status(cell) == PlacementStatus.WRONG || supportMask() == 0) {
                     continue;
                 }
                 Item need = kind == BuildPlan.SCAFFOLD ? scaffoldItem : items[scan.volume().paletteIndex(cell)];

@@ -44,6 +44,7 @@ public final class SchematicToolkit implements IModule, IConfigurable {
     private SchematicSettings settings = SchematicSettings.DEFAULTS;
     private SchematicProject project;
     private SchematicAnalysis installed;
+    private String shownRestockNote;
 
     public SchematicToolkit(SchematicLibrary library) {
         this.library = library;
@@ -106,7 +107,22 @@ public final class SchematicToolkit implements IModule, IConfigurable {
             setNote(p, WALKING_NOTE, walk == ReachWalker.Phase.WALKING);
             setNote(p, WALK_PAUSED_NOTE, walk == ReachWalker.Phase.PAUSED);
             setNote(p, WALK_UNAVAILABLE_NOTE, walk == ReachWalker.Phase.UNAVAILABLE);
+            String restock = assist.restockNotice();
+            if (restock != shownRestockNote) { // the assist builds a new string only when the notice changes
+                if (shownRestockNote != null) {
+                    p.removeNote(shownRestockNote);
+                }
+                if (restock != null) {
+                    p.addNote(restock);
+                }
+                shownRestockNote = restock;
+            }
         }
+    }
+
+    /** Hook Build Assist calls when it runs out of materials (set by the goal-engine bridge). */
+    void setRestockHook(BuildAssist.RestockHook hook) {
+        assist.setRestockHook(hook);
     }
 
     private static void setNote(SchematicProject p, String note, boolean on) {
@@ -203,6 +219,7 @@ public final class SchematicToolkit implements IModule, IConfigurable {
         }
         assist.stop();
         installed = null;
+        shownRestockNote = null;
         String path = request.schematicPath();
         String name = path.substring(Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\')) + 1);
         project = new SchematicProject(request, name, ax, ay, az, library);
