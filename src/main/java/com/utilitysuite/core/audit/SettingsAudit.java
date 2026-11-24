@@ -97,7 +97,10 @@ public final class SettingsAudit {
      * movement_assist: switching the intent assist off clears the target, which counts one missed-target tick.
      */
     private static final Map<String, Set<String>> RUNTIME_PATHS = Map.of(
-            "movement_assist", Set.of("brain.rawMissTicks"));
+            "movement_assist", Set.of("brain.rawMissTicks"),
+            // shrinking breadcrumb_capacity keeps only the newest points: the dropped ones cannot come back
+            // (trail.ring#len still shows the capacity change and must come back)
+            "waypoints", Set.of("trail.ring#hash", "trail.ages#hash", "trail.head", "trail.size"));
 
     static List<Class<?>> staticHolders(String moduleId) {
         List<Class<?>> out = new ArrayList<>();
