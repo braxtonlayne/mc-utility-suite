@@ -138,6 +138,7 @@ public final class CoreBootstrap {
         bus.addListener((ScreenEvent.Opening e) -> sharedControl.onScreenOpening());
         bus.addListener(CoreBootstrap::onLogin);
         bus.addListener(CoreBootstrap::onLogout);
+        bus.addListener(CoreBootstrap::onPlayerSwap);
         bus.addListener(manualInput::onKey);
         bus.addListener(manualInput::onMouseButton);
         bus.addListener(manualInput::onScroll);
@@ -260,6 +261,19 @@ public final class CoreBootstrap {
         if (modState.hasActiveProfile()) {
             modState.unloadProfile();
         }
+    }
+
+    /**
+     * Respawn and dimension change: {@code ClientPacketListener.handleRespawn} builds a new {@code LocalPlayer} for both
+     * and posts Clone (no LoggingOut/LoggingIn), on the client thread, once {@code mc.player} is the new one. Key
+     * mappings and the smoother's state are not per player, so a held key, a silent rotation or a reported sneak pose
+     * would act on the new player. The world and the profile stay, so modules get no {@code onWorldUnload}; the
+     * arbiter ends the leases (holders are notified) and releases all simulated input. The server set the new
+     * player's head angle itself, so a silent rotation's eased return is dropped instead of played on the new player.
+     */
+    private static void onPlayerSwap(ClientPlayerNetworkEvent.Clone event) {
+        arbiter.resetForPlayerSwap();
+        smoother.dropSilentReturn();
     }
 
     static String currentProfileId(Minecraft mc) {

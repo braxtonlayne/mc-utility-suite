@@ -195,4 +195,58 @@ class ActionArbiterTest {
         long bytes = AllocationProbe.measure(200_000, arbiter::tick);
         assertTrue(bytes < 2048, "arbiter.tick allocated " + bytes + " bytes over 200k ticks");
     }
+
+    @Test
+    void playerSwapEndsLeasesAndReleasesHeldInput() {
+        Recorder r = new Recorder();
+        ControlLease l = grant("travel", ControlPriority.TRAVEL, r, MOVEMENT, CAMERA);
+        smoother.setKeyHeld(l, SimKey.FORWARD, true);
+        smoother.setKeyHeld(l, SimKey.SNEAK, true);
+        assertTrue(smoother.setRotationTarget(l, com.utilitysuite.core.api.RotationTarget.silent(90f, 10f)));
+        assertTrue(smoother.setServerPose(l, Boolean.TRUE, null));
+        smoother.postTick();
+        assertTrue(backend.isDown(SimKey.FORWARD));
+        assertTrue(smoother.isSilentRotationActive());
+        assertTrue(com.utilitysuite.core.input.ServerPose.sneak(false));
+
+        arbiter.resetForPlayerSwap(); // respawn or dimension change: a new LocalPlayer, same keys and smoother
+
+        assertFalse(l.isActive());
+        assertEquals(List.of("preempted:TIMED_OUT:player_swap"), r.log, "the holder is told, so it drops its caches");
+        assertFalse(backend.anyDown(), "no simulated key survives into the new player");
+        assertFalse(smoother.isSilentRotationActive());
+        assertFalse(com.utilitysuite.core.input.ServerPose.sneak(false), "reported sneak pose ended");
+        // the core then drops the eased return too: the new player's packets carry the camera angle at once
+        assertTrue(smoother.isSilentReturning());
+        smoother.dropSilentReturn();
+        assertFalse(smoother.isSilentReturning());
+        assertFalse(com.utilitysuite.core.input.SilentRotation.isActive(), "no stale silent angle in packets");
+        smoother.postTick();
+        assertFalse(com.utilitysuite.core.input.SilentRotation.isActive());
+        smoother.setKeyHeld(l, SimKey.FORWARD, true);
+        smoother.preTick();
+        assertFalse(backend.anyDown(), "the ended lease drives nothing");
+        // the world goes on: nothing fires onResumable for the ended lease, and control can be requested again
+        for (int i = 0; i < 5; i++) {
+            arbiter.tick();
+        }
+        assertEquals(1, r.log.size());
+        assertTrue(arbiter.request(LeaseRequest.of("travel", ControlPriority.TRAVEL, r, MOVEMENT)).isPresent());
+    }
+
+    @Test
+    void playerSwapKeepsStopAllAndOffersFreedChannelsNextTick() {
+        Recorder low = new Recorder();
+        grant("low", ControlPriority.IDLE, low, HOTBAR);
+        grant("high", ControlPriority.GOAL, null, HOTBAR); // "low" is remembered
+        arbiter.resetForPlayerSwap();
+        assertEquals(List.of("preempted:PREEMPTED:high"), low.log, "no resume callback inside the swap itself");
+        arbiter.tick();
+        assertEquals(List.of("preempted:PREEMPTED:high", "resumable"), low.log);
+
+        arbiter.stopAll("test");
+        arbiter.resetForPlayerSwap();
+        assertTrue(arbiter.isAutomationStopped(), "a respawn must not undo the user's Stop-All");
+        assertTrue(arbiter.request(LeaseRequest.of("e", ControlPriority.EMERGENCY, null, CAMERA)).isEmpty());
+    }
 }

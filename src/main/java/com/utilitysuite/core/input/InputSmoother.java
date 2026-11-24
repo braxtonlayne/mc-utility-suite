@@ -364,6 +364,16 @@ public final class InputSmoother implements IInputSmoother, IContainerClicker {
         return silentReturning;
     }
 
+    /**
+     * Ends a SILENT rotation's eased return at once: packets carry the real camera angle again. Only for a replaced
+     * local player (respawn / dimension change, after {@link #releaseAll()}): the server placed the new player's head
+     * itself, so easing from the old player's silent angle would send a stale angle, not avoid a snap.
+     */
+    public void dropSilentReturn() {
+        silentReturning = false;
+        SilentRotation.clear();
+    }
+
     /** True while packets carry silent angles (the rendered camera belongs to the user). */
     public boolean isSilentRotationActive() {
         return silentActive;

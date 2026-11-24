@@ -60,6 +60,7 @@ public final class ActionArbiter implements IActionArbiter {
     public static final String BY_MANUAL = "manual";
     public static final String BY_STOP_ALL = "stop_all";
     public static final String BY_TIMEOUT = "timeout";
+    public static final String BY_PLAYER_SWAP = "player_swap";
 
     /** Remembered (suspended) leases are capped; the oldest is dropped beyond this. */
     private static final int MAX_SUSPENDED = 32;
@@ -94,6 +95,8 @@ public final class ActionArbiter implements IActionArbiter {
     private long nextLeaseId = 1;
     private long tickCounter;
     private boolean stopped;
+    /** A player swap ended leases outside {@link #tick()}: the next tick offers the freed channels for resume. */
+    private boolean resumeCheckPending;
     private boolean inResumeCheck;
     private boolean resumeCheckAgain;
 
@@ -460,6 +463,31 @@ public final class ActionArbiter implements IActionArbiter {
             input.releaseAll();
         }
         stopped = false;
+        resumeCheckPending = false;
+    }
+
+    /**
+     * The server replaced the local player in the same session (respawn, dimension change, return from the End): the
+     * old player's held keys, silent rotation and sneak/sprint pose must not carry over to the new one. Every lease and
+     * the shared grant end involuntarily ({@link LeaseEndReason#TIMED_OUT} by {@link #BY_PLAYER_SWAP}, so holders are
+     * told and drop their key caches; like a timeout, the ended leases get no {@code onResumable} and their modules
+     * re-request when they still want control) and all simulated input is released. Unlike
+     * {@link #resetForWorldUnload()} the world goes on: the Stop-All state, manual-override pauses and remembered
+     * leases stay, and the remembered ones are offered the freed channels on the next tick. Not part of
+     * {@link IActionArbiter}; called by the core.
+     */
+    public void resetForPlayerSwap() {
+        endSharedInvoluntary(LeaseEndReason.TIMED_OUT, BY_PLAYER_SWAP);
+        for (int i = 0; i < CHANNELS.length; i++) {
+            Lease h = holders[i];
+            if (h != null) {
+                endLease(h, LeaseEndReason.TIMED_OUT, BY_PLAYER_SWAP);
+                resumeCheckPending = true;
+            }
+        }
+        if (input != null) {
+            input.releaseAll();
+        }
     }
 
     // ---- tick -------------------------------------------------------------------------------------------------------
@@ -484,6 +512,10 @@ public final class ActionArbiter implements IActionArbiter {
                 endLease(h, LeaseEndReason.TIMED_OUT, BY_TIMEOUT);
                 leaseEnded = true;
             }
+        }
+        if (resumeCheckPending) {
+            resumeCheckPending = false;
+            leaseEnded = true;
         }
         if ((pauseEnded || leaseEnded) && !suspended.isEmpty()) {
             checkResumable();

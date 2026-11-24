@@ -14,8 +14,10 @@ import java.util.concurrent.Executor;
  * Runs {@link OreSimulator} for chunks around the player on a background executor and keeps the published immutable
  * {@link ChunkOreSnapshot}s. Game-agnostic: the caller supplies terrain/biome oracles captured on the client thread.
  * <p>
- * Threading: {@link #configure}, {@link #request}, {@link #drainCompleted} and {@link #evictOutside} are client-thread
- * calls; {@link #get} and {@link #snapshotsNear} may be called from any thread (guarded by the cache lock).
+ * Threading: {@link #configure}, {@link #isKnownOrPending}, {@link #request}, {@link #drainCompleted} and
+ * {@link #evictOutside} are client-thread calls; {@link #get} and {@link #snapshotsNear} may be called from any thread
+ * (guarded by the cache lock). The worker only reads {@code generation}, runs {@link #compute} and appends to the
+ * concurrent {@code completed} queue.
  */
 public final class OreSimService {
 
@@ -35,6 +37,11 @@ public final class OreSimService {
     private final ThreadLocal<OreSimulator> simulators = ThreadLocal.withInitial(OreSimulator::new);
     private final Object lock = new Object();
     private final Long2ObjectOpenHashMap<ChunkOreSnapshot> cache = new Long2ObjectOpenHashMap<>();
+    /**
+     * Chunks queued or being simulated for the current generation. Client thread only (written by {@link #configure},
+     * {@link #request} and {@link #drainCompleted}, read by {@link #isKnownOrPending}); the worker never touches it,
+     * so it is deliberately not under {@link #lock}.
+     */
     private final LongOpenHashSet pending = new LongOpenHashSet();
     private final ConcurrentLinkedQueue<ChunkOreSnapshot> completed = new ConcurrentLinkedQueue<>();
     private final LongArrayList evictScratch = new LongArrayList();
@@ -118,11 +125,13 @@ public final class OreSimService {
             if (s == null) {
                 break;
             }
-            long key = BlockPosPacking.chunk(s.chunkX, s.chunkZ);
-            pending.remove(key);
             if (s.generation != gen) {
+                // Finished after a reconfigure: configure() already emptied pending, and this key may be pending again
+                // for the current generation, so it must stay.
                 continue;
             }
+            long key = BlockPosPacking.chunk(s.chunkX, s.chunkZ);
+            pending.remove(key);
             synchronized (lock) {
                 cache.put(key, s);
             }
