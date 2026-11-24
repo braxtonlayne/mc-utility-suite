@@ -21,8 +21,10 @@ public final class StructureSpread {
             Map.entry("igloo", new Placement(32, 8, 14357618, false)),
             Map.entry("jungle_temple", new Placement(32, 8, 14357619, false)),
             Map.entry("swamp_hut", new Placement(32, 8, 14357620, false)),
+            Map.entry("pillager_outpost", new Placement(32, 8, 165745296, false)),
             Map.entry("ancient_city", new Placement(24, 8, 20083232, false)),
             Map.entry("ocean_monument", new Placement(32, 5, 10387313, true)),
+            Map.entry("end_city", new Placement(20, 11, 10387313, true)),
             Map.entry("woodland_mansion", new Placement(80, 20, 10387319, true)),
             Map.entry("ruined_portal", new Placement(40, 15, 34222645, false)),
             Map.entry("shipwreck", new Placement(24, 4, 165745295, false)),
@@ -48,7 +50,42 @@ public final class StructureSpread {
 
     /** True when a structure of this set could start in the chunk for the seed. */
     public static boolean canStartIn(long seed, Placement p, int chunkX, int chunkZ) {
-        int[] c = potentialChunk(seed, p, chunkX, chunkZ);
-        return c[0] == chunkX && c[1] == chunkZ;
+        return canStartIn(seed, p, chunkX, chunkZ, WorldgenRng.legacy());
+    }
+
+    /** Allocation-free check reusing {@code rng} ({@link WorldgenRng#legacy()}). */
+    public static boolean canStartIn(long seed, Placement p, int chunkX, int chunkZ, WorldgenRng rng) {
+        int rx = Math.floorDiv(chunkX, p.spacing());
+        int rz = Math.floorDiv(chunkZ, p.spacing());
+        rng.setLargeFeatureWithSalt(seed, rx, rz, p.salt());
+        int bound = p.spacing() - p.separation();
+        int ox = p.triangular() ? (rng.nextInt(bound) + rng.nextInt(bound)) / 2 : rng.nextInt(bound);
+        if (rx * p.spacing() + ox != chunkX) {
+            return false;
+        }
+        int oz = p.triangular() ? (rng.nextInt(bound) + rng.nextInt(bound)) / 2 : rng.nextInt(bound);
+        return rz * p.spacing() + oz == chunkZ;
+    }
+
+    /** Pillager outpost check including vanilla {@code legacyPillagerOutpostReducer} (0.2 probability per 16-chunk sector). */
+    public static boolean canStartOutpost(long seed, int chunkX, int chunkZ, WorldgenRng rng) {
+        Placement p = PLACEMENTS.get("pillager_outpost");
+        if (p == null || !canStartIn(seed, p, chunkX, chunkZ, rng)) {
+            return false;
+        }
+        int sx = chunkX >> 4;
+        int sz = chunkZ >> 4;
+        rng.setSeed((long) (sx ^ (sz << 4)) ^ seed);
+        rng.nextInt(Integer.MAX_VALUE); // consume one raw 32-bit int matching WorldgenRandom.nextInt()
+        return rng.nextInt(5) == 0;
+    }
+
+    /**
+     * Vanilla 1.21.1 {@code BURIED_TREASURES} frequency reducer check ({@code LEGACY_TYPE_2}, salt 10387320, prob 0.01f).
+     * Note {@code StructurePlacement.isStructureChunk} passes chunk coordinates directly into the reducer.
+     */
+    public static boolean isBuriedTreasureChunk(long seed, int chunkX, int chunkZ, WorldgenRng rng) {
+        rng.setLargeFeatureWithSalt(seed, chunkX, chunkZ, 10387320);
+        return rng.nextFloat() < 0.01F;
     }
 }

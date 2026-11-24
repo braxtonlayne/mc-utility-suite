@@ -12,7 +12,7 @@ public record GeneratorProfile(long seed, boolean seedKnown, String mcVersion, S
 
     public static final String CURRENT_VERSION = "1.21.1";
 
-    public enum Source { NONE, INTEGRATED_SERVER, MANUAL, CHAT }
+    public enum Source { NONE, INTEGRATED_SERVER, MANUAL, CHAT, SCANNED }
 
     public static GeneratorProfile none() {
         return new GeneratorProfile(0L, false, CURRENT_VERSION, Source.NONE, false);

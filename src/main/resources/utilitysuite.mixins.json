@@ -18,6 +18,7 @@
     "travel.LivingEntityFluidSurfaceMixin",
     "travel.PlayerSafeWalkMixin",
     "ui.KeyboardHandlerTabGuiMixin",
+    "world.BiomeManagerAccessor",
     "world.BlockFaceHidingMixin",
     "world.ClientLevelBlockUpdateMixin",
     "world.ClientLevelDataTimeMixin",

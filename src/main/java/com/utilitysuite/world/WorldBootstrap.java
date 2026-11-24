@@ -18,6 +18,7 @@ import com.utilitysuite.world.minimap.MinimapModule;
 import com.utilitysuite.world.oresim.OreSimModule;
 import com.utilitysuite.world.overlays.WorldOverlaysModule;
 import com.utilitysuite.world.overlays.WorldRadarModule;
+import com.utilitysuite.world.seed.SeedScannerModule;
 import com.utilitysuite.world.waypoints.WaypointsModule;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
@@ -71,6 +72,7 @@ public final class WorldBootstrap {
         WorldOverlaysModule overlays = new WorldOverlaysModule(runtime, knowledgeService);
         OreSimModule oreSim = new OreSimModule(knowledgeService, runtime.scanner());
         knowledge.setPredictionSource(oreSim.predictions());
+        SeedScannerModule seedScanner = new SeedScannerModule(oreSim::profile, oreSim::onScannedSeed);
         WorldRadarModule radar = new WorldRadarModule(runtime);
         ScoutCameraModule camera = new ScoutCameraModule();
         WaypointsModule waypoints = new WaypointsModule();
@@ -86,8 +88,8 @@ public final class WorldBootstrap {
         waypoints.subscribe(events);
 
         IModuleRegistry registry = Services.modules();
-        for (WorldModule m : new WorldModule[] {knowledge, overlays, oreSim, radar, camera, waypoints, minimap,
-                lightOverlay, blastOverlay, spawnGeometry, freelook, renderFilters}) {
+        for (WorldModule m : new WorldModule[] {knowledge, overlays, oreSim, seedScanner, radar, camera, waypoints,
+                minimap, lightOverlay, blastOverlay, spawnGeometry, freelook, renderFilters}) {
             registry.register(m);
             runtime.add(m);
         }
@@ -128,6 +130,9 @@ public final class WorldBootstrap {
             runtime.onChunkLoad(e);
             if (e.getLevel().isClientSide()) {
                 lightOverlay.onChunkLoaded(e.getChunk().getPos().x, e.getChunk().getPos().z);
+                if (e.getLevel() instanceof net.minecraft.client.multiplayer.ClientLevel cl) {
+                    seedScanner.onChunkLoaded(cl, e.getChunk());
+                }
             }
         });
         bus.addListener((ChunkEvent.Unload e) -> runtime.onChunkUnload(e));

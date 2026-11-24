@@ -72,6 +72,7 @@ public final class OreSimModule extends WorldModule {
     private SeedMode seedMode;
     private String manualSeed;
     private String chatSeed;
+    private String scannedSeed;
     private boolean listenChat;
     private Set<String> resources = Set.of();
     private int radiusChunks;
@@ -174,6 +175,7 @@ public final class OreSimModule extends WorldModule {
         if (!p.profileId().equals(profileId)) {
             profileId = p.profileId();
             chatSeed = p.getString(ID, "chat_seed", "");
+            scannedSeed = p.getString(ID, "scanned_seed", "");
             workbenchUncertain = false;
             lastReport = null;
             announcedVerdict = null;
@@ -265,8 +267,22 @@ public final class OreSimModule extends WorldModule {
                     GeneratorProfile.Source.INTEGRATED_SERVER, custom);
         }
         OptionalLong s = SeedText.parseManualSeed(chatSeed == null ? "" : chatSeed);
-        return s.isPresent() ? new GeneratorProfile(s.getAsLong(), true, GeneratorProfile.CURRENT_VERSION,
-                GeneratorProfile.Source.CHAT, workbenchUncertain) : GeneratorProfile.none();
+        if (s.isPresent()) {
+            return new GeneratorProfile(s.getAsLong(), true, GeneratorProfile.CURRENT_VERSION,
+                    GeneratorProfile.Source.CHAT, workbenchUncertain);
+        }
+        OptionalLong scanned = SeedText.parseManualSeed(scannedSeed == null ? "" : scannedSeed);
+        return scanned.isPresent() ? new GeneratorProfile(scanned.getAsLong(), true, GeneratorProfile.CURRENT_VERSION,
+                GeneratorProfile.Source.SCANNED, workbenchUncertain) : GeneratorProfile.none();
+    }
+
+    /** Called by {@link com.utilitysuite.world.seed.SeedScannerModule} once a unique 64-bit world seed is found. */
+    public void onScannedSeed(long seed) {
+        scannedSeed = Long.toString(seed);
+        ProfileConfig p = Services.modState().profile();
+        p.set(ID, "scanned_seed", scannedSeed);
+        Services.modState().markDirty();
+        configKey = "";
     }
 
     /** Vanilla noise generator with the vanilla settings for this dimension (else predictions are uncertain). */

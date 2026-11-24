@@ -23,6 +23,7 @@ import com.utilitysuite.world.camera.ScoutCameraModule;
 import com.utilitysuite.world.minimap.MinimapModule;
 import com.utilitysuite.ui.ModulePanels;
 import com.utilitysuite.world.overlays.WorldOverlaysModule;
+import com.utilitysuite.world.seed.SeedScannerModule;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
@@ -61,7 +62,8 @@ public final class WorldTab {
                 + "/" + Services.modules().byCategory(ModuleCategory.WORLD).size()
                 + "/" + Services.modules().find(ScoutCameraModule.class).map(c -> c.isFreecamActive()).orElse(false)
                 + "/" + Services.modules().find(WorldOverlaysModule.class).map(IModule::isEnabled).orElse(false)
-                + "/" + Services.modules().find(MinimapModule.class).map(IModule::isEnabled).orElse(false);
+                + "/" + Services.modules().find(MinimapModule.class).map(IModule::isEnabled).orElse(false)
+                + "/" + Services.modules().find(SeedScannerModule.class).map(s -> s.clueCount() + ":" + s.isSolving()).orElse("-");
     }
 
     /** Custom rows inside World module cards (called once from the UI bootstrap). */
@@ -70,6 +72,25 @@ public final class WorldTab {
             if (m instanceof MinimapModule mm) {
                 QuickActions.actionRow(p, "Position and size", "Drag the map to move it, the corner to resize.",
                         "Edit HUD layout", PillButton.Style.SECONDARY, mm::openLayoutEditor);
+            }
+        });
+        ModulePanels.register(SeedScannerModule.ID, (p, m) -> {
+            if (m instanceof SeedScannerModule ss) {
+                p.paragraph(ss.statusLine() + "  ·  " + ss.clueSummary(), Panel.GRAY);
+                QuickActions.actionRow(p, "Loaded chunks",
+                        "Re-scan chunks already in view to gather structure clues.",
+                        "Rescan loaded", PillButton.Style.SECONDARY, () -> {
+                            ss.rescanLoaded();
+                            p.toast("Queued loaded chunks for seed clues");
+                            p.rebuild();
+                        });
+                QuickActions.actionRow(p, "Collected clues",
+                        "Clear all stored structure, slime, and pillar clues for this world.",
+                        "Reset clues", PillButton.Style.DANGER_SOFT, () -> {
+                            ss.resetClues();
+                            p.toast("Cleared seed scanner clues");
+                            p.rebuild();
+                        });
             }
         });
     }
