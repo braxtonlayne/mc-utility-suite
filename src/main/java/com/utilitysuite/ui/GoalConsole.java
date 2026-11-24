@@ -15,6 +15,7 @@ import java.util.List;
 import java.util.function.ToIntFunction;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.resources.language.I18n;
 
 /**
  * The Goal Console behind the top-bar command field: Enter asks the goal engine for a dry-run preview; Enter again on
@@ -142,6 +143,41 @@ public final class GoalConsole {
         return new PreviewCard(font, preview, width, maxSteps);
     }
 
+    /**
+     * The duration estimate and required-tools lines of a preview ({@code lang} resolves a key plus format args to
+     * text; the game passes {@code I18n::get}). Empty when the preview carries neither.
+     */
+    static List<String> summaryLines(PlanPreview pv, java.util.function.BiFunction<String, Object[], String> lang) {
+        List<String> out = new ArrayList<>(2);
+        if (pv.estimatedSeconds() > 0) {
+            out.add(lang.apply("ui.utilitysuite.preview.estimate",
+                    new Object[]{duration(pv.estimatedSeconds(), lang)}));
+        }
+        if (!pv.requiredTools().isEmpty()) {
+            StringBuilder sb = new StringBuilder();
+            for (String t : pv.requiredTools()) {
+                if (sb.length() > 0) {
+                    sb.append(", ");
+                }
+                sb.append(com.utilitysuite.jobs.planner.DisplayNames.of(t));
+            }
+            out.add(lang.apply("ui.utilitysuite.preview.tools", new Object[]{sb.toString()}));
+        }
+        return out;
+    }
+
+    /** "45 s", "12 min" (rounded up to a whole minute from 60 s), "1 h 5 min". */
+    static String duration(int seconds, java.util.function.BiFunction<String, Object[], String> lang) {
+        if (seconds < 60) {
+            return lang.apply("ui.utilitysuite.preview.duration.seconds", new Object[]{seconds});
+        }
+        int minutes = (seconds + 30) / 60;
+        if (minutes < 60) {
+            return lang.apply("ui.utilitysuite.preview.duration.minutes", new Object[]{minutes});
+        }
+        return lang.apply("ui.utilitysuite.preview.duration.hours", new Object[]{minutes / 60, minutes % 60});
+    }
+
     private static final int LINE_H = 11;
     private static final int PAD = 10;
 
@@ -197,6 +233,9 @@ public final class GoalConsole {
             }
             if (!pv.missingMaterials().isEmpty()) {
                 notes.addAll(wrap("Missing: " + materials(pv.missingMaterials(), 8), width - 2 * PAD, font::width));
+            }
+            for (String info : summaryLines(pv, I18n::get)) {
+                notes.addAll(wrap(info, width - 2 * PAD, font::width));
             }
             for (String warn : pv.warnings()) {
                 notes.addAll(wrap("! " + warn, width - 2 * PAD, font::width));
