@@ -54,6 +54,53 @@ class KeyChangeLimiterTest {
     }
 
     @Test
+    void aPlannedStrafeKeyGoesDownWithTheJumpAndNothingElseDoes() {
+        JumpCommit c = armed(3, 3);
+        takeoff(c, FORWARD);
+        c.limit(KEEP, 1, 1, 0, true);
+        assertEquals(1, c.limitedStrafe(), "planned on the ground, pressed on the first air tick");
+        assertEquals(1, c.keyChanges(), "it is one of the jump's key changes");
+        air(c, FORWARD);
+        c.limit(0, 1, 1, 0, true);
+        assertEquals(KEEP, c.limitedForward(), "letting go of forward waits out the delay");
+        assertEquals(1, c.limitedStrafe());
+        air(c, FORWARD);
+        c.limit(0, 1, 1, 0, true);
+        air(c, FORWARD);
+        c.limit(0, 1, 1, 0, true);
+        assertEquals(0, c.limitedForward(), "after the delay");
+        assertEquals(2, c.keyChanges());
+
+        JumpCommit late = armed(3, 3);
+        takeoff(late, FORWARD);
+        late.limit(KEEP, KEEP, 1, 0, true);
+        air(late, FORWARD);
+        late.limit(KEEP, 1, 1, 0, true);
+        assertEquals(KEEP, late.limitedStrafe(), "a tick later it is a change in the flight: it waits");
+
+        JumpCommit release = armed(3, 3);
+        takeoff(release, FORWARD);
+        release.limit(0, 1, 1, 0, true);
+        assertEquals(KEEP, release.limitedForward(), "forward let go with the jump is not exempt");
+        assertEquals(KEEP, release.limitedStrafe(), "and the pair stays whole");
+
+        JumpCommit unplanned = armed(3, 3);
+        takeoff(unplanned, FORWARD);
+        unplanned.limit(KEEP, 1, 1, 0);
+        assertEquals(KEEP, unplanned.limitedStrafe(), "the per-tick air plan is not a planned script");
+
+        JumpCommit capped = armed(3, 3);
+        capped.maxKeyChanges = 1;
+        takeoff(capped, FORWARD);
+        capped.limit(KEEP, 1, 1, 0, true);
+        for (int i = 0; i < 4; i++) {
+            air(capped, FORWARD);
+        }
+        capped.limit(0, 1, 1, 0, true);
+        assertEquals(KEEP, capped.limitedForward(), "the press with the jump used the one change");
+    }
+
+    @Test
     void theReactionDelayOfAJumpIsFixedAtItsTakeoff() {
         JumpCommit c = armed(2, 1);
         takeoff(c, FORWARD);
@@ -73,7 +120,7 @@ class KeyChangeLimiterTest {
         takeoff(c, FORWARD);
         c.limit(KEEP, 1, 1, 0);
         assertEquals(1, c.limitedStrafe(), "it goes on through the reaction delay");
-        assertEquals(0, c.keyChanges());
+        assertEquals(1, c.keyChanges(), "no reaction, but one of the jump's key changes");
         air(c, FORWARD);
         c.limit(0, 1, 1, 0);
         assertEquals(KEEP, c.limitedForward(), "a new key is still held back by the delay");
@@ -82,7 +129,7 @@ class KeyChangeLimiterTest {
         air(c, FORWARD);
         c.limit(0, 1, 1, 0);
         assertEquals(0, c.limitedForward(), "after the delay");
-        assertEquals(1, c.keyChanges());
+        assertEquals(2, c.keyChanges());
     }
 
     @Test
@@ -145,16 +192,32 @@ class KeyChangeLimiterTest {
         TechniqueRoller roller = new TechniqueRoller();
         TechniqueTemplates.Candidate c = new TechniqueTemplates.Candidate();
         c.reset(TechniqueTemplates.HEADHITTER, 0, 0f);
-        c.segment(1, 0, Float.NaN); // strafe from the first air tick to the touchdown
+        c.segment(0, 1, Float.NaN);
+        c.segment(1, 0, Float.NaN); // strafe from the second air tick to the touchdown
         FlightScript out = new FlightScript();
         int jump = takeoffTick(roller, g, pad, c, out);
-        assertEquals(1, out.strafe[jump + 1], "no limits: the key is down on the first air tick");
+        assertEquals(1, out.strafe[jump + 2], "no limits: the key is down on the second air tick");
 
         roller.keyReaction = 3;
         assertTrue(roller.roll(start(), 0f, true, 0, c, 0, pad, false, 0f, true, 20f, g, out));
         for (int a = 0; a < 6; a++) {
             assertEquals(a < 3 ? 0 : 1, out.strafe[jump + 1 + a], "air tick " + a);
         }
+        // a strafe key from the first air tick goes down with the jump: planned, no reaction (and forward let go
+        // on that tick as well is held back whole)
+        TechniqueTemplates.Candidate with = new TechniqueTemplates.Candidate();
+        with.reset(TechniqueTemplates.HEADHITTER, jump, 0f);
+        with.segment(1, 0, Float.NaN);
+        FlightScript planned = new FlightScript();
+        assertTrue(roller.roll(start(), 0f, true, 0, with, 0, pad, false, 0f, true, 20f, g, planned));
+        assertEquals(1, planned.strafe[jump + 1], "pressed with the jump");
+        with.segForward[0] = 0;
+        roller.roll(start(), 0f, true, 0, with, 0, pad, false, 0f, true, 20f, g, planned);
+        assertEquals(1, planned.forward[jump + 1], "forward is not let go inside the delay");
+        assertEquals(0, planned.strafe[jump + 1], "and the strafe key waits with it");
+        assertEquals(0, planned.forward[jump + 4], "after the delay");
+        assertEquals(1, planned.strafe[jump + 4]);
+        assertTrue(roller.roll(start(), 0f, true, 0, c, 0, pad, false, 0f, true, 20f, g, out));
         // and the recorded line is the line of those keys: a plain replay of the script lands where it says
         MovementPhysics p = start();
         for (int i = 0; i <= out.landIndex; i++) {

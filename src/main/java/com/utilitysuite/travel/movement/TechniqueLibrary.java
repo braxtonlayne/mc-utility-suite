@@ -190,6 +190,12 @@ public final class TechniqueLibrary implements TechniqueSource {
                 boolean ok = roller.roll(now, yaw, sprinting, userS, cand, 0, target, yawAllowed,
                         maxYawDegPerTick, safeOnly, health, w, scratch);
                 ticks += roller.ticks;
+                if (!ok && !yawPhase && roller.keyReaction > 0 && ticks + ROLL_COST <= MAX_SIM_TICKS_PER_CALL
+                        && pressOnTheJumpTick(cand, userS)) {
+                    ok = roller.roll(now, yaw, sprinting, userS, cand, 0, target, yawAllowed, maxYawDegPerTick,
+                            safeOnly, health, w, scratch);
+                    ticks += roller.ticks;
+                }
                 if (ok && (!fresh || roller.score > bestScore)) {
                     best.copyFrom(cand);
                     keepBest(now);
@@ -199,6 +205,25 @@ public final class TechniqueLibrary implements TechniqueSource {
         }
         lastSimTicks = ticks;
         return fresh;
+    }
+
+    /**
+     * Under a reaction delay (LEGIT) a keys-only candidate that did not land with its strafe key down from the first
+     * air tick is tried once more with that key down one tick earlier, on the tick of the jump key itself: the same
+     * planned press ({@link KeyChangeLimiter#withTheJump}), on the other side of the jump key. On the ground the key
+     * bites harder (more sideways, a little less reach), which is what a short corner needs and a long one cannot
+     * afford. Held through the takeoff the commitment carries it ({@link JumpCommit#noteGroundKeys}) as one of the
+     * jump's key changes. A candidate with its own run-up strafe is left as it is.
+     *
+     * @return true when the candidate was changed
+     */
+    private static boolean pressOnTheJumpTick(TechniqueTemplates.Candidate c, int userS) {
+        if (c.groundStrafeTicks != 0 || c.segments == 0 || c.segStrafe[0] == 0 || c.segStrafe[0] == userS) {
+            return false;
+        }
+        c.groundStrafe = c.segStrafe[0];
+        c.groundStrafeTicks = 1;
+        return true;
     }
 
     private void keepBest(MovementPhysics now) {

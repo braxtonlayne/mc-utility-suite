@@ -1559,7 +1559,7 @@ public final class MovementAssistBrain {
         } else {
             int f = commit.resolveAxis(0, userForward, sf == userForward ? KEEP : sf);
             int s = commit.resolveAxis(1, userStrafe, ss == userStrafe ? KEEP : ss);
-            commit.limit(f, s, userForward, userStrafe);
+            commit.limit(f, s, userForward, userStrafe, true);
             forward = commit.limitedForward();
             strafe = commit.limitedStrafe();
         }

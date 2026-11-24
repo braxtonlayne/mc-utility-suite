@@ -382,12 +382,24 @@ public final class JumpCommit {
      * {@link KeyChangeLimiter}'s, which the technique planner rolls its scripts under too.
      */
     public void limit(int f, int s, int userF, int userS) {
+        limit(f, s, userF, userS, false);
+    }
+
+    /**
+     * As {@link #limit(int, int, int, int)}; {@code planned}: the pair is a tick of a script planned on the ground
+     * before the takeoff. Its strafe key may go down on the first air tick, the tick after the jump key: a key pressed
+     * together with the jump is part of the takeoff, not a reaction to the flight ({@link KeyChangeLimiter#withTheJump}).
+     */
+    public void limit(int f, int s, int userF, int userS, boolean planned) {
         limiter.maxKeyChanges = maxKeyChanges;
         boolean inReaction = airTicks < flightReaction && (phase == Phase.FLIGHT || phase == Phase.TAKEOFF);
         int choiceF = limiter.choiceF;
         int choiceS = limiter.choiceS;
         f = sameKey(f, userF, choiceF);
         s = sameKey(s, userS, choiceS);
+        if (inReaction && planned && airTicks == 0 && limiter.withTheJump(f, s)) {
+            inReaction = false;
+        }
         int d = limiter.decide(f, s, minHoldTicks(), inReaction);
         if (d == KeyChangeLimiter.HOLD) {
             // keep the earlier choice a little longer, re-resolved so a fresh key still wins

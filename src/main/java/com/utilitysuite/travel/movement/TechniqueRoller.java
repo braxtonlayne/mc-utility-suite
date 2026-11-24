@@ -139,7 +139,10 @@ final class TechniqueRoller {
                 // the keys as the commitment lets them out (the user holds forward and the strafe of the run-up)
                 int wantF = forward == 1 ? KeyChangeLimiter.KEEP : forward;
                 int wantS = strafe == userStrafe ? KeyChangeLimiter.KEEP : strafe;
-                int d = limiter.decide(wantF, wantS, keyMinHold, i - jumpAt - 1 < keyReaction);
+                int air = i - jumpAt - 1;
+                // (a script is planned before its takeoff: its strafe key may go down with the jump, see the limiter)
+                boolean inReaction = air < keyReaction && !(air == 0 && limiter.withTheJump(wantF, wantS));
+                int d = limiter.decide(wantF, wantS, keyMinHold, inReaction);
                 if (d == KeyChangeLimiter.HOLD) {
                     wantF = limiter.choiceF;
                     wantS = limiter.choiceS;

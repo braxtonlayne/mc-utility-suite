@@ -40,6 +40,7 @@ final class KeyChangeLimiter {
     void start(int heldF, int heldS, int heldAge) {
         changes = 0;
         if (heldAge > 0 && (heldF != KEEP || heldS != KEEP)) {
+            changes = 1; // no reaction, but one of the jump's key changes all the same
             choiceF = heldF;
             choiceS = heldS;
             choiceAge = heldAge;
@@ -77,6 +78,17 @@ final class KeyChangeLimiter {
         changes++;
         choiceAge = 0;
         return PASS;
+    }
+
+    /**
+     * The wanted pair only presses a strafe key (nothing held is let go or swapped, forward stays as it is). On the
+     * first air tick of a jump planned on the ground, that key goes down together with the jump key, one tick apart at
+     * most: the way a player takes a corner, planned with the takeoff, so the reaction delay does not hold it back
+     * (decision of 2026-11-24). It is still one of the jump's key changes and is held the minimum time; every later
+     * change waits out the delay.
+     */
+    boolean withTheJump(int f, int s) {
+        return f == choiceF && choiceS == KEEP && s != KEEP && s != 0;
     }
 
     /** The pair that went out this tick. */
