@@ -1,0 +1,175 @@
+package com.utilitysuite.travel.movement;
+
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import org.junit.jupiter.api.Test;
+
+/**
+ * Ladder catch (course J49 / J85): the jump's goal is a climbable face. Before {@link ClimbCatch} the assist planned no
+ * target there, so an early press fell short and Takeover bridged the gap with a block instead.
+ */
+class ClimbCatchTest {
+    private static final float S = 1f / 16f;
+
+    /** A pad (z -4..0, top 20) or a lone wall post (z 0, top 20.5); a 3-wide ladder face at z 3 on a tower at z 4. */
+    static ShapeGrid scene(boolean post, boolean ladders) {
+        ShapeGrid g = new ShapeGrid();
+        if (post) {
+            g.wallPost(0, 19, 0);
+        } else {
+            g.fill(-1, 19, -4, 1, 19, 0);
+        }
+        g.fill(-1, 17, 4, 1, 22, 4);
+        if (ladders) {
+            for (int x = -1; x <= 1; x++) {
+                for (int y = 18; y <= 22; y++) {
+                    g.boxes(x, y, 3, 0, 0, 13 * S, 1, 1, 1); // ladder facing north (hangs on the tower's -Z face)
+                    g.surface(x, y, 3, MovementPhysics.SURFACE_CLIMBABLE);
+                }
+            }
+        }
+        return g;
+    }
+
+    /**
+     * Runs W + sprint toward the tower. The user's jump key goes down at {@code pressAt} (z) and stays down until the
+     * body leaves the ground; NaN: never pressed.
+     */
+    static String run(ShapeGrid g, MovementPhysics p, double pressAt, boolean auto, boolean assist) {
+        ClimbCatch c = new ClimbCatch();
+        boolean down = false;
+        boolean flew = false;
+        for (int t = 0; t < 80; t++) {
+            if (!flew && !Double.isNaN(pressAt) && p.z >= pressAt) {
+                down = true;
+            }
+            boolean jump = down;
+            if (assist) {
+                c.decide(p, 0f, 0f, 1, 0, true, down, auto, g);
+                assertTrue(c.simTicks <= 1200,
+                        "budget " + c.simTicks);
+                jump = c.jump() || (down && !c.withholdJump());
+            }
+            p.tick(1, 0, 0f, true, jump, g);
+            if (!p.onGround) {
+                flew = true;
+                down = false;
+            }
+            if (g.surface((int) Math.floor(p.x), (int) Math.floor(p.y), (int) Math.floor(p.z))
+                    == MovementPhysics.SURFACE_CLIMBABLE) {
+                return "caught";
+            }
+            if (p.y < 16) {
+                return String.format("fell at z%.2f", p.z);
+            }
+        }
+        return String.format("stuck at z%.2f y%.2f", p.z, p.y);
+    }
+
+    @Test
+    void anEarlyPressFromThePadWaitsAndCatchesTheLadder() {
+        int caught = 0;
+        int tried = 0;
+        int shortUnassisted = 0;
+        StringBuilder out = new StringBuilder();
+        for (double press = -2.0; press <= 0.81; press += 0.2) {
+            tried++;
+            ShapeGrid g = scene(false, true);
+            String r = run(g, new MovementPhysics().set(0.5, 20, -3.5, 0, -0.0784, 0, true), press, false, true);
+            if (r.equals("caught")) {
+                caught++;
+            } else {
+                out.append(String.format(" [press z%.1f: %s]", press, r));
+            }
+            if (!run(g, new MovementPhysics().set(0.5, 20, -3.5, 0, -0.0784, 0, true), press, false, false)
+                    .equals("caught")) {
+                shortUnassisted++;
+            }
+        }
+        System.out.println("CLIMB PAD " + caught + "/" + tried + " (unassisted misses " + shortUnassisted + ")" + out);
+        assertTrue(shortUnassisted > 0, "the scene should punish an early press");
+        assertTrue(caught == tried, caught + " of " + tried + out);
+    }
+
+    @Test
+    void takeoverCatchesTheLadderWithNoPress() {
+        StringBuilder out = new StringBuilder();
+        int caught = 0;
+        int tried = 0;
+        for (double z = -3.5; z <= -0.4; z += 0.5) {
+            tried++;
+            String r = run(scene(false, true), new MovementPhysics().set(0.5, 20, z, 0, -0.0784, 0, true), Double.NaN,
+                    true, true);
+            if (r.equals("caught")) {
+                caught++;
+            } else {
+                out.append(String.format(" [start z%.1f: %s]", z, r));
+            }
+        }
+        System.out.println("CLIMB TAKEOVER " + caught + "/" + tried + out);
+        assertTrue(caught == tried, caught + " of " + tried + out);
+    }
+
+    /** J85: the ladder jump right after landing on a wall post (the J84 landing's speed carries over). */
+    @Test
+    void takeoverCatchesFromTheWallPostItJustLandedOn() {
+        StringBuilder out = new StringBuilder();
+        int caught = 0;
+        int tried = 0;
+        for (double vz : new double[] {0.05, 0.12, 0.2, 0.28}) {
+            for (double z : new double[] {0.35, 0.5, 0.65}) {
+                tried++;
+                String r = run(scene(true, true), new MovementPhysics().set(0.5, 20.5, z, 0, -0.0784, vz, true),
+                        Double.NaN, true, true);
+                if (r.equals("caught")) {
+                    caught++;
+                } else {
+                    out.append(String.format(" [z%.2f vz%.2f: %s]", z, vz, r));
+                }
+            }
+        }
+        System.out.println("CLIMB POST " + caught + "/" + tried + out);
+        assertTrue(caught * 10 >= tried * 9, caught + " of " + tried + out);
+    }
+
+    /** The lookahead reaches 12 blocks: an early press far from the face is held, not wasted. */
+    @Test
+    void aPressTenBlocksOutIsHeldForTheCatch() {
+        ShapeGrid g = new ShapeGrid();
+        g.fill(-1, 19, -12, 1, 19, 0);
+        ShapeGrid s = scene(false, true);
+        for (int z = -12; z <= -5; z++) {
+            for (int x = -1; x <= 1; x++) {
+                s.cube(x, 19, z);
+            }
+        }
+        String r = run(s, new MovementPhysics().set(0.5, 20, -11.5, 0, -0.0784, 0, true), -8.0, false, true);
+        System.out.println("CLIMB FAR " + r);
+        assertTrue(r.equals("caught"), r);
+    }
+
+    @Test
+    void decideAllocatesNothing() {
+        org.junit.jupiter.api.Assumptions.assumeTrue(com.utilitysuite.core.AllocationProbe.supported());
+        ShapeGrid g = scene(false, true);
+        ClimbCatch c = new ClimbCatch();
+        MovementPhysics p = new MovementPhysics().set(0.5, 20, -1.5, 0, -0.0784, 0.2, true);
+        for (int i = 0; i < 2000; i++) {
+            c.decide(p, 0f, 0f, 1, 0, true, true, true, g); // warm up the JIT
+        }
+        long bytes = com.utilitysuite.core.AllocationProbe.measure(500, () -> c.decide(p, 0f, 0f, 1, 0, true, true, true, g));
+        assertTrue(bytes < 1024, "decide allocated " + bytes + " bytes");
+    }
+
+    @Test
+    void noClimbableAheadLeavesTheJumpAlone() {
+        ShapeGrid g = scene(false, false);
+        ClimbCatch c = new ClimbCatch();
+        MovementPhysics p = new MovementPhysics().set(0.5, 20, -1.0, 0, -0.0784, 0.2, true);
+        c.decide(p, 0f, 0f, 1, 0, true, true, true, g);
+        assertFalse(c.active());
+        assertFalse(c.withholdJump());
+        assertFalse(c.jump());
+    }
+}

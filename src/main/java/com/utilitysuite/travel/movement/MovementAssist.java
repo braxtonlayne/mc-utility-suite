@@ -178,6 +178,8 @@ public final class MovementAssist implements IModule, IConfigurable {
     private final SupportRegion landingTop = new SupportRegion();
     private double topX0, topZ0, topX1, topZ1;
     private final IntentEstimator intent = new IntentEstimator();
+    /** A jump onto a ladder or vine face: owns the jump instead of the landing planners and the block assist. */
+    private final ClimbCatch climb = new ClimbCatch();
     /** Feet height of the last ground the body stood on (the takeoff of the current jump). */
     private double jumpGroundY = Double.NaN;
     private boolean turnGain = true;
@@ -316,6 +318,7 @@ public final class MovementAssist implements IModule, IConfigurable {
         if (skipped != null) {
             // Stop-All, a screen, a higher lease, not on foot: the commitment and the hold end at once
             brain.abortCommitment();
+            climb.reset();
             endCommitView(ap);
             endGrant();
             blocks.release();
@@ -334,6 +337,7 @@ public final class MovementAssist implements IModule, IConfigurable {
         if (in.shiftKeyDown) {
             // sneak is the documented "let go" key: the commitment and the landing hold hand everything back now
             brain.noteUserSneak();
+            climb.reset();
             endCommitView(ap);
             endGrant();
             status = "sneaking";
@@ -375,7 +379,17 @@ public final class MovementAssist implements IModule, IConfigurable {
                 intent.clearChainHint();
             }
         }
-        if (brain.intentAssist && (userF != 0 || userS != 0 || !now.onGround)
+        // a ladder or vine face ahead that a jump catches: no landing target (the planners only know tops and would
+        // pick a block below), no placement; the press waits for a catching tick, Takeover makes it on the last one
+        boolean climbCarry = auto || TravelKeys.takeoverHeld() || handOverHeld
+                || controlMode.mode == JumpCommit.Mode.CARRY;
+        if (brain.intentAssist && (auto || controlMode.mode != JumpCommit.Mode.NUDGE || climbCarry)) {
+            climb.decide(now, yaw, userF > 0 ? yaw : moveYaw(yaw, userF, userS), userF, userS, sprinting, in.jumping,
+                    climbCarry, voxels);
+        } else {
+            climb.reset();
+        }
+        if (!climb.active() && brain.intentAssist && (userF != 0 || userS != 0 || !now.onGround)
                 && intent.estimate(now, yaw, p.getXRot(), userF, userS, sprinting, voxels) && intent.hasTarget()) {
             brain.setIntentBlocked(intent.targetBlocked());
             brain.setIntentLook(intent.lookConfidence());
@@ -437,6 +451,10 @@ public final class MovementAssist implements IModule, IConfigurable {
         if (brain.withholdJump()) {
             jumpW = SharedGrant.OFF; // opt-in jump buffer: the press fires on the last ground tick instead
         }
+        if (climb.active()) {
+            // the catch owns the jump: the brain's edge reflex and buffer planned for a top, not this face
+            jumpW = climb.jump() ? SharedGrant.ON : climb.withholdJump() ? SharedGrant.OFF : SharedGrant.KEEP;
+        }
         int fwdW = brain.forward() != MovementAssistBrain.KEEP ? brain.forward() : SharedGrant.KEEP;
         int strW = brain.strafe() != MovementAssistBrain.KEEP ? brain.strafe() : SharedGrant.KEEP;
         // takeoff shaping's sprint timing, a fill only (vanilla's own rules end it); a withhold wins in the core
@@ -470,7 +488,7 @@ public final class MovementAssist implements IModule, IConfigurable {
         blocks.planner.dropAllowance = intent.hasTarget() && intent.targetTopY() < jumpGroundY
                 ? jumpGroundY - intent.targetTopY() + 0.5 : BlockAssistPlanner.FREE_DROP;
         boolean blockJump = false;
-        if (useBlocks && brain.edgeNoLanding() && !blocks.active() && now.onGround
+        if (useBlocks && !climb.active() && brain.edgeNoLanding() && !blocks.active() && now.onGround
                 && ParkourBlocks.blockSlot(p.getInventory(), mc.level) >= 0) {
             // an edge nothing clears: jump anyway when the jump plus one block keeps the run going
             hop.copyFrom(now).tick(userF, userS, p.getYRot(), sprinting, true, voxels);
@@ -481,7 +499,7 @@ public final class MovementAssist implements IModule, IConfigurable {
             }
         }
         // a commitment that lands owns the jump: no placement starts on top of it (one already running goes on)
-        if (useBlocks && !clutch.active() && (blocks.active() || !brain.commitOwnsLanding())) {
+        if (useBlocks && !clutch.active() && (blocks.active() || (!brain.commitOwnsLanding() && !climb.active()))) {
             blocks.tick(mc, p, now, sprinting, userF, userS, health, jumpAir, voxels);
             if (blocks.active()) {
                 // mid placement the camera is turned away and the user's keys are rotated back onto the heading:
