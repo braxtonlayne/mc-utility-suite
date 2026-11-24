@@ -96,6 +96,8 @@ public final class SmartInventory implements IModule, IConfigurable, LeaseListen
     private int opTicks;
     private int ticks;
     private int cooldown;
+    private int hintSlot = -1;
+    private int hintItem = -1;
     private String lastResult = "";
 
     public SmartInventory() {
@@ -170,11 +172,38 @@ public final class SmartInventory implements IModule, IConfigurable, LeaseListen
             start(Op.REFILL, player.inventoryMenu.containerId, player);
             return;
         }
+        if (refillOn) {
+            reserveHint(player);
+        }
         if (armorDue && ArmorRanker.hasUpgrade(model) && safeForArmor(player)) {
             plan.clear();
             if (ArmorRanker.plan(model, plan) > 0) {
                 start(Op.ARMOR, player.inventoryMenu.containerId, player);
             }
+        }
+    }
+
+    /**
+     * A pinned stack ran low with no reserve in the main inventory: if a shulker box holds more, post one notice. The
+     * box scan runs once per depletion (slot + item), not per scan; nothing is opened.
+     */
+    private void reserveHint(LocalPlayer player) {
+        int h = refill.depletedPinned(model, categoryMask, refillPct, pinnedMask);
+        if (h < 0) {
+            hintSlot = -1;
+            hintItem = -1;
+            return;
+        }
+        int item = refill.itemAt(model, h);
+        if (h == hintSlot && item == hintItem) {
+            return;
+        }
+        hintSlot = h;
+        hintItem = item;
+        int more = ShulkerPreview.countInShulkers(player.getInventory(), item);
+        if (more > 0 && !Services.modState().isCleanScreen()) {
+            Services.visuals().notices().post(com.utilitysuite.core.api.visual.NoticeKind.INFO,
+                    "Slot " + (h + 1) + " is out: a shulker box has " + more + " more", null);
         }
     }
 

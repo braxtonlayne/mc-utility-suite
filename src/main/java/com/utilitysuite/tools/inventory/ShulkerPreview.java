@@ -91,6 +91,30 @@ public final class ShulkerPreview {
         elements.add(Math.min(1, elements.size()), cachedElement);
     }
 
+    /**
+     * Total of the item with raw id {@code itemId} inside the shulker boxes in the main inventory (container
+     * component only; nothing is opened). Allocates (iterators): call it only on a rare event, never per tick.
+     */
+    static int countInShulkers(net.minecraft.world.entity.player.Inventory inv, int itemId) {
+        int total = 0;
+        for (int s = 0; s < inv.items.size(); s++) {
+            ItemStack box = inv.items.get(s);
+            if (!(box.getItem() instanceof BlockItem bi) || !(bi.getBlock() instanceof ShulkerBoxBlock)) {
+                continue;
+            }
+            ItemContainerContents contents = box.get(DataComponents.CONTAINER);
+            if (contents == null) {
+                continue;
+            }
+            for (ItemStack in : contents.nonEmptyItems()) {
+                if (McInventory.itemId(in.getItem()) == itemId) {
+                    total += in.getCount();
+                }
+            }
+        }
+        return total;
+    }
+
     private static boolean isVanillaContentsLine(Either<FormattedText, TooltipComponent> e) {
         FormattedText text = e.left().orElse(null);
         if (text instanceof Component c && c.getContents() instanceof TranslatableContents tc) {

@@ -87,6 +87,49 @@ public final class HotbarRefillPlanner {
         }
     }
 
+    /**
+     * A pinned hotbar slot that is low (or ran out) while the main inventory holds none of its item: the reserve is
+     * empty, so the user may want to look in a shulker box. Allocation free; call it only on the rare tick where
+     * {@link #plan} refilled nothing. Returns the hotbar slot or -1; {@link #itemAt} gives its raw item id.
+     */
+    public int depletedPinned(InventoryModel inv, int categoryMask, int thresholdPct, int pinnedMask) {
+        for (int h = 0; h < InventoryModel.HOTBAR; h++) {
+            if (!PinnedSlots.isPinned(pinnedMask, h)) {
+                continue;
+            }
+            int count = inv.count[h];
+            int key;
+            int flags;
+            int max;
+            if (count > 0) {
+                key = inv.key[h];
+                flags = inv.flags[h];
+                max = inv.maxStack[h];
+            } else if (remembered[h]) {
+                key = memKey[h];
+                flags = memFlags[h];
+                max = memMax[h];
+            } else {
+                continue;
+            }
+            if (max <= 1 || (flags & categoryMask) == 0) {
+                continue;
+            }
+            if (count > 0 && (long) count * 100L >= (long) max * thresholdPct) {
+                continue;
+            }
+            if (bestSource(inv, key) < 0) {
+                return h;
+            }
+        }
+        return -1;
+    }
+
+    /** Raw item id of what the hotbar slot holds, or last held when empty. */
+    public int itemAt(InventoryModel inv, int hotbarSlot) {
+        return inv.count[hotbarSlot] > 0 ? inv.item[hotbarSlot] : memItem[hotbarSlot];
+    }
+
     public boolean remembers(int hotbarSlot) {
         return remembered[hotbarSlot];
     }
