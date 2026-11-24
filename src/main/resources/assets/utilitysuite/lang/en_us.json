@@ -49,6 +49,8 @@
   "message.utilitysuite.autopilot.landed": "Autopilot: landed",
   "message.utilitysuite.autopilot.landed_safety": "Autopilot: landed (health or food low)",
   "message.utilitysuite.autopilot.lava": "Autopilot: lava, stopping",
+  "message.utilitysuite.autopilot.bounce_blocked": "Autopilot: path blocked ahead, stopping",
+  "message.utilitysuite.autopilot.unloaded_ahead": "Autopilot: terrain ahead not loaded, holding altitude",
   "message.utilitysuite.bridge.disabled": "Bridge Assist is disabled",
   "message.utilitysuite.bridge.started": "Bridging %s blocks",
   "message.utilitysuite.bridge.stopped": "Bridge stopped (%s placed)",

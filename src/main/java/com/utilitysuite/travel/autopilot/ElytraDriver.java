@@ -13,6 +13,7 @@ import com.utilitysuite.travel.TravelMessages;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.item.ElytraItem;
@@ -23,13 +24,16 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.phys.shapes.VoxelShape;
 
 /**
  * Elytra autopilot. Phases: TAKEOFF (jump, deploy, first rocket), CRUISE (yaw to the stop, pitch from
  * {@link ElytraPitchController} toward a terrain-following altitude, rockets via {@link RocketPolicy}), SEARCH (budgeted
  * {@link LandingSearch} while gliding gently), APPROACH (glide slope to the site, flare, land). Cruise is aborted into a
  * landing when {@link FlightReserve} says rockets or elytra durability reached the reserve, or when health/food are low.
- * Also the Nether highway BOUNCE mode (rhythmic jump-gliding along flat tunnels, experimental).
+ * While a lookahead column is not loaded yet, cruise keeps the {@link UnloadedTerrainHold} margin (higher target, rockets
+ * held back). Also the Nether highway BOUNCE mode (rhythmic jump-gliding along flat tunnels, experimental), which stops
+ * when {@link BounceGuard} finds the way ahead blocked.
  * <p>
  * Rockets: the fireworks hotbar slot is selected through the smoother (HOTBAR), then USE is tapped (WORLD_INTERACT),
  * only when the crosshair targets nothing (a rocket used on a block would be placed instead of boosting).
@@ -44,6 +48,8 @@ final class ElytraDriver {
     private static final int BOOST_TICKS = 20;
     private static final int[] LOOKAHEAD = {8, 16, 32, 48};
     private static final double APPROACH_RADIUS = 48.0;
+    /** Collision up to this height is walked over without a jump (vanilla step height), so it is no obstacle. */
+    private static final double STEP_HEIGHT = 0.6;
 
     private final ElytraPitchController controller = new ElytraPitchController();
     private final RocketPolicy rockets = new RocketPolicy();
@@ -51,6 +57,9 @@ final class ElytraDriver {
     private final HeldKeys keys = new HeldKeys();
     private final CameraAim aim = new CameraAim(0.75f);
     private final SolidQuery solid = new SolidQuery();
+    private final SolidQuery tall = new SolidQuery(STEP_HEIGHT);
+    private final UnloadedTerrainHold hold = new UnloadedTerrainHold();
+    private final BounceGuard bounceGuard = new BounceGuard();
 
     private Phase phase = Phase.TAKEOFF;
     private int ticksSinceRocket = 1000;
@@ -58,6 +67,7 @@ final class ElytraDriver {
     private int pendingRocketSlot = -1;
     private int airborneTicks;
     private int searchAttempts;
+    private boolean unloadedAhead;
     private String failure = "";
 
     // settings
@@ -85,6 +95,9 @@ final class ElytraDriver {
         airborneTicks = 0;
         searchAttempts = 0;
         failure = "";
+        unloadedAhead = false;
+        hold.reset();
+        bounceGuard.reset();
         search.cancel();
         keys.reset();
         aim.reset();
@@ -203,6 +216,11 @@ final class ElytraDriver {
         }
         Level level = player.level();
         double targetAlt = Math.max(minAltitude, groundAhead(level, px, pz, bearing) + clearance);
+        hold.update(unloadedAhead, player.getY());
+        targetAlt = hold.targetAltitude(targetAlt);
+        if (hold.announce()) {
+            TravelMessages.status("message.utilitysuite.autopilot.unloaded_ahead");
+        }
         double dx = Angles.dirX(bearing);
         double dz = Angles.dirZ(bearing);
         double blocked = GridRay.march(px, player.getY() + 0.5, pz, dx, 0.0, dz, 48.0, solid.bind(level));
@@ -214,8 +232,10 @@ final class ElytraDriver {
         boolean boosting = ticksSinceRocket < BOOST_TICKS;
         double pitch = controller.pitch(player.getY(), targetAlt, v.y, vh, boosting);
         aim.aim(input, lease, bearing, pitch, RotationMode.VISIBLE, 1.5f);
-        if (pendingRocketSlot < 0 && rockets.shouldFire(player.getY(), targetAlt, vh, boosting, ticksSinceRocket,
-                rocketCount, reserveRockets)) {
+        // During a hold the rocket target is the current altitude: rockets keep speed, they do not chase height.
+        double rocketAlt = hold.active() ? player.getY() : targetAlt;
+        if (pendingRocketSlot < 0 && hold.rocketAllowed(vh) && rockets.shouldFire(player.getY(), rocketAlt, vh,
+                boosting, ticksSinceRocket, rocketCount, reserveRockets)) {
             requestRocket(player, input, lease);
         }
     }
@@ -273,7 +293,21 @@ final class ElytraDriver {
             failure = "message.utilitysuite.autopilot.lava";
             return Result.FAILED;
         }
-        aim.aim(input, lease, route.bearing(px, pz), 0.0, RotationMode.VISIBLE, 1.5f);
+        double bearing = route.bearing(px, pz);
+        // Obstacle rays follow the actual motion (a turn or a slide along a wall), the bearing only from a standstill.
+        Vec3 v = player.getDeltaMovement();
+        double vhSqr = v.x * v.x + v.z * v.z;
+        boolean moving = vhSqr > 0.01;
+        Level level = player.level();
+        bounceGuard.observe(player.getY(), player.onGround());
+        if (bounceGuard.check(px, player.getY(), pz, moving ? v.x : Angles.dirX(bearing),
+                moving ? v.z : Angles.dirZ(bearing), Math.sqrt(vhSqr), tall.bind(level), solid.bind(level))
+                == BounceGuard.Verdict.BLOCKED) {
+            keys.releaseAll(input, lease);
+            failure = "message.utilitysuite.autopilot.bounce_blocked";
+            return Result.FAILED;
+        }
+        aim.aim(input, lease, bearing, 0.0, RotationMode.VISIBLE, 1.5f);
         keys.set(input, lease, SimKey.FORWARD, true);
         keys.set(input, lease, SimKey.SPRINT, true);
         if (keyCooldown == 0) {
@@ -316,13 +350,17 @@ final class ElytraDriver {
         double dx = Angles.dirX(bearing);
         double dz = Angles.dirZ(bearing);
         int max = level.getHeight(Heightmap.Types.MOTION_BLOCKING, (int) Math.floor(px), (int) Math.floor(pz));
+        boolean unloaded = false;
         for (int d : LOOKAHEAD) {
             int x = (int) Math.floor(px + dx * d);
             int z = (int) Math.floor(pz + dz * d);
             if (level.hasChunk(x >> 4, z >> 4)) {
                 max = Math.max(max, level.getHeight(Heightmap.Types.MOTION_BLOCKING, x, z));
+            } else {
+                unloaded = true; // no height to follow there: the caller keeps the UnloadedTerrainHold margin
             }
         }
+        unloadedAhead = unloaded;
         return max;
     }
 
@@ -381,10 +419,22 @@ final class ElytraDriver {
         pendingRocketSlot = -1;
     }
 
-    /** Solid collision for the forward obstacle ray. */
+    /**
+     * Solid collision for the forward obstacle rays: any collision, or only collision taller than {@code minHeight}
+     * (the bounce's foot row, where carpet and slabs are stepped over). Unloaded columns do not block.
+     */
     private static final class SolidQuery implements BlockQuery {
         private final BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+        private final double minHeight;
         private Level level;
+
+        SolidQuery() {
+            this(0.0);
+        }
+
+        SolidQuery(double minHeight) {
+            this.minHeight = minHeight;
+        }
 
         SolidQuery bind(Level level) {
             this.level = level;
@@ -397,7 +447,11 @@ final class ElytraDriver {
                 return false;
             }
             BlockState s = level.getBlockState(pos.set(x, y, z));
-            return !s.isAir() && !s.getCollisionShape(level, pos).isEmpty();
+            if (s.isAir()) {
+                return false;
+            }
+            VoxelShape shape = s.getCollisionShape(level, pos);
+            return !shape.isEmpty() && (minHeight <= 0.0 || shape.max(Direction.Axis.Y) > minHeight);
         }
     }
 }
