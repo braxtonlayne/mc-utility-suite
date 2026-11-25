@@ -95,6 +95,9 @@ public final class TargetHud implements IModule, IConfigurable {
         TargetHud h = instance;
         if (h != null) {
             h.pops.pop(entityId);
+            if (h.assistant != null) {
+                h.assistant.onTotemPop(entityId); // post-pop pressure
+            }
         }
     }
 

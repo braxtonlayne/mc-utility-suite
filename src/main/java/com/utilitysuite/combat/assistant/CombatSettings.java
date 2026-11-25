@@ -44,6 +44,16 @@ public final class CombatSettings {
     public static final String SWAP_BACK = "swap_back_pulled";
     public static final String KEEP_TOTEM = "keep_offhand_totem";
     public static final String JUMP_RESET = "jump_reset";
+    public static final String COMBAT_POTIONS = "combat_potions";
+    public static final String POTION_HEAL_HEALTH = "potion_heal_health";
+    public static final String POTION_REGEN_HEALTH = "potion_regen_health";
+    public static final String SPLASH_WHEN_CHASED = "splash_when_chased";
+    public static final String POP_PRESSURE = "pop_pressure";
+    public static final String PRESSURE_CRITICAL = "pop_pressure_critical";
+    public static final String PRESSURE_TICKS = "pop_pressure_ticks";
+    public static final String MACE_DIVE = "mace_dive";
+    public static final String MACE_TIER = "mace_dive_tier";
+    public static final String FIGHT_GAP_JUMPS = "fight_gap_jumps";
 
     public static final String ENGAGE_MODE = "engage_mode";
     public static final String TARGETS = "proactive_targets";
@@ -117,6 +127,21 @@ public final class CombatSettings {
     public boolean swapBack = true;
     public boolean keepTotem = true;
     public boolean jumpReset = false;
+    /** Drink or splash healing/regeneration potions ({@link com.utilitysuite.combat.tactics.PotionPlanner}). */
+    public boolean combatPotions = false;
+    public float potionHealHealth = 8f;
+    public float potionRegenHealth = 12f;
+    public boolean splashWhenChased = true;
+    /** Post-totem-pop pressure: no retreat or eating to heal while the window is open, unless critical. */
+    public boolean popPressure = false;
+    public float pressureCritical = 6f;
+    public int pressureTicks = 100;
+    /** Wind-charge launch / elytra dive mace plans ({@link com.utilitysuite.combat.tactics.MaceDivePlanner}). */
+    public boolean maceDive = false;
+    public com.utilitysuite.combat.tactics.MaceDivePlanner.Tier maceTier =
+            com.utilitysuite.combat.tactics.MaceDivePlanner.Tier.HEAVY;
+    /** Validated gap jumps mid-fight ({@link com.utilitysuite.combat.tactics.CombatGapJump}). */
+    public boolean fightGapJumps = false;
     public boolean hitTrade = true;
     public int hitTradeHorizon = 7;
     public double tradeCaution = 2.5;
@@ -174,6 +199,16 @@ public final class CombatSettings {
         swapBack = p.getBool(id, SWAP_BACK, true);
         keepTotem = p.getBool(id, KEEP_TOTEM, true);
         jumpReset = p.getBool(id, JUMP_RESET, false);
+        combatPotions = p.getBool(id, COMBAT_POTIONS, false);
+        potionHealHealth = (float) p.getDouble(id, POTION_HEAL_HEALTH, 8.0);
+        potionRegenHealth = (float) p.getDouble(id, POTION_REGEN_HEALTH, 12.0);
+        splashWhenChased = p.getBool(id, SPLASH_WHEN_CHASED, true);
+        popPressure = p.getBool(id, POP_PRESSURE, false);
+        pressureCritical = (float) p.getDouble(id, PRESSURE_CRITICAL, 6.0);
+        pressureTicks = p.getInt(id, PRESSURE_TICKS, 100);
+        maceDive = p.getBool(id, MACE_DIVE, false);
+        maceTier = parseEnum(p.getString(id, MACE_TIER, ""), com.utilitysuite.combat.tactics.MaceDivePlanner.Tier.HEAVY);
+        fightGapJumps = p.getBool(id, FIGHT_GAP_JUMPS, false);
         disengageRadius = p.getDouble(id, DISENGAGE_RADIUS, 16.0);
         engageRange = Math.min(disengageRadius - 1.0, p.getDouble(id, ENGAGE_RANGE, 8.0));
         foodRange = Math.min(disengageRadius - 1.0, p.getDouble(id, FOOD_RANGE, 12.0));
@@ -425,6 +460,37 @@ public final class CombatSettings {
                                 + " servers only).").asAdvanced(),
                 SettingSpec.bool(JUMP_RESET, "Jump reset on knockback", false, "Spacing",
                         "Tap jump when hit while engaged and on the ground (single-player or allow-listed servers"
-                                + " only).").asAdvanced());
+                                + " only).").asAdvanced(),
+                SettingSpec.bool(POP_PRESSURE, "Keep pressure after a totem pop", false, "Emergency",
+                        "For a few seconds after the opponent pops a totem, don't back off or stop to eat (it is at"
+                                + " its weakest), unless your health is at the critical threshold. The lethal-damage"
+                                + " totem still goes into your offhand.").asAdvanced(),
+                SettingSpec.decimal(PRESSURE_CRITICAL, "Pressure critical health (half-hearts)", 6.0, 2.0, 12.0,
+                        "Emergency", "Below this, heal or back off even right after a pop.").asAdvanced(),
+                SettingSpec.integer(PRESSURE_TICKS, "Pressure window (ticks)", 100, 20, 200, "Emergency",
+                        "How long after a pop the pressure rule holds.").asAdvanced(),
+                SettingSpec.bool(COMBAT_POTIONS, "Combat potions", false, "Potions",
+                        "Drink or splash healing and regeneration potions from the hotbar at the thresholds below;"
+                                + " for a splash the camera eases down to your feet (speed-capped) before the throw."
+                                + " Decision logic only so far: not driven in fights yet.").asAdvanced(),
+                SettingSpec.decimal(POTION_HEAL_HEALTH, "Healing potion at (half-hearts)", 8.0, 2.0, 16.0, "Potions",
+                        "Use instant health at or below this health (absorption counts).").asAdvanced(),
+                SettingSpec.decimal(POTION_REGEN_HEALTH, "Regeneration potion at (half-hearts)", 12.0, 2.0, 18.0,
+                        "Potions", "Use regeneration at or below this health when not already regenerating.")
+                        .asAdvanced(),
+                SettingSpec.bool(SPLASH_WHEN_CHASED, "Splash when chased", true, "Potions",
+                        "Prefer a splash potion over drinking while being chased (drinking takes 1.6 s).")
+                        .asAdvanced(),
+                SettingSpec.bool(MACE_DIVE, "Mace dive plans", false, "Shield & weapons",
+                        "Plan wind-charge launches and elytra dives so a mace smash lands as the fall ends within"
+                                + " reach. The mace is held a full tick before the swing; no weapon swap mid-hit."
+                                + " Planner only so far: not driven in fights yet.").asAdvanced(),
+                SettingSpec.choice(MACE_TIER, "Mace dive damage tier", com.utilitysuite.combat.tactics.MaceDivePlanner.Tier.HEAVY,
+                        "Shield & weapons", "Smash: any fall over 1.5 blocks. Heavy: 3 blocks (+12). Full: 8 blocks"
+                                + " (+22, needs an elytra dive or a high drop).").asAdvanced(),
+                SettingSpec.bool(FIGHT_GAP_JUMPS, "Gap jumps in fights", false, "Spacing",
+                        "Let fight movement jump a gap when the parkour check approves the jump, it keeps you in the"
+                                + " fight, and the landing is safe (no damage at all with SafeWalk on). Gating logic"
+                                + " only so far: not driven in fights yet.").asAdvanced());
     }
 }

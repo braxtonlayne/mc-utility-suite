@@ -36,6 +36,20 @@ public final class SustainPlanner {
         return Action.NONE;
     }
 
+    /**
+     * {@link #decide} with the post-totem-pop pressure rule: while {@code pressureHold} (the opponent just popped and
+     * health is above the critical threshold, see {@code PotionPlanner.pressureHoldsRetreat}) the player neither backs
+     * off nor stops to eat; the lethal-damage totem still goes into the offhand.
+     */
+    public static Action decide(CombatSnapshot s, float lowThreshold, float lastHitDamage, boolean totems,
+                                boolean gapples, boolean pressureHold) {
+        Action a = decide(s, lowThreshold, lastHitDamage, totems, gapples);
+        if (pressureHold && (a == Action.EAT || a == Action.RETREAT)) {
+            return Action.NONE;
+        }
+        return a;
+    }
+
     /** Player-inventory menu slot for an inventory index (hotbar 0..8 -> 36..44, main 9..35 unchanged). */
     public static int menuSlotOf(int inventoryIndex) {
         return inventoryIndex < 9 ? 36 + inventoryIndex : inventoryIndex;
