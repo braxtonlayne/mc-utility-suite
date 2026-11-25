@@ -59,6 +59,7 @@ public final class TravelAutopilot implements IModule, IConfigurable {
     static final String K_MIN_DURABILITY = "elytra_min_durability";
     static final String K_ROCKET_COOLDOWN = "rocket_cooldown";
     static final String K_LAND_TO_MEND = "elytra_land_to_mend";
+    static final String K_RIPTIDE = "elytra_riptide_launch";
 
     static final String K_HUB = "nether_hub";
     static final String K_HUB_MIN = "nether_hub_min_distance";
@@ -775,6 +776,10 @@ public final class TravelAutopilot implements IModule, IConfigurable {
                         "At the elytra reserve with no spare elytra: if the worn one has Mending and bottles o' "
                                 + "enchanting are in the hotbar, land, throw them at your feet until it is repaired, "
                                 + "then take off again."),
+                SettingSpec.bool(K_RIPTIDE, "Riptide launch", false, "Elytra",
+                        "Take off with a Riptide trident instead of rockets when it is held and you are in rain or "
+                                + "water: aim along the route at the planned launch pitch, charge, release, open the "
+                                + "elytra at the top of the arc and glide on."),
                 SettingSpec.bool(K_HUB, "Nether hub routing", true, "Nether hub",
                         "Overland trips to a far overworld destination go through recorded Portals waypoints when "
                                 + "that is cheaper: walk to a portal, cross the Nether at 1:8, take a portal back. "
@@ -809,5 +814,6 @@ public final class TravelAutopilot implements IModule, IConfigurable {
         elytra.configure(p.getInt(ID, K_CLEARANCE, 24), p.getInt(ID, K_MIN_ALT, 0), p.getInt(ID, K_RESERVE, 3),
                 p.getInt(ID, K_MIN_DURABILITY, 20), p.getInt(ID, K_ROCKET_COOLDOWN, 30), arrival);
         elytra.setLandToMend(p.getBool(ID, K_LAND_TO_MEND, false));
+        elytra.setRiptideLaunch(p.getBool(ID, K_RIPTIDE, false));
     }
 }

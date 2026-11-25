@@ -100,6 +100,10 @@ public final class CombatBootstrap {
         Services.modules().register(trigger);
         Services.modules().register(targetHud);
         Services.modules().register(readRing);
+        // M1 kinetic chain calculator (visual only, off by default)
+        com.utilitysuite.combat.hud.KineticChainModule kinetic = new com.utilitysuite.combat.hud.KineticChainModule();
+        Services.modules().register(kinetic);
+        NeoForge.EVENT_BUS.addListener(kinetic::onRenderLevel); // the readout is a HUD-host element (self-registers)
         assistant.bindModuleRegistry(Services.modules());
 
         CombatEventBridge.install(assistant);
