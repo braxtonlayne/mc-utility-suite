@@ -6,6 +6,8 @@ import com.utilitysuite.core.api.ISuiteEventBus;
 import com.utilitysuite.core.api.Services;
 import com.utilitysuite.core.input.KeybindManager;
 import com.utilitysuite.world.blast.BlastOverlayModule;
+import com.utilitysuite.world.replay.PipCameraModule;
+import com.utilitysuite.world.replay.ReplayTheatreModule;
 import com.utilitysuite.world.camera.FreelookModule;
 import com.utilitysuite.world.camera.ScoutCameraModule;
 import com.utilitysuite.world.filters.RenderFiltersModule;
@@ -91,6 +93,14 @@ public final class WorldBootstrap {
         RenderFiltersModule renderFilters = new RenderFiltersModule();
         StrongholdFinderModule strongholdFinder = new StrongholdFinderModule();
         TrialChamberModule trialChambers = new TrialChamberModule(runtime);
+        ReplayTheatreModule replay = new ReplayTheatreModule();
+        PipCameraModule pip = new PipCameraModule();
+        modBus.addListener(RegisterGuiLayersEvent.class, e -> {
+            e.registerBelow(VanillaGuiLayers.CHAT,
+                    ResourceLocation.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID, "pip_camera"), pip);
+            e.registerBelow(VanillaGuiLayers.CHAT,
+                    ResourceLocation.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID, "replay_splits"), replay);
+        });
         modBus.addListener(RegisterGuiLayersEvent.class, e -> e.registerBelow(VanillaGuiLayers.CHAT,
                 ResourceLocation.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID, "minimap"), minimap.hud()));
         Services.registerWaypoints(waypoints.store());
@@ -100,7 +110,7 @@ public final class WorldBootstrap {
         for (WorldModule m : new WorldModule[] {knowledge, overlays, oreSim, seedScanner, seedDiff, radar, camera,
                 waypoints,
                 minimap, lightOverlay, blastOverlay, spawnGeometry, seedLocator, freelook, renderFilters,
-                strongholdFinder, trialChambers}) {
+                strongholdFinder, trialChambers, replay, pip}) {
             registry.register(m);
             runtime.add(m);
         }
@@ -121,6 +131,16 @@ public final class WorldBootstrap {
             e.register(freelookKey);
             freelook.setKey(freelookKey);
             waypoints.setKeys(addWaypointKey, takeMeBackKey);
+            KeyMapping replayFreezeKey = key("replay_freeze", InputConstants.UNKNOWN.getValue());
+            KeyMapping parkourStartKey = key("parkour_start", InputConstants.UNKNOWN.getValue());
+            KeyMapping parkourFinishKey = key("parkour_finish", InputConstants.UNKNOWN.getValue());
+            KeyMapping pipParkKey = key("pip_park", InputConstants.UNKNOWN.getValue());
+            e.register(replayFreezeKey);
+            e.register(parkourStartKey);
+            e.register(parkourFinishKey);
+            e.register(pipParkKey);
+            replay.setKeys(replayFreezeKey, parkourStartKey, parkourFinishKey);
+            pip.setParkKey(pipParkKey);
         });
 
         // Mixin hooks.
@@ -136,6 +156,7 @@ public final class WorldBootstrap {
         IEventBus bus = NeoForge.EVENT_BUS;
         bus.addListener(runtime::onTick);
         bus.addListener((net.neoforged.neoforge.client.event.ClientTickEvent.Post e) -> freelook.pollKey());
+        bus.addListener((net.neoforged.neoforge.client.event.ClientTickEvent.Post e) -> replay.pollKeys());
         bus.addListener(runtime::onRender);
         bus.addListener((ChunkEvent.Load e) -> {
             runtime.onChunkLoad(e);
