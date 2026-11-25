@@ -35,6 +35,7 @@ public final class ToolsBootstrap {
     private static AutoRespawn autoRespawn;
     private static AutoReconnect autoReconnect;
     private static QuickPearl quickPearl;
+    private static com.utilitysuite.tools.villager.VillagerHelpers villagerHelpers;
 
     private ToolsBootstrap() {
     }
@@ -96,6 +97,15 @@ public final class ToolsBootstrap {
         bus.addListener(autoReconnect::onScreenRender);
         bus.addListener(autoReconnect::onClientTick);
         bus.addListener(quickPearl::onClientTick);
+
+        villagerHelpers = new com.utilitysuite.tools.villager.VillagerHelpers();
+        Services.modules().register(villagerHelpers);
+        modBus.addListener(villagerHelpers::onRegisterKeys);
+        bus.addListener(villagerHelpers::onKeyPressed);
+    }
+
+    public static com.utilitysuite.tools.villager.VillagerHelpers villagerHelpers() {
+        return villagerHelpers;
     }
 
     public static DotCommands dotCommands() {
