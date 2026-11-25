@@ -545,3 +545,37 @@ Eleven tasks merged on main, none left on a branch; 1797 unit tests pass. Nothin
 - [ ] UI: place the `GoalConsole` nodes in `JobsTab`; hero frame for the takeover status line; remove the duplicate
       autopilot action-bar message; move the remaining chat / action-bar call sites to notices; `show_swing` for
       the coach arc; `world_lines` setting and a see-through world render type; style-scan backlog.
+
+## Selected next features (user list 2026-11-24, synced to 10fd736)
+
+Rules as always: zero steady-state allocation in tick/render paths, input only through core.input leases,
+heavy planning off-thread, HUD discipline. Combat items wait until combat testing resumes (owner paused it
+2026-11-24), so they would land unverified in live fights.
+
+Tier 1 (project fit, immediately useful)
+- [ ] J4 Baritone-free local pathfinder (bounded voxel A*, <= 64 blocks) behind INavigator when `baritoe` is
+      absent, so waypoint Go / Take Me Back work without Baritone; live job ETA (EMA of completed steps) on the HUD line.
+- [ ] T1 Cross-dimension Nether-hub routing: overworld leg -> nearest Portals waypoint -> Nether transit at 8:1 ->
+      paired exit portal -> final leg; multi-leg state survives the dimension change and re-acquires the TRAVEL lease.
+- [ ] J1 Shulker-aware StorageMemory (DataComponents.CONTAINER in chests and inventory) and a SHULKER_RESTOCK
+      job step: place a carried shulker, take what the plan needs, break it with the right tool, pick it up.
+- [ ] W8 Two-eye stronghold triangulator from thrown EyeOfEnder velocities, snapped to the vanilla ring bands,
+      posted as a waypoint.
+- [ ] W10 Trial Chamber / vault assistant: normal vs ominous spawners and vaults, spawner cooldowns, looted vs
+      unlooted vaults (Breeze alert hook into DodgePlanner waits for combat testing).
+- [ ] T2 Elytra: hands-free clear-sky takeoff (>= 6 clear above), mid-flight swap to a spare elytra before the
+      durability reserve, optional landing to mend with XP bottles.
+- [ ] U3 Local Rules visual builder (trigger / threshold / action cycles) and one-click safety templates:
+      stranger within 48 m while mining -> Stop-All + alert; armour < 12% -> retreat; totem pop -> QuickPearl escape.
+
+Tier 2 (bigger, own-world, seed- or combat-dependent)
+- [ ] C1 Ranged ballistics lead and charge timing (bow, crossbow volleys, trident). Combat: deferred.
+- [ ] C2 Combat potions, splash-heal foot throws, post-pop pressure. Combat: deferred.
+- [ ] C3 Mace + wind charge + elytra dive planner (no attribute/breach swap exploits). Combat: deferred.
+- [ ] C4 Wind-charge / fireball deflection and a pearl landing countdown. Combat: deferred.
+- [ ] C5 Parkour + combat movement fusion (gap jumps mid-fight via MovementPhysics). Combat: deferred.
+- [ ] J2 Villager bulk trading and librarian enchantment roller (opt-in, protected-area guards).
+- [ ] J3 Schematic auto-supply runs between layers and temporary scaffolding cleanup.
+- [ ] W1 Client-side terrain and biome oracles for OreSim on remote servers (full value needs a known seed).
+- [ ] W2 Seed-powered structure and slime-cluster locator (spiral search, minimap markers, Add waypoint / Go).
+- [ ] W6 Enchanting-table xpSeed cracker and cheapest dummy-enchant sequence (single player).
