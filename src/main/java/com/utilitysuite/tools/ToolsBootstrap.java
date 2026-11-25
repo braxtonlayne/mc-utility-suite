@@ -34,6 +34,7 @@ public final class ToolsBootstrap {
     private static OffhandManager offhand;
     private static AutoFish autoFish;
     private static AutoRespawn autoRespawn;
+    private static com.utilitysuite.tools.packetlab.LagGuard lagGuard;
     private static AutoReconnect autoReconnect;
     private static QuickPearl quickPearl;
     private static com.utilitysuite.tools.villager.VillagerHelpers villagerHelpers;
@@ -51,6 +52,9 @@ public final class ToolsBootstrap {
         Services.modules().register(packetLab);
         Services.modules().register(latency);
         Services.modules().register(rules);
+        lagGuard = new com.utilitysuite.tools.packetlab.LagGuard();
+        Services.modules().register(lagGuard);
+        Services.registerServerHealth(lagGuard);
 
         packetLab.subscribe(Services.events());
         rules.subscribe(Services.events());

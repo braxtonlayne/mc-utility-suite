@@ -508,7 +508,7 @@ public final class CombatSettings {
                 SettingSpec.bool(COMBAT_POTIONS, "Combat potions", false, "Potions",
                         "Drink or splash healing and regeneration potions from the hotbar at the thresholds below;"
                                 + " for a splash the camera eases down to your feet (speed-capped) before the throw."
-                                + " Decision logic only so far: not driven in fights yet.").asAdvanced(),
+                                + " Drinking needs Emergency sustain on.").asAdvanced(),
                 SettingSpec.decimal(POTION_HEAL_HEALTH, "Healing potion at (half-hearts)", 8.0, 2.0, 16.0, "Potions",
                         "Use instant health at or below this health (absorption counts).").asAdvanced(),
                 SettingSpec.decimal(POTION_REGEN_HEALTH, "Regeneration potion at (half-hearts)", 12.0, 2.0, 18.0,
@@ -520,13 +520,14 @@ public final class CombatSettings {
                 SettingSpec.bool(MACE_DIVE, "Mace dive plans", false, "Shield & weapons",
                         "Plan wind-charge launches and elytra dives so a mace smash lands as the fall ends within"
                                 + " reach. The mace is held a full tick before the swing; no weapon swap mid-hit."
-                                + " Planner only so far: not driven in fights yet.").asAdvanced(),
+                                + " Wind-charge launches are driven in fights (not while Wind charge launch is on).")
+                        .asAdvanced(),
                 SettingSpec.choice(MACE_TIER, "Mace dive damage tier", com.utilitysuite.combat.tactics.MaceDivePlanner.Tier.HEAVY,
                         "Shield & weapons", "Smash: any fall over 1.5 blocks. Heavy: 3 blocks (+12). Full: 8 blocks"
                                 + " (+22, needs an elytra dive or a high drop).").asAdvanced(),
                 SettingSpec.bool(FIGHT_GAP_JUMPS, "Gap jumps in fights", false, "Spacing",
                         "Let fight movement jump a gap when the parkour check approves the jump, it keeps you in the"
                                 + " fight, and the landing is safe (no damage at all with SafeWalk on). Gating logic"
-                                + " only so far: not driven in fights yet.").asAdvanced());
+                                + " applies on the way to the target.").asAdvanced());
     }
 }

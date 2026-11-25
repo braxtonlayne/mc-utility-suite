@@ -27,8 +27,30 @@ public interface HealFacts {
     /** Ticks to eat the best food (32 for most food, 16 for dried kelp). */
     int bestFoodEatTicks();
 
-    /** Hotbar index of a splash potion of healing, or -1 (not used yet: splash healing is a later task). */
+    /** Hotbar index of a splash potion of healing, or -1. */
     int splashHealingSlot();
+
+    // ---- combat potions ({@link PotionStage}); defaults keep older test doubles valid -----------------------------
+
+    /** Hotbar index of a drinkable potion of healing, or -1. */
+    default int drinkHealingSlot() {
+        return -1;
+    }
+
+    /** Hotbar index of a drinkable potion of regeneration, or -1. */
+    default int drinkRegenSlot() {
+        return -1;
+    }
+
+    /** Hotbar index of a splash potion of regeneration, or -1. */
+    default int splashRegenSlot() {
+        return -1;
+    }
+
+    /** The player has the regeneration effect now. */
+    default boolean regenerating() {
+        return false;
+    }
 
     /** Golden apples (both kinds) in the whole inventory. */
     int goldenAppleCount();

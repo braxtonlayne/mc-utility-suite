@@ -102,6 +102,10 @@ public final class CombatBootstrap {
         assistant.addStage(shieldDuel);                                  // PRE_SWING
         reflexes.feedShieldStage(shieldDuel.threatFeed()); // one USE owner in a fight; the reflex keeps sensing
         assistant.addStage(new HealWindowStage(new McHealFacts()));
+        assistant.addStage(new com.utilitysuite.combat.assistant.stages.PotionStage(new McHealFacts())); // SUSTAIN, off unless combat_potions
+        assistant.addStage(new com.utilitysuite.combat.assistant.stages.MaceDiveStage()); // PRE_AIM, off unless mace_dive
+        assistant.addStage(new com.utilitysuite.combat.assistant.stages.GapJumpStage(
+                new com.utilitysuite.combat.assistant.mc.McGapJumpFacts())); // MOVEMENT, off unless fight_gap_jumps
         assistant.addStage(new ComboEscapeStage());                      // MOVEMENT
         Services.modules().register(assistant);
         Services.modules().register(coach);

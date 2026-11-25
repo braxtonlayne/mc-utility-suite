@@ -66,6 +66,8 @@ final class ElytraDriver {
     private static final int BOOST_TICKS = 20;
     private static final int[] LOOKAHEAD = {8, 16, 32, 48};
     private static final double APPROACH_RADIUS = 48.0;
+    /** Pitch held while the lag guard pauses the cruise: a level glide (no dive into terrain the server lags on). */
+    static final double LAG_SAFE_PITCH = 0.0;
     /** Collision up to this height is walked over without a jump (vanilla step height), so it is no obstacle. */
     private static final double STEP_HEIGHT = 0.6;
 
@@ -423,6 +425,11 @@ final class ElytraDriver {
             dist = route.horizontalDistance(px, pz);
         }
         double bearing = route.bearing(px, pz);
+        if (com.utilitysuite.core.api.Services.serverHealth().pauseHighRisk()) {
+            // lag guard: the server stalled or runs slow; hold a level glide (smoothed), no rockets, no dive
+            aim.aim(input, lease, bearing, LAG_SAFE_PITCH, RotationMode.VISIBLE, 1.0f);
+            return;
+        }
         if (route.isFinalStop() && dist < APPROACH_RADIUS) {
             beginSearchAround(route, bearing);
             return;
