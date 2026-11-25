@@ -1,6 +1,7 @@
 package com.utilitysuite.world.camera;
 
 import com.utilitysuite.core.api.ProfileConfig;
+import com.utilitysuite.core.api.SecondaryView;
 import com.utilitysuite.core.api.SettingSpec;
 import com.utilitysuite.world.WorldModule;
 import net.minecraft.client.KeyMapping;
@@ -104,6 +105,9 @@ public final class FreelookModule extends WorldModule {
 
     /** Game bus: applies the orbit to the view only. */
     public void onCameraAngles(ViewportEvent.ComputeCameraAngles event) {
+        if (SecondaryView.active()) {
+            return; // the picture-in-picture camera sets its own angles; don't advance the orbit easing twice
+        }
         long now = System.nanoTime();
         double dt = lastNanos == 0L ? 0.0 : Math.min(0.1, (now - lastNanos) / 1.0e9);
         lastNanos = now;
