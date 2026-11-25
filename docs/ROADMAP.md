@@ -553,19 +553,19 @@ heavy planning off-thread, HUD discipline. Combat items wait until combat testin
 2026-11-24), so they would land unverified in live fights.
 
 Tier 1 (project fit, immediately useful)
-- [ ] J4 Baritone-free local pathfinder (bounded voxel A*, <= 64 blocks) behind INavigator when `baritoe` is
+- [x] J4 Baritone-free local pathfinder (bounded voxel A*, <= 64 blocks) behind INavigator when `baritoe` is
       absent, so waypoint Go / Take Me Back work without Baritone; live job ETA (EMA of completed steps) on the HUD line.
 - [ ] T1 Cross-dimension Nether-hub routing: overworld leg -> nearest Portals waypoint -> Nether transit at 8:1 ->
       paired exit portal -> final leg; multi-leg state survives the dimension change and re-acquires the TRAVEL lease.
 - [ ] J1 Shulker-aware StorageMemory (DataComponents.CONTAINER in chests and inventory) and a SHULKER_RESTOCK
       job step: place a carried shulker, take what the plan needs, break it with the right tool, pick it up.
-- [ ] W8 Two-eye stronghold triangulator from thrown EyeOfEnder velocities, snapped to the vanilla ring bands,
+- [x] W8 Two-eye stronghold triangulator from thrown EyeOfEnder velocities, snapped to the vanilla ring bands,
       posted as a waypoint.
-- [ ] W10 Trial Chamber / vault assistant: normal vs ominous spawners and vaults, spawner cooldowns, looted vs
+- [x] W10 Trial Chamber / vault assistant: normal vs ominous spawners and vaults, spawner cooldowns, looted vs
       unlooted vaults (Breeze alert hook into DodgePlanner waits for combat testing).
-- [ ] T2 Elytra: hands-free clear-sky takeoff (>= 6 clear above), mid-flight swap to a spare elytra before the
+- [x] T2 Elytra: hands-free clear-sky takeoff (>= 6 clear above), mid-flight swap to a spare elytra before the
       durability reserve, optional landing to mend with XP bottles.
-- [ ] U3 Local Rules visual builder (trigger / threshold / action cycles) and one-click safety templates:
+- [x] U3 Local Rules visual builder (trigger / threshold / action cycles) and one-click safety templates:
       stranger within 48 m while mining -> Stop-All + alert; armour < 12% -> retreat; totem pop -> QuickPearl escape.
 
 Tier 2 (bigger, own-world, seed- or combat-dependent)
