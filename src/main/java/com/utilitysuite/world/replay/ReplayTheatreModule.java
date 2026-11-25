@@ -1,9 +1,14 @@
 package com.utilitysuite.world.replay;
 
+import com.utilitysuite.UtilitySuiteMod;
 import com.utilitysuite.core.api.IAutopilot;
 import com.utilitysuite.core.api.ProfileConfig;
 import com.utilitysuite.core.api.Services;
 import com.utilitysuite.core.api.SettingSpec;
+import com.utilitysuite.core.api.visual.NoticeKind;
+import com.utilitysuite.world.WorldExecutor;
+import com.utilitysuite.world.WorldFiles;
+import com.utilitysuite.world.WorldIds;
 import com.utilitysuite.world.WorldModule;
 import com.utilitysuite.world.render.RenderContext;
 import com.utilitysuite.world.render.WorldRenderKit;
@@ -32,6 +37,11 @@ import java.util.List;
  * and the personal best becomes a translucent ghost box in the world (or the scene saved from the replay screen). While
  * a run is live, one HUD line shows the split delta vs the ghost. Recording is allocation free (preallocated arrays;
  * entity iteration uses the level's own iterable). Off by default; nothing is drawn when idle or in Clean-Screen.
+ * <p>Persistence (per world): personal bests and their ghost tracks are kept per course in a {@link GhostLibrary}
+ * ({@code <profile>.ghosts.bin.gz}, gzip on the world executor, debounced), and setting markers at a saved course
+ * picks its ghost and best back up, so split deltas work across sessions. The 30 s ring can be saved as a kill-cam clip
+ * ({@link ReplayClipCodec}, {@link ClipShelf}, at most {@link ClipShelf#MAX_CLIPS} per world) and reopened in the
+ * replay screen; the module card lists and deletes both.
  */
 public final class ReplayTheatreModule extends WorldModule implements LayeredDraw.Layer {
 
@@ -60,6 +70,17 @@ public final class ReplayTheatreModule extends WorldModule implements LayeredDra
     private long cachedTick = -1;
     private long lastHandOver = Long.MIN_VALUE;
     private String cached = "";
+
+    // ---- persistence: saved ghosts / personal bests and kill-cam clips, per world --------------------------------
+    private static final int SAVE_CHECK_TICKS = 200;
+    private final GhostLibrary library = new GhostLibrary();
+    private final ClipShelf clips = new ClipShelf(WorldExecutor.get());
+    private String pendingProfile;
+    private String profileId;
+    private String dimension;
+    private boolean libraryLoaded;
+    /** Id of the saved course the current markers belong to (null = not saved yet). */
+    private String courseId;
 
     public ReplayTheatreModule() {
         super(ID, "Replay Theatre", false);
@@ -99,18 +120,240 @@ public final class ReplayTheatreModule extends WorldModule implements LayeredDra
         showGhost = bool(p, "show_ghost");
         splitRadius = decimal(p, "split_radius");
         splits.setRadius(splitRadius);
+        if (!"global".equals(p.profileId())) {
+            pendingProfile = p.profileId(); // files are opened on the next tick in a world (settings stay I/O free)
+        }
     }
 
     @Override
     protected void onDisable() {
         ring.clear();
         splits.resetClock();
+        saveLibrary(true);
     }
 
     @Override
     public void onWorldUnload() {
         ring.clear();
         splits.resetClock();
+        saveLibrary(false);
+        library.clear();
+        libraryLoaded = false;
+        profileId = null;
+        dimension = null;
+        courseId = null;
+        clips.open(null);
+    }
+
+    // ---- persistence ----------------------------------------------------------------------------------------------
+
+    /** Opens this world's ghost file and clip folder when the profile or dimension changed. Client thread. */
+    private void ensureFiles(String dim) {
+        boolean profileChanged = pendingProfile != null && !pendingProfile.equals(profileId);
+        if (!profileChanged && libraryLoaded && dim.equals(dimension)) {
+            return;
+        }
+        if (profileChanged || !libraryLoaded) {
+            saveLibrary(false);
+            if (pendingProfile != null) {
+                profileId = pendingProfile;
+            }
+            loadLibrary();
+            clips.open(profileId == null ? null
+                    : WorldFiles.dir().resolve("replays").resolve(WorldFiles.safe(profileId)));
+        }
+        dimension = dim;
+        courseId = null;
+    }
+
+    private java.nio.file.Path libraryFile() {
+        return WorldFiles.file(profileId, ".ghosts.bin.gz");
+    }
+
+    private void loadLibrary() {
+        library.clear();
+        libraryLoaded = true;
+        if (profileId == null) {
+            return;
+        }
+        byte[] data = WorldFiles.read(libraryFile());
+        if (data == null) {
+            return;
+        }
+        try {
+            library.fromBytes(data);
+        } catch (java.io.IOException e) {
+            UtilitySuiteMod.LOGGER.warn("Ignoring unreadable parkour ghosts for {}", profileId, e);
+        }
+    }
+
+    private void saveLibrary(boolean async) {
+        if (profileId == null || !libraryLoaded || !library.consumeDirty()) {
+            return;
+        }
+        java.nio.file.Path f = libraryFile();
+        Runnable write = () -> {
+            try {
+                WorldFiles.writeNow(f, library.toBytes());
+            } catch (java.io.IOException e) {
+                UtilitySuiteMod.LOGGER.warn("Could not save parkour ghosts", e);
+            }
+        };
+        if (async) {
+            WorldExecutor.get().execute(write); // gzip off the client thread
+        } else {
+            write.run();
+        }
+    }
+
+    /** Markers changed: pick up the saved course (ghost and best) at the same markers, if any. */
+    private void matchCourse() {
+        courseId = null;
+        if (!splits.ready() || dimension == null) {
+            return;
+        }
+        GhostLibrary.Course c = library.match(dimension, splits.startX(), splits.startY(), splits.startZ(),
+                splits.finishX(), splits.finishY(), splits.finishZ());
+        if (c != null) {
+            applyCourse(c);
+        } else {
+            splits.clearGhost();
+        }
+    }
+
+    private void applyCourse(GhostLibrary.Course c) {
+        splits.setStart(c.sx(), c.sy(), c.sz());
+        splits.setFinish(c.fx(), c.fy(), c.fz());
+        int n = c.copyTrack(trackX, trackY, trackZ);
+        splits.clearGhost();
+        if (n > 1) {
+            splits.setGhost(trackX, trackY, trackZ, n);
+        }
+        splits.setBestTicks(c.bestTicks());
+        everFinished = false;
+        courseId = c.id();
+    }
+
+    /** Stores the current ghost as the course's best ({@code force}: an explicit save replaces a faster one). */
+    private void storeCurrentGhost(boolean force) {
+        if (!splits.ready() || dimension == null || profileId == null) {
+            return;
+        }
+        int n = splits.copyGhost(trackX, trackY, trackZ);
+        if (n < 2) {
+            return;
+        }
+        GhostLibrary.Course existing = courseId == null ? null : library.get(courseId);
+        String name = existing != null ? existing.name() : "Course " + (library.size() + 1);
+        GhostLibrary.Course c = library.put(GhostLibrary.course(name, dimension, splits.startX(), splits.startY(),
+                splits.startZ(), splits.finishX(), splits.finishY(), splits.finishZ(), splits.bestTicks(),
+                System.currentTimeMillis(), trackX, trackY, trackZ, n), force);
+        courseId = c.id();
+    }
+
+    /** Saved courses of this world, newest first (empty until the module has ticked in a world). */
+    public List<GhostLibrary.Course> savedGhosts() {
+        return library.list();
+    }
+
+    public boolean filesOpen() {
+        return libraryLoaded && profileId != null;
+    }
+
+    /** Loads a saved course: its markers, ghost and personal best. Returns a status line. */
+    public String loadGhost(String id) {
+        GhostLibrary.Course c = library.get(id);
+        if (c == null) {
+            return "That ghost is no longer saved";
+        }
+        if (dimension != null && !dimension.equals(c.dimension())) {
+            return c.name() + " is in another dimension";
+        }
+        applyCourse(c);
+        return "Loaded " + c.name() + " (best " + seconds(c.bestTicks()) + ")";
+    }
+
+    /** Deletes a saved course (and drops its ghost if it is the active one). Returns a status line. */
+    public String deleteGhost(String id) {
+        GhostLibrary.Course c = library.get(id);
+        if (c == null || !library.remove(id)) {
+            return "That ghost is no longer saved";
+        }
+        if (id.equals(courseId)) {
+            splits.clearGhost();
+            courseId = null;
+        }
+        saveLibrary(true);
+        return "Deleted ghost " + c.name();
+    }
+
+    public List<ClipShelf.Entry> savedClips() {
+        return clips.entries();
+    }
+
+    /** Saves the current 30 s ring (live or frozen) as a kill-cam clip. Returns a status line. */
+    public String saveKillCam() {
+        return saveClip(ring, selfIdOrMin());
+    }
+
+    String saveClip(ReplayRing r, int selfId) {
+        if (!clips.isOpen()) {
+            return isEnabled() ? "Join a world first" : "Turn Replay Theatre on first";
+        }
+        if (r.frames() < 2) {
+            return "Nothing recorded yet";
+        }
+        byte[] raw;
+        try {
+            raw = ReplayClipCodec.encode(r, selfId, System.currentTimeMillis()); // one copy; gzip runs off-thread
+        } catch (java.io.IOException e) {
+            return "Could not save the clip";
+        }
+        double secs = (r.tickOf(r.frames() - 1) - r.tickOf(0)) / ReplayTimeline.TICKS_PER_SECOND;
+        clips.save(raw, System.currentTimeMillis(), id -> {
+            if (id == null) {
+                Minecraft.getInstance().execute(() -> notice(NoticeKind.WARN, "Kill-cam clip could not be written"));
+            }
+        });
+        return "Kill-cam clip saved (" + Math.round(secs) + " s)";
+    }
+
+    /** Opens a saved clip in the replay screen (read in the background). Returns a status line. */
+    public String openClip(String id) {
+        Minecraft mc = Minecraft.getInstance();
+        clips.load(id, clip -> mc.execute(() -> {
+            if (clip == null) {
+                notice(NoticeKind.WARN, "That clip could not be read");
+            } else if (mc.player != null) {
+                mc.setScreen(new ReplayScreen(this, clip.ring(), clip.info().selfId(), true));
+            }
+        }));
+        return "Opening clip...";
+    }
+
+    public String deleteClip(String id) {
+        clips.delete(id);
+        return "Deleted clip";
+    }
+
+    private static void notice(NoticeKind kind, String text) {
+        if (!cleanScreen()) {
+            Services.visuals().notices().post(kind, text, null);
+        }
+    }
+
+    private static int selfIdOrMin() {
+        LocalPlayer p = Minecraft.getInstance().player;
+        return p == null ? Integer.MIN_VALUE : p.getId();
+    }
+
+    static String seconds(int ticks) {
+        if (ticks < 0) {
+            return "-";
+        }
+        StringBuilder b = new StringBuilder(12);
+        appendSeconds(b, ticks);
+        return b.toString();
     }
 
     /** Client tick (game bus, always): key presses; the recording itself runs in {@link #onTick}. */
@@ -120,17 +363,19 @@ public final class ReplayTheatreModule extends WorldModule implements LayeredDra
         while (freezeKey != null && freezeKey.consumeClick()) {
             if (p != null && isEnabled() && ring.frames() > 1 && mc.screen == null) {
                 ring.setFrozen(true);
-                mc.setScreen(new ReplayScreen(this));
+                mc.setScreen(new ReplayScreen(this, ring, p.getId(), false));
             }
         }
         while (startKey != null && startKey.consumeClick()) {
             if (p != null && isEnabled()) {
                 splits.setStart(p.getX(), p.getY(), p.getZ());
+                matchCourse();
             }
         }
         while (finishKey != null && finishKey.consumeClick()) {
             if (p != null && isEnabled()) {
                 splits.setFinish(p.getX(), p.getY(), p.getZ());
+                matchCourse();
             }
         }
     }
@@ -140,21 +385,26 @@ public final class ReplayTheatreModule extends WorldModule implements LayeredDra
         ring.setFrozen(false);
     }
 
-    /** Replay screen "save as ghost": the local player's track over [from, to] frames becomes the ghost. */
-    int saveGhost(int fromFrame, int toFrame) {
-        Minecraft mc = Minecraft.getInstance();
-        if (mc.player == null) {
+    /**
+     * Replay screen "save as ghost": {@code selfId}'s track over [from, to] frames of {@code r} (the live ring or a
+     * saved clip) becomes the ghost and personal best, and is saved with the course.
+     */
+    int saveGhost(ReplayRing r, int selfId, int fromFrame, int toFrame) {
+        if (Minecraft.getInstance().player == null) {
             return 0;
         }
-        int n = ring.copyTrack(mc.player.getId(), fromFrame, toFrame, trackX, trackY, trackZ);
+        int n = r.copyTrack(selfId, fromFrame, toFrame, trackX, trackY, trackZ);
         if (n > 1 && !splits.ready()) {
             // no markers yet: the saved stretch's ends become the start and finish
             splits.setStart(trackX[0], trackY[0], trackZ[0]);
             splits.setFinish(trackX[n - 1], trackY[n - 1], trackZ[n - 1]);
+            courseId = null;
         }
         if (n > 1) {
             splits.setGhost(trackX, trackY, trackZ, n);
             splits.setBestTicks(n - 1);
+            storeCurrentGhost(true);
+            saveLibrary(true);
         }
         return n;
     }
@@ -168,10 +418,17 @@ public final class ReplayTheatreModule extends WorldModule implements LayeredDra
             return;
         }
         tickCounter++;
+        ensureFiles(WorldIds.dimension(level));
         if (splits.ready()) {
             if (splits.tick(p.getX(), p.getY(), p.getZ())) {
                 everFinished = true;
+                if (splits.consumeNewBest()) {
+                    storeCurrentGhost(false); // a personal best: kept across sessions (debounced write below)
+                }
             }
+        }
+        if (tickCounter % SAVE_CHECK_TICKS == 0) {
+            saveLibrary(true);
         }
         if (ring.frozen()) {
             return;

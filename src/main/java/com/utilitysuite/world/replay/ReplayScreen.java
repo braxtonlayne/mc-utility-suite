@@ -12,7 +12,8 @@ import org.lwjgl.glfw.GLFW;
  * velocity vectors (10 ticks ahead), look lines while swinging, hit markers (X) near hit events and a ground grid. The
  * bottom strip is the timeline (click/drag to scrub) with hit ticks marked, play state, speed and the trade timing.
  * Keys: Space play/pause, Left/Right step a tick, Up/Down speed, I sets the in-point, G saves in-point..playhead of
- * your own track as the parkour ghost, Esc closes (recording resumes).
+ * your own track as the parkour ghost (and saves it with the course), K saves the 30 s ring as a kill-cam clip on disk,
+ * Esc closes (recording resumes). The same screen opens a saved clip read back from disk.
  * <p>The view is a projected wireframe (a {@link ViewProjector}), not a second world render; see the PiP notes.
  */
 public final class ReplayScreen extends Screen {
@@ -45,31 +46,46 @@ public final class ReplayScreen extends Screen {
     private long lastNanos;
     private int inPoint;
     private String status = "";
+    private final int selfId;
+    private final boolean savedClip;
 
+    /** The live (frozen) ring, with the local player as "you". */
     public ReplayScreen(ReplayTheatreModule module) {
-        super(Component.literal("Replay Theatre"));
+        this(module, module.ring(), localPlayerId(), false);
+    }
+
+    private static int localPlayerId() {
+        var p = net.minecraft.client.Minecraft.getInstance().player;
+        return p == null ? Integer.MIN_VALUE : p.getId();
+    }
+
+    /**
+     * @param ring      the frozen live ring, or a ring decoded from a saved clip
+     * @param selfId    the entity id of "you" in that ring (the local player when it was recorded)
+     * @param savedClip true for a clip read from disk (closing does not touch the live recording)
+     */
+    public ReplayScreen(ReplayTheatreModule module, ReplayRing ring, int selfId, boolean savedClip) {
+        super(Component.literal(savedClip ? "Replay Theatre (saved clip)" : "Replay Theatre"));
         this.module = module;
-        this.ring = module.ring();
+        this.ring = ring;
+        this.selfId = selfId;
+        this.savedClip = savedClip;
         timeline.load(ring.frames());
-        int selfId = selfId();
         if (ring.pose(timeline.position(), selfId, pose)) {
             orbitYaw = (float) pose[3];
         }
     }
 
     private int selfId() {
-        return minecraftPlayerId();
-    }
-
-    private static int minecraftPlayerId() {
-        var p = net.minecraft.client.Minecraft.getInstance().player;
-        return p == null ? Integer.MIN_VALUE : p.getId();
+        return selfId;
     }
 
     /** Called whenever this screen goes away (Esc, another screen, disconnect): recording resumes. */
     @Override
     public void removed() {
-        module.unfreeze();
+        if (!savedClip) {
+            module.unfreeze();
+        }
         super.removed();
     }
 
@@ -216,7 +232,7 @@ public final class ReplayScreen extends Screen {
         }
         g.drawString(font, b.toString(), 10, viewH + 20, 0xFFE0E0E0, false);
         g.drawString(font, "Space play  ←/→ step  ↑/↓ speed  drag orbit  scroll zoom  I in-point  "
-                + "G save ghost  Esc close" + status, 10, viewH + 31, 0xFF8090A0, false);
+                + "G save ghost  " + (savedClip ? "" : "K save clip  ") + "Esc close" + status, 10, viewH + 31, 0xFF8090A0, false);
     }
 
     private void scrubAt(double mouseX) {
@@ -275,9 +291,11 @@ public final class ReplayScreen extends Screen {
             case GLFW.GLFW_KEY_DOWN -> timeline.slower();
             case GLFW.GLFW_KEY_I -> inPoint = (int) Math.round(timeline.position());
             case GLFW.GLFW_KEY_G -> {
-                int n = module.saveGhost(inPoint, (int) Math.round(timeline.position()));
+                int n = module.saveGhost(ring, selfId, inPoint, (int) Math.round(timeline.position()));
                 status = n > 1 ? "   ghost saved (" + n + " ticks)" : "   nothing to save";
             }
+            case GLFW.GLFW_KEY_K -> status = savedClip ? "   already a saved clip"
+                    : "   " + module.saveClip(ring, selfId);
             default -> {
                 return super.keyPressed(key, scan, mods);
             }

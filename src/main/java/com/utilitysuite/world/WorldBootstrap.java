@@ -157,6 +157,17 @@ public final class WorldBootstrap {
                     "map atlas 3d", atlas::openScreen));
             actions.register(new com.utilitysuite.core.api.SuiteAction("sonar_pulse", "Sonar Pulse",
                     "lidar scan pulse caves spawners", sonar::pulse));
+            actions.register(new com.utilitysuite.core.api.SuiteAction("clear_change_snapshot_chunk",
+                    "Clear change snapshot (this chunk)", "change tracker forget reset chunk",
+                    () -> notice(changeTracker.clearChunkUnderPlayer())));
+            actions.register(new com.utilitysuite.core.api.SuiteAction("clear_change_snapshots_dimension",
+                    "Clear change snapshots (this dimension)", "change tracker forget reset dimension",
+                    () -> notice(changeTracker.clearDimension())));
+            actions.register(new com.utilitysuite.core.api.SuiteAction("clear_change_snapshots_all",
+                    "Clear change snapshots (whole world)", "change tracker forget reset all world",
+                    () -> notice(changeTracker.clearAll())));
+            actions.register(new com.utilitysuite.core.api.SuiteAction("save_killcam", "Save kill-cam clip",
+                    "replay theatre record clip save 30 seconds", () -> notice(replay.saveKillCam())));
         }
         // Created in the registration event (not during parallel mod construction: KeyMapping keeps a global map).
         modBus.addListener((RegisterKeyMappingsEvent e) -> {
@@ -237,6 +248,13 @@ public final class WorldBootstrap {
         bus.addListener((CalculatePlayerTurnEvent e) -> camera.onTurnSensitivity(e));
         bus.addListener((RenderBlockScreenEffectEvent e) -> camera.onScreenEffect(e));
         bus.addListener((RenderGuiLayerEvent.Pre e) -> camera.onGuiLayer(e));
+    }
+
+    /** Confirmation toast of a suite action (hidden in Clean-Screen, like every notice). */
+    private static void notice(String text) {
+        if (!Services.modState().isCleanScreen()) {
+            Services.visuals().notices().post(com.utilitysuite.core.api.visual.NoticeKind.INFO, text, null);
+        }
     }
 
     private static KeyMapping key(String name, int defaultKey) {
