@@ -83,8 +83,14 @@ public final class WorldRadarModule extends WorldModule {
     private double acousticMaxDistSq;
     private final AcousticRadar.Visitor acousticLineVisitor = this::drawAcousticLine;
     private final AcousticRadar.Visitor acousticLabelVisitor = this::drawAcousticLabel;
+    private boolean acousticRipples;
+    private boolean acousticEdgeCues;
+    private final AcousticRipples ripples = new AcousticRipples(96);
+    private final AcousticRipples.RingVisitor ringVisitor = this::drawRing;
+    private boolean trailClasses;
+    private final TrailForensics trailForensics = new TrailForensics();
     private static final String[] ACOUSTIC_LABELS = {
-            "Container", "Portal", "Explosion", "Piston", "Player", "Sound"
+            "Container", "Portal", "Explosion", "Redstone", "Player", "Sound", "Footsteps", "Eating", "Sculk"
     };
 
     private static final int MAX_MOBS = 128;
@@ -137,7 +143,14 @@ public final class WorldRadarModule extends WorldModule {
                 SettingSpec.bool("acoustic_pings", "Acoustic pings", false, "Groups",
                         "3D markers for recent sound and global packet activity (requires Packet Lab)."),
                 SettingSpec.integer("acoustic_max_age_sec", "Acoustic ping age (s)", 8, 1, 30, "Display",
-                        "How long acoustic ping markers remain visible."));
+                        "How long acoustic ping markers remain visible."),
+                SettingSpec.bool("acoustic_ripples", "Echo ripples", false, "Display",
+                        "Acoustic pings also draw three expanding rings at the sound, coloured by source."),
+                SettingSpec.bool("acoustic_edge_cues", "Off-screen sound cues", false, "Display",
+                        "Arrows at the screen edge point to acoustic pings outside your view."),
+                SettingSpec.bool("trail_classes", "Trail forensics", false, "Display",
+                        "Classifies new-chunk trails (elytra highway, boat run, Nether tunnel, search zig-zag) and "
+                                + "draws a direction arrow along each."));
     }
 
     @Override
@@ -155,6 +168,12 @@ public final class WorldRadarModule extends WorldModule {
         trailRadius = integer(p, "trail_radius");
         acousticPings = bool(p, "acoustic_pings");
         acousticMaxAgeMs = integer(p, "acoustic_max_age_sec") * 1000L;
+        acousticRipples = bool(p, "acoustic_ripples");
+        acousticEdgeCues = bool(p, "acoustic_edge_cues");
+        trailClasses = bool(p, "trail_classes");
+        if (!trailClasses) {
+            trailForensics.clear();
+        }
         itemFilter.set(text(p, "item_highlight"), text(p, "item_junk"), bool(p, "show_other_items"));
         itemVerdicts.clear();
         scanner.chunkAge.configure(integer(p, "trail_window"), 2);
@@ -175,6 +194,8 @@ public final class WorldRadarModule extends WorldModule {
     @Override
     public void onWorldUnload() {
         clearItems();
+        ripples.clear();
+        trailForensics.clear();
         colliderLevel = null;
     }
 
@@ -241,6 +262,15 @@ public final class WorldRadarModule extends WorldModule {
         if (ticks % 200 == 0) {
             tags.sweep();
         }
+        if (trails && trailClasses && self != null && level != null && ticks % 40 == 0) {
+            trailForensics.gather(scanner.chunkAge, level, self.getBlockX() >> 4, self.getBlockZ() >> 4, trailRadius,
+                    level.dimension() == net.minecraft.world.level.Level.NETHER);
+        }
+    }
+
+    /** For the edge-cue HUD layer. */
+    boolean wantsEdgeCues() {
+        return isEnabled() && acousticPings && acousticEdgeCues;
     }
 
     private ItemFilter.Verdict verdict(Item item) {
@@ -371,8 +401,28 @@ public final class WorldRadarModule extends WorldModule {
                 acousticNowMs = System.currentTimeMillis();
                 acousticMaxDistSq = r2;
                 radar.forEachActive(acousticNowMs, acousticMaxAgeMs, acousticLineVisitor);
+                if (acousticRipples) {
+                    ripples.ingest(radar);
+                    ripples.forEachRing(acousticNowMs, ringVisitor);
+                }
                 acousticCtx = null;
             }
+        }
+    }
+
+    /** One horizontal ripple ring (32 segments) around a sound origin. */
+    private void drawRing(double x, double y, double z, float radius, int argb) {
+        RenderContext ctx = acousticCtx;
+        if (ctx.distSq((int) Math.floor(x), (int) Math.floor(y), (int) Math.floor(z)) > acousticMaxDistSq) {
+            return;
+        }
+        float cx = ctx.rx(x);
+        float cy = ctx.ry(y);
+        float cz = ctx.rz(z);
+        for (int i = 0; i < AcousticRipples.SEGMENTS; i++) {
+            WorldRenderKit.line(ctx.lines, ctx.pose, cx + radius * AcousticRipples.cos(i), cy,
+                    cz + radius * AcousticRipples.sin(i), cx + radius * AcousticRipples.cos(i + 1), cy,
+                    cz + radius * AcousticRipples.sin(i + 1), argb);
         }
     }
 
@@ -436,6 +486,9 @@ public final class WorldRadarModule extends WorldModule {
                 float z0 = ctx.rz(cz << 4);
                 WorldRenderKit.square(ctx.lines, ctx.pose, x0 + 0.5f, y, z0 + 0.5f, x0 + 15.5f, z0 + 15.5f, 0xA0FF4040);
             }
+        }
+        if (trailClasses) {
+            trailForensics.render(ctx, y + 0.5f);
         }
     }
 
@@ -563,6 +616,9 @@ public final class WorldRadarModule extends WorldModule {
                             0xFFC0C0C0);
                 }
             }
+        }
+        if (trails && trailClasses) {
+            trailForensics.renderLabels(ctx, ctx.ry(self.getBlockY() - 1 + 0.52));
         }
         if (acousticPings) {
             AcousticRadar radar = PacketLab.acousticRadar();

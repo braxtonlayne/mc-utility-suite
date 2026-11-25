@@ -103,8 +103,13 @@ public final class WorldBootstrap {
         WorldAtlasModule atlas = new WorldAtlasModule();
         com.utilitysuite.world.redstone.RedstoneTracerModule redstoneTracer =
                 new com.utilitysuite.world.redstone.RedstoneTracerModule();
+        com.utilitysuite.world.changes.ChangeTrackerModule changeTracker =
+                new com.utilitysuite.world.changes.ChangeTrackerModule();
         modBus.addListener(RegisterGuiLayersEvent.class, e -> e.registerBelow(VanillaGuiLayers.CHAT,
                 ResourceLocation.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID, "minimap"), minimap.hud()));
+        modBus.addListener(RegisterGuiLayersEvent.class, e -> e.registerBelow(VanillaGuiLayers.CHAT,
+                ResourceLocation.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID, "acoustic_edge_cues"),
+                new com.utilitysuite.world.overlays.AcousticEdgeHud(radar)));
         Services.registerWaypoints(waypoints.store());
         waypoints.subscribe(events);
 
@@ -112,7 +117,8 @@ public final class WorldBootstrap {
         for (WorldModule m : new WorldModule[] {knowledge, overlays, oreSim, seedScanner, seedDiff, radar, camera,
                 waypoints,
                 minimap, lightOverlay, blastOverlay, crystalExposure, projectileRibbon, spawnGeometry, seedLocator,
-                freelook, renderFilters, strongholdFinder, trialChambers, sonar, cavities, atlas, redstoneTracer}) {
+                freelook, renderFilters, strongholdFinder, trialChambers, sonar, cavities, atlas, redstoneTracer,
+                changeTracker}) {
             registry.register(m);
             runtime.add(m);
         }
@@ -140,6 +146,11 @@ public final class WorldBootstrap {
             e.register(cavityKey);
             sonar.setKey(sonarKey);
             cavities.setKey(cavityKey);
+            KeyMapping snapshotKey = key("snapshot_chunks", InputConstants.UNKNOWN.getValue());
+            KeyMapping changeDiffKey = key("toggle_change_diff", InputConstants.UNKNOWN.getValue());
+            e.register(snapshotKey);
+            e.register(changeDiffKey);
+            changeTracker.setKeys(snapshotKey, changeDiffKey);
         });
 
         // Mixin hooks.
