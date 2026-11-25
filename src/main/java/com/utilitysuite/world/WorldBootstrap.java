@@ -11,6 +11,8 @@ import com.utilitysuite.world.camera.ScoutCameraModule;
 import com.utilitysuite.world.filters.RenderFiltersModule;
 import com.utilitysuite.world.lighting.LightOverlayModule;
 import com.utilitysuite.world.spawn.SpawnGeometryModule;
+import com.utilitysuite.world.stealth.StealthVisionModule;
+import com.utilitysuite.world.fortress.FortressSpawnModule;
 import com.utilitysuite.world.stronghold.StrongholdFinderModule;
 import com.utilitysuite.world.trial.TrialChamberModule;
 import com.utilitysuite.world.knowledge.KnowledgeLedger;
@@ -91,6 +93,8 @@ public final class WorldBootstrap {
         RenderFiltersModule renderFilters = new RenderFiltersModule();
         StrongholdFinderModule strongholdFinder = new StrongholdFinderModule();
         TrialChamberModule trialChambers = new TrialChamberModule(runtime);
+        StealthVisionModule stealthVision = new StealthVisionModule();
+        FortressSpawnModule fortressSpawns = new FortressSpawnModule(oreSim::profile);
         modBus.addListener(RegisterGuiLayersEvent.class, e -> e.registerBelow(VanillaGuiLayers.CHAT,
                 ResourceLocation.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID, "minimap"), minimap.hud()));
         Services.registerWaypoints(waypoints.store());
@@ -100,7 +104,7 @@ public final class WorldBootstrap {
         for (WorldModule m : new WorldModule[] {knowledge, overlays, oreSim, seedScanner, seedDiff, radar, camera,
                 waypoints,
                 minimap, lightOverlay, blastOverlay, spawnGeometry, seedLocator, freelook, renderFilters,
-                strongholdFinder, trialChambers}) {
+                strongholdFinder, trialChambers, stealthVision, fortressSpawns}) {
             registry.register(m);
             runtime.add(m);
         }

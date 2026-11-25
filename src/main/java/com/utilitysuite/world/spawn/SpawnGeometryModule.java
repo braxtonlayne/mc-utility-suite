@@ -13,7 +13,14 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.client.server.IntegratedServer;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.LightLayer;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.chunk.LevelChunk;
+import com.utilitysuite.world.lighting.ColumnScanScheduler;
+import com.utilitysuite.world.render.LineSink;
 import org.joml.Matrix4f;
 
 import java.util.List;
@@ -25,6 +32,11 @@ import java.util.function.Supplier;
  * around a pinned point (where the module was switched on): nothing spawns within 24 blocks of a player, and mobs
  * beyond 128 blocks despawn at once. The slime chunk list is recomputed on the tick only when the player's chunk or
  * the seed changes; frames walk a flat array.
+ * <p>
+ * Mob-cap view (off by default): wireframe domes at 24 (no spawn), 32 (random despawn starts) and 128 blocks (instant
+ * despawn) around you or a pinned AFK spot, and a budgeted cave scan that counts dark spawnable floor spots (light 0,
+ * valid floor, two air blocks above) 24 to 128 blocks from that spot per sub-chunk ({@link CaveHeatGrid}) and points an
+ * arrow at the biggest touching cluster: where your mob cap goes while you idle there.
  */
 public final class SpawnGeometryModule extends WorldModule {
 
@@ -34,6 +46,13 @@ public final class SpawnGeometryModule extends WorldModule {
     private static final int SLIME_COLOR = 0xC060FF60;
     private static final int INNER_COLOR = 0x90FF5050;
     private static final int OUTER_COLOR = 0x605090FF;
+    private static final int DOME_NO_SPAWN = 0x90FF5050;
+    private static final int DOME_RANDOM = 0x80FFD040;
+    private static final int DOME_INSTANT = 0x605090FF;
+    private static final int HEAT_COLOR = 0xE0FF60FF;
+    /** Cave scan: one column every HEAT_STEP blocks each way (a 4x sample of the 257x257 square). */
+    private static final int HEAT_STEP = 2;
+    private static final int HEAT_MOVE_RESTART = 16;
     private static final String SEED_NEEDED = "Slime chunks: seed needed (Seed Workbench or setting)";
 
     private final Supplier<GeneratorProfile> seedSource;
@@ -63,6 +82,37 @@ public final class SpawnGeometryModule extends WorldModule {
     private double pinY;
     private double pinZ;
 
+    // Mob-cap domes and cave heat (R4).
+    private boolean domes;
+    private boolean afkPin;
+    private boolean afkCapturePending;
+    private boolean afkKnown;
+    private double afkX;
+    private double afkY;
+    private double afkZ;
+    private boolean caveHeat;
+    private int heatBudget;
+    private final ColumnScanScheduler heatScheduler = new ColumnScanScheduler();
+    private final CaveHeatGrid heatGrid = new CaveHeatGrid();
+    private final BlockPos.MutableBlockPos heatPos = new BlockPos.MutableBlockPos();
+    private boolean heatRunning;
+    private int heatCenterX;
+    private int heatCenterY;
+    private int heatCenterZ;
+    // Published result of the last finished pass (rendered).
+    private int sinkSpots;
+    private int sinkTotal;
+    private double sinkX;
+    private double sinkY;
+    private double sinkZ;
+    private int sinkX0;
+    private int sinkY0;
+    private int sinkZ0;
+    private int sinkX1;
+    private int sinkY1;
+    private int sinkZ1;
+    private String sinkLabel = "";
+
     public SpawnGeometryModule(Supplier<GeneratorProfile> seedSource) {
         super(ID, "Spawn Geometry", false);
         this.seedSource = seedSource;
@@ -82,7 +132,17 @@ public final class SpawnGeometryModule extends WorldModule {
                         "Used when neither single-player nor the Seed Workbench knows the seed."),
                 SettingSpec.bool("spheres", "Spawn spheres", true, "Spawn spheres",
                         "24-block no-spawn sphere and 128-block despawn sphere around the point where you switched "
-                                + "this module on (switch off and on to move it)."));
+                                + "this module on (switch off and on to move it)."),
+                SettingSpec.bool("domes", "Mob-cap domes", false, "Mob cap",
+                        "Wireframe domes at 24 (no spawn), 32 (random despawn starts) and 128 blocks (instant "
+                                + "despawn) around you or the pinned AFK spot."),
+                SettingSpec.bool("afk_pin", "Pin AFK spot here", false, "Mob cap",
+                        "Switch on to pin the domes and the cave scan where you stand now; off: they follow you."),
+                SettingSpec.bool("cave_heat", "Find cave spawn spots", false, "Mob cap",
+                        "Scan (a little per tick) for dark spawnable cave floor 24-128 blocks from the AFK spot and "
+                                + "point at the biggest cluster: where your mob cap goes."),
+                SettingSpec.integer("heat_budget", "Scan columns per tick", 16, 2, 128, "Mob cap",
+                        "Columns examined per tick by the cave scan (one every 2 blocks each way)."));
     }
 
     @Override
@@ -97,6 +157,15 @@ public final class SpawnGeometryModule extends WorldModule {
         manualValue = manualKnown ? parsed.getAsLong() : 0L;
         spheres = bool(p, "spheres");
         lastChunkX = Integer.MIN_VALUE; // force a recompute
+        domes = bool(p, "domes");
+        boolean pin = bool(p, "afk_pin");
+        afkCapturePending = pin && (!afkPin || !afkKnown); // capture on the next tick when switched on
+        afkPin = pin;
+        caveHeat = bool(p, "cave_heat");
+        heatBudget = integer(p, "heat_budget");
+        if (!caveHeat) {
+            heatRunning = false;
+        }
     }
 
     @Override
@@ -108,6 +177,10 @@ public final class SpawnGeometryModule extends WorldModule {
     @Override
     public void onWorldUnload() {
         pinned = false;
+        afkKnown = false;
+        afkCapturePending = afkPin;
+        heatRunning = false;
+        sinkSpots = 0;
         slimeCount = 0;
         lastChunkX = Integer.MIN_VALUE;
     }
@@ -125,6 +198,16 @@ public final class SpawnGeometryModule extends WorldModule {
             pinX = player.getX();
             pinY = player.getY();
             pinZ = player.getZ();
+        }
+        if (afkCapturePending) {
+            afkCapturePending = false;
+            afkKnown = true;
+            afkX = player.getX();
+            afkY = player.getY();
+            afkZ = player.getZ();
+        }
+        if (caveHeat) {
+            tickCaveHeat(level, player);
         }
         if (!slime) {
             slimeCount = 0;
@@ -159,6 +242,104 @@ public final class SpawnGeometryModule extends WorldModule {
                 }
             }
         }
+    }
+
+    private double capCenterX(LocalPlayer player) {
+        return afkPin && afkKnown ? afkX : player.getX();
+    }
+
+    private double capCenterY(LocalPlayer player) {
+        return afkPin && afkKnown ? afkY : player.getY();
+    }
+
+    private double capCenterZ(LocalPlayer player) {
+        return afkPin && afkKnown ? afkZ : player.getZ();
+    }
+
+    /** Budgeted cave scan around the AFK spot (or the player); publishes the biggest cluster when a pass ends. */
+    private void tickCaveHeat(ClientLevel level, LocalPlayer player) {
+        int cx = (int) Math.floor(capCenterX(player));
+        int cy = (int) Math.floor(capCenterY(player));
+        int cz = (int) Math.floor(capCenterZ(player));
+        if (!heatRunning || Math.abs(cx - heatCenterX) > HEAT_MOVE_RESTART
+                || Math.abs(cz - heatCenterZ) > HEAT_MOVE_RESTART || Math.abs(cy - heatCenterY) > HEAT_MOVE_RESTART) {
+            startHeatPass(level, cx, cy, cz);
+        }
+        heatScheduler.beginTick(heatBudget);
+        while (heatScheduler.next()) {
+            scanHeatColumn(level, heatCenterX + (heatScheduler.x() - heatCenterX) * HEAT_STEP,
+                    heatCenterZ + (heatScheduler.z() - heatCenterZ) * HEAT_STEP);
+        }
+        if (!heatScheduler.passActive()) {
+            heatGrid.computeClusters();
+            publishSink();
+            startHeatPass(level, cx, cy, cz);
+        }
+    }
+
+    private void startHeatPass(ClientLevel level, int cx, int cy, int cz) {
+        heatRunning = true;
+        heatCenterX = cx;
+        heatCenterY = cy;
+        heatCenterZ = cz;
+        heatGrid.reset(cx, cz, level.getMinSection(), level.getSectionsCount());
+        // Scheduler units are HEAT_STEP blocks, centred on the anchor (x() - centre is the step index).
+        heatScheduler.clear();
+        heatScheduler.restart(cx, cz, (int) CaveHeatGrid.INSTANT_DESPAWN / HEAT_STEP);
+    }
+
+    private void scanHeatColumn(ClientLevel level, int x, int z) {
+        LevelChunk chunk = level.getChunkSource().getChunk(x >> 4, z >> 4, false);
+        if (chunk == null) {
+            return;
+        }
+        double dx = x + 0.5 - heatCenterX;
+        double dz = z + 0.5 - heatCenterZ;
+        double h2 = dx * dx + dz * dz;
+        if (h2 > CaveHeatGrid.INSTANT_DESPAWN * CaveHeatGrid.INSTANT_DESPAWN) {
+            return;
+        }
+        int minY = Math.max(level.getMinBuildHeight(), heatCenterY - (int) CaveHeatGrid.INSTANT_DESPAWN);
+        int maxY = Math.min(level.getMaxBuildHeight() - 3, heatCenterY + (int) CaveHeatGrid.INSTANT_DESPAWN);
+        // Walk down; 'air' counts consecutive empty blocks above the current one.
+        int air = 0;
+        for (int y = maxY + 2; y >= minY; y--) {
+            BlockState s = chunk.getBlockState(heatPos.set(x, y, z));
+            if (s.isAir()) {
+                air++;
+                continue;
+            }
+            if (air >= 2 && y <= maxY) {
+                double dy = y + 1 - heatCenterY;
+                if (CaveHeatGrid.countsForCap(h2 + dy * dy) && s.isValidSpawn(level, heatPos, EntityType.ZOMBIE)) {
+                    heatPos.set(x, y + 1, z);
+                    if (level.getBrightness(LightLayer.BLOCK, heatPos) == 0
+                            && level.getBrightness(LightLayer.SKY, heatPos) == 0) {
+                        heatGrid.add(x, y + 1, z);
+                    }
+                }
+            }
+            air = 0;
+        }
+    }
+
+    /** Copies the grid's best cluster into the rendered fields (once per finished pass). */
+    private void publishSink() {
+        sinkTotal = heatGrid.total();
+        sinkSpots = heatGrid.bestSpots();
+        if (sinkSpots == 0) {
+            return;
+        }
+        sinkX = heatGrid.bestX();
+        sinkY = heatGrid.bestY();
+        sinkZ = heatGrid.bestZ();
+        sinkX0 = heatGrid.bestMinSX() << 4;
+        sinkY0 = heatGrid.bestMinSY() << 4;
+        sinkZ0 = heatGrid.bestMinSZ() << 4;
+        sinkX1 = (heatGrid.bestMaxSX() + 1) << 4;
+        sinkY1 = (heatGrid.bestMaxSY() + 1) << 4;
+        sinkZ1 = (heatGrid.bestMaxSZ() + 1) << 4;
+        sinkLabel = "Cave spawns: " + sinkSpots + " of " + sinkTotal + " dark spots (sampled)"; // once per pass
     }
 
     /** Integrated server seed, else the Seed Workbench's profile, else the manual setting. Not a hot path per frame. */
@@ -197,6 +378,42 @@ public final class SpawnGeometryModule extends WorldModule {
             Shapes.globe(s, x, y, z, NO_SPAWN_RADIUS, INNER_COLOR);
             Shapes.globe(s, x, y, z, DESPAWN_RADIUS, OUTER_COLOR);
         }
+        if (domes || caveHeat) {
+            float x = ctx.rx(capCenterX(player));
+            float y = ctx.ry(capCenterY(player));
+            float z = ctx.rz(capCenterZ(player));
+            if (domes) {
+                emitDomes(s, x, y, z);
+            }
+            if (afkPin && afkKnown) {
+                Shapes.verticalRing(s, x, y + 1f, z, 0.6f, true, HEAT_COLOR);
+                Shapes.verticalRing(s, x, y + 1f, z, 0.6f, false, HEAT_COLOR);
+            }
+            if (caveHeat && sinkSpots > 0) {
+                emitSinkArrow(s, x, y + 0.2f, z, ctx.rx(sinkX), ctx.ry(sinkY), ctx.rz(sinkZ));
+                WorldRenderKit.box(ctx.lines, ctx.pose, ctx.rx(sinkX0), ctx.ry(sinkY0), ctx.rz(sinkZ0), ctx.rx(sinkX1),
+                        ctx.ry(sinkY1), ctx.rz(sinkZ1), HEAT_COLOR & 0x80FFFFFF);
+            }
+        }
+    }
+
+    /** The three mob-cap domes (allocation-free). */
+    static void emitDomes(LineSink s, float x, float y, float z) {
+        Shapes.dome(s, x, y, z, CaveHeatGrid.NO_SPAWN, DOME_NO_SPAWN);
+        Shapes.dome(s, x, y, z, CaveHeatGrid.RANDOM_DESPAWN, DOME_RANDOM);
+        Shapes.dome(s, x, y, z, CaveHeatGrid.INSTANT_DESPAWN, DOME_INSTANT);
+    }
+
+    /** Ground arrow up to 8 blocks long from the AFK spot toward the cluster, plus a thin line to its centroid. */
+    static void emitSinkArrow(LineSink s, float x, float y, float z, float tx, float ty, float tz) {
+        float dx = tx - x;
+        float dz = tz - z;
+        float len = (float) Math.sqrt(dx * dx + dz * dz);
+        if (len > 1.0e-3f) {
+            float k = Math.min(8f, len) / len;
+            Shapes.arrow(s, x, y, z, x + dx * k, y, z + dz * k, 1.5f, HEAT_COLOR);
+        }
+        s.line(x, y, z, tx, ty, tz, HEAT_COLOR & 0x60FFFFFF);
     }
 
     /** Per-frame emitter (allocation-free). */
@@ -214,11 +431,15 @@ public final class SpawnGeometryModule extends WorldModule {
 
     @Override
     public void renderLabels(RenderContext ctx) {
-        if (!slime || seedKnown || !overworld) {
-            return;
-        }
         LocalPlayer player = Minecraft.getInstance().player;
         if (player == null) {
+            return;
+        }
+        if (caveHeat && sinkSpots > 0) {
+            Matrix4f hm = ctx.kit.beginLabel(ctx.pose, ctx.rx(sinkX), ctx.ry(sinkY + 2), ctx.rz(sinkZ));
+            WorldRenderKit.text(ctx.font, ctx.buffers, hm, sinkLabel, -ctx.font.width(sinkLabel) / 2f, HEAT_COLOR);
+        }
+        if (!slime || seedKnown || !overworld) {
             return;
         }
         // One line in the world ahead of the player while no seed is known.
