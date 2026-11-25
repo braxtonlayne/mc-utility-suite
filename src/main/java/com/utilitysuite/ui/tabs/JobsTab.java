@@ -82,6 +82,7 @@ public final class JobsTab {
             queue(p, goals);
         }
         schematics(p);
+        GeneratorCards.build(p);
         List<IModule> mods = new ArrayList<>(Services.modules().byCategory(ModuleCategory.JOBS));
         if (!mods.isEmpty()) {
             p.section("Job modules");

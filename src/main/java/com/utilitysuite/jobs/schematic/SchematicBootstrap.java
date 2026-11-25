@@ -16,6 +16,7 @@ import net.neoforged.neoforge.common.NeoForge;
 public final class SchematicBootstrap {
 
     private static SchematicToolkit toolkit;
+    private static SymmetryBuilder symmetry;
 
     private SchematicBootstrap() {
     }
@@ -24,6 +25,8 @@ public final class SchematicBootstrap {
         SchematicLibrary library = new SchematicLibrary(FMLPaths.GAMEDIR.get());
         toolkit = new SchematicToolkit(library);
         Services.modules().register(toolkit);
+        symmetry = new SymmetryBuilder();
+        Services.modules().register(symmetry);
         com.utilitysuite.jobs.goal.GoalEngine.registerBuildHandler(new SchematicBuildBridge(toolkit));
         NeoForge.EVENT_BUS.addListener(SchematicBootstrap::onRenderLevel);
     }
@@ -33,6 +36,15 @@ public final class SchematicBootstrap {
         if (t != null) {
             t.onRenderLevel(event);
         }
+        SymmetryBuilder s = symmetry;
+        if (s != null) {
+            s.onRenderLevel(event);
+        }
+    }
+
+    /** The symmetry builder (null before {@link #init}). */
+    public static SymmetryBuilder symmetry() {
+        return symmetry;
     }
 
     /** The module instance (null before {@link #init}). */
