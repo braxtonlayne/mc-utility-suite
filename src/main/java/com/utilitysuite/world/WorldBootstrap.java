@@ -108,6 +108,13 @@ public final class WorldBootstrap {
         // Keys: quick toggles from the core's key set, plus three of our own.
         KeybindManager.onPressed(KeybindManager.KeyId.TOGGLE_WORLD_OVERLAYS, overlays::toggleFromKey);
         KeybindManager.onPressed(KeybindManager.KeyId.TOGGLE_SCOUT_CAMERA, camera::toggleFreecam);
+        com.utilitysuite.core.api.ISuiteActions actions = Services.actionsOrNull();
+        if (actions != null) {
+            actions.register(new com.utilitysuite.core.api.SuiteAction("drop_waypoint", "Drop Waypoint",
+                    "add waypoint mark here", waypoints::requestAddHere));
+            actions.register(new com.utilitysuite.core.api.SuiteAction("take_me_back", "Take Me Back",
+                    "breadcrumbs return trail", waypoints::requestTakeMeBack));
+        }
         // Created in the registration event (not during parallel mod construction: KeyMapping keeps a global map).
         modBus.addListener((RegisterKeyMappingsEvent e) -> {
             KeyMapping zoomKey = key("zoom", GLFW.GLFW_KEY_Z);

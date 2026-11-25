@@ -85,23 +85,35 @@ class ProfileBundleTest {
         ConfigUndoStack s = new ConfigUndoStack(10);
         assertFalse(s.record("p", "m", "k", new JsonPrimitive(1), new JsonPrimitive(1)));
         for (int i = 0; i < 12; i++) {
-            assertTrue(s.record("p", "m", "k", i == 0 ? null : new JsonPrimitive(i), new JsonPrimitive(i + 1)));
+            assertTrue(s.record("p", "m", "k" + i, i == 0 ? null : new JsonPrimitive(i), new JsonPrimitive(i + 1)));
         }
         assertEquals(10, s.size());
         JsonObject root = new JsonObject();
         ConfigUndoStack.Entry e = s.pop();
         assertEquals(new JsonPrimitive(11), e.before());
         ConfigUndoStack.restore(e, root);
-        assertEquals(11, root.getAsJsonObject("m").get("k").getAsInt());
+        assertEquals(11, root.getAsJsonObject("m").get("k11").getAsInt());
         int popped = 1;
         while (s.pop() != null) {
             popped++;
         }
         assertEquals(10, popped); // the two oldest dropped off the ring
         assertNull(s.peek());
-        s.record("p", "m", "k", null, new JsonPrimitive(true));
+        s.record("p", "m", "k11", null, new JsonPrimitive(true));
         ConfigUndoStack.restore(s.pop(), root);
-        assertFalse(root.getAsJsonObject("m").has("k"));
+        assertFalse(root.getAsJsonObject("m").has("k11"));
+    }
+
+    @Test
+    void repeatedChangesToOneSettingCoalesceIntoOneStep() {
+        ConfigUndoStack s = new ConfigUndoStack(10);
+        s.record("p", "m", "reach", new JsonPrimitive(3.0), new JsonPrimitive(3.1));
+        s.record("p", "m", "reach", new JsonPrimitive(3.1), new JsonPrimitive(3.4)); // slider drag
+        assertEquals(1, s.size());
+        assertEquals(new JsonPrimitive(3.0), s.peek().before());
+        assertEquals(new JsonPrimitive(3.4), s.peek().after());
+        s.record("p", "m", "reach", new JsonPrimitive(3.4), new JsonPrimitive(3.0)); // dragged back
+        assertEquals(0, s.size());
     }
 
     @Test

@@ -45,6 +45,17 @@ public final class UiBootstrap {
         tabGui = new TabGui(); // off by default; reads arrow keys only while enabled
         Services.modules().register(tabGui);
         KeybindManager.setOpenMenuHandler(UiBootstrap::openMenu);
+        radialWheel = new com.utilitysuite.ui.radial.RadialWheel(); // inert until its hold key is bound
+        Services.modules().register(radialWheel);
+        KeybindManager.onPressed(KeybindManager.KeyId.COMMAND_PALETTE, UiBootstrap::openPalette);
+        KeybindManager.onPressed(KeybindManager.KeyId.UNDO_SETTING, () -> actionBar(ConfigUndo.undo()));
+        com.utilitysuite.core.api.ISuiteActions actions = Services.actionsOrNull();
+        if (actions != null) {
+            actions.register(new com.utilitysuite.core.api.SuiteAction("cycle_visual_preset", "Next Visual Preset",
+                    "cave run debris builder clean overlays", () -> actionBar(WorldTab.cycleVisualPreset())));
+            actions.register(new com.utilitysuite.core.api.SuiteAction("cycle_accent", "Next Accent Colour",
+                    "appearance theme colour color", () -> actionBar(cycleAccent())));
+        }
         modBus.addListener(UiBootstrap::onRegisterLayers);
         TravelTab.registerPanels();
         ToolsTab.registerPanels();
@@ -58,6 +69,44 @@ public final class UiBootstrap {
         // the one HUD host layer: status line, badges, info strip, module list and every registered HudElement
         event.registerAboveAll(ResourceLocation.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID, "status_line"), hud);
         event.registerAboveAll(ResourceLocation.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID, "tab_gui"), tabGui);
+        event.registerAboveAll(ResourceLocation.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID, "radial_wheel"),
+                radialWheel);
+    }
+
+    private static com.utilitysuite.ui.radial.RadialWheel radialWheel;
+
+    /** Ctrl+K: the command palette (only in game; the key's conflict context keeps it out of screens). */
+    public static void openPalette() {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.screen == null && mc.player != null) {
+            mc.setScreen(new com.utilitysuite.ui.palette.CommandPaletteScreen());
+        }
+    }
+
+    /** A short status on the action bar (suppressed under Clean-Screen). */
+    static void actionBar(String status) {
+        Minecraft mc = Minecraft.getInstance();
+        if (status != null && mc.player != null && !Services.modState().isCleanScreen()) {
+            mc.player.displayClientMessage(net.minecraft.network.chat.Component.literal(status), true);
+        }
+    }
+
+    /** Action registry: the next appearance accent preset, written through the active profile. */
+    static String cycleAccent() {
+        com.utilitysuite.core.api.ProfileConfig p = Services.modState().profile();
+        VisualSettings.Accent[] all = VisualSettings.Accent.values();
+        VisualSettings.Accent cur;
+        try {
+            cur = VisualSettings.Accent.valueOf(p.getString(VisualSettings.ID, VisualSettings.K_ACCENT,
+                    VisualSettings.Accent.CYAN.name()));
+        } catch (IllegalArgumentException e) {
+            cur = VisualSettings.Accent.CYAN;
+        }
+        VisualSettings.Accent next = all[(cur.ordinal() + 1) % all.length];
+        p.set(VisualSettings.ID, VisualSettings.K_ACCENT, next.name());
+        VisualSettings.apply(p);
+        Services.modState().markDirty();
+        return "Accent: " + next.name().toLowerCase(java.util.Locale.ROOT);
     }
 
     /** Opens the menu (key handler; also usable from other code on the client thread). */

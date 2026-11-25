@@ -12,7 +12,8 @@ import com.google.gson.JsonObject;
 public final class ConfigUndoStack {
 
     /** One recorded change. {@code before}/{@code after} are deep copies (null = unset). */
-    public record Entry(String profileId, String moduleId, String key, JsonElement before, JsonElement after) {
+    public record Entry(String profileId, String moduleId, String key, JsonElement before, JsonElement after,
+                        Object tag) {
     }
 
     private final Entry[] ring;
@@ -39,11 +40,28 @@ public final class ConfigUndoStack {
 
     /** Records a change (copies the values). Returns false for a no-op change. */
     public boolean record(String profileId, String moduleId, String key, JsonElement before, JsonElement after) {
+        return record(profileId, moduleId, key, before, after, null);
+    }
+
+    /** As {@link #record(String, String, String, JsonElement, JsonElement)} with a caller tag (e.g. the change callback). */
+    public boolean record(String profileId, String moduleId, String key, JsonElement before, JsonElement after,
+                          Object tag) {
         if (before == null ? after == null : before.equals(after)) {
             return false;
         }
+        Entry last = peek();
+        if (last != null && last.profileId().equals(profileId) && last.moduleId().equals(moduleId)
+                && last.key().equals(key)) {
+            // the same setting again (a slider drag, typing): one step from the first old value
+            pop();
+            JsonElement first = last.before();
+            if (first == null ? after == null : first.equals(after)) {
+                return true; // back where it started: nothing left to undo for it
+            }
+            before = first;
+        }
         ring[top] = new Entry(profileId, moduleId, key, before == null ? null : before.deepCopy(),
-                after == null ? null : after.deepCopy());
+                after == null ? null : after.deepCopy(), tag);
         top = (top + 1) % ring.length;
         size = Math.min(size + 1, ring.length);
         return true;
