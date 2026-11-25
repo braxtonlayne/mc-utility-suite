@@ -17,25 +17,14 @@ import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.AbstractClientPlayer;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
-import net.minecraft.core.component.DataComponents;
-import net.minecraft.world.item.component.ChargedProjectiles;
 import net.minecraft.tags.FluidTags;
 import net.minecraft.util.Mth;
-import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.monster.Enemy;
 import net.minecraft.world.entity.item.ItemEntity;
-import net.minecraft.world.item.BowItem;
-import net.minecraft.world.item.CrossbowItem;
-import net.minecraft.world.item.EggItem;
-import net.minecraft.world.item.EnderpearlItem;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.Items;
-import net.minecraft.world.item.SnowballItem;
-import net.minecraft.world.item.TridentItem;
-import net.minecraft.world.item.WindChargeItem;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Matrix4f;
@@ -69,6 +58,7 @@ public final class WorldRadarModule extends WorldModule {
     private final WorldScanner scanner;
     private final ItemFilter itemFilter = new ItemFilter();
     private final TrajectoryIntegrator integrator = new TrajectoryIntegrator(200);
+    private final HeldProjectile held = new HeldProjectile();
     private final BlockPos.MutableBlockPos probe = new BlockPos.MutableBlockPos();
     private final TrajectoryIntegrator.Collider collider = this::collide;
     private final Int2IntOpenHashMap storageColor = new Int2IntOpenHashMap();
@@ -463,39 +453,11 @@ public final class WorldRadarModule extends WorldModule {
     }
 
     private void drawAimArc(RenderContext ctx, LocalPlayer self, ClientLevel level) {
-        TrajectoryIntegrator.Kind kind = null;
-        double power = 1.0;
-        for (InteractionHand hand : HANDS) {
-            ItemStack stack = self.getItemInHand(hand);
-            Item item = stack.getItem();
-            if (item instanceof BowItem) {
-                if (self.isUsingItem() && self.getUsedItemHand() == hand) {
-                    power = TrajectoryIntegrator.bowPower(self.getTicksUsingItem());
-                    if (power >= 0.1) {
-                        kind = TrajectoryIntegrator.Kind.ARROW;
-                    }
-                }
-            } else if (item instanceof CrossbowItem) {
-                if (CrossbowItem.isCharged(stack) && !stack.getOrDefault(DataComponents.CHARGED_PROJECTILES,
-                        ChargedProjectiles.EMPTY).contains(Items.FIREWORK_ROCKET)) {
-                    kind = TrajectoryIntegrator.Kind.CROSSBOW_ARROW;
-                }
-            } else if (item instanceof TridentItem) {
-                if (self.isUsingItem() && self.getUsedItemHand() == hand && self.getTicksUsingItem() >= 10) {
-                    kind = TrajectoryIntegrator.Kind.TRIDENT;
-                }
-            } else if (item instanceof EnderpearlItem || item instanceof SnowballItem || item instanceof EggItem) {
-                kind = TrajectoryIntegrator.Kind.THROWN;
-            } else if (item instanceof WindChargeItem) {
-                kind = TrajectoryIntegrator.Kind.WIND_CHARGE;
-            }
-            if (kind != null) {
-                break;
-            }
-        }
-        if (kind == null) {
+        if (!held.read(self)) {
             return;
         }
+        TrajectoryIntegrator.Kind kind = held.kind;
+        double power = held.power;
         float pt = ctx.partialTick;
         float yaw = self.getViewYRot(pt);
         float pitch = self.getViewXRot(pt);
@@ -520,8 +482,6 @@ public final class WorldRadarModule extends WorldModule {
                     hz + 0.15f, 0xFFFF4040);
         }
     }
-
-    private static final InteractionHand[] HANDS = InteractionHand.values();
 
     @Override
     public void renderLabels(RenderContext ctx) {

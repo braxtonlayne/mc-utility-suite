@@ -85,6 +85,10 @@ public final class WorldBootstrap {
         MinimapModule minimap = new MinimapModule();
         LightOverlayModule lightOverlay = new LightOverlayModule();
         BlastOverlayModule blastOverlay = new BlastOverlayModule();
+        com.utilitysuite.world.blast.CrystalExposureModule crystalExposure =
+                new com.utilitysuite.world.blast.CrystalExposureModule();
+        com.utilitysuite.world.overlays.ProjectileRibbonModule projectileRibbon =
+                new com.utilitysuite.world.overlays.ProjectileRibbonModule();
         SpawnGeometryModule spawnGeometry = new SpawnGeometryModule(oreSim::profile);
         SeedLocatorModule seedLocator = new SeedLocatorModule(oreSim::profile);
         FreelookModule freelook = new FreelookModule();
@@ -99,7 +103,8 @@ public final class WorldBootstrap {
         IModuleRegistry registry = Services.modules();
         for (WorldModule m : new WorldModule[] {knowledge, overlays, oreSim, seedScanner, seedDiff, radar, camera,
                 waypoints,
-                minimap, lightOverlay, blastOverlay, spawnGeometry, seedLocator, freelook, renderFilters,
+                minimap, lightOverlay, blastOverlay, crystalExposure, projectileRibbon, spawnGeometry, seedLocator,
+                freelook, renderFilters,
                 strongholdFinder, trialChambers}) {
             registry.register(m);
             runtime.add(m);
@@ -137,6 +142,7 @@ public final class WorldBootstrap {
         bus.addListener(runtime::onTick);
         bus.addListener((net.neoforged.neoforge.client.event.ClientTickEvent.Post e) -> freelook.pollKey());
         bus.addListener(runtime::onRender);
+        bus.addListener(projectileRibbon::onRenderLevel);
         bus.addListener((ChunkEvent.Load e) -> {
             runtime.onChunkLoad(e);
             if (e.getLevel().isClientSide()) {

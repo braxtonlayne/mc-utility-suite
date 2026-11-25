@@ -19,6 +19,7 @@ import com.utilitysuite.combat.assistant.stages.HealWindowStage;
 import com.utilitysuite.combat.assistant.stages.ShieldDuelStage;
 import com.utilitysuite.combat.assistant.stages.ThreatFightStage;
 import com.utilitysuite.combat.coach.ThreatTracker;
+import com.utilitysuite.combat.hud.ChoreographyModule;
 import com.utilitysuite.combat.hud.ReadRingModule;
 import com.utilitysuite.combat.hud.TargetHud;
 import com.utilitysuite.combat.reflex.CombatReflexes;
@@ -100,6 +101,13 @@ public final class CombatBootstrap {
         Services.modules().register(trigger);
         Services.modules().register(targetHud);
         Services.modules().register(readRing);
+        ChoreographyModule choreography = new ChoreographyModule(
+                () -> {
+                    int t = assistant.targetId();
+                    return t >= 0 ? t : assistant.recentOpponentId();
+                });
+        Services.modules().register(choreography);
+        NeoForge.EVENT_BUS.addListener(choreography::onRenderLevel);
         assistant.bindModuleRegistry(Services.modules());
 
         CombatEventBridge.install(assistant);
