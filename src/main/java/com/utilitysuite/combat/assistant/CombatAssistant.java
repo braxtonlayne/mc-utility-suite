@@ -406,6 +406,10 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
     public void onTotemPop(int entityId) {
         if (state == CombatState.ENGAGED && entityId == targetId) {
             lastOpponentPopAt = tacticClock;
+            FightStage[] all = allStages;
+            for (int i = 0; i < all.length; i++) {
+                all[i].onTargetPop(tacticClock); // e.g. the combat potions' post-pop pressure rule
+            }
         }
     }
 

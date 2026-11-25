@@ -13,7 +13,6 @@
     "input.LocalPlayerSprintWithholdMixin",
     "input.RecipeBookComponentAccessor",
     "tools.ClientPacketListenerTimeMixin",
-    "tools.ClientPacketListenerServerTimeMixin",
     "travel.ClientPacketListenerCorrectionMixin",
     "travel.ClientPacketListenerVelocityMixin",
     "travel.LiquidBlockSolidSurfaceMixin",
