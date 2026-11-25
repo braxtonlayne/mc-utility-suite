@@ -68,6 +68,11 @@ shared with the Latency Simulator), same as today.
       if short, queue an XP sub-goal (quartz/coal mining or mob hunting) until level 30.
 - [ ] Multi-furnace array: when StorageMemory knows several furnaces at a base, split ore and fuel evenly across them,
       do a nearby task meanwhile, then come back and collect.
+- [x] Shulker-aware storage: StorageMemory records shulker boxes inside containers (and the planner sees carried ones)
+      as nested contents, so have/where counts include them. Plans use loose stacks first, then carried boxes, then
+      boxes in chests (FETCH the box, then unpack). New SHULKER_RESTOCK step: place on a safe floor spot with free
+      space above (abort if none), open, take via the clicker, close, break (hotbar pickaxe, else hand), pick it up.
+      Unit-tested (counting, nesting, planning, executor with fakes); not yet playtested in game.
 
 ### Opportunistic detours ("while I'm passing by")
 

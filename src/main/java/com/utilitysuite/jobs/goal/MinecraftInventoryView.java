@@ -75,6 +75,18 @@ public final class MinecraftInventoryView implements IInventoryView {
     }
 
     @Override
+    public List<com.utilitysuite.core.api.NestedContainer> carriedContainers() {
+        Inventory inv = inventory();
+        if (inv == null) {
+            return List.of();
+        }
+        List<com.utilitysuite.core.api.NestedContainer> out = new java.util.ArrayList<>();
+        com.utilitysuite.jobs.storage.ShulkerItems.collect(inv.items, out);
+        com.utilitysuite.jobs.storage.ShulkerItems.collect(inv.offhand, out);
+        return out;
+    }
+
+    @Override
     public int count(String itemId) {
         Inventory inv = inventory();
         if (inv == null) {

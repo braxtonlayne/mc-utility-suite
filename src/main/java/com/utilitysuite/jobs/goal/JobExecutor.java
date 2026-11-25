@@ -133,6 +133,8 @@ public final class JobExecutor implements LeaseListener {
         final IdentityHashMap<PlanStep, Integer> replans = new IdentityHashMap<>();
         final IdentityHashMap<PlanStep, Integer> baselines = new IdentityHashMap<>();
         final Set<Long> excludedContainers = new HashSet<>();
+        /** Items taken so far by the current SHULKER_RESTOCK step (several boxes may be unpacked). */
+        int restockTaken;
         /** Paused by the user, Stop-All or an exhausted budget: no automatic resume. */
         boolean holdPaused;
         /** The no-backup tool pause was already shown for this job (plain tools only). */
@@ -412,6 +414,7 @@ public final class JobExecutor implements LeaseListener {
         switch (step.kind()) {
             case GATHER, MINE -> tickMine(j, step);
             case FETCH -> tickFetch(j, step);
+            case SHULKER_RESTOCK -> tickShulkerRestock(j, step);
             case CRAFT, SMELT -> tickCraft(j, step);
             case TRAVEL, RETURN -> tickTravel(j, step);
             case BUILD -> tickBuild(j, step);
@@ -1023,6 +1026,56 @@ public final class JobExecutor implements LeaseListener {
         setReason(j, why + "; new source: " + String.join(", ", sub.milestones()));
     }
 
+    /**
+     * Unpacks carried shulker boxes until the step's count is taken: one place-open-take-break cycle per box. A short
+     * or failed unpack (no safe spot, box empty) replans the remainder from other sources.
+     */
+    private void tickShulkerRestock(Job j, PlanStep step) {
+        WorldActions a = deps.actions();
+        String box = step.blockIds().isEmpty() ? "minecraft:shulker_box" : step.blockIds().get(0);
+        if (j.phase == Phase.START) {
+            j.restockTaken = 0;
+            a.beginShulkerRestock(box, step.itemId(), step.count(), lease);
+            j.phase = Phase.WAIT_ACTION;
+            markChanged(j);
+            return;
+        }
+        WorldActions.Result r = a.poll();
+        if (r == WorldActions.Result.RUNNING) {
+            return;
+        }
+        int got = a.transferred().getOrDefault(step.itemId(), 0); // a failed break may still have taken items
+        j.restockTaken += got;
+        if (j.restockTaken >= step.count()) {
+            completeStep(j);
+            return;
+        }
+        if (r == WorldActions.Result.DONE && got > 0 && carriedBoxHolds(step.itemId())) {
+            // this box ran out; another carried box still has some
+            a.beginShulkerRestock(box, step.itemId(), step.count() - j.restockTaken, lease);
+            return;
+        }
+        int short_ = step.count() - j.restockTaken;
+        String why = "Shulker box unpack got " + j.restockTaken + "/" + step.count() + " " + step.itemId()
+                + (r == WorldActions.Result.FAILED ? " (" + a.message() + ")" : "");
+        if (!replan(j, step, why)) {
+            return;
+        }
+        Plan sub = deps.planner().get().planAcquire(step.itemId(), short_,
+                context(j, Map.of(), false).withCarriedShulkers(List.of()));
+        replaceCurrent(j, sub.steps());
+        setReason(j, why + "; new source: " + String.join(", ", sub.milestones()));
+    }
+
+    private boolean carriedBoxHolds(String itemId) {
+        for (com.utilitysuite.core.api.NestedContainer c : deps.inventory().get().carriedContainers()) {
+            if (c.count(itemId) > 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private void addBatchedFetches(Job j, PlanStep step, Map<String, Integer> items) {
         for (Job q : jobs) {
             if (q == j || q.status.isTerminal() || !q.steps.isEmpty()) {
@@ -1369,7 +1422,7 @@ public final class JobExecutor implements LeaseListener {
             return MOVE_CHANNELS;
         }
         return switch (step.kind()) {
-            case CRAFT, SMELT, FETCH, RETURN -> ALL_CHANNELS;
+            case CRAFT, SMELT, FETCH, SHULKER_RESTOCK, RETURN -> ALL_CHANNELS;
             default -> MOVE_CHANNELS;
         };
     }

@@ -24,6 +24,14 @@ public interface WorldActions {
     /** Puts the items into the container at {@code packedPos}. */
     void beginDeposit(long packedPos, Map<String, Integer> items, ControlLease lease);
 
+    /**
+     * Unpacks a carried shulker box: places it on a safe spot next to the player, opens it, takes up to {@code count}
+     * of the item, closes it, breaks it (pickaxe when one is on the hotbar) and picks the box back up. Prefers a box of
+     * {@code boxItemId} that holds the item, else any carried box that does. Fails without placing anything when there
+     * is no safe spot. {@link #transferred()} reports the items taken.
+     */
+    void beginShulkerRestock(String boxItemId, String itemId, int count, ControlLease lease);
+
     Result poll();
 
     /** Human-readable result or failure reason of the last operation. */

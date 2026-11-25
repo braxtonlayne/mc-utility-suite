@@ -88,4 +88,33 @@ class StorageMemoryTest {
         loaded.loadJson("not json");
         assertTrue(loaded.entries().size() <= 1, "corrupt file must not throw");
     }
+
+    @Test
+    void shulkerContentsCountAsNestedAndSurviveSaving() {
+        long a = PackedPos.pack(0, 64, 0);
+        long b = PackedPos.pack(9, 64, 0);
+        mem.record(OW, a, "minecraft:chest", Map.of("minecraft:shulker_box", 1, "minecraft:diamond", 1),
+                List.of(new com.utilitysuite.core.api.NestedContainer("minecraft:shulker_box",
+                        Map.of("minecraft:diamond", 20, "minecraft:emerald", 5))));
+        mem.record(OW, b, "minecraft:barrel", Map.of("minecraft:diamond", 2));
+
+        assertEquals(23, mem.count("minecraft:diamond", false), "loose + inside the shulker");
+        assertEquals(5, mem.count("minecraft:emerald", false));
+        List<StorageEntry> withEmerald = mem.containersWith("minecraft:emerald", OW, b);
+        assertEquals(1, withEmerald.size(), "a container holding the item only in a shulker is found");
+        StorageEntry e = withEmerald.get(0);
+        assertEquals(0, e.contents().getOrDefault("minecraft:emerald", 0), "nested items are not loose contents");
+        assertEquals(5, e.nestedCount("minecraft:emerald"));
+        assertEquals(21, e.totalCount("minecraft:diamond"));
+
+        StorageMemory loaded = new StorageMemory(now::get, 60_000);
+        loaded.loadJson(mem.toJson());
+        assertEquals(23, loaded.count("minecraft:diamond", false));
+        StorageEntry back = loaded.containersWith("minecraft:emerald", OW, a).get(0);
+        assertEquals(1, back.nested().size());
+        assertEquals("minecraft:shulker_box", back.nested().get(0).containerItemId());
+
+        mem.record(OW, a, "minecraft:chest", Map.of("minecraft:diamond", 1));
+        assertEquals(3, mem.count("minecraft:diamond", false), "re-recording without the box drops nested items");
+    }
 }

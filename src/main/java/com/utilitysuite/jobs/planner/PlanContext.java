@@ -3,6 +3,7 @@ package com.utilitysuite.jobs.planner;
 import com.utilitysuite.core.api.CostProfile;
 import com.utilitysuite.core.api.IInventoryView;
 import com.utilitysuite.core.api.IStorageIndex;
+import com.utilitysuite.core.api.NestedContainer;
 import com.utilitysuite.core.api.StorageEntry;
 
 import java.util.ArrayList;
@@ -19,10 +20,12 @@ import java.util.Set;
  * @param credit             expected surplus of jobs queued ahead of this one (shared errands)
  * @param nearbyStations     station items already placed near the player ("minecraft:crafting_table")
  * @param includeReturn      append a Return/Deposit step after harvesting
+ * @param carriedShulkers    shulker boxes the player carries, with contents (unpacked by SHULKER_RESTOCK steps)
  */
 public record PlanContext(Map<String, Integer> inventory, int pickaxeTier, List<StorageEntry> storage,
                           String dimension, long origin, CostProfile cost, Map<String, Integer> credit,
-                          Set<String> nearbyStations, boolean includeReturn) {
+                          Set<String> nearbyStations, boolean includeReturn,
+                          List<NestedContainer> carriedShulkers) {
 
     public static final int DEFAULT_STORAGE_RANGE = 256;
 
@@ -32,6 +35,7 @@ public record PlanContext(Map<String, Integer> inventory, int pickaxeTier, List<
         credit = Map.copyOf(credit);
         nearbyStations = Set.copyOf(nearbyStations);
         cost = cost == null ? CostProfile.FASTEST : cost;
+        carriedShulkers = carriedShulkers == null ? List.of() : List.copyOf(carriedShulkers);
     }
 
     /**
@@ -57,35 +61,40 @@ public record PlanContext(Map<String, Integer> inventory, int pickaxeTier, List<
                     PackedPos.distSq(b.packedPos(), origin)));
         }
         return new PlanContext(inv.counts(), inv.bestPickaxeTier(), eligible, dimension, origin, cost, credit,
-                nearbyStations, includeReturn);
+                nearbyStations, includeReturn, inv.carriedContainers());
     }
 
     /** Context with only an inventory (tests, quick previews). */
     public static PlanContext ofInventory(Map<String, Integer> inventory, int pickaxeTier) {
         return new PlanContext(inventory, pickaxeTier, List.of(), "minecraft:overworld", 0L, CostProfile.FASTEST,
-                Map.of(), Set.of(), true);
+                Map.of(), Set.of(), true, List.of());
     }
 
     public PlanContext withStorage(List<StorageEntry> entries) {
         return new PlanContext(inventory, pickaxeTier, entries, dimension, origin, cost, credit, nearbyStations,
-                includeReturn);
+                includeReturn, carriedShulkers);
     }
 
     public PlanContext withCost(CostProfile c) {
         return new PlanContext(inventory, pickaxeTier, storage, dimension, origin, c, credit, nearbyStations,
-                includeReturn);
+                includeReturn, carriedShulkers);
     }
 
     public PlanContext withCredit(Map<String, Integer> c) {
         return new PlanContext(inventory, pickaxeTier, storage, dimension, origin, cost, c, nearbyStations,
-                includeReturn);
+                includeReturn, carriedShulkers);
     }
 
     public PlanContext withReturn(boolean r) {
-        return new PlanContext(inventory, pickaxeTier, storage, dimension, origin, cost, credit, nearbyStations, r);
+        return new PlanContext(inventory, pickaxeTier, storage, dimension, origin, cost, credit, nearbyStations, r, carriedShulkers);
+    }
+
+    public PlanContext withCarriedShulkers(List<NestedContainer> c) {
+        return new PlanContext(inventory, pickaxeTier, storage, dimension, origin, cost, credit, nearbyStations,
+                includeReturn, c);
     }
 
     public PlanContext withStations(Set<String> s) {
-        return new PlanContext(inventory, pickaxeTier, storage, dimension, origin, cost, credit, s, includeReturn);
+        return new PlanContext(inventory, pickaxeTier, storage, dimension, origin, cost, credit, s, includeReturn, carriedShulkers);
     }
 }

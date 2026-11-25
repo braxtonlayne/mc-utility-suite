@@ -1,6 +1,7 @@
 package com.utilitysuite.jobs.planner;
 
 import com.utilitysuite.core.api.CostProfile;
+import com.utilitysuite.core.api.NestedContainer;
 import com.utilitysuite.core.api.StorageEntry;
 
 import java.util.ArrayList;
@@ -483,11 +484,23 @@ public final class DependencyPlanner {
                 if (c != null) {
                     sum += c - taken.getOrDefault(e.packedPos() + "|" + item, 0);
                 }
+                List<NestedContainer> boxes = e.nested();
+                for (int b = 0; b < boxes.size(); b++) {
+                    sum += boxes.get(b).count(item) - taken.getOrDefault(e.packedPos() + "#" + b + "|" + item, 0);
+                }
+            }
+            List<NestedContainer> carried = ctx.carriedShulkers();
+            for (int b = 0; b < carried.size(); b++) {
+                sum += carried.get(b).count(item) - taken.getOrDefault("c#" + b + "|" + item, 0);
             }
             return sum;
         }
 
-        /** Withdraws up to {@code n} from the nearest containers; one FETCH step per container. */
+        /**
+         * Withdraws up to {@code n}: loose stacks in the nearest containers first (one FETCH step per container), then
+         * shulker boxes the player carries (SHULKER_RESTOCK), then shulker boxes inside known containers (FETCH the box,
+         * then SHULKER_RESTOCK).
+         */
         int fetch(String item, int n, StepRole role) {
             int got = 0;
             for (StorageEntry e : ctx.storage()) {
@@ -506,6 +519,69 @@ public final class DependencyPlanner {
                 int take = Math.min(avail, n - got);
                 taken.merge(key, take, Integer::sum);
                 Node node = touch(StepKind.FETCH, item, null, List.of(), 0, e.packedPos(), role);
+                node.count += take;
+                got += take;
+            }
+            if (got < n) {
+                got += unpackCarried(item, n - got, role);
+            }
+            for (StorageEntry e : ctx.storage()) {
+                if (got >= n) {
+                    break;
+                }
+                got += unpackStored(e, item, n - got, role);
+            }
+            return got;
+        }
+
+        /** Plans SHULKER_RESTOCK steps from carried boxes, fullest first. */
+        int unpackCarried(String item, int n, StepRole role) {
+            List<NestedContainer> carried = ctx.carriedShulkers();
+            if (carried.isEmpty()) {
+                return 0;
+            }
+            Map<Integer, Integer> already = new HashMap<>();
+            for (int b = 0; b < carried.size(); b++) {
+                Integer t = taken.get("c#" + b + "|" + item);
+                if (t != null) {
+                    already.put(b, t);
+                }
+            }
+            int got = 0;
+            for (ShulkerContents.Take t : ShulkerContents.plan(carried, item, n, already)) {
+                taken.merge("c#" + t.index() + "|" + item, t.count(), Integer::sum);
+                Node node = touch(StepKind.SHULKER_RESTOCK, item, null, List.of(t.containerItemId()), 0,
+                        PlanStep.NO_POS, role);
+                node.count += t.count();
+                got += t.count();
+            }
+            return got;
+        }
+
+        /** Plans a FETCH of a stored shulker box (once per box) followed by its SHULKER_RESTOCK. */
+        int unpackStored(StorageEntry e, String item, int n, StepRole role) {
+            List<NestedContainer> boxes = e.nested();
+            int got = 0;
+            for (int b = 0; b < boxes.size() && got < n; b++) {
+                NestedContainer box = boxes.get(b);
+                String key = e.packedPos() + "#" + b + "|" + item;
+                int avail = box.count(item) - taken.getOrDefault(key, 0);
+                if (avail <= 0) {
+                    continue;
+                }
+                String boxKey = e.packedPos() + "#" + b;
+                if (!taken.containsKey(boxKey)) {
+                    // the box itself leaves the container (any box of that colour)
+                    taken.put(boxKey, 1);
+                    taken.merge(e.packedPos() + "|" + box.containerItemId(), 1, Integer::sum);
+                    Node fetchBox = touch(StepKind.FETCH, box.containerItemId(), null, List.of(), 0, e.packedPos(),
+                            StepRole.COMPONENT);
+                    fetchBox.count += 1;
+                }
+                int take = Math.min(avail, n - got);
+                taken.merge(key, take, Integer::sum);
+                Node node = touch(StepKind.SHULKER_RESTOCK, item, null, List.of(box.containerItemId()), 0,
+                        e.packedPos(), role);
                 node.count += take;
                 got += take;
             }
@@ -755,11 +831,15 @@ public final class DependencyPlanner {
                 case GATHER -> "Gather " + what;
                 case SMELT -> "Smelt " + what;
                 case FETCH -> "Fetch " + what;
+                case SHULKER_RESTOCK -> "Unpack " + what + " from Shulker Box";
                 default -> "Craft " + what;
             };
         }
         if (n.kind == StepKind.FETCH) {
             return "Fetch " + DisplayNames.of(n.item);
+        }
+        if (n.kind == StepKind.SHULKER_RESTOCK) {
+            return "Unpack " + DisplayNames.of(n.item) + " from Shulker Box";
         }
         return DisplayNames.of(n.item);
     }

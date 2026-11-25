@@ -5,6 +5,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.utilitysuite.core.api.IStorageIndex;
+import com.utilitysuite.core.api.NestedContainer;
 import com.utilitysuite.core.api.StorageEntry;
 import com.utilitysuite.jobs.planner.PackedPos;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
@@ -29,6 +30,7 @@ public final class StorageMemory implements IStorageIndex {
         final String dimension;
         String type;
         Map<String, Integer> contents;
+        List<NestedContainer> nested = List.of();
         long timestamp;
         boolean marked;
 
@@ -63,6 +65,15 @@ public final class StorageMemory implements IStorageIndex {
 
     /** Records the full contents seen when a container was open. Empty contents are recorded too (known empty). */
     public void record(String dimension, long pos, String containerType, Map<String, Integer> contents) {
+        record(dimension, pos, containerType, contents, List.of());
+    }
+
+    /**
+     * Records the contents plus the shulker boxes seen inside the container (their items count toward {@link #count}
+     * and {@link #containersWith}, tagged as nested in {@link StorageEntry#nested()}).
+     */
+    public void record(String dimension, long pos, String containerType, Map<String, Integer> contents,
+                       List<NestedContainer> nested) {
         Record r = byDim.computeIfAbsent(dimension, d -> new Long2ObjectOpenHashMap<>()).get(pos);
         if (r == null) {
             r = new Record(pos, dimension);
@@ -70,6 +81,7 @@ public final class StorageMemory implements IStorageIndex {
         }
         r.type = containerType;
         r.contents = Map.copyOf(contents);
+        r.nested = List.copyOf(nested);
         r.timestamp = clock.getAsLong();
         r.marked = false;
         changed();
@@ -157,7 +169,7 @@ public final class StorageMemory implements IStorageIndex {
         for (Long2ObjectOpenHashMap<Record> m : byDim.values()) {
             for (Record r : m.values()) {
                 boolean stale = r.marked || now - r.timestamp > maxAgeMillis;
-                out.add(new StorageEntry(r.pos, r.dimension, r.type, r.contents, r.timestamp, stale));
+                out.add(new StorageEntry(r.pos, r.dimension, r.type, r.contents, r.timestamp, stale, r.nested));
             }
         }
         snapshot = List.copyOf(out);
@@ -175,7 +187,7 @@ public final class StorageMemory implements IStorageIndex {
         int sum = 0;
         for (StorageEntry e : snapshot) {
             if (includeStale || !e.stale()) {
-                sum += e.contents().getOrDefault(itemId, 0);
+                sum += e.totalCount(itemId);
             }
         }
         return sum;
@@ -185,7 +197,7 @@ public final class StorageMemory implements IStorageIndex {
     public List<StorageEntry> containersWith(String itemId, String dimension, long fromPackedPos) {
         List<StorageEntry> out = new ArrayList<>();
         for (StorageEntry e : snapshot) {
-            if (!e.stale() && e.dimension().equals(dimension) && e.contents().getOrDefault(itemId, 0) > 0) {
+            if (!e.stale() && e.dimension().equals(dimension) && e.totalCount(itemId) > 0) {
                 out.add(e);
             }
         }
@@ -223,6 +235,18 @@ public final class StorageMemory implements IStorageIndex {
                 JsonObject c = new JsonObject();
                 r.contents.forEach(c::addProperty);
                 o.add("c", c);
+                if (!r.nested.isEmpty()) {
+                    JsonArray n = new JsonArray();
+                    for (NestedContainer nc : r.nested) {
+                        JsonObject b = new JsonObject();
+                        b.addProperty("i", nc.containerItemId());
+                        JsonObject bc = new JsonObject();
+                        nc.contents().forEach(bc::addProperty);
+                        b.add("c", bc);
+                        n.add(b);
+                    }
+                    o.add("n", n);
+                }
                 arr.add(o);
             }
         }
@@ -246,6 +270,18 @@ public final class StorageMemory implements IStorageIndex {
                     c.put(e.getKey(), e.getValue().getAsInt());
                 }
                 r.contents = Map.copyOf(c);
+                if (o.has("n")) {
+                    List<NestedContainer> nested = new ArrayList<>();
+                    for (JsonElement be : o.getAsJsonArray("n")) {
+                        JsonObject b = be.getAsJsonObject();
+                        Map<String, Integer> bc = new LinkedHashMap<>();
+                        for (Map.Entry<String, JsonElement> x : b.getAsJsonObject("c").entrySet()) {
+                            bc.put(x.getKey(), x.getValue().getAsInt());
+                        }
+                        nested.add(new NestedContainer(b.get("i").getAsString(), bc));
+                    }
+                    r.nested = List.copyOf(nested);
+                }
                 byDim.computeIfAbsent(r.dimension, d -> new Long2ObjectOpenHashMap<>()).put(r.pos, r);
             }
         } catch (RuntimeException e) {
