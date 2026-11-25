@@ -146,7 +146,7 @@ final class FieldJobsScenario {
         return "status '" + deepField(module, "status") + "', hands " + (hands == null ? "?" : H.fields(hands,
                 "actionCell", "aimSet", "ticks", "cooldown", "lease")) + ", yaw " + Harness.fmt("%.1f", H.p().getYRot())
                 + " pitch " + Harness.fmt("%.1f", H.p().getXRot()) + ", " + hr + ", attack down "
-                + H.mc().options.keyAttack.isDown() + ", player " + H.posStr() + ", " + H.arbiterState();
+                + H.mc().options.keyAttack.isDown() + ", mouse grabbed " + H.mc().mouseHandler.isMouseGrabbed() + ", player " + H.posStr() + ", " + H.arbiterState();
     }
 
     private static int intField(Object o, String name) {
@@ -731,9 +731,10 @@ final class FieldJobsScenario {
                             && !deb.equals("minecraft:ancient_debris"),
                     "debris cell now " + deb + ", ancient debris carried " + H.count("minecraft:ancient_debris")
                             + ", vein busy " + ((VeinWorkModule) H.module(VeinWorkModule.ID)).isBusy()
-                            + ", mine status seen " + run.sawMine + "; " + where);
+                            + ", mine status seen " + run.sawMine + "; " + where + "; " + run.notes);
             H.enable(DebrisBlastModule.ID, false);
             H.setting(DebrisBlastModule.ID, "relaxed", false);
+            H.setting(VeinWorkModule.ID, "relaxed", false);
         });
     }
 
@@ -766,6 +767,7 @@ final class FieldJobsScenario {
         boolean placed, retreated, relaxed, steppedIn, sawPlug, sawMine;
         int cyclesAtEnd = -1;
         int handOffTicks;
+        boolean grabNoted;
 
         boolean tick(Scenario s, int t) {
             DebrisBlastModule m = H.module(DebrisBlastModule.ID);
@@ -800,7 +802,7 @@ final class FieldJobsScenario {
                         if (busy && phaseTicks % 100 == 0) {
                             s.note("debris hand-offs still busy after " + phaseTicks + " ticks: "
                                     + H.fields(H.module(LavaPlugModule.ID), "status")
-                                    + " / " + H.fields(H.module(VeinWorkModule.ID), "status") + "; " + handsDiag(m));
+                                    + " / vein " + H.fields(H.module(VeinWorkModule.ID), "current", "pickBusy", "running", "scanning", "relaxed") + " held " + H.p().getMainHandItem() + " slot " + H.p().getInventory().selected + " destroy " + H.fields(H.mc().gameMode, "destroyProgress", "isDestroying", "destroyBlockPos") + "; vein hands: " + handsDiag(H.module(VeinWorkModule.ID)));
                         }
                         return !busy || phaseTicks > 20 * 30;
                     }
@@ -839,6 +841,13 @@ final class FieldJobsScenario {
                         // like a user: walk back toward the crater
                         Harness.command("tp @s " + (cx - 0.5) + " " + cy + " " + (cz + 1.5));
                         steppedIn = true;
+                    }
+                    if (!grabNoted && !H.mc().mouseHandler.isMouseGrabbed()) {
+                        // held-attack mining (vanilla continueAttack) needs the mouse grabbed; with two test clients
+                        // open the window can lose focus, so the hand-off runs on the explicit less-legit setting
+                        notes.append("window lost mouse grab (focus) during the hand-offs: Vein Work set to relaxed; ");
+                        H.setting(VeinWorkModule.ID, "relaxed", true);
+                        grabNoted = true;
                     }
                     if (++handOffTicks % 60 == 0 && handOffTicks <= 600) {
                         Object lp = H.module(LavaPlugModule.ID);

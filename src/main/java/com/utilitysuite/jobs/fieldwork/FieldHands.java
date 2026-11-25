@@ -281,11 +281,15 @@ final class FieldHands implements LeaseListener, com.utilitysuite.core.api.IBloc
      */
     int tickPlace(Minecraft mc, LocalPlayer player, int sx, int sy, int sz, Direction face, boolean relaxed) {
         long cell = BlockPos.asLong(sx, sy, sz) ^ ((long) face.ordinal() << 60);
+        IInputSmoother input = Services.input();
         if (cell != actionCell) {
             resetAction();
             actionCell = cell;
+            // A break that ended because its cell turned to air (the caller stops calling tickBreak) leaves ATTACK
+            // held, and while the game is destroying a block it ignores USE: release it before placing (playtest
+            // find: the bed was never placed, attack still held on the floor block).
+            input.setKeyHeld(lease, SimKey.ATTACK, false);
         }
-        IInputSmoother input = Services.input();
         double hx = sx + 0.5 + face.getStepX() * 0.5;
         double hy = sy + 0.5 + face.getStepY() * 0.5;
         if (face == Direction.UP) {
