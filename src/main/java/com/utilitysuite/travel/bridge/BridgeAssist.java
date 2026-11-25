@@ -210,6 +210,15 @@ public final class BridgeAssist implements IModule, IConfigurable {
         pausedNotified = false;
         Level level = mc.level;
         IInputSmoother input = Services.input();
+        if (Services.serverHealth().pauseHighRisk()) {
+            // lag guard: hold still crouched at the edge (no forward, no placement) until the server is stable
+            keys.set(input, lease, SimKey.SNEAK, true);
+            keys.set(input, lease, SimKey.FORWARD, false);
+            keys.set(input, lease, SimKey.BACK, false);
+            keys.set(input, lease, SimKey.LEFT, false);
+            keys.set(input, lease, SimKey.RIGHT, false);
+            return;
+        }
         int baseY = Packed.y(start);
 
         // Safety: the bridge never jumps; leaving the ground for long or dropping below the deck ends the run.

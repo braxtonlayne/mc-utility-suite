@@ -277,6 +277,17 @@ public final class MovementAssist implements IModule, IConfigurable, com.utility
             }
             return;
         }
+        if (Services.serverHealth().pauseHighRisk() && !clutch.active() && !clutch.staging.staged()) {
+            // lag guard: no automated leaps, takeover or block assists while the server stalls (a clutch already
+            // under way finishes); the user's own keys pass through untouched
+            endGrant();
+            if (blocks.active()) {
+                blocks.release();
+            }
+            status = "server lag";
+            showLanding = false;
+            return;
+        }
         boolean useClutch = enabled ? clutchOn || handOverHeld : ap.allows(IAutopilot.Reflex.FALL_CLUTCH);
         boolean useParkour = enabled || ap.allows(IAutopilot.Reflex.PARKOUR);
         boolean useBlocks = enabled ? blocksOn || handOverHeld : ap.allows(IAutopilot.Reflex.PARKOUR_BLOCKS);
