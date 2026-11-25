@@ -84,6 +84,7 @@ public final class ToolsBootstrap {
         Services.modules().register(autoRespawn);
         Services.modules().register(autoReconnect);
         Services.modules().register(quickPearl);
+        Services.modules().register(new com.utilitysuite.tools.enchant.EnchantSeedHelper());
 
         modBus.addListener(quickPearl::onRegisterKeys);
 
