@@ -51,6 +51,7 @@ public final class TravelAutopilot implements IModule, IConfigurable {
     static final String K_RESERVE = "rocket_reserve";
     static final String K_MIN_DURABILITY = "elytra_min_durability";
     static final String K_ROCKET_COOLDOWN = "rocket_cooldown";
+    static final String K_LAND_TO_MEND = "elytra_land_to_mend";
 
     private enum Run { IDLE, OVERLAND, BOAT, ELYTRA, BOUNCE }
 
@@ -434,7 +435,11 @@ public final class TravelAutopilot implements IModule, IConfigurable {
                 SettingSpec.integer(K_MIN_DURABILITY, "Elytra reserve", 20, 1, 400, "Elytra",
                         "Abort cruise and land when the elytra has this many seconds of flight left."),
                 SettingSpec.integer(K_ROCKET_COOLDOWN, "Rocket spacing (ticks)", 30, 10, 200, "Elytra",
-                        "Minimum ticks between rockets.").asAdvanced());
+                        "Minimum ticks between rockets.").asAdvanced(),
+                SettingSpec.bool(K_LAND_TO_MEND, "Land to mend", false, "Elytra",
+                        "At the elytra reserve with no spare elytra: if the worn one has Mending and bottles o' "
+                                + "enchanting are in the hotbar, land, throw them at your feet until it is repaired, "
+                                + "then take off again."));
     }
 
     @Override
@@ -456,5 +461,6 @@ public final class TravelAutopilot implements IModule, IConfigurable {
         boat.configure(p.getInt(ID, K_RAY_RANGE, 24), arrival);
         elytra.configure(p.getInt(ID, K_CLEARANCE, 24), p.getInt(ID, K_MIN_ALT, 0), p.getInt(ID, K_RESERVE, 3),
                 p.getInt(ID, K_MIN_DURABILITY, 20), p.getInt(ID, K_ROCKET_COOLDOWN, 30), arrival);
+        elytra.setLandToMend(p.getBool(ID, K_LAND_TO_MEND, false));
     }
 }
