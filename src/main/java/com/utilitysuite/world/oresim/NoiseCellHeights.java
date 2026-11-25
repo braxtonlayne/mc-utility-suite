@@ -2,6 +2,7 @@ package com.utilitysuite.world.oresim;
 
 import com.utilitysuite.UtilitySuiteMod;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.LevelHeightAccessor;
 import net.minecraft.util.Mth;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
@@ -67,7 +68,8 @@ final class NoiseCellHeights implements ColumnHeightCache.CellFiller {
         BEARDIFIER_MARKER = marker;
     }
 
-    private final ServerLevel level;
+    /** Build-height bounds: the server level, or a fixed accessor for a client-side generator. */
+    private final LevelHeightAccessor level;
     private final ChunkGenerator generator;
     private final RandomState random;
     // set only on the fast path
@@ -80,10 +82,11 @@ final class NoiseCellHeights implements ColumnHeightCache.CellFiller {
     /** The first few cells are cross-checked against {@code getBaseHeight}; any mismatch disables the fast path. */
     private int parityChecksLeft = 8;
 
-    private NoiseCellHeights(ServerLevel level, NoiseGeneratorSettings settings, Aquifer.FluidPicker fluidPicker) {
+    private NoiseCellHeights(ChunkGenerator generator, RandomState random, LevelHeightAccessor level,
+            NoiseGeneratorSettings settings, Aquifer.FluidPicker fluidPicker) {
         this.level = level;
-        this.generator = level.getChunkSource().getGenerator();
-        this.random = level.getChunkSource().randomState();
+        this.generator = generator;
+        this.random = random;
         this.settings = settings;
         this.noiseSettings = settings == null ? null : settings.noiseSettings().clampToHeightAccessor(level);
         this.fluidPicker = fluidPicker;
@@ -91,18 +94,26 @@ final class NoiseCellHeights implements ColumnHeightCache.CellFiller {
     }
 
     static ColumnHeightCache.CellFiller create(ServerLevel level) {
-        ChunkGenerator gen = level.getChunkSource().getGenerator();
+        return create(level.getChunkSource().getGenerator(), level.getChunkSource().randomState(), level);
+    }
+
+    /**
+     * Same as {@link #create(ServerLevel)} for a generator that is not attached to a level: the client-side rebuild of
+     * the vanilla generator from a known seed ({@link ClientWorldgenOracles}).
+     */
+    static NoiseCellHeights create(ChunkGenerator gen, RandomState random, LevelHeightAccessor level) {
         if (gen.getClass() == NoiseBasedChunkGenerator.class && INTERPOLATED_STATE != null && FLUID_PICKER != null
                 && BEARDIFIER_MARKER != null) {
             try {
                 NoiseBasedChunkGenerator noise = (NoiseBasedChunkGenerator) gen;
                 Supplier<?> sup = (Supplier<?>) FLUID_PICKER.get(noise);
-                return new NoiseCellHeights(level, noise.generatorSettings().value(), (Aquifer.FluidPicker) sup.get());
+                return new NoiseCellHeights(gen, random, level, noise.generatorSettings().value(),
+                        (Aquifer.FluidPicker) sup.get());
             } catch (ReflectiveOperationException | RuntimeException e) {
                 UtilitySuiteMod.LOGGER.warn("OreSim: falling back to getBaseHeight per column: {}", e.toString());
             }
         }
-        return new NoiseCellHeights(level, null, null);
+        return new NoiseCellHeights(gen, random, level, null, null);
     }
 
     @Override
