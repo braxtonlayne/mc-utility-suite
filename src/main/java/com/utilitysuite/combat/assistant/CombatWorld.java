@@ -53,6 +53,11 @@ public interface CombatWorld {
     /** Single-player, or a server on the shared allow list ({@code core.ServerAllowList}). Cheap; may be cached. */
     boolean extrasAllowedHere();
 
+    /** Address of the current server ("singleplayer" in a local world, "" when unknown). Not a tick path. */
+    default String serverKey() {
+        return "";
+    }
+
     /**
      * Proactive-mode scan: fills {@code out} with living entities (players and mobs, never the local player) within
      * {@code radius} blocks, flagged per {@link TargetCandidates}. Line of sight is only traced when

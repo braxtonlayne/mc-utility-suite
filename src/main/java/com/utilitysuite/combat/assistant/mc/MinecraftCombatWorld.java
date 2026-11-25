@@ -118,6 +118,16 @@ public final class MinecraftCombatWorld implements CombatWorld, LineOfSight.Soli
     }
 
     @Override
+    public String serverKey() {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.hasSingleplayerServer()) {
+            return "singleplayer";
+        }
+        ServerData server = mc.getCurrentServer();
+        return server == null || server.ip == null ? "" : server.ip;
+    }
+
+    @Override
     public String describe(int entityId) {
         Entity e = entity(entityId);
         return e == null ? "entity #" + entityId : e.getName().getString() + " #" + entityId;

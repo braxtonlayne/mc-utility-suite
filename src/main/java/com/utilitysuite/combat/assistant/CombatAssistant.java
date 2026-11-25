@@ -128,6 +128,8 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
     private final TacticUtility utility = new TacticUtility();
     /** Combo keeper, strafe-phase read, arena read, feints, rank dial, pearl intercept, the read (one facade). */
     private final ProFeelLayer feel = new ProFeelLayer(ID);
+    /** Cross-session opponent memory (off by default; no store in tests). */
+    private final OpponentRecall recall;
     private final double[] aimOffset = new double[2];
     /** Sprint reset of the last swing: the setting, or the combo keeper's choice. */
     private CombatSettings.SprintReset resetKind = CombatSettings.SprintReset.W_RELEASE;
@@ -381,6 +383,7 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
     public CombatAssistant(CombatWorld world, AllyRoster roster, IActionArbiter arbiter, IInputSmoother input,
                            IContainerClicker clicker, LongSupplier clock) {
         this.world = world;
+        this.recall = new OpponentRecall(world);
         this.roster = roster;
         this.arbiter = arbiter;
         this.input = input;
@@ -564,6 +567,12 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         lastPositional = TacticUtility.Tactic.FIGHT;
         lastFeintNoted = FeintPlanner.Move.NONE;
         feel.engage(entityId, targetIsPlayer); // a target switch ends the combo plan, feints and any pearl run
+        if (settings.opponentMemory && targetIsPlayer) {
+            double prior = recall.onEngage(entityId, true);
+            if (!Double.isNaN(prior)) {
+                feel.seedSkill(entityId, prior);
+            }
+        }
         stageTarget = -1;
         takenUnanswered = 0; // a new opponent owes us nothing yet
         for (FightStage st : allStages) {
@@ -1409,6 +1418,12 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         feel.useReadState(read);
     }
 
+    /** Attaches the opponent memory file and where its one-line hints go (the coach / notices). */
+    public void useOpponentMemory(com.utilitysuite.combat.tactics.memory.OpponentMemoryStore store,
+                                  java.util.function.Consumer<String> hintSink) {
+        recall.useStore(store, hintSink);
+    }
+
     /** The pro-feel units (tests script them through its seams). */
     public ProFeelLayer proFeel() {
         return feel;
@@ -2241,6 +2256,10 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
             return;
         }
         lastDisengage = reason;
+        if (settings.opponentMemory && targetIsPlayer && targetId >= 0) {
+            recall.onFightEnd(targetId, true, opponents, feel.skillOf(targetId), feel.skillSamples(targetId),
+                    clock.getAsLong());
+        }
         collecting = false;
         foodEngagement = false;
         proactivePause = switch (reason) {

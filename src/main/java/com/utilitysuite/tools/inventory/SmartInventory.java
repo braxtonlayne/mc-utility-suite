@@ -14,6 +14,11 @@ import com.utilitysuite.core.api.Services;
 import com.utilitysuite.core.api.SettingSpec;
 import com.utilitysuite.core.input.ScreenMovementPassthrough;
 import com.utilitysuite.core.input.ScreenTextEntry;
+import com.utilitysuite.tools.inventory.loadout.GearItem;
+import com.utilitysuite.tools.inventory.loadout.Loadout;
+import com.utilitysuite.tools.inventory.loadout.LoadoutBook;
+import com.utilitysuite.tools.inventory.loadout.LoadoutPlanner;
+import com.utilitysuite.tools.inventory.loadout.McLoadouts;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
@@ -60,7 +65,13 @@ public final class SmartInventory implements IModule, IConfigurable, LeaseListen
     public static final String K_GUI_MOVE_SNEAK = "gui_move_sneak";
     public static final String K_SCAN_INTERVAL = "scan_interval_ticks";
 
-    private enum Op { NONE, REFILL, DEPOSIT, ARMOR }
+    /** Profile key of the saved gear loadouts (compact JSON; not a menu setting, written via the debounced profile). */
+    public static final String K_LOADOUTS = "loadouts";
+
+    private enum Op { NONE, REFILL, DEPOSIT, ARMOR, LOADOUT }
+
+    private LoadoutBook loadouts = new LoadoutBook();
+    private final LoadoutPlanner loadoutPlanner = new LoadoutPlanner();
 
     private static final int ARMOR_INTERVAL = 40;
     private static final int COOLDOWN_AFTER_OP = 10;
@@ -102,6 +113,18 @@ public final class SmartInventory implements IModule, IConfigurable, LeaseListen
 
     public SmartInventory() {
         this.leaseRequest = new LeaseRequest(ID, ControlPriority.SURVIVAL, EnumSet.of(ControlChannel.HOTBAR), 200, this);
+        com.utilitysuite.core.api.ISuiteActions actions = Services.actionsOrNull();
+        if (actions != null) {
+            for (String preset : Loadout.PRESET_NAMES) {
+                String key = preset.toLowerCase(java.util.Locale.ROOT);
+                actions.register(new com.utilitysuite.core.api.SuiteAction("equip_loadout_" + key,
+                        "Equip loadout " + preset, "gear kit armor hotbar swap " + key,
+                        () -> postResult(equipLoadout(preset))));
+                actions.register(new com.utilitysuite.core.api.SuiteAction("save_loadout_" + key,
+                        "Save loadout " + preset, "gear kit armor hotbar remember " + key,
+                        () -> postResult(saveLoadout(preset))));
+            }
+        }
     }
 
     // ---- IModule ----------------------------------------------------------------------------------------------------
@@ -365,6 +388,84 @@ public final class SmartInventory implements IModule, IConfigurable, LeaseListen
     }
 
     /** True while a deposit/refill/armor operation is running. */
+    // ---- gear loadouts (I1) -----------------------------------------------------------------------------------------
+
+    /** Saved loadouts in order (UI). */
+    public List<Loadout> loadouts() {
+        return loadouts.all();
+    }
+
+    /** Saves the current armour, offhand and hotbar under {@code name} (replacing one with the same name). */
+    public String saveLoadout(String name) {
+        LocalPlayer player = Minecraft.getInstance().player;
+        if (player == null) {
+            return "Not in a world";
+        }
+        Loadout l = McLoadouts.capture(name, player.getInventory());
+        if (l.filledSlots() == 0) {
+            lastResult = "Nothing to save: armour, offhand and hotbar are empty";
+            return lastResult;
+        }
+        loadouts.put(l);
+        Services.modState().profile().set(ID, K_LOADOUTS, loadouts.encode());
+        Services.modState().markDirty();
+        lastResult = "Saved loadout " + l.name() + " (" + l.filledSlots() + " items)";
+        return lastResult;
+    }
+
+    /**
+     * Equips a saved loadout with the fewest clicks, from the inventory and from an open chest, shulker box or ender
+     * chest. Armour found in a container is pulled into the inventory first; equip again after closing it.
+     */
+    public String equipLoadout(String name) {
+        Minecraft client = Minecraft.getInstance();
+        LocalPlayer player = client.player;
+        if (player == null || !enabled) {
+            return "Smart Inventory is off";
+        }
+        Loadout l = loadouts.get(name);
+        if (l == null) {
+            lastResult = "No loadout named " + name + " (save one first)";
+            return lastResult;
+        }
+        if (op != Op.NONE) {
+            return "Busy";
+        }
+        if (Services.arbiter().isAutomationStopped()) {
+            return "Automation is stopped";
+        }
+        AbstractContainerMenu menu = player.containerMenu;
+        boolean own = menu == player.inventoryMenu;
+        if (!own && !(menu instanceof ChestMenu || menu instanceof ShulkerBoxMenu)) {
+            lastResult = "Close this screen first";
+            return lastResult;
+        }
+        int containerSlots = own ? 0 : menu.slots.size() - 36;
+        if (own && client.screen != null && !(client.screen instanceof AbstractContainerScreen<?>)) {
+            return "Close this screen first";
+        }
+        GearItem[] pos = McLoadouts.positions(player.getInventory(), menu, containerSlots);
+        plan.clear();
+        LoadoutPlanner.Result r = loadoutPlanner.plan(l, pos, containerSlots, McLoadouts.lockedArmor(
+                player.getInventory()), plan);
+        String tail = (r.missing().isEmpty() ? "" : ", missing " + String.join(", ", r.missing()))
+                + (r.deferred() > 0 ? ", close the container and equip again for armour" : "");
+        if (plan.isEmpty()) {
+            lastResult = l.name() + ": nothing to move" + tail;
+            return lastResult;
+        }
+        start(Op.LOADOUT, menu.containerId, player);
+        lastResult = op == Op.LOADOUT ? "Equipping " + l.name() + " (" + plan.size() + " clicks)" + tail
+                : "Inventory busy (another module)";
+        return lastResult;
+    }
+
+    private static void postResult(String text) {
+        if (!Services.modState().isCleanScreen()) {
+            Services.visuals().notices().post(com.utilitysuite.core.api.visual.NoticeKind.INFO, text, null);
+        }
+    }
+
     public boolean isBusy() {
         return op != Op.NONE;
     }
@@ -459,6 +560,7 @@ public final class SmartInventory implements IModule, IConfigurable, LeaseListen
         guiMove = p.getBool(ID, K_GUI_MOVE, true);
         guiMoveSneak = p.getBool(ID, K_GUI_MOVE_SNEAK, false);
         scanInterval = clamp(p.getInt(ID, K_SCAN_INTERVAL, 10), 2, 40);
+        loadouts = LoadoutBook.decode(p.getString(ID, K_LOADOUTS, ""));
     }
 
     private static int clamp(int v, int lo, int hi) {
