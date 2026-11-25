@@ -161,6 +161,11 @@ public final class JobExecutor implements LeaseListener {
         JobSnapshot lastPosted;
         /** Moving average of step durations for the live ETA. */
         final StepRateEstimator eta = new StepRateEstimator();
+        /** Shown instead of "Done" when the job completes (hall sort summary). */
+        String doneNote;
+        /** Hall sort: items put away so far and items a put came up short. */
+        int hallMoved;
+        int hallShort;
 
         Job(long id, GoalRequest request) {
             this.id = id;
@@ -219,6 +224,22 @@ public final class JobExecutor implements LeaseListener {
         this.stationSource = source;
     }
 
+    private com.utilitysuite.jobs.planner.HallJobSource hallSource;
+
+    /** The Hall Sorter, which plans "sort hall" jobs; null fails them with "not loaded". */
+    public void setHallSource(com.utilitysuite.jobs.planner.HallJobSource source) {
+        this.hallSource = source;
+    }
+
+    /** Plans "sort hall" now (client thread) for a preview; an error result when no sorter is registered. */
+    public com.utilitysuite.jobs.planner.HallJobSource.Result hallPlan(boolean forRun) {
+        com.utilitysuite.jobs.planner.HallJobSource src = hallSource;
+        if (src == null) {
+            return com.utilitysuite.jobs.planner.HallJobSource.Result.error("The hall sorter is not loaded");
+        }
+        return src.hallPlan(deps.actions().dimension(), deps.actions().playerPos(), forRun);
+    }
+
     /** Plans a furnace-array or brewing goal on the client thread (cheap), or returns null for other requests. */
     private Plan stationPlan(Job j) {
         String dim = deps.actions().dimension();
@@ -267,6 +288,10 @@ public final class JobExecutor implements LeaseListener {
         Job j = new Job(nextJobId++, request);
         if (request instanceof GoalRequest.Build && buildHandler == null) {
             j.reason = "Waiting for schematic toolkit";
+        }
+        if (request instanceof GoalRequest.SortHall) {
+            com.utilitysuite.jobs.planner.HallJobSource.Result r = hallPlan(false);
+            j.provisional = r.error() == null ? r.plan() : Plan.EMPTY; // "Show Plan" while queued
         }
         jobs.add(j);
         refreshProvisionalPlans();
@@ -486,7 +511,47 @@ public final class JobExecutor implements LeaseListener {
             case TRAVEL, RETURN -> tickTravel(j, step);
             case BUILD -> tickBuild(j, step);
             case FURNACE_LOAD, FURNACE_COLLECT, BREW, FILL_BOTTLES, CRAFTER_SAVE, CRAFTER_APPLY -> tickStation(j, step);
+            case HALL_TAKE, HALL_PUT, HALL_MERGE -> tickHall(j, step);
         }
+    }
+
+    /**
+     * Storage hall steps: one world action each. A container that cannot be reached or opened is retried on the
+     * replan budget (then the job pauses with the reason); a take or put that opened the container but moved less
+     * than planned completes and is counted short (items not put stay in the inventory).
+     */
+    private void tickHall(Job j, PlanStep step) {
+        WorldActions a = deps.actions();
+        if (j.phase == Phase.START) {
+            a.beginHallStep(step, lease);
+            j.phase = Phase.WAIT_ACTION;
+            markChanged(j);
+            return;
+        }
+        WorldActions.Result r = a.poll();
+        if (r == WorldActions.Result.RUNNING) {
+            return;
+        }
+        if (r == WorldActions.Result.FAILED) {
+            if (replan(j, step, step.label() + " failed: " + a.message())) {
+                j.phase = Phase.START; // try the same chest again
+            }
+            return;
+        }
+        int moved = 0;
+        for (int v : a.transferred().values()) {
+            moved += v;
+        }
+        if (step.kind() == StepKind.HALL_PUT) {
+            j.hallMoved += moved;
+        }
+        if (step.kind() != StepKind.HALL_MERGE && moved < step.count()) {
+            j.hallShort += step.count() - moved;
+            setReason(j, step.label() + ": moved " + moved + "/" + step.count());
+        }
+        j.doneNote = "Hall sorted: " + j.hallMoved + " items put away"
+                + (j.hallShort > 0 ? ", " + j.hallShort + " short (left in place or in your inventory)" : "");
+        completeStep(j);
     }
 
     /**
@@ -555,6 +620,18 @@ public final class JobExecutor implements LeaseListener {
                 return;
             }
             j.pendingPlan = travelPlan(t);
+            return;
+        }
+        if (j.request instanceof GoalRequest.SortHall) {
+            com.utilitysuite.jobs.planner.HallJobSource.Result r = hallPlan(true);
+            if (r.error() != null) {
+                fail(j, r.error());
+                return;
+            }
+            if (r.plan().steps().isEmpty()) {
+                j.doneNote = "Hall already sorted";
+            }
+            j.pendingPlan = r.plan();
             return;
         }
         if (j.request instanceof GoalRequest.SmeltArray || j.request instanceof GoalRequest.Brew
@@ -660,8 +737,9 @@ public final class JobExecutor implements LeaseListener {
         List<PlanContext> contexts = new ArrayList<>();
         List<List<DependencyPlanner.Target>> targets = new ArrayList<>();
         for (Job j : jobs) {
-            if (j.status.isTerminal() || j.request instanceof GoalRequest.Travel) {
-                continue;
+            if (j.status.isTerminal() || j.request instanceof GoalRequest.Travel
+                    || j.request instanceof GoalRequest.SortHall) {
+                continue; // no dependency plan: travel has none, the hall plan comes from the sorter
             }
             if (j == active && !j.steps.isEmpty()) {
                 continue;
@@ -1496,7 +1574,7 @@ public final class JobExecutor implements LeaseListener {
 
     private void complete(Job j) {
         releaseLease();
-        setStatus(j, JobStatus.COMPLETED, "Done");
+        setStatus(j, JobStatus.COMPLETED, j.doneNote != null ? j.doneNote : "Done");
         jobs.remove(j);
         if (active == j) {
             active = null;
@@ -1545,7 +1623,7 @@ public final class JobExecutor implements LeaseListener {
         }
         return switch (step.kind()) {
             case CRAFT, SMELT, FETCH, SHULKER_RESTOCK, RETURN, FURNACE_LOAD, FURNACE_COLLECT, BREW, FILL_BOTTLES,
-                 CRAFTER_SAVE, CRAFTER_APPLY ->
+                 CRAFTER_SAVE, CRAFTER_APPLY, HALL_TAKE, HALL_PUT, HALL_MERGE ->
                     ALL_CHANNELS;
             default -> MOVE_CHANNELS;
         };
@@ -1661,6 +1739,9 @@ public final class JobExecutor implements LeaseListener {
             case BREW:
             case CRAFTER_SAVE:
             case CRAFTER_APPLY:
+            case HALL_TAKE:
+            case HALL_PUT:
+            case HALL_MERGE:
                 return step.storagePos();
             case GATHER:
             case MINE:

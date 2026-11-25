@@ -92,6 +92,16 @@ public sealed interface GoalRequest {
         }
     }
 
+    /**
+     * Tidy the storage hall around the player ("sort hall", "sort storage"): the Hall Sorter plans moves over the
+     * remembered chests within its radius and the job walks them (take, put, merge partial stacks).
+     */
+    record SortHall(CostProfile cost, DataSourceMode dataSource) implements GoalRequest {
+        public String label() {
+            return "Sort storage hall";
+        }
+    }
+
     record Custom(String text, CostProfile cost, DataSourceMode dataSource) implements GoalRequest {
         public String label() {
             return text;

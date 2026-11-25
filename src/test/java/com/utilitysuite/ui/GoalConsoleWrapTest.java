@@ -13,13 +13,6 @@ class GoalConsoleWrapTest {
         return s.length() * 6;
     }
 
-    @Test
-    void sortHallIsRecognisedButNotGoals() {
-        assertTrue(GoalConsole.isSortHall("  Sort   HALL "));
-        assertTrue(GoalConsole.isSortHall("sort storage"));
-        assertEquals(false, GoalConsole.isSortHall("sort hall 64 diamonds"));
-        assertEquals(false, GoalConsole.isSortHall("get 64 cobblestone"));
-    }
 
     @Test
     void wrapsAtWordBoundaries() {

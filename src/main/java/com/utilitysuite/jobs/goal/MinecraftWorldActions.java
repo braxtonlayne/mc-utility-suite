@@ -21,6 +21,10 @@ import net.minecraft.world.inventory.BrewingStandMenu;
 import com.utilitysuite.jobs.planner.Items;
 import com.utilitysuite.jobs.planner.PlanStep;
 import com.utilitysuite.jobs.storage.ShulkerItems;
+import com.utilitysuite.jobs.storage.StorageMemoryModule;
+import com.utilitysuite.jobs.storage.hall.HallSlotPick;
+import com.utilitysuite.jobs.storage.hall.HallSortSteps;
+import com.utilitysuite.jobs.storage.hall.InChestMerge;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
@@ -35,6 +39,7 @@ import net.minecraft.world.entity.monster.Creeper;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.inventory.AbstractFurnaceMenu;
+import net.minecraft.world.inventory.ChestMenu;
 import net.minecraft.world.inventory.CraftingMenu;
 import net.minecraft.world.inventory.InventoryMenu;
 import net.minecraft.world.inventory.Slot;
@@ -78,7 +83,7 @@ import java.util.function.Supplier;
  */
 public final class MinecraftWorldActions implements WorldActions {
 
-    private enum Op { NONE, CRAFT, SMELT, FETCH, DEPOSIT, SHULKER, STATION, ENDER }
+    private enum Op { NONE, CRAFT, SMELT, FETCH, DEPOSIT, SHULKER, STATION, ENDER, HALL }
 
     private enum Phase { FIND, SELECT_ITEM, CLEAR_OBSTRUCTION, CLEAR_WALK, AIM_PLACE, WAIT_PLACED, OPEN, WAIT_OPEN, WORK, WAIT_CLICKS, COLLECT, BREAK, PICKUP, WATER_WALK, WATER_AIM, WATER_WAIT, DONE }
 
@@ -345,7 +350,9 @@ public final class MinecraftWorldActions implements WorldActions {
                 }
             }
             case COLLECT -> {
-                if (op == Op.STATION) {
+                if (op == Op.HALL) {
+                    hallMergeTick(player);
+                } else if (op == Op.STATION) {
                     stationTick(player);
                 } else {
                     collectSmelted(player);
@@ -568,8 +575,360 @@ public final class MinecraftWorldActions implements WorldActions {
                 timer = 0;
             }
             case STATION -> stationWork(player, menu);
+            case HALL -> hallWork(player, menu);
             default -> fail("No operation");
         }
+    }
+
+    // ---- storage hall sort steps ---------------------------------------------------------------------------------------
+
+    /** Hotbar + main inventory slots ({@code Inventory.items}). */
+    private static final int PLAYER_SLOTS = 36;
+    /** Merge passes per container before giving up on what is left (a pass replans from the live menu). */
+    private static final int MAX_MERGE_PASSES = 3;
+    /**
+     * Items the last HALL_TAKE brought into each player inventory slot. HALL_PUT only moves these, so the player's own
+     * tools and stacks never end up in a hall chest. Reset by the next take.
+     */
+    private final int[] hallLedger = new int[PLAYER_SLOTS];
+    /**
+     * Player slots when the current hall step was first started, and the ledger then. A step retried after a pause or
+     * a failed open measures against these, so items moved by an interrupted attempt are neither lost from the ledger
+     * nor moved twice.
+     */
+    private final int[] hallBefore = new int[PLAYER_SLOTS];
+    private final String[] hallBeforeKey = new String[PLAYER_SLOTS];
+    private final int[] hallLedgerStart = new int[PLAYER_SLOTS];
+    private PlanStep hallBaseStep;
+    private final Map<String, Integer> hallMoved = new LinkedHashMap<>();
+    private int hallMergePasses;
+    private int hallMerged;
+
+    @Override
+    public void beginHallStep(PlanStep s, ControlLease l) {
+        start(Op.HALL, s, l);
+        hallMoved.clear();
+        hallMergePasses = 0;
+        hallMerged = 0;
+        beginTransfer(s.storagePos(), Map.of());
+    }
+
+    private static boolean isStorageMenu(AbstractContainerMenu menu) {
+        return menu instanceof ChestMenu || menu instanceof ShulkerBoxMenu;
+    }
+
+    /** WORK: the container is open. Queues the take or put clicks (merge-only steps go straight to merging). */
+    private void hallWork(LocalPlayer player, AbstractContainerMenu menu) {
+        if (!isStorageMenu(menu)) {
+            fail("Opened block is not a chest, barrel or shulker box");
+            return;
+        }
+        if (!menu.getCarried().isEmpty()) {
+            fail("An item is held on the cursor");
+            return;
+        }
+        Inventory pinv = player.getInventory();
+        if (step.kind() == StepKind.HALL_MERGE) {
+            startMerge();
+            return;
+        }
+        if (step != hallBaseStep) { // first attempt of this step (identity: a retry is the same object)
+            hallBaseStep = step;
+            if (step.kind() == StepKind.HALL_TAKE) {
+                java.util.Arrays.fill(hallLedger, 0); // a new trip: leftovers of earlier trips are the player's again
+            }
+            System.arraycopy(hallLedger, 0, hallLedgerStart, 0, PLAYER_SLOTS);
+            snapshotPlayer(pinv);
+        }
+        if (step.kind() == StepKind.HALL_TAKE) {
+            hallTake(menu, pinv);
+        } else {
+            hallPut(menu, pinv);
+        }
+        phase = Phase.WAIT_CLICKS;
+        timer = 0;
+    }
+
+    /** Menu slot indices of the container's own slots, in container order. */
+    private static int[] containerSlots(AbstractContainerMenu menu, Inventory pinv) {
+        int n = 0;
+        for (Slot s : menu.slots) {
+            if (s.container != pinv) {
+                n++;
+            }
+        }
+        int[] idx = new int[n];
+        int k = 0;
+        for (Slot s : menu.slots) {
+            if (s.container != pinv) {
+                idx[k++] = s.index;
+            }
+        }
+        return idx;
+    }
+
+    private void snapshotPlayer(Inventory pinv) {
+        for (int i = 0; i < PLAYER_SLOTS; i++) {
+            ItemStack st = pinv.items.get(i);
+            hallBefore[i] = st.isEmpty() ? 0 : st.getCount();
+            hallBeforeKey[i] = st.isEmpty() ? null
+                    : HallSortSteps.key(inv.idOf(st.getItem()), StorageMemoryModule.variantKey(st));
+        }
+    }
+
+    /**
+     * Slot-precise take: each listed slot is checked (item id and stored enchantments) right before it is clicked;
+     * a slot that changed is replaced by another holding the same item+variant (see {@link HallSlotPick}). Split
+     * stacks go into reserved empty player slots first, whole stacks follow by shift-click.
+     */
+    private void hallTake(AbstractContainerMenu menu, Inventory pinv) {
+        int[] idx = containerSlots(menu, pinv);
+        int n = idx.length;
+        String[] item = new String[n];
+        String[] variant = new String[n];
+        int[] count = new int[n];
+        for (int k = 0; k < n; k++) {
+            ItemStack st = menu.getSlot(idx[k]).getItem();
+            variant[k] = "";
+            if (!st.isEmpty()) {
+                item[k] = inv.idOf(st.getItem());
+                variant[k] = StorageMemoryModule.variantKey(st);
+                count[k] = st.getCount();
+            }
+        }
+        // what an interrupted attempt of this step already took is not taken again
+        Map<String, Integer> already = new LinkedHashMap<>();
+        for (int i = 0; i < PLAYER_SLOTS; i++) {
+            ItemStack st = pinv.items.get(i);
+            int d = (st.isEmpty() ? 0 : st.getCount()) - hallBefore[i];
+            if (d > 0) {
+                already.merge(HallSortSteps.key(inv.idOf(st.getItem()), StorageMemoryModule.variantKey(st)), d,
+                        Integer::sum);
+            }
+        }
+        List<HallSortSteps.Take> wanted = new ArrayList<>();
+        for (HallSortSteps.Take w : HallSortSteps.takes(step)) {
+            String key = HallSortSteps.key(w.item(), w.variant());
+            int got = Math.min(w.count(), already.getOrDefault(key, 0));
+            already.merge(key, -got, Integer::sum);
+            if (w.count() > got) {
+                wanted.add(new HallSortSteps.Take(w.slot(), w.count() - got, w.item(), w.variant()));
+            }
+        }
+        List<HallSlotPick.Pick> picks = HallSlotPick.pick(wanted, item, variant, count);
+        boolean[] reserved = new boolean[menu.slots.size()];
+        for (HallSlotPick.Pick p : picks) {
+            if (p.count() >= count[p.slot()]) {
+                continue;
+            }
+            int dst = emptyPlayerSlot(menu, pinv, reserved);
+            if (dst < 0) {
+                continue; // no free slot to split into: this part stays (reported short)
+            }
+            reserved[dst] = true;
+            for (SlotTransfer.Step c : SlotTransfer.exact(idx[p.slot()], count[p.slot()], dst, p.count())) {
+                Services.clicker().queueClick(lease, c.slot(), c.button(), c.click());
+            }
+        }
+        for (HallSlotPick.Pick p : picks) {
+            if (p.count() >= count[p.slot()]) {
+                Services.clicker().queueClick(lease, idx[p.slot()], 0, IContainerClicker.Click.QUICK_MOVE);
+            }
+        }
+    }
+
+    private static int emptyPlayerSlot(AbstractContainerMenu menu, Inventory pinv, boolean[] reserved) {
+        for (Slot s : menu.slots) {
+            if (s.container == pinv && s.getContainerSlot() < PLAYER_SLOTS && !s.hasItem() && !reserved[s.index]) {
+                return s.index;
+            }
+        }
+        return -1;
+    }
+
+    /** Puts only ledger items (what the last take brought) of each listed item+variant into the open container. */
+    private void hallPut(AbstractContainerMenu menu, Inventory pinv) {
+        int[] idx = containerSlots(menu, pinv);
+        boolean[] reserved = new boolean[idx.length];
+        List<Integer> whole = new ArrayList<>();
+        // ledger now = ledger at the first attempt minus what an interrupted attempt already put
+        Map<String, Integer> already = new LinkedHashMap<>();
+        for (int i = 0; i < PLAYER_SLOTS; i++) {
+            ItemStack st = pinv.items.get(i);
+            int d = Math.max(0, Math.min(hallBefore[i] - (st.isEmpty() ? 0 : st.getCount()), hallLedgerStart[i]));
+            hallLedger[i] = hallLedgerStart[i] - d;
+            if (d > 0 && hallBeforeKey[i] != null) {
+                already.merge(hallBeforeKey[i], d, Integer::sum);
+            }
+        }
+        for (HallSortSteps.Put p : HallSortSteps.puts(step)) {
+            String key = HallSortSteps.key(p.item(), p.variant());
+            int done = Math.min(p.count(), already.getOrDefault(key, 0));
+            already.merge(key, -done, Integer::sum);
+            int left = p.count() - done;
+            for (Slot s : menu.slots) {
+                if (left <= 0) {
+                    break;
+                }
+                int i = s.getContainerSlot();
+                if (s.container != pinv || i < 0 || i >= PLAYER_SLOTS || hallLedger[i] <= 0 || !s.hasItem()) {
+                    continue;
+                }
+                ItemStack st = s.getItem();
+                if (!p.item().equals(inv.idOf(st.getItem()))
+                        || !p.variant().equals(StorageMemoryModule.variantKey(st)) || whole.contains(s.index)) {
+                    continue;
+                }
+                int k = Math.min(left, Math.min(hallLedger[i], st.getCount()));
+                if (k >= st.getCount()) {
+                    whole.add(s.index);
+                } else {
+                    int dst = containerTarget(menu, idx, st, k, reserved);
+                    if (dst < 0) {
+                        continue;
+                    }
+                    reserved[dst] = true;
+                    for (SlotTransfer.Step c : SlotTransfer.exact(s.index, st.getCount(), idx[dst], k)) {
+                        Services.clicker().queueClick(lease, c.slot(), c.button(), c.click());
+                    }
+                }
+                left -= k;
+            }
+        }
+        for (int w : whole) {
+            Services.clicker().queueClick(lease, w, 0, IContainerClicker.Click.QUICK_MOVE);
+        }
+    }
+
+    /** A container slot that takes {@code k} of the stack: a matching partial with room first, else an empty one. */
+    private static int containerTarget(AbstractContainerMenu menu, int[] idx, ItemStack st, int k,
+                                       boolean[] reserved) {
+        int empty = -1;
+        for (int c = 0; c < idx.length; c++) {
+            if (reserved[c]) {
+                continue;
+            }
+            Slot slot = menu.getSlot(idx[c]);
+            ItemStack in = slot.getItem();
+            if (in.isEmpty()) {
+                if (empty < 0) {
+                    empty = c;
+                }
+            } else if (ItemStack.isSameItemSameComponents(in, st)
+                    && Math.min(in.getMaxStackSize(), slot.getMaxStackSize(in)) - in.getCount() >= k) {
+                return c;
+            }
+        }
+        return empty;
+    }
+
+    /** WAIT_CLICKS done: what moved per player slot, then the merge pass or finish. */
+    private void hallAfterClicks(LocalPlayer player) {
+        Inventory pinv = player.getInventory();
+        boolean take = step.kind() == StepKind.HALL_TAKE;
+        for (int i = 0; i < PLAYER_SLOTS; i++) {
+            ItemStack st = pinv.items.get(i);
+            int now = st.isEmpty() ? 0 : st.getCount();
+            if (take) {
+                int d = Math.max(0, now - hallBefore[i]);
+                hallLedger[i] = d;
+                if (d > 0) {
+                    hallMoved.merge(HallSortSteps.key(inv.idOf(st.getItem()), StorageMemoryModule.variantKey(st)), d,
+                            Integer::sum);
+                }
+            } else {
+                int d = Math.max(0, Math.min(hallBefore[i] - now, hallLedgerStart[i]));
+                hallLedger[i] = hallLedgerStart[i] - d;
+                if (d > 0 && hallBeforeKey[i] != null) {
+                    hallMoved.merge(hallBeforeKey[i], d, Integer::sum);
+                }
+            }
+        }
+        if (HallSortSteps.mergeAfter(step)) {
+            startMerge();
+            return;
+        }
+        hallFinish(player, "");
+    }
+
+    private void startMerge() {
+        phase = Phase.COLLECT;
+        timer = 0;
+    }
+
+    /**
+     * COLLECT for hall steps: one merge pass once the previous clicks are done. Stacking kinds come from the live
+     * menu (same item and components), {@link InChestMerge} plans the pass and its clicks are queued at once; the
+     * next pass re-reads the menu. Done when nothing is left to merge or after {@link #MAX_MERGE_PASSES}.
+     */
+    private void hallMergeTick(LocalPlayer player) {
+        if (Services.clicker().pending() > 0 || timer < 3) {
+            return; // let the server echo the last pass
+        }
+        AbstractContainerMenu menu = player.containerMenu;
+        if (!isStorageMenu(menu)) {
+            fail("Container closed while merging stacks");
+            return;
+        }
+        Inventory pinv = player.getInventory();
+        int[] idx = containerSlots(menu, pinv);
+        int n = idx.length;
+        if (!menu.getCarried().isEmpty()) {
+            // a click landed differently than planned: put the held stack down in an empty container slot
+            for (int c = 0; c < n; c++) {
+                if (!menu.getSlot(idx[c]).hasItem()) {
+                    Services.clicker().queueClick(lease, idx[c], 0, IContainerClicker.Click.PICKUP);
+                    timer = 0;
+                    return;
+                }
+            }
+            fail("Merging left an item on the cursor and the container is full");
+            return;
+        }
+        int[] kind = new int[n];
+        int[] count = new int[n];
+        int[] max = new int[n];
+        for (int c = 0; c < n; c++) {
+            Slot slot = menu.getSlot(idx[c]);
+            ItemStack st = slot.getItem();
+            kind[c] = -1;
+            if (st.isEmpty()) {
+                continue;
+            }
+            count[c] = st.getCount();
+            max[c] = Math.min(st.getMaxStackSize(), slot.getMaxStackSize(st));
+            kind[c] = c;
+            for (int j = 0; j < c; j++) {
+                if (kind[j] >= 0 && ItemStack.isSameItemSameComponents(menu.getSlot(idx[j]).getItem(), st)) {
+                    kind[c] = kind[j];
+                    break;
+                }
+            }
+        }
+        List<InChestMerge.Merge> merges = InChestMerge.plan(kind, count, max);
+        if (merges.isEmpty()) {
+            hallFinish(player, hallMerged > 0 ? "merged " + hallMerged + " items" : "");
+            return;
+        }
+        if (hallMergePasses++ >= MAX_MERGE_PASSES) {
+            hallFinish(player, "partial stacks left after " + MAX_MERGE_PASSES + " merge passes");
+            return;
+        }
+        hallMerged += InChestMerge.moved(merges);
+        for (SlotTransfer.Step c : InChestMerge.clicks(merges)) {
+            Services.clicker().queueClick(lease, idx[c.slot()], c.button(), c.click());
+        }
+        timer = 0;
+    }
+
+    /**
+     * Closes the container (Storage Memory re-records it from the close event: the open came from a real USE key
+     * press, so NeoForge fired RightClickBlock for it) and reports what moved.
+     */
+    private void hallFinish(LocalPlayer player, String note) {
+        transferred = Map.copyOf(hallMoved);
+        finish(player, step.label() + ": " + (transferred.isEmpty() ? "nothing moved" : transferred.toString())
+                + (note.isEmpty() ? "" : " (" + note + ")"));
     }
 
     // ---- station steps (furnace arrays, brewing) ----------------------------------------------------------------------
@@ -1264,6 +1623,7 @@ public final class MinecraftWorldActions implements WorldActions {
                 phase = Phase.BREAK;
                 timer = 0;
             }
+            case HALL -> hallAfterClicks(player);
             default -> finish(player, "");
         }
     }

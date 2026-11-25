@@ -4,7 +4,6 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 
 /**
  * Plans how to tidy a storage hall: every chest gets a category (manual tag, else inferred from its majority contents),
@@ -16,8 +15,8 @@ import java.util.Objects;
  *   <li>consolidates partial stacks of the same item inside each chest;</li>
  *   <li>flags chests whose used-slot share reaches {@code nearlyFull}.</li>
  * </ol>
- * The walking job carries out the moves chest by chest (open source, take, open target, put). Engine free; runs off
- * the client thread on a snapshot of {@code StorageMemory}.
+ * {@link HallSortSteps} turns the moves into goal-engine steps (slot-precise takes, puts, in-chest merges). Engine
+ * free; works on a snapshot of {@code StorageMemory}.
  */
 public final class HallSortPlanner {
 
@@ -68,8 +67,11 @@ public final class HallSortPlanner {
         }
     }
 
-    /** Move {@code count} items from chest/slot to chest/slot (indices into the input list). */
-    public record Move(int fromChest, int fromSlot, int toChest, int toSlot, int count, String itemId) {
+    /**
+     * Move {@code count} items from chest/slot to chest/slot (indices into the input list). {@code variant} is the
+     * slot's variant key (stored enchantments of a book, else "").
+     */
+    public record Move(int fromChest, int fromSlot, int toChest, int toSlot, int count, String itemId, String variant) {
     }
 
     public record Plan(List<Move> moves, String[] categories, List<Integer> nearlyFull) {
@@ -216,7 +218,7 @@ public final class HallSortPlanner {
                 }
                 b.count[s] += n;
                 a.count[fs] -= n;
-                moves.add(new Move(from, fs, to, s, n, item));
+                moves.add(new Move(from, fs, to, s, n, item, variant));
             }
         }
         if (a.count[fs] <= 0) {
@@ -228,23 +230,14 @@ public final class HallSortPlanner {
 
     /** Merges partial stacks of the same item+variant inside one chest (later slots into earlier ones). */
     private static void consolidate(Chest c, int index, List<Move> moves) {
-        for (int s = 0; s < c.item.length; s++) {
-            if (c.item[s] == null || c.count[s] <= 0 || c.count[s] >= c.max[s]) {
-                continue;
-            }
-            for (int t = s + 1; t < c.item.length && c.count[s] < c.max[s]; t++) {
-                if (c.item[t] == null || c.count[t] <= 0 || !Objects.equals(c.item[t], c.item[s])
-                        || !c.variant[t].equals(c.variant[s])) {
-                    continue;
-                }
-                int n = Math.min(c.max[s] - c.count[s], c.count[t]);
-                c.count[s] += n;
-                c.count[t] -= n;
-                moves.add(new Move(index, t, index, s, n, c.item[s]));
-                if (c.count[t] == 0) {
-                    c.item[t] = null;
-                    c.variant[t] = "";
-                }
+        int[] kind = InChestMerge.kinds(c.item, c.variant, c.count);
+        for (InChestMerge.Merge m : InChestMerge.plan(kind, c.count, c.max)) {
+            moves.add(new Move(index, m.from(), index, m.to(), m.moved(), c.item[m.to()], c.variant[m.to()]));
+            c.count[m.to()] += m.moved();
+            c.count[m.from()] -= m.moved();
+            if (c.count[m.from()] == 0) {
+                c.item[m.from()] = null;
+                c.variant[m.from()] = "";
             }
         }
     }

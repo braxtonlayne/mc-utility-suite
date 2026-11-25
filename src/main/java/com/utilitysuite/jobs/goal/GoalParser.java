@@ -20,8 +20,8 @@ import java.util.function.Supplier;
 /**
  * GoalConsole parser: deterministic tokenizer for commands such as {@code gather 32 diamonds},
  * {@code craft 16 hoppers cost=cheapest}, {@code mine 64 iron_ingots source=hybrid},
- * {@code build schematic house.litematic anchor=10,64,-3 gather-only}, {@code goto 100 64 -200} and
- * {@code travel to Base}. Modifiers ({@code key=value}) may appear anywhere.
+ * {@code build schematic house.litematic anchor=10,64,-3 gather-only}, {@code goto 100 64 -200},
+ * {@code travel to Base} and {@code sort hall}. Modifiers ({@code key=value}) may appear anywhere.
  */
 public final class GoalParser {
 
@@ -92,7 +92,7 @@ public final class GoalParser {
     }
 
     private static final List<String> VERBS = List.of("gather", "mine", "collect", "get", "craft", "make", "smelt",
-            "build", "goto", "travel", "furnaces", "brew", "crafter");
+            "build", "goto", "travel", "furnaces", "brew", "crafter", "sort");
 
     private final Supplier<ItemNameMatcher> matcher;
     private final Function<String, Optional<WaypointTarget>> waypoints;
@@ -187,7 +187,21 @@ public final class GoalParser {
             case "furnaces", "smelt-array", "blast", "smoke" -> parseSmeltArray(verb, rest, cost, source);
             case "brew" -> parseBrew(rest, cost, source);
             case "crafter" -> parseCrafter(rest, cost, source);
+            case "sort", "tidy" -> parseSort(rest, cost, source);
             default -> ParseResult.error("Unknown verb '" + verb + "'", closestVerbs(verb));
+        };
+    }
+
+    /** "sort hall", "sort storage", "sort the hall", "tidy storage": the Hall Sorter job. */
+    private static ParseResult parseSort(List<String> rest, CostProfile cost, DataSourceMode source) {
+        String what = String.join(" ", rest).toLowerCase(Locale.ROOT);
+        if (what.startsWith("the ")) {
+            what = what.substring(4);
+        }
+        return switch (what) {
+            case "hall", "storage", "storage hall", "chests" -> ParseResult.ok(new GoalRequest.SortHall(cost, source));
+            default -> ParseResult.error("Sort what? The storage hall is the only thing that can be sorted",
+                    List.of("sort hall", "sort storage"));
         };
     }
 
