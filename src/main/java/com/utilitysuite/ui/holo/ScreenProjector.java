@@ -73,7 +73,8 @@ public final class ScreenProjector {
             return;
         }
         IWorldMarks m = marks;
-        if (m == null || !anyOccupied(m)) {
+        if (m == null || (!anyOccupied(m) && auxMode == AUX_NONE)) {
+            auxState = NONE;
             clearStates();
             return;
         }
@@ -90,6 +91,7 @@ public final class ScreenProjector {
         lb.partialTick = event.getPartialTick().getGameTimeDeltaPartialTick(false);
         Vec3 cam = event.getCamera().getPosition();
         project(m, event.getModelViewMatrix(), event.getProjectionMatrix(), cam.x, cam.y, cam.z, lb);
+        projectAux(cam.x, cam.y, cam.z, lb);
         lb.level = null;
     }
 
@@ -123,6 +125,68 @@ public final class ScreenProjector {
                     rects, s * STRIDE);
             generations[s] = table.generation(s);
         }
+    }
+
+    // ---- auxiliary anchor (holo cards) ------------------------------------------------------------------------------
+
+    static final int AUX_NONE = 0;
+    static final int AUX_ENTITY = 1;
+    static final int AUX_BOX = 2;
+    private int auxMode;
+    private int auxEntity;
+    private final double[] auxBox = new double[6];
+    private final float[] auxRect = new float[STRIDE];
+    private int auxState;
+
+    /** Anchors the auxiliary projection to an entity (client thread; one anchor at a time). */
+    public void anchorEntity(int entityId) {
+        auxMode = AUX_ENTITY;
+        auxEntity = entityId;
+    }
+
+    /** Anchors the auxiliary projection to a world box. */
+    public void anchorBox(double minX, double minY, double minZ, double maxX, double maxY, double maxZ) {
+        auxMode = AUX_BOX;
+        auxBox[0] = minX;
+        auxBox[1] = minY;
+        auxBox[2] = minZ;
+        auxBox[3] = maxX;
+        auxBox[4] = maxY;
+        auxBox[5] = maxZ;
+    }
+
+    public void clearAnchor() {
+        auxMode = AUX_NONE;
+        auxState = NONE;
+    }
+
+    /** Projects the auxiliary anchor with this frame's matrices (call after {@link #project}). */
+    public void projectAux(double camX, double camY, double camZ, EntityBounds entities) {
+        if (auxMode == AUX_NONE) {
+            auxState = NONE;
+            return;
+        }
+        double[] b = bounds;
+        if (auxMode == AUX_ENTITY) {
+            if (entities == null || !entities.bounds(auxEntity, b)) {
+                auxState = NONE;
+                return;
+            }
+        } else {
+            System.arraycopy(auxBox, 0, b, 0, 6);
+        }
+        auxState = projectBox(mvp, view, (float) (b[0] - camX), (float) (b[1] - camY), (float) (b[2] - camZ),
+                (float) (b[3] - camX), (float) (b[4] - camY), (float) (b[5] - camZ), auxRect, 0);
+    }
+
+    /** State of the auxiliary anchor this frame ({@link #NONE} when unset). */
+    public int auxState() {
+        return auxState;
+    }
+
+    /** One {@link #STRIDE} field of the auxiliary anchor's projection. */
+    public float auxValue(int field) {
+        return auxRect[field];
     }
 
     /** Cheap early-out: is anything published at all. */
