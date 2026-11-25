@@ -74,7 +74,10 @@ final class ModulesScenario {
         s.waitUpTo("totem in the offhand", 20 * 5, () -> H.p().getOffhandItem().is(Items.TOTEM_OF_UNDYING));
         s.run("offhand result", () -> s.check("Offhand Manager moves a totem to the offhand at low health",
                 H.p().getOffhandItem().is(Items.TOTEM_OF_UNDYING),
-                Harness.fmt("health %.1f, offhand %s", H.p().getHealth(), H.p().getOffhandItem())));
+                Harness.fmt("health %.1f, offhand %s", H.p().getHealth(), H.p().getOffhandItem())
+                        + "; " + H.fields(module("offhand_manager"), "planned", "plannedDelay", "lease", "actingForAutopilot")
+                        + "; autopilot on " + (module("autopilot") != null && module("autopilot").isEnabled())
+                        + ", stopped " + Services.arbiter().isAutomationStopped()));
         s.cmd("effect give @s minecraft:instant_health 1 5 true");
         s.cmd("clear @s");
         s.run("offhand off", () -> H.enable("offhand_manager", false));

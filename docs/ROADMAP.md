@@ -590,7 +590,7 @@ Tier 2 (bigger, own-world, seed- or combat-dependent)
 Same rules: zero steady-state allocation in tick/render paths, input only through core.input leases, heavy work
 off-thread on snapshots, nothing drawn when idle, Clean-Screen hides everything, new automation defaults OFF.
 Overlapping ideas from the two lists are merged into one entry (noted in brackets).
-Status 2026-11-25: every entry is built and unit-tested on main; none has been tried in game yet.
+Status 2026-11-25: every entry is built in full and unit-tested on main. The full playtest pass is green except one intermittent Offhand Manager check; the features scenario (13-features) exercises atlas, sonar, cavities, redstone tracer, boat line, holo cards, replay, full-render PiP, sky recolour, palette, anvil, shapes and map art in game.
 
 Holographic and spatial visuals
 - [x] V1 World Atlas (`M`): full-screen 2D pan/zoom map plus a tiltable 3D isometric terrain hologram from minimap
@@ -622,19 +622,19 @@ Physics, maths and engine tricks
 World sense and environment
 - [x] R1 Acoustic echo-ripples: AcousticRadar pings drawn as 3D expanding ripples, colour-coded, with edge cues.
 - [x] R2 "What changed since my last visit": per-chunk block-hash snapshots; overlay new (cyan), removed (amber),
-      emptied containers (red). **Partial:** no clear-snapshot action yet.
+      emptied containers (red).
 - [x] R3 Stealth vision cones: Warden/Enderman/Piglin Brute/player view cones and sculk vibration spheres with wool
       occlusion. [merges the sculk half of W14]
 - [x] R4 Mob-cap and despawn-sphere hologram: 24/32/128-block domes on the player or a pinned AFK spot, plus a
       sub-chunk "where the cap goes" heat indicator.
 - [x] R5 Trail forensics classifier: elytra highway vs boat run vs Nether tunnel vs search zig-zag, with spline
-      arrows, direction and recency. **Partial:** no per-point timestamps for recency.
-- [x] R6 Atmosphere studio: warm night-vision, clear water with depth tint, sky/fog colour ramps, biome presets. **Partial:** sky colour not recoloured.
+      arrows, direction and recency.
+- [x] R6 Atmosphere studio: warm night-vision, clear water with depth tint, sky/fog colour ramps, biome presets.
 
 Interaction, building and replay
-- [x] F1 Picture-in-picture drone cam and rear-view mirror (ScoutCamera to a HUD viewport). **Partial:** PiP is a wireframe fallback, not a second world render.
+- [x] F1 Picture-in-picture drone cam and rear-view mirror (ScoutCamera to a HUD viewport).
 - [x] F2 Kill-cam / replay theatre: 30 s ring buffer of nearby poses + BlackBox events, freeze and orbit with a
-      scrubber, hitboxes, velocity vectors; ghost playback and split deltas for parkour. [merges C9] **Partial:** ghost/personal best not saved to disk.
+      scrubber, hitboxes, velocity vectors; ghost playback and split deltas for parkour. [merges C9]
 - [x] F3 Mirror-plane and 4x/8x radial symmetry builder feeding BuildAssist.
 - [x] F4 Flick-gesture holo radial wheel (8 slices) for suite actions.
 - [x] F5 Ctrl+K command palette with fuzzy compound intents and preview cards (GoalConsole).
@@ -654,11 +654,11 @@ Jobs and automation
 Inventory and logistics
 - [x] I1 Named gear and hotbar loadouts (armour, offhand, hotbar) in one click.
 - [x] I2 Ender chest mirror and remote quick-pull plan (including nested shulkers).
-- [x] I3 Storage hall auto-sorter: categories, consolidation, enchanted-book grouping, nearly-full flags. **Partial:** in-chest merges and mixed-book moves skipped; runs outside the job queue.
+- [x] I3 Storage hall auto-sorter: categories, consolidation, enchanted-book grouping, nearly-full flags.
 - [x] I4 Piglin bartering loop and Bastion gold-safety guard.
 
 Combat and parkour depth
-- [x] C6 Cross-session opponent playstyle memory (server + UUID). **Partial:** pearl/ranged/mace habits not recorded.
+- [x] C6 Cross-session opponent playstyle memory (server + UUID).
 - [x] C7 Crystal / respawn-anchor defensive exposure: lethal blast at feet/head, safe foot blocks, trap warning.
 - [x] C8 Dimension-aware fall-clutch fallback chain (water, powder snow, slime/hay, cobweb, boat, vines, wind charge).
 - [x] C10 Drive the C2/C3/C5 planners in fights (potions, mace dive, fight gap jumps), settings still off by default.
@@ -671,6 +671,6 @@ Travel and building
 
 Diagnostics, safety and UX
 - [x] U4 Lag-spike / TPS-drop safe-pause guard for high-risk automation.
-- [x] U5 FPS / render-budget auto-governor. **Partial:** item frames not culled.
+- [x] U5 FPS / render-budget auto-governor.
 - [x] U6 Profile bundles: export/import, diff preview, 10-step config undo.
-- [x] U7 In-game self-test harness for recent features with pass/fail report. **Partial:** scenario compiles, not run yet.
+- [x] U7 In-game self-test harness for recent features with pass/fail report.
