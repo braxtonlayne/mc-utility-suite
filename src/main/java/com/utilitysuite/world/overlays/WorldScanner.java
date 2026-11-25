@@ -150,11 +150,46 @@ public final class WorldScanner {
     }
 
     public void setTrackChunkAge(boolean on) {
-        trackChunkAge = on;
+        if (on == trackChunkAge) {
+            return;
+        }
         if (!on) {
+            persistTrails(true); // keep what this session saw before forgetting it
             chunkAge.clear();
         }
+        trackChunkAge = on;
+        if (on) {
+            restoreTrails();
+        }
     }
+
+    /**
+     * Where the trails of a dimension are saved (dimension id to file), or null for no persistence. Set by World Radar
+     * from the world profile. Changing it saves the current trails to the old file and merges the new one in.
+     */
+    public void setTrailFiles(java.util.function.Function<String, Path> files) {
+        persistTrails(true);
+        trailFiles = files;
+        restoreTrails();
+    }
+
+    /** Saves the trails if they changed since the last save (serialised here, written on the world executor). */
+    public void persistTrails(boolean async) {
+        java.util.function.Function<String, Path> f = trailFiles;
+        if (f == null || level == null || dimension.isEmpty() || !trackChunkAge || !chunkAge.consumeDirty()) {
+            return;
+        }
+        saveTrails(f.apply(dimension), async);
+    }
+
+    private void restoreTrails() {
+        java.util.function.Function<String, Path> f = trailFiles;
+        if (f != null && level != null && !dimension.isEmpty() && trackChunkAge) {
+            loadTrails(f.apply(dimension)); // merges: chunks seen this session keep their live state
+        }
+    }
+
+    private volatile java.util.function.Function<String, Path> trailFiles;
 
     public String dimension() {
         return dimension;
@@ -178,6 +213,7 @@ public final class WorldScanner {
     // ---- lifecycle ----------------------------------------------------------------------------------------------
 
     public void reset() {
+        persistTrails(true); // the old level's trails, before they are cleared
         lastRenderRebuild = -RENDER_REBUILD_TICKS;
         level = null;
         dimension = "";
@@ -198,6 +234,7 @@ public final class WorldScanner {
             dimension = WorldIds.dimension(l);
             observed.setDimension(dimension);
             fluids.setDimension(dimension);
+            restoreTrails();
         }
     }
 
