@@ -61,6 +61,16 @@ public final class DebrisBlastModule extends FieldModule {
     private final VeinWorkModule veinWork;
     private final LavaPlugModule lavaPlug;
 
+    private static final int RETRY_TICKS = 40;
+    private static final String WAITING_PREFIX = "Debris blast waiting: ";
+    private int waitTicks;
+
+    /** Missing preconditions keep the module on and waiting; safety aborts switch it off. */
+    static boolean waitsFor(DebrisBlastCycle.Abort why) {
+        return why == DebrisBlastCycle.Abort.NOT_NETHER || why == DebrisBlastCycle.Abort.WRONG_LEVEL
+                || why == DebrisBlastCycle.Abort.NO_CHARGE;
+    }
+
     public DebrisBlastModule(VeinWorkModule veinWork, LavaPlugModule lavaPlug) {
         super(ID, ControlPriority.GOAL);
         this.veinWork = veinWork;
@@ -86,6 +96,10 @@ public final class DebrisBlastModule extends FieldModule {
         if (hands.consumePreempted()) {
             return; // the user's own input pauses the step; the cycle keeps its place
         }
+        if (waitTicks > 0) {
+            waitTicks--; // waiting for a missing precondition (Nether, charges); retried every 2 s
+            return;
+        }
         observe(level, player);
         if (cycle.phase() == DebrisBlastCycle.Phase.IDLE) {
             heading = player.getDirection();
@@ -93,9 +107,17 @@ public final class DebrisBlastModule extends FieldModule {
         }
         DebrisBlastCycle.Phase p = cycle.step(obs);
         if (p == DebrisBlastCycle.Phase.ABORTED) {
-            status = "Debris blast stopped: " + cycle.abortReason();
-            enabled = false;
+            DebrisBlastCycle.Abort why = cycle.abortReason();
             stopWork();
+            if (waitsFor(why)) {
+                // Nothing to do yet (not in the Nether, no TNT/bed): stay on, say what is missing, retry.
+                status = WAITING_PREFIX + why;
+                cycle.stop();
+                waitTicks = RETRY_TICKS;
+                return;
+            }
+            status = "Debris blast stopped: " + why;
+            enabled = false;
             return;
         }
         if (cycle.stallHeld()) {
