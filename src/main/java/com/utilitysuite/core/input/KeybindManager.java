@@ -34,16 +34,32 @@ public final class KeybindManager {
         /** Hold to hand the whole body to the autopilot (read with {@link #isHeld}; unbound by default). */
         HAND_OVER("hand_over", InputConstants.UNKNOWN.getValue()),
         /** Opens the full-screen World Atlas. M is not bound by vanilla 1.21.1. */
-        OPEN_WORLD_ATLAS("open_world_atlas", GLFW.GLFW_KEY_M);
+        OPEN_WORLD_ATLAS("open_world_atlas", GLFW.GLFW_KEY_M),
+        /** Hold to open the action wheel (read with {@link #isHeld}; unbound by default: every free key is taken). */
+        RADIAL_WHEEL("radial_wheel", InputConstants.UNKNOWN.getValue()),
+        /** Ctrl+K: the command palette (vanilla binds nothing to K). */
+        COMMAND_PALETTE("command_palette", GLFW.GLFW_KEY_K, true),
+        UNDO_SETTING("undo_setting", InputConstants.UNKNOWN.getValue());
 
         private static final KeyId[] VALUES = values();
 
         private final String name;
         private final int defaultKey;
+        private final boolean ctrl;
 
         KeyId(String name, int defaultKey) {
+            this(name, defaultKey, false);
+        }
+
+        KeyId(String name, int defaultKey, boolean ctrl) {
             this.name = name;
             this.defaultKey = defaultKey;
+            this.ctrl = ctrl;
+        }
+
+        /** Short id, e.g. {@code stop_all}. */
+        public String id() {
+            return name;
         }
 
         /** Translation key, e.g. {@code key.utilitysuite.stop_all}. */
@@ -77,6 +93,22 @@ public final class KeybindManager {
         Runnable[] next = Arrays.copyOf(old, old.length + 1);
         next[old.length] = handler;
         HANDLERS[id.ordinal()] = next;
+    }
+
+    /**
+     * Runs a key's handlers as if it had been pressed (action registry: wheel slices, command palette). Client thread.
+     * Returns false when the key has no handler.
+     */
+    public static boolean fire(KeyId id) {
+        Runnable[] hs = HANDLERS[id.ordinal()];
+        for (Runnable h : hs) {
+            try {
+                h.run();
+            } catch (RuntimeException e) {
+                LOG.error("Key handler for {} failed", id, e);
+            }
+        }
+        return hs.length > 0;
     }
 
     /** Pluggable handler for the Open Menu key; the UI milestone sets it. Same as {@code onPressed(OPEN_MENU, ...)}. */
@@ -145,11 +177,45 @@ public final class KeybindManager {
         mc.options.save();
     }
 
+    /**
+     * Saved form of a mapping for profile bundles: the key name ({@code key.keyboard.k}) plus {@code ":CONTROL"} etc.
+     * when it has a modifier.
+     */
+    public static String saveString(KeyMapping m) {
+        net.neoforged.neoforge.client.settings.KeyModifier mod = m.getKeyModifier();
+        return m.saveString() + (mod == net.neoforged.neoforge.client.settings.KeyModifier.NONE ? "" : ":" + mod);
+    }
+
+    /** Applies a {@link #saveString} value (bundle import) and saves options.txt. Returns false for a bad value. */
+    public static boolean applySaveString(KeyMapping m, String value) {
+        net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
+        if (m == null || value == null || mc == null || mc.options == null) {
+            return false;
+        }
+        int colon = value.indexOf(':');
+        String keyName = colon < 0 ? value : value.substring(0, colon);
+        net.neoforged.neoforge.client.settings.KeyModifier mod = colon < 0
+                ? net.neoforged.neoforge.client.settings.KeyModifier.NONE
+                : net.neoforged.neoforge.client.settings.KeyModifier.valueFromString(value.substring(colon + 1));
+        InputConstants.Key key;
+        try {
+            key = InputConstants.getKey(keyName);
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
+        m.setKeyModifierAndCode(mod, key);
+        KeyMapping.resetMapping();
+        mc.options.save();
+        return true;
+    }
+
     /** Mod-bus listener. */
     public static void onRegisterKeyMappings(RegisterKeyMappingsEvent event) {
         for (KeyId id : IDS) {
-            KeyMapping m = new KeyMapping(id.translationKey(), KeyConflictContext.IN_GAME, InputConstants.Type.KEYSYM,
-                    id.defaultKey(), CATEGORY);
+            KeyMapping m = new KeyMapping(id.translationKey(), KeyConflictContext.IN_GAME,
+                    id.ctrl ? net.neoforged.neoforge.client.settings.KeyModifier.CONTROL
+                            : net.neoforged.neoforge.client.settings.KeyModifier.NONE,
+                    InputConstants.Type.KEYSYM, id.defaultKey(), CATEGORY);
             MAPPINGS[id.ordinal()] = m;
             event.register(m);
         }
@@ -157,6 +223,7 @@ public final class KeybindManager {
 
     /** Client tick: dispatches every queued press. Allocation free. */
     public static void tick() {
+        LookCapture.tick(); // a camera hold lapses unless its owner renews it this tick
         for (int i = 0; i < IDS.length; i++) {
             KeyMapping m = MAPPINGS[i];
             if (m == null) {

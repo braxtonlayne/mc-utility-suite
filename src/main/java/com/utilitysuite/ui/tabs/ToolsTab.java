@@ -113,6 +113,7 @@ public final class ToolsTab {
         Services.modules().byId(SuiteHud.ID).ifPresent(m -> SettingsRenderer.module(p, m));
         Services.modules().byId(VisualSettings.ID).ifPresent(m -> SettingsRenderer.module(p, m, false));
         profiles(p);
+        BundlePanel.render(p);
         hotkeys(p);
         coreSettings(p);
     }

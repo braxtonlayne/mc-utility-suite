@@ -244,6 +244,28 @@ public final class WorldTab {
 
     /** Writes the preset through each module's settings API (onSettingChanged + markDirty) and sets enable flags. */
     static void applyPreset(Panel p, VisualPresets.Preset preset) {
+        int missing = applyPreset(preset);
+        p.setState(K_APPLIED_PRESET, preset.name());
+        p.toast("Preset applied: " + preset.name() + (missing > 0 ? " (some modules not installed)" : ""));
+        p.rebuild();
+    }
+
+    private static int presetCursor = -1;
+
+    /**
+     * Action registry ("cycle_visual_preset"): applies the next visual preset in {@link VisualPresets#ALL} order.
+     * Returns a status line.
+     */
+    public static String cycleVisualPreset() {
+        List<VisualPresets.Preset> all = VisualPresets.ALL;
+        presetCursor = (presetCursor + 1) % all.size();
+        VisualPresets.Preset preset = all.get(presetCursor);
+        int missing = applyPreset(preset);
+        return "Preset applied: " + preset.name() + (missing > 0 ? " (some modules not installed)" : "");
+    }
+
+    /** Applies a preset without a menu; returns the number of settings and switches whose module is missing. */
+    public static int applyPreset(VisualPresets.Preset preset) {
         ProfileConfig profile = Services.modState().profile();
         int missing = 0;
         for (VisualPresets.Setting s : preset.settings()) {
@@ -259,9 +281,7 @@ public final class WorldTab {
             }
         }
         Services.modState().markDirty();
-        p.setState(K_APPLIED_PRESET, preset.name());
-        p.toast("Preset applied: " + preset.name() + (missing > 0 ? " (some modules not installed)" : ""));
-        p.rebuild();
+        return missing;
     }
 
     private static final String K_APPLIED_PRESET = "world.applied_preset";
@@ -416,11 +436,15 @@ public final class WorldTab {
     private static final String OVERWORLD = "minecraft:overworld";
 
     private static void goTo(Panel p, IWaypointService wps, Waypoint wp) {
+        p.toast(goToWaypoint(wps, wp));
+    }
+
+    /** Paths to a waypoint (through the Nether when cheaper). Returns a status line. Also used by the palette. */
+    public static String goToWaypoint(IWaypointService wps, Waypoint wp) {
         INavigator nav = Services.navigatorOrNull();
         Minecraft mc = Minecraft.getInstance();
         if (nav == null || !nav.isAvailable() || mc.level == null) {
-            p.toast("Pathing is not available (Baritone not installed)");
-            return;
+            return "Pathing is not available (Baritone not installed)";
         }
         // Far overworld waypoints: Travel Autopilot routes through recorded portals and the Nether when cheaper.
         if (OVERWORLD.equals(wp.dimension())) {
@@ -428,17 +452,15 @@ public final class WorldTab {
             Optional<TravelAutopilot> autopilot = Services.modules().find(TravelAutopilot.class);
             if (autopilot.isPresent() && autopilot.get().goViaNetherHub(BlockPos.getX(ow), BlockPos.getY(ow),
                     BlockPos.getZ(ow), wp.name())) {
-                p.toast("Going to " + wp.name() + " through the Nether");
-                return;
+                return "Going to " + wp.name() + " through the Nether";
             }
         }
         long pos = wps.positionIn(wp, mc.level.dimension().location().toString());
         if (nav.goToLeased(NAV_OWNER, ControlPriority.TRAVEL, BlockPos.getX(pos), BlockPos.getY(pos),
                 BlockPos.getZ(pos), 2).isEmpty()) {
-            p.toast("Movement is busy or automation is stopped");
-            return;
+            return "Movement is busy or automation is stopped";
         }
-        p.toast("Going to " + wp.name());
+        return "Going to " + wp.name();
     }
 
     /** Saves the player's position under the typed name, or "Waypoint N" when the name field is empty. */

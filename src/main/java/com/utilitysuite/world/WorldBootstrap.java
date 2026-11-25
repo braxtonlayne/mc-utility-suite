@@ -147,6 +147,17 @@ public final class WorldBootstrap {
         KeybindManager.onPressed(KeybindManager.KeyId.TOGGLE_WORLD_OVERLAYS, overlays::toggleFromKey);
         KeybindManager.onPressed(KeybindManager.KeyId.TOGGLE_SCOUT_CAMERA, camera::toggleFreecam);
         KeybindManager.onPressed(KeybindManager.KeyId.OPEN_WORLD_ATLAS, atlas::openScreen);
+        com.utilitysuite.core.api.ISuiteActions actions = Services.actionsOrNull();
+        if (actions != null) {
+            actions.register(new com.utilitysuite.core.api.SuiteAction("drop_waypoint", "Drop Waypoint",
+                    "add waypoint mark here", waypoints::requestAddHere));
+            actions.register(new com.utilitysuite.core.api.SuiteAction("take_me_back", "Take Me Back",
+                    "breadcrumbs return trail", waypoints::requestTakeMeBack));
+            actions.register(new com.utilitysuite.core.api.SuiteAction("open_world_atlas", "Open World Atlas",
+                    "map atlas 3d", atlas::openScreen));
+            actions.register(new com.utilitysuite.core.api.SuiteAction("sonar_pulse", "Sonar Pulse",
+                    "lidar scan pulse caves spawners", sonar::pulse));
+        }
         // Created in the registration event (not during parallel mod construction: KeyMapping keeps a global map).
         modBus.addListener((RegisterKeyMappingsEvent e) -> {
             KeyMapping zoomKey = key("zoom", GLFW.GLFW_KEY_Z);

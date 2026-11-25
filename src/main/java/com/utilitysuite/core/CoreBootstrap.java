@@ -125,6 +125,24 @@ public final class CoreBootstrap {
         KeybindManager.onPressed(KeybindManager.KeyId.CLEAN_SCREEN,
                 () -> modState.setCleanScreen(!modState.isCleanScreen()));
 
+        // Named actions (action wheel, command palette). Key-backed ones run the key's handlers, so later modules'
+        // handlers (freecam, overlays) are included.
+        com.utilitysuite.core.actions.SuiteActionRegistry actions = new com.utilitysuite.core.actions.SuiteActionRegistry();
+        Services.registerActions(actions);
+        keyAction(actions, KeybindManager.KeyId.STOP_ALL, "stop_all", "Stop-All", "stop cancel halt panic");
+        keyAction(actions, KeybindManager.KeyId.CLEAN_SCREEN, "toggle_clean_screen", "Toggle Clean-Screen",
+                "streamer hide hud");
+        keyAction(actions, KeybindManager.KeyId.TOGGLE_AUTOPILOT, "toggle_autopilot", "Toggle Autopilot", "");
+        keyAction(actions, KeybindManager.KeyId.TOGGLE_WORLD_OVERLAYS, "toggle_world_overlays",
+                "Toggle World Overlays", "esp boxes");
+        keyAction(actions, KeybindManager.KeyId.TOGGLE_SCOUT_CAMERA, "toggle_scout_camera", "Toggle Freecam",
+                "scout camera drone");
+        keyAction(actions, KeybindManager.KeyId.TOGGLE_TERRAIN_SURFACE, "toggle_terrain_surface",
+                "Toggle Terrain Assist", "surface");
+        keyAction(actions, KeybindManager.KeyId.OPEN_MENU, "open_menu", "Open Suite Menu", "settings");
+        keyAction(actions, KeybindManager.KeyId.COMMAND_PALETTE, "command_palette", "Command Palette", "search");
+        keyAction(actions, KeybindManager.KeyId.UNDO_SETTING, "undo_setting", "Undo Last Setting Change", "revert");
+
         IEventBus bus = NeoForge.EVENT_BUS;
         bus.addListener(CoreBootstrap::onTickPre);
         bus.addListener(CoreBootstrap::onTickPost);
@@ -188,6 +206,11 @@ public final class CoreBootstrap {
     /** Control shared with the user (also in {@link Services#sharedControl()}). */
     public static SharedInputOverlay sharedControl() {
         return sharedControl;
+    }
+
+    private static void keyAction(com.utilitysuite.core.api.ISuiteActions actions, KeybindManager.KeyId key,
+                                  String id, String label, String keywords) {
+        actions.register(new com.utilitysuite.core.api.SuiteAction(id, label, keywords, () -> KeybindManager.fire(key)));
     }
 
     private static void stopAllFromKey() {
