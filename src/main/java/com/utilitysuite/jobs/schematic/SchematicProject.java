@@ -238,9 +238,15 @@ final class SchematicProject {
     }
 
     SchematicJobCard card(boolean building) {
+        return card(building, false);
+    }
+
+    /** @param cleaningUp recorded scaffolding is still being removed: a finished build reads BUILDING until done */
+    SchematicJobCard card(boolean building, boolean cleaningUp) {
         SchematicAnalysis a = analysis;
         SchematicVolume v = volume;
-        String phaseName = paused ? "PAUSED" : phase == Phase.READY && building ? "BUILDING" : phase.name();
+        boolean busy = (phase == Phase.READY && building) || (phase == Phase.COMPLETE && cleaningUp);
+        String phaseName = paused ? "PAUSED" : busy ? "BUILDING" : phase.name();
         return new SchematicJobCard(name, v == null ? "" : v.format(), v == null ? 0 : v.sizeX(),
                 v == null ? 0 : v.sizeY(), v == null ? 0 : v.sizeZ(), anchorX, anchorY, anchorZ, phaseName,
                 scan == null ? 0f : scan.isComplete() ? 1f : scan.progress(), request.gatherOnly(),

@@ -32,7 +32,10 @@ import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
 
+import com.utilitysuite.core.api.IBlockChangeFeed;
+import com.utilitysuite.jobs.schematic.bom.SupplyTrip;
 import com.utilitysuite.jobs.schematic.plan.RestockCollector;
+import com.utilitysuite.jobs.schematic.plan.ScaffoldLedger;
 import com.utilitysuite.jobs.schematic.plan.SupportFaceRanker;
 import net.minecraft.core.registries.BuiltInRegistries;
 
@@ -144,6 +147,31 @@ public final class BuildAssist implements LeaseListener {
     private int restockRetryAt;
     private String restockNotice;
 
+    // Auto-supply between layers: checked once when the first open step moves to a new Y level.
+    private boolean autoSupply = true;
+    private int layerY = Integer.MIN_VALUE;
+    private boolean layerCheckDue;
+
+    // Temporary scaffolding cleanup: blocks that appeared next to the player during a "walk to reach" run (the
+    // navigator pillaring / bridging) and are not part of the schematic. Recorded from the block-change feed into a
+    // preallocated buffer, filtered on the tick, removed top-down once the plan is finished.
+    private static final int PENDING_CHANGES_MAX = 256;
+    private static final double SCAFFOLD_RECORD_RADIUS = 5.0;
+    private final ScaffoldLedger ledger = new ScaffoldLedger();
+    private final long[] pendingChanges = new long[PENDING_CHANGES_MAX];
+    private int pendingCount;
+    private final IBlockChangeFeed.Listener changeListener = this::onBlockChanged;
+    private IBlockChangeFeed subscribedFeed;
+    private boolean cleanupEnabled = true;
+    private boolean cleanupRequested;
+    private boolean cleanupPending;
+    private boolean cleanupTarget;
+    private long cleanupPos;
+    private long[] cleanupOrder = new long[16];
+    private int cleanupLeftUnder = -1;
+    private int cleanupOutOfReach = -1;
+    private String cleanupNotice;
+
     /**
      * Called once when the build has run out of materials: nothing in the look-ahead window is placeable with what the
      * inventory holds, and some of it needs items the inventory lacks. Client thread, from inside {@link #tick}: the
@@ -158,6 +186,17 @@ public final class BuildAssist implements LeaseListener {
          * @return true when a fetch round was queued; false when nothing wanted is stored nearby
          */
         boolean requestRestock(Map<String, Integer> wanted, long fromPacked, String dimension);
+
+        /**
+         * Auto-supply between layers: the build has moved on to a new layer and the inventory does not cover it.
+         * Same threading rules as {@link #requestRestock}.
+         *
+         * @param shortfall item id to the count the layer needs beyond the inventory (plan order)
+         * @return true when a supply trip was queued
+         */
+        default boolean requestSupply(Map<String, Integer> shortfall, long fromPacked, String dimension) {
+            return false;
+        }
     }
 
     public BuildAssist(String ownerId) {
@@ -207,6 +246,41 @@ public final class BuildAssist implements LeaseListener {
         restockHook = hook;
     }
 
+    /** "Auto-supply between layers" setting. */
+    public void setAutoSupply(boolean on) {
+        autoSupply = on;
+        if (!on) {
+            layerCheckDue = false;
+        }
+    }
+
+    /** "Clean up scaffolding" setting: remove recorded temporary blocks when the plan is finished. */
+    public void setCleanupScaffold(boolean on) {
+        cleanupEnabled = on;
+        cleanupPending = (on || cleanupRequested) && !ledger.isEmpty();
+    }
+
+    /** Removes the recorded temporary blocks now (menu button), whether or not the setting is on. */
+    public void requestScaffoldCleanup() {
+        cleanupRequested = true;
+        cleanupPending = !ledger.isEmpty();
+    }
+
+    /** Recorded temporary blocks not yet removed. */
+    public int scaffoldCount() {
+        return ledger.size();
+    }
+
+    /** True while recorded scaffolding is still to be removed (the job is not complete yet). */
+    public boolean cleanupPending() {
+        return cleanupPending;
+    }
+
+    /** Card notice about scaffolding left behind (under the player or out of reach), or null. */
+    public String cleanupNotice() {
+        return cleanupNotice;
+    }
+
     /** Card notice about restocking (out of materials with nothing stored, or a fetch queued), or null. */
     public String restockNotice() {
         return restockNotice;
@@ -227,6 +301,19 @@ public final class BuildAssist implements LeaseListener {
             blockedCells.clear(); // cell indices belong to the scan; a refreshed plan for the same scan keeps them
             walker.reset();
             resetRestock();
+            // The ledger survives a new pass (a supply trip hands the build over to a new job): world unload clears it.
+            pendingCount = 0;
+            cleanupNotice = null;
+            cleanupLeftUnder = -1;
+            cleanupOutOfReach = -1;
+        }
+        cleanupPending = (cleanupEnabled || cleanupRequested) && !ledger.isEmpty();
+        layerY = Integer.MIN_VALUE; // the first layer is checked too (after a supply trip it is usually covered)
+        layerCheckDue = false;
+        IBlockChangeFeed feed = Services.blockChangesOrNull();
+        if (feed != null && feed != subscribedFeed) {
+            feed.subscribe(changeListener);
+            subscribedFeed = feed;
         }
         if (haveStamp.length != items.length + 1) {
             haveStamp = new int[items.length + 1];
@@ -273,7 +360,56 @@ public final class BuildAssist implements LeaseListener {
         items = null;
         pausedByPreemption = false;
         resetRestock();
+        if (subscribedFeed != null) {
+            subscribedFeed.unsubscribe(changeListener);
+            subscribedFeed = null;
+        }
+        pendingCount = 0;
+        cleanupRequested = false;
+        cleanupPending = false;
+        cleanupNotice = null;
+        layerCheckDue = false;
         clearTarget();
+    }
+
+    /** Forgets the recorded temporary blocks (world unload: positions belong to that world). */
+    public void clearScaffolding() {
+        ledger.clear();
+        cleanupPending = false;
+    }
+
+    /** {@link IBlockChangeFeed} listener: cheap and allocation free, only buffers positions while a walk runs. */
+    private void onBlockChanged(long packedPos) {
+        if (walker.isWalking() && pendingCount < PENDING_CHANGES_MAX) {
+            pendingChanges[pendingCount++] = packedPos;
+        }
+    }
+
+    /** Records buffered changes that are solid blocks near the player and not part of the schematic. */
+    private void drainBlockChanges(LocalPlayer player) {
+        int n = pendingCount;
+        pendingCount = 0;
+        if (scan == null) {
+            return;
+        }
+        double r2 = SCAFFOLD_RECORD_RADIUS * SCAFFOLD_RECORD_RADIUS;
+        SchematicVolume v = scan.volume();
+        for (int i = 0; i < n; i++) {
+            long p = pendingChanges[i];
+            int x = BlockPos.getX(p), y = BlockPos.getY(p), z = BlockPos.getZ(p);
+            double dx = x + 0.5 - player.getX(), dy = y + 0.5 - player.getY(), dz = z + 0.5 - player.getZ();
+            if (dx * dx + dy * dy + dz * dz > r2 || probe.probe(x, y, z, -1) != PlacementStatus.W_OTHER) {
+                continue;
+            }
+            int lx = x - scan.originX(), ly = y - scan.originY(), lz = z - scan.originZ();
+            if (v.contains(lx, ly, lz) && v.isBlock(v.paletteIndex(lx, ly, lz))) {
+                continue; // part of the schematic
+            }
+            ledger.record(p);
+        }
+        if (n > 0 && (cleanupEnabled || cleanupRequested) && !ledger.isEmpty()) {
+            cleanupPending = true;
+        }
     }
 
     // ---- lease callbacks ----------------------------------------------------------------------------------------
@@ -304,6 +440,9 @@ public final class BuildAssist implements LeaseListener {
         if (Services.arbiter().isAutomationStopped()) {
             releaseLease();
             return;
+        }
+        if (pendingCount > 0) {
+            drainBlockChanges(player);
         }
         long here = player.blockPosition().asLong();
         if (!blockedCells.isEmpty() && here != blockedFrom) {
@@ -344,8 +483,13 @@ public final class BuildAssist implements LeaseListener {
         if (windowCount >= maxPerWindow) {
             return;
         }
-        if (targetStep < 0 && !selectTarget(player, reach)) {
-            stalledLastTick = true;
+        if (layerCheckDue && targetStep < 0 && !cleanupTarget) {
+            layerCheckDue = false;
+            checkLayerSupply(player);
+        }
+        if (targetStep < 0 && !cleanupTarget && !selectTarget(player, reach)
+                && !(firstOpen >= plan.size() && cleanupPending && pickCleanupTarget(player, reach))) {
+            stalledLastTick = firstOpen < plan.size(); // nothing to walk to once only scaffold cleanup is left
             if (++idleTicks > IDLE_RELEASE_TICKS) {
                 releaseLease();
             }
@@ -357,6 +501,17 @@ public final class BuildAssist implements LeaseListener {
             return;
         }
         IInputSmoother input = Services.input();
+        if (cleanupTarget) {
+            if (ScaffoldLedger.underPlayer(cleanupPos, player.blockPosition().asLong())) {
+                // The player stepped onto (or above) it while aiming: never break the block under them.
+                input.setKeyHeld(lease, SimKey.ATTACK, false);
+                input.clearRotation(lease);
+                clearTarget();
+                return;
+            }
+            tickBreak(mc, player, input);
+            return;
+        }
         byte kind = plan.kind(targetStep);
         if (kind == BuildPlan.REMOVE_SCAFFOLD) {
             tickBreak(mc, player, input);
@@ -394,6 +549,14 @@ public final class BuildAssist implements LeaseListener {
         }
         if (firstOpen >= size || budget == 0) {
             return false; // finished, or keep advancing the checkpoint next tick
+        }
+        int y = scan.volume().yOf(plan.cell(firstOpen));
+        if (y != layerY) { // the plan is bottom-up, one layer at a time: a new Y is a new layer
+            layerY = y;
+            layerCheckDue = autoSupply && restockHook != null && !restockQueued;
+            if (layerCheckDue) {
+                return false; // check the layer's materials first (next tick, outside the search)
+            }
         }
         if (searchPos < firstOpen || searchPos >= Math.min(size, firstOpen + LOOKAHEAD)) {
             searchPos = firstOpen;
@@ -527,6 +690,116 @@ public final class BuildAssist implements LeaseListener {
             out.merge(BuiltInRegistries.ITEM.getKey(item).toString(), Math.min(restock.count(i), cap), Integer::sum);
         }
         return out;
+    }
+
+    /**
+     * Auto-supply between layers: counts what the steps of the layer at {@link #firstOpen} still need, compares it with
+     * the inventory and, when something is short, asks the hook for a supply trip. Runs once per layer change.
+     */
+    private void checkLayerSupply(LocalPlayer player) {
+        RestockHook hook = restockHook;
+        if (hook == null || plan == null || firstOpen >= plan.size()) {
+            return;
+        }
+        restock.reset();
+        SchematicVolume v = scan.volume();
+        int end = (int) Math.min(plan.size(), (long) firstOpen + RESTOCK_SCAN_STEPS);
+        for (int step = firstOpen; step < end; step++) {
+            int cell = plan.cell(step);
+            if (v.yOf(cell) != layerY) {
+                break; // bottom-up plan: the layer ends here
+            }
+            byte kind = plan.kind(step);
+            if (kind != BuildPlan.PLACE) {
+                continue; // scaffold is on hand or comes back when removed; removal needs no item
+            }
+            byte s = scan.status(cell);
+            if (!PlacementStatus.needsPlacing(s) || s == PlacementStatus.WRONG) {
+                continue;
+            }
+            int key = itemKey(kind, cell);
+            if (key >= 0 && !restock.add(key)) {
+                break; // more item types than one round carries; the rest is the next round's
+            }
+        }
+        if (restock.size() == 0) {
+            return;
+        }
+        Map<String, Integer> need = new LinkedHashMap<>();
+        for (int i = 0; i < restock.size(); i++) {
+            need.merge(BuiltInRegistries.ITEM.getKey(itemOf(restock.key(i))).toString(), restock.count(i),
+                    Integer::sum);
+        }
+        Map<String, Integer> shortfall = SupplyTrip.shortfall(need, McInventoryView.snapshot(player));
+        if (shortfall.isEmpty()) {
+            return;
+        }
+        if (hook.requestSupply(shortfall, player.blockPosition().asLong(),
+                player.level().dimension().location().toString())) {
+            restockQueued = true;
+            restockNotice = "Next layer short of " + shortfall.size() + " item type(s): supply trip queued";
+        }
+    }
+
+    /**
+     * Next recorded scaffold block to break: removal order (top-down, the player's own column last), skipping blocks
+     * already gone (forgotten), blocks under the player and blocks out of reach. Sets {@link #cleanupTarget}.
+     */
+    private boolean pickCleanupTarget(LocalPlayer player, double reach) {
+        if (ledger.isEmpty()) {
+            cleanupPending = false;
+            cleanupRequested = false;
+            setCleanupNotice(0, 0);
+            return false;
+        }
+        long feet = player.blockPosition().asLong();
+        int n = ledger.size();
+        cleanupOrder = ledger.removalOrder(feet, cleanupOrder);
+        int under = 0, far = 0;
+        for (int i = 0; i < n; i++) {
+            long p = cleanupOrder[i];
+            targetX = BlockPos.getX(p);
+            targetY = BlockPos.getY(p);
+            targetZ = BlockPos.getZ(p);
+            int w = probe.probe(targetX, targetY, targetZ, -1);
+            if (w == PlacementStatus.W_EMPTY || w == PlacementStatus.W_FLUID) {
+                ledger.forget(p);
+                continue;
+            }
+            if (w == PlacementStatus.W_UNLOADED || !withinReach(player, reach)) {
+                far++;
+                continue;
+            }
+            if (ScaffoldLedger.underPlayer(p, feet)) {
+                under++;
+                continue;
+            }
+            cleanupPos = p;
+            cleanupTarget = true;
+            aimSet = false;
+            aimTicks = 0;
+            breakTicks = 0;
+            return true;
+        }
+        // Nothing breakable from here: leave the rest (the card says where) and let the job complete.
+        cleanupPending = false;
+        cleanupRequested = false;
+        setCleanupNotice(under, far);
+        return false;
+    }
+
+    private void setCleanupNotice(int under, int far) {
+        if (under == cleanupLeftUnder && far == cleanupOutOfReach) {
+            return; // builds a new string only when the counts change
+        }
+        cleanupLeftUnder = under;
+        cleanupOutOfReach = far;
+        if (under == 0 && far == 0) {
+            cleanupNotice = null;
+        } else {
+            cleanupNotice = "Scaffolding left: " + under + " under you, " + far
+                    + " out of reach (step off / move closer, then Remove scaffolding)";
+        }
     }
 
     /** Cache key of the item a step needs: its palette index, {@code items.length} for scaffold, -1 for none. */
@@ -861,6 +1134,9 @@ public final class BuildAssist implements LeaseListener {
     private void tickBreak(Minecraft mc, LocalPlayer player, IInputSmoother input) {
         int w = probe.probe(targetX, targetY, targetZ, -1);
         if (w == PlacementStatus.W_EMPTY || w == PlacementStatus.W_FLUID || ++breakTicks > BREAK_TIMEOUT_TICKS) {
+            if (cleanupTarget) {
+                ledger.forget(cleanupPos); // removed, or gave up on it (timed out): never retried in a loop
+            }
             input.setKeyHeld(lease, SimKey.ATTACK, false);
             input.clearRotation(lease);
             clearTarget();
@@ -958,6 +1234,7 @@ public final class BuildAssist implements LeaseListener {
     }
 
     private void clearTarget() {
+        cleanupTarget = false;
         targetStep = -1;
         targetFace = -1;
         aimTicks = 0;
