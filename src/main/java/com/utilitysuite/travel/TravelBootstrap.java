@@ -90,6 +90,10 @@ public final class TravelBootstrap {
                 event -> event.registerAbove(net.neoforged.neoforge.client.gui.VanillaGuiLayers.CROSSHAIR,
                         net.minecraft.resources.ResourceLocation.fromNamespaceAndPath(
                                 com.utilitysuite.UtilitySuiteMod.MOD_ID, "elytra_hud"), elytraHud::render));
+        com.utilitysuite.travel.movement.RunnersVisionModule runnersVision =
+                new com.utilitysuite.travel.movement.RunnersVisionModule(worldShapes);
+        Services.modules().register(runnersVision);
+        NeoForge.EVENT_BUS.addListener(runnersVision::onRenderLevel);
         onAutopilotKey = autopilot::toggle;
         onBridgeKey = bridge::toggle;
         onBridgeMarkKey = bridge::mark;
