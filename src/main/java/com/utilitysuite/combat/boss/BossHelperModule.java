@@ -86,6 +86,7 @@ public final class BossHelperModule implements IModule, IConfigurable {
         this.enabled = enabled;
         if (!enabled) {
             line = null;
+            clearMarks();
         }
     }
 
@@ -100,8 +101,9 @@ public final class BossHelperModule implements IModule, IConfigurable {
             dragon = d;
         } else if (e instanceof WitherBoss w) {
             wither = w;
-        } else if (e instanceof EndCrystal) {
+        } else if (e instanceof EndCrystal c) {
             crystals++;
+            put(crystalRefs, c);
         } else if (e instanceof WitherSkull s) {
             put(skulls, s);
         } else if (e instanceof AreaEffectCloud c && c.getParticle().getType() == ParticleTypes.DRAGON_BREATH) {
@@ -120,6 +122,7 @@ public final class BossHelperModule implements IModule, IConfigurable {
             wither = null;
         } else if (e instanceof EndCrystal) {
             crystals = Math.max(0, crystals - 1);
+            remove(crystalRefs, e);
         } else if (e instanceof WitherSkull) {
             remove(skulls, e);
         } else if (e instanceof AreaEffectCloud) {
@@ -154,9 +157,13 @@ public final class BossHelperModule implements IModule, IConfigurable {
         LocalPlayer p = Minecraft.getInstance().player;
         if (p == null || (dragon == null && wither == null && !anyTracked())) {
             line = null;
+            clearMarks();
             return;
         }
         line = compute(p);
+        if (++markTicks % 10 == 0) {
+            publishMarks(p); // crystal cage/range is budgeted: every half second
+        }
     }
 
     private boolean anyTracked() {
@@ -216,6 +223,141 @@ public final class BossHelperModule implements IModule, IConfigurable {
         return null;
     }
 
+    // ---- world marks (Shell reticles via IWorldMarks) ------------------------------------------------------------
+
+    private static final String[] MARK_OWNERS = {"boss_helper.crystal", "boss_helper.boss", "boss_helper.skull"};
+    private static final int M_CRYSTAL = 0, M_BOSS = 1, M_SKULL = 2;
+    private final EndCrystal[] crystalRefs = new EndCrystal[MAX_TRACKED];
+    private final int[] markSlot = {-2, -2, -2};
+    private final boolean[] markOn = new boolean[3];
+    private final net.minecraft.core.BlockPos.MutableBlockPos cursor = new net.minecraft.core.BlockPos.MutableBlockPos();
+    private final com.utilitysuite.combat.tactics.RangedBallistics ballistics =
+            new com.utilitysuite.combat.tactics.RangedBallistics();
+    private int markTicks;
+
+    private void publishMarks(LocalPlayer p) {
+        com.utilitysuite.core.api.visual.IVisuals v = Services.visualsOrNull();
+        if (v == null || Services.modState().isCleanScreen()) {
+            clearMarks();
+            return;
+        }
+        com.utilitysuite.core.api.visual.IWorldMarks marks = v.marks();
+        // nearest live crystal (dragon fight only): caged / in bow range on the low arc
+        EndCrystal best = null;
+        double bestD = Double.MAX_VALUE;
+        if (dragonHints && dragon != null) {
+            for (int i = 0; i < MAX_TRACKED; i++) {
+                EndCrystal c = crystalRefs[i];
+                if (c != null && c.isAlive()) {
+                    double d = c.distanceToSqr(p);
+                    if (d < bestD) {
+                        bestD = d;
+                        best = c;
+                    }
+                }
+            }
+        }
+        if (best != null && slot(marks, M_CRYSTAL) >= 0) {
+            boolean caged = BossFightAdvisor.caged(ironBarsAround(p, best));
+            double dx = best.getX() - p.getX(), dz = best.getZ() - p.getZ();
+            BossFightAdvisor.ShotVerdict sv = BossFightAdvisor.bowShot(ballistics, Math.sqrt(dx * dx + dz * dz),
+                    best.getY() + 1.0 - p.getEyeY(), caged, true);
+            String word = switch (sv) {
+                case CAGED -> "CAGED";
+                case OUT_OF_RANGE -> "OUT OF RANGE";
+                default -> "BOW RANGE";
+            };
+            marks.setEntity(markSlot[M_CRYSTAL], com.utilitysuite.core.api.visual.MarkKind.OBJECTIVE, best.getId(),
+                    -1f, -1f, (float) Math.sqrt(bestD), "End crystal", word,
+                    com.utilitysuite.core.api.visual.IWorldMarks.FLAG_TAG);
+            markOn[M_CRYSTAL] = true;
+        } else {
+            clear(marks, M_CRYSTAL);
+        }
+        net.minecraft.world.entity.LivingEntity boss = dragonHints && dragon != null ? dragon
+                : witherHints && wither != null ? wither : null;
+        if (boss != null && slot(marks, M_BOSS) >= 0) {
+            float max = boss.getMaxHealth();
+            String word = boss == wither && BossFightAdvisor.witherArmoured(wither.getHealth(), max) ? "MELEE ONLY"
+                    : null;
+            marks.setEntity(markSlot[M_BOSS], com.utilitysuite.core.api.visual.MarkKind.THREAT, boss.getId(),
+                    max > 0f ? boss.getHealth() / max : -1f, -1f, (float) Math.sqrt(boss.distanceToSqr(p)),
+                    boss == dragon ? "Ender dragon" : "Wither", word,
+                    com.utilitysuite.core.api.visual.IWorldMarks.FLAG_TAG);
+            markOn[M_BOSS] = true;
+        } else {
+            clear(marks, M_BOSS);
+        }
+        WitherSkull incoming = null;
+        if (witherHints) {
+            double cy = p.getY() + p.getBbHeight() * 0.5;
+            for (int i = 0; i < MAX_TRACKED && incoming == null; i++) {
+                WitherSkull s = skulls[i];
+                if (s != null) {
+                    var vel = s.getDeltaMovement();
+                    if (BossFightAdvisor.skullIncoming(s.getX(), s.getY(), s.getZ(), vel.x, vel.y, vel.z,
+                            s.isDangerous(), p.getX(), cy, p.getZ(), 1.5, 40)) {
+                        incoming = s;
+                    }
+                }
+            }
+        }
+        if (incoming != null && slot(marks, M_SKULL) >= 0) {
+            marks.setEntity(markSlot[M_SKULL], com.utilitysuite.core.api.visual.MarkKind.THREAT, incoming.getId(),
+                    -1f, -1f, (float) Math.sqrt(incoming.distanceToSqr(p)),
+                    incoming.isDangerous() ? "Blue skull" : "Wither skull", null,
+                    com.utilitysuite.core.api.visual.IWorldMarks.FLAG_TAG
+                            | (incoming.isDangerous() ? com.utilitysuite.core.api.visual.IWorldMarks.FLAG_LETHAL : 0));
+            markOn[M_SKULL] = true;
+        } else {
+            clear(marks, M_SKULL);
+        }
+    }
+
+    /** Iron bars in the 8 horizontal neighbours of the crystal's block and the block above. */
+    private int ironBarsAround(LocalPlayer p, EndCrystal c) {
+        int bx = c.getBlockX(), by = c.getBlockY(), bz = c.getBlockZ(), n = 0;
+        for (int dy = 0; dy <= 1; dy++) {
+            for (int dx = -1; dx <= 1; dx++) {
+                for (int dz = -1; dz <= 1; dz++) {
+                    if ((dx != 0 || dz != 0) && p.level().getBlockState(cursor.set(bx + dx, by + dy, bz + dz))
+                            .is(net.minecraft.world.level.block.Blocks.IRON_BARS)) {
+                        n++;
+                    }
+                }
+            }
+        }
+        // a cage also has bars above the crystal
+        if (p.level().getBlockState(cursor.set(bx, by + 2, bz)).is(net.minecraft.world.level.block.Blocks.IRON_BARS)) {
+            n++;
+        }
+        return n;
+    }
+
+    private int slot(com.utilitysuite.core.api.visual.IWorldMarks marks, int which) {
+        if (markSlot[which] == -2) {
+            markSlot[which] = marks.claim(MARK_OWNERS[which]);
+        }
+        return markSlot[which];
+    }
+
+    private void clear(com.utilitysuite.core.api.visual.IWorldMarks marks, int which) {
+        if (markOn[which] && markSlot[which] >= 0) {
+            marks.clear(markSlot[which]);
+        }
+        markOn[which] = false;
+    }
+
+    private void clearMarks() {
+        com.utilitysuite.core.api.visual.IVisuals v = Services.visualsOrNull();
+        if (v == null) {
+            return;
+        }
+        for (int i = 0; i < 3; i++) {
+            clear(v.marks(), i);
+        }
+    }
+
     @Override
     public void onWorldUnload() {
         dragon = null;
@@ -223,6 +365,8 @@ public final class BossHelperModule implements IModule, IConfigurable {
         crystals = 0;
         java.util.Arrays.fill(skulls, null);
         java.util.Arrays.fill(clouds, null);
+        java.util.Arrays.fill(crystalRefs, null);
+        clearMarks();
         lastPhase = -1;
         line = null;
     }

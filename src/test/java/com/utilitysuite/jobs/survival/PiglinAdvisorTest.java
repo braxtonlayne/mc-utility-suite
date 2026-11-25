@@ -53,6 +53,16 @@ class PiglinAdvisorTest {
     }
 
     @Test
+    void giveStepMatchesBarterRules() {
+        assertEquals(Act.NONE, PiglinAdvisor.giveStep(0, false, 2, 100, 20));
+        assertEquals(Act.NONE, PiglinAdvisor.giveStep(5, true, 2, 100, 20));
+        assertEquals(Act.WAIT, PiglinAdvisor.giveStep(5, false, 2, 10, 20));
+        assertEquals(Act.WAIT, PiglinAdvisor.giveStep(5, false, Double.POSITIVE_INFINITY, 100, 20));
+        assertEquals(Act.GIVE, PiglinAdvisor.giveStep(5, false, 2, 100, 20));
+        assertEquals(Act.TOSS, PiglinAdvisor.giveStep(5, false, 5, 100, 20));
+    }
+
+    @Test
     void guardWarnsWithoutGold() {
         List<String> iron = List.of("minecraft:iron_boots", "", "minecraft:iron_chestplate", "");
         List<String> gold = List.of("minecraft:golden_boots", "", "", "");

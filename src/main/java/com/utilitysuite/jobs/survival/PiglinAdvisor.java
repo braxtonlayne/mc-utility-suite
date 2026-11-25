@@ -92,6 +92,23 @@ public final class PiglinAdvisor {
         return ingotsInHand > 0 ? Decision.WAIT : Decision.NONE;
     }
 
+    /**
+     * Allocation-free give/toss step for the tick path (same rules as {@link #barter} without drop collection).
+     *
+     * @param nearestIdleAdult distance to the nearest adult, calm piglin that is not admiring (+inf when none)
+     * @return GIVE / TOSS (to that piglin), WAIT, or NONE (stop: no ingots or a hostile piglin in range)
+     */
+    public static Act giveStep(int ingotsInHand, boolean hostileInRange, double nearestIdleAdult, int ticksSinceGive,
+                               int cadenceTicks) {
+        if (hostileInRange || ingotsInHand <= 0) {
+            return Act.NONE;
+        }
+        if (ticksSinceGive < cadenceTicks || nearestIdleAdult > TOSS_RANGE) {
+            return Act.WAIT;
+        }
+        return nearestIdleAdult <= GIVE_RANGE ? Act.GIVE : Act.TOSS;
+    }
+
     public static boolean isJunk(String itemId, Set<String> pinnedJunk) {
         if (InventoryPressurePolicy.VALUABLES.contains(itemId)) {
             return false;

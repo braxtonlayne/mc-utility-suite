@@ -58,6 +58,11 @@ public final class PiglinGuard implements IModule, IConfigurable, LeaseListener 
     private boolean enabled;
     private boolean autoEquip;
     private boolean containerWarn = true;
+    private boolean barter;
+    private int cadenceTicks = 20;
+    private int sinceGive = 1_000;
+    public static final String K_BARTER = "barter_toss";
+    public static final String K_BARTER_CADENCE = "barter_cadence_ticks";
 
     private final AbstractPiglin[] piglins = new AbstractPiglin[MAX_PIGLINS];
     private final BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
@@ -158,6 +163,53 @@ public final class PiglinGuard implements IModule, IConfigurable, LeaseListener 
                 equip(mc, goldSlot);
             }
         }
+        if (barter && g != PiglinAdvisor.Guard.EQUIP_GOLD) {
+            barterStep(mc, p);
+        }
+    }
+
+    /**
+     * Opt-in barter toss: with gold ingots in the main hand and a calm adult piglin within a few blocks that is not
+     * already admiring, throws one ingot (a THROW click on the selected hotbar slot under a HOTBAR lease) at the set
+     * cadence. Piglins walk to dropped gold themselves. Stops when any piglin in range is aggressive.
+     */
+    private void barterStep(Minecraft mc, LocalPlayer p) {
+        sinceGive += PERIOD;
+        if (mc.screen != null) {
+            return;
+        }
+        ItemStack hand = p.getMainHandItem();
+        int ingots = hand.is(Items.GOLD_INGOT) ? hand.getCount() : 0;
+        boolean hostile = false;
+        double idle = Double.POSITIVE_INFINITY;
+        for (int i = 0; i < MAX_PIGLINS; i++) {
+            AbstractPiglin g = piglins[i];
+            if (g == null || !g.isAlive()) {
+                continue;
+            }
+            double d = Math.sqrt(g.distanceToSqr(p));
+            if (g.isAggressive() && d <= PiglinAdvisor.AGGRO_RANGE) {
+                hostile = true;
+            } else if (!g.isBaby() && g.getOffhandItem().isEmpty()) {
+                idle = Math.min(idle, d);
+            }
+        }
+        PiglinAdvisor.Act act = PiglinAdvisor.giveStep(ingots, hostile, idle, sinceGive, cadenceTicks);
+        if (act != PiglinAdvisor.Act.GIVE && act != PiglinAdvisor.Act.TOSS) {
+            return;
+        }
+        if (lease == null || !lease.isActive()) {
+            if (request == null) {
+                request = new LeaseRequest(ID, ControlPriority.IDLE, EnumSet.of(ControlChannel.HOTBAR), 0, this);
+            }
+            lease = Services.arbiter().request(request).orElse(null);
+            if (lease == null) {
+                return;
+            }
+        }
+        // InventoryMenu hotbar slots are 36..44; THROW with button 0 drops one item
+        Services.clicker().queueClick(lease, 36 + p.getInventory().selected, 0, IContainerClicker.Click.THROW);
+        sinceGive = 0;
     }
 
     /** Same decision as {@link PiglinAdvisor#guard} without building the worn-armour list. */
@@ -277,11 +329,18 @@ public final class PiglinGuard implements IModule, IConfigurable, LeaseListener 
                         "When piglins are near and no gold is worn, shift-click a gold armour piece from the"
                                 + " inventory into its empty armour slot (never replaces worn armour)."),
                 SettingSpec.bool(K_CONTAINER_WARN, "Bastion container warning", true, "",
-                        "Warn while the crosshair is on a container next to gold blocks or gilded blackstone."));
+                        "Warn while the crosshair is on a container next to gold blocks or gilded blackstone."),
+                SettingSpec.bool(K_BARTER, "Barter toss", false, "",
+                        "With gold ingots in your main hand, toss one to a calm adult piglin within 6 blocks that is"
+                                + " not already admiring one. Stops when a piglin turns hostile."),
+                SettingSpec.integer(K_BARTER_CADENCE, "Barter cadence", 20, 10, 200, "ticks",
+                        "Minimum ticks between two tossed ingots."));
     }
 
     @Override
     public void onProfileLoaded(ProfileConfig p) {
+        barter = p.getBool(ID, K_BARTER, false);
+        cadenceTicks = p.getInt(ID, K_BARTER_CADENCE, 20);
         autoEquip = p.getBool(ID, K_AUTO_EQUIP, false);
         containerWarn = p.getBool(ID, K_CONTAINER_WARN, true);
     }
