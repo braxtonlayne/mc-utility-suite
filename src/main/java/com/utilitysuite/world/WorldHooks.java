@@ -25,6 +25,8 @@ public final class WorldHooks {
     private static volatile TurnRedirect turnRedirect;
     /** Read by the light texture mixin every frame the lightmap updates. */
     private static volatile boolean fullbright;
+    /** Atmosphere studio partial lift (0..1 of the night-vision brightening), read with the fullbright flag. */
+    private static volatile float lightLift;
 
     private WorldHooks() {
     }
@@ -43,6 +45,15 @@ public final class WorldHooks {
 
     public static boolean fullbright() {
         return fullbright;
+    }
+
+    public static void setLightLift(float lift) {
+        lightLift = lift;
+    }
+
+    /** Partial dark-area lift requested by the Atmosphere studio (0 = none). */
+    public static float lightLift() {
+        return lightLift;
     }
 
     public static void blockChanged(BlockPos pos, BlockState oldState, BlockState newState) {

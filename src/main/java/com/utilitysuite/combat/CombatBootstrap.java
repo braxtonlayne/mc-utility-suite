@@ -112,6 +112,14 @@ public final class CombatBootstrap {
         com.utilitysuite.combat.hud.KineticChainModule kinetic = new com.utilitysuite.combat.hud.KineticChainModule();
         Services.modules().register(kinetic);
         NeoForge.EVENT_BUS.addListener(kinetic::onRenderLevel); // the readout is a HUD-host element (self-registers)
+        // Holo audio cues (off by default): reads the coach readout, so it is registered (and ticks) after the coach.
+        com.utilitysuite.combat.cues.HoloAudioCues cues = new com.utilitysuite.combat.cues.HoloAudioCues(
+                coach.readout());
+        Services.modules().register(cues);
+        Services.events().subscribe(com.utilitysuite.core.api.SuiteEvent.LeaseGranted.class,
+                e -> cues.onLeaseGranted());
+        Services.events().subscribe(com.utilitysuite.core.api.SuiteEvent.LeaseEnded.class,
+                e -> cues.onLeaseEnded(e.reason()));
         assistant.bindModuleRegistry(Services.modules());
 
         CombatEventBridge.install(assistant);

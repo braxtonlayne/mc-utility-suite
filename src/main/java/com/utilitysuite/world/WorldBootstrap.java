@@ -5,7 +5,11 @@ import com.utilitysuite.core.api.IModuleRegistry;
 import com.utilitysuite.core.api.ISuiteEventBus;
 import com.utilitysuite.core.api.Services;
 import com.utilitysuite.core.input.KeybindManager;
+import com.utilitysuite.world.atmosphere.AtmosphereModule;
 import com.utilitysuite.world.blast.BlastOverlayModule;
+import com.utilitysuite.world.budget.RenderGovernorModule;
+import net.neoforged.neoforge.client.event.RenderFrameEvent;
+import net.neoforged.neoforge.client.event.RenderLivingEvent;
 import com.utilitysuite.world.camera.FreelookModule;
 import com.utilitysuite.world.camera.ScoutCameraModule;
 import com.utilitysuite.world.filters.RenderFiltersModule;
@@ -109,6 +113,8 @@ public final class WorldBootstrap {
                 new com.utilitysuite.world.changes.ChangeTrackerModule();
         StealthVisionModule stealthVision = new StealthVisionModule();
         FortressSpawnModule fortressSpawns = new FortressSpawnModule(oreSim::profile);
+        AtmosphereModule atmosphere = new AtmosphereModule();
+        RenderGovernorModule governor = new RenderGovernorModule();
         modBus.addListener(RegisterGuiLayersEvent.class, e -> e.registerBelow(VanillaGuiLayers.CHAT,
                 ResourceLocation.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID, "minimap"), minimap.hud()));
         modBus.addListener(RegisterGuiLayersEvent.class, e -> e.registerBelow(VanillaGuiLayers.CHAT,
@@ -122,7 +128,7 @@ public final class WorldBootstrap {
                 waypoints,
                 minimap, lightOverlay, blastOverlay, crystalExposure, projectileRibbon, spawnGeometry, seedLocator,
                 freelook, renderFilters, strongholdFinder, trialChambers, sonar, cavities, atlas, redstoneTracer,
-                changeTracker, stealthVision, fortressSpawns}) {
+                changeTracker, stealthVision, fortressSpawns, atmosphere, governor}) {
             registry.register(m);
             runtime.add(m);
         }
@@ -192,6 +198,10 @@ public final class WorldBootstrap {
         bus.addListener((ViewportEvent.ComputeFov e) -> camera.onComputeFov(e));
         bus.addListener((ViewportEvent.ComputeCameraAngles e) -> freelook.onCameraAngles(e));
         bus.addListener((ViewportEvent.RenderFog e) -> camera.onFog(e));
+        bus.addListener((ViewportEvent.RenderFog e) -> atmosphere.onFog(e));
+        bus.addListener((ViewportEvent.ComputeFogColor e) -> atmosphere.onFogColor(e));
+        bus.addListener((RenderFrameEvent.Pre e) -> governor.onFrame(e));
+        bus.addListener(RenderLivingEvent.Pre.class, e -> governor.onRenderLiving(e));
         bus.addListener((CalculatePlayerTurnEvent e) -> camera.onTurnSensitivity(e));
         bus.addListener((RenderBlockScreenEffectEvent e) -> camera.onScreenEffect(e));
         bus.addListener((RenderGuiLayerEvent.Pre e) -> camera.onGuiLayer(e));
