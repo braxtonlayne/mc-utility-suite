@@ -89,6 +89,44 @@ public final class SnapshotDiff {
         }
     }
 
+    /**
+     * The result without any mark inside chunk ({@code chunkX}, {@code chunkZ}) (its snapshot was cleared). The
+     * compared-chunk count drops by one when anything was there; section counts are kept (they are not per chunk).
+     * Returns {@code r} itself when nothing changes, null for null.
+     */
+    public static Result withoutChunk(Result r, int chunkX, int chunkZ) {
+        if (r == null) {
+            return null;
+        }
+        long[] a = dropChunk(r.added(), chunkX, chunkZ);
+        long[] rm = dropChunk(r.removed(), chunkX, chunkZ);
+        long[] e = dropChunk(r.emptied(), chunkX, chunkZ);
+        if (a == r.added() && rm == r.removed() && e == r.emptied()) {
+            return r;
+        }
+        return new Result(a, rm, e, r.changedSections(), Math.max(0, r.comparedChunks() - 1));
+    }
+
+    private static long[] dropChunk(long[] marks, int chunkX, int chunkZ) {
+        int keep = 0;
+        for (long p : marks) {
+            if (BlockPosPacking.x(p) >> 4 != chunkX || BlockPosPacking.z(p) >> 4 != chunkZ) {
+                keep++;
+            }
+        }
+        if (keep == marks.length) {
+            return marks;
+        }
+        long[] out = new long[keep];
+        int k = 0;
+        for (long p : marks) {
+            if (BlockPosPacking.x(p) >> 4 != chunkX || BlockPosPacking.z(p) >> 4 != chunkZ) {
+                out[k++] = p;
+            }
+        }
+        return out;
+    }
+
     public Result result() {
         return new Result(added.toLongArray(), removed.toLongArray(), emptied.toLongArray(), changedSections,
                 compared);
