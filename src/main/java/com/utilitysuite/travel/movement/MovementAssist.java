@@ -437,16 +437,24 @@ public final class MovementAssist implements IModule, IConfigurable, com.utility
         brain.setCoSteerSpentDeg(grant != null && grant.isActive() ? grant.coSteerAddedDeg() : 0.0);
         brain.sprintWithholdAvailable = grant != null && grant.isActive() ? grant.canWithholdSprint()
                 : withholdCapable;
+        double safetyMargin = com.utilitysuite.tools.packetlab.ServerPhysicsMonitor.current().movementSafetyMargin();
+        if (safetyMargin > 0.0) {
+            brain.intentThreshold = Math.min(0.95, brain.intentThreshold + safetyMargin * 0.5);
+        }
         if (auto) {
             // the autopilot's parkour reflex is edge jumps and air steering, whatever this module's own toggles say
             boolean e = brain.edgeJump;
             boolean s = brain.airSteer;
             boolean h = brain.sprintHop;
             boolean ts = brain.takeoffShaping;
+            boolean tp = brain.tickPhase;
             brain.edgeJump = useParkour;
             brain.airSteer = useParkour;
             brain.sprintHop = false;
             brain.takeoffShaping = false;
+            if (safetyMargin >= 0.10) {
+                brain.tickPhase = false;
+            }
             // the autopilot's parkour reflex runs the selected mode, at least Co-pilot (Takeover while the key is held)
             brain.mode = mode;
             brain.decide(now, p.getYRot(), sprinting, userF, userS, in.jumping, health, voxels);
@@ -454,10 +462,16 @@ public final class MovementAssist implements IModule, IConfigurable, com.utility
             brain.airSteer = s;
             brain.sprintHop = h;
             brain.takeoffShaping = ts;
+            brain.tickPhase = tp;
             status = userF > 0 ? "autopilot" : "autopilot: no forward key";
         } else {
+            boolean tp = brain.tickPhase;
+            if (safetyMargin >= 0.10) {
+                brain.tickPhase = false;
+            }
             brain.mode = mode;
             brain.decide(now, p.getYRot(), sprinting, userF, userS, in.jumping, health, voxels);
+            brain.tickPhase = tp;
             status = userF > 0 ? "assisting" : "no forward key";
         }
         publishCommit(ap, auto);

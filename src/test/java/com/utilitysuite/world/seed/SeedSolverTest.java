@@ -65,7 +65,7 @@ class SeedSolverTest {
         assertEquals(SeedSolver.Status.NEED_MORE_CLUES, SeedSolver.solve(weak, () -> false).status());
 
         List<SeedSolver.StructureClue> clues = generateStructures(worldSeed,
-                new String[] {"desert_pyramid", "swamp_hut", "ruined_portal"}, 1);
+                new String[] {"desert_pyramid", "swamp_hut", "jungle_temple", "ruined_portal"}, 1);
         SeedSolver.Clues input = new SeedSolver.Clues(BiomeManager.obfuscateSeed(worldSeed), true, pillarSeed,
                 clues, List.of(), List.of());
         assertTrue(SeedSolver.assess(input).ready());
@@ -114,5 +114,30 @@ class SeedSolverTest {
             }
         }
         assertTrue(treasureHits > 0 && treasureHits < 45);
+    }
+
+    @Test
+    void solves64BitWorldSeedFromBedrockSamplesWhenHashedSeedIsAbsent() {
+        long worldSeed = (0x4321L << 48) | 0x1122_3344_5566L;
+        int pillarSeed = EndPillars.pillarSeedOf(worldSeed);
+        List<SeedSolver.StructureClue> clues = generateStructures(worldSeed,
+                new String[] {"desert_pyramid", "swamp_hut", "jungle_temple", "ruined_portal"}, 1);
+        List<BedrockPatternVerifier.Sample> samples = new ArrayList<>();
+        for (int i = 0; i < 48; i++) {
+            int x = i * 5 + 3;
+            int z = i * 9 - 17;
+            int y = 123 + (i & 3);
+            boolean present = BedrockPatternVerifier.predict(
+                    worldSeed, BedrockPatternVerifier.Layer.NETHER_ROOF, x, y, z);
+            samples.add(new BedrockPatternVerifier.Sample(
+                    BedrockPatternVerifier.Layer.NETHER_ROOF, x, y, z, present));
+        }
+
+        SeedSolver.Clues input = new SeedSolver.Clues(0L, false, pillarSeed,
+                clues, List.of(), List.of(), samples);
+        assertTrue(input.hasBedrockVerifier());
+        SeedSolver.Result res = SeedSolver.solve(input, () -> false);
+        assertEquals(SeedSolver.Status.FOUND_WORLD_SEED, res.status(), res.detail());
+        assertEquals(worldSeed, res.worldSeed());
     }
 }

@@ -16,6 +16,9 @@ import com.utilitysuite.core.api.SettingSpec;
 import com.utilitysuite.core.api.Waypoint;
 import com.utilitysuite.travel.LeaseSlot;
 import com.utilitysuite.travel.TravelMessages;
+import com.utilitysuite.world.overlays.ChunkAgeTracker;
+import com.utilitysuite.world.overlays.TrailVector;
+import com.utilitysuite.world.overlays.WorldScanner;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
@@ -61,7 +64,20 @@ public final class TravelAutopilot implements IModule, IConfigurable {
     static final String K_HUB_MIN = "nether_hub_min_distance";
     static final String K_HUB_FACTOR = "nether_hub_cost_factor";
 
-    private enum Run { IDLE, OVERLAND, BOAT, ELYTRA, BOUNCE, PORTAL_HUB }
+    private enum Run { IDLE, OVERLAND, BOAT, ELYTRA, BOUNCE, PORTAL_HUB, TRAIL }
+
+    private static final int TRAIL_RADIUS_CHUNKS = 16;
+    private static final int TRAIL_LOOKAHEAD_CHUNKS = 4;
+    private static final int TRAIL_RETARGET_TICKS = 20;
+
+    // Trail-following state
+    private final TrailVector trailVector = new TrailVector();
+    private double trailDirX;
+    private double trailDirZ;
+    private int trailRetargetTicks;
+    private boolean trailFlight;
+    private int trailTargetCx = Integer.MIN_VALUE;
+    private int trailTargetCz = Integer.MIN_VALUE;
 
     // Nether-hub routing (overland runs only)
     private boolean hubEnabled = true;
@@ -149,6 +165,7 @@ public final class TravelAutopilot implements IModule, IConfigurable {
             case BOAT -> tickBoat(player);
             case ELYTRA, BOUNCE -> tickElytra(player);
             case PORTAL_HUB -> tickHub(player);
+            case TRAIL -> tickTrail(player);
             default -> {
             }
         }
@@ -168,6 +185,11 @@ public final class TravelAutopilot implements IModule, IConfigurable {
         run = Run.IDLE;
         route = null;
         hub = null;
+        trailTargetCx = Integer.MIN_VALUE;
+        trailTargetCz = Integer.MIN_VALUE;
+        trailDirX = 0.0;
+        trailDirZ = 0.0;
+        trailFlight = false;
         slot.reset();
     }
 
@@ -201,6 +223,9 @@ public final class TravelAutopilot implements IModule, IConfigurable {
         if (r == Run.PORTAL_HUB && h != null) {
             return h.phase().name();
         }
+        if (r == Run.TRAIL) {
+            return trailFlight ? elytra.phaseLabel() : "TRAIL";
+        }
         return r == Run.ELYTRA || r == Run.BOUNCE ? elytra.phaseLabel() : r.name();
     }
 
@@ -232,6 +257,9 @@ public final class TravelAutopilot implements IModule, IConfigurable {
         if (Services.arbiter().isAutomationStopped()) {
             TravelMessages.status("message.utilitysuite.travel.automation_stopped");
             return false;
+        }
+        if (mode == AutopilotMode.TRAIL) {
+            return startTrailFollow();
         }
         String dimension = mc.level.dimension().location().toString();
         RouteParser.Result parsed = RouteParser.parse(spec, name -> resolveWaypoint(name, dimension));
@@ -273,6 +301,71 @@ public final class TravelAutopilot implements IModule, IConfigurable {
         if (run != Run.IDLE) {
             finish("message.utilitysuite.autopilot.stopped");
         }
+    }
+
+    /**
+     * Starts following the dominant {@link ChunkAgeTracker#OLD} exploration trail near the player using
+     * {@link TrailVector} lookahead targets via {@link ElytraDriver} (if wearing an elytra without a ceiling) or
+     * {@link OverlandDriver}, under the {@code TRAVEL} lease.
+     */
+    public boolean startTrailFollow() {
+        Minecraft mc = Minecraft.getInstance();
+        LocalPlayer player = mc.player;
+        if (player == null || mc.level == null) {
+            return false;
+        }
+        if (!enabled) {
+            TravelMessages.status("message.utilitysuite.autopilot.disabled");
+            return false;
+        }
+        if (Services.arbiter().isAutomationStopped()) {
+            TravelMessages.status("message.utilitysuite.travel.automation_stopped");
+            return false;
+        }
+        ChunkAgeTracker tracker = WorldScanner.activeChunkAge();
+        if (tracker == null) {
+            TravelMessages.status("message.utilitysuite.autopilot.no_trail");
+            return false;
+        }
+        int pcx = player.getBlockX() >> 4;
+        int pcz = player.getBlockZ() >> 4;
+        if (!trailVector.estimate(tracker, pcx, pcz, TRAIL_RADIUS_CHUNKS, TRAIL_LOOKAHEAD_CHUNKS, 0.0, 0.0)
+                || !trailVector.valid()) {
+            TravelMessages.status("message.utilitysuite.autopilot.no_trail");
+            return false;
+        }
+        boolean canFly = player.getItemBySlot(EquipmentSlot.CHEST).getItem() instanceof ElytraItem
+                && !mc.level.dimensionType().hasCeiling();
+        if (!canFly) {
+            INavigator nav = Services.navigatorOrNull();
+            if (nav == null || !nav.isAvailable()) {
+                TravelMessages.status("message.utilitysuite.autopilot.no_navigator");
+                return false;
+            }
+        }
+        if (run != Run.IDLE) {
+            finish(null);
+        }
+        slot.reset();
+        landingForSafety = false;
+        pausedNotified = false;
+        hub = null;
+        trailFlight = canFly;
+        trailDirX = trailVector.dx();
+        trailDirZ = trailVector.dz();
+        trailTargetCx = trailVector.targetChunkX();
+        trailTargetCz = trailVector.targetChunkZ();
+        trailRetargetTicks = 0;
+        route = new RouteState(List.of(new RouteParser.Stop(
+                (trailTargetCx << 4) + 8, player.getBlockY(), (trailTargetCz << 4) + 8, false, "Trail")));
+        if (trailFlight) {
+            elytra.begin(false);
+        } else {
+            overland.begin();
+        }
+        run = Run.TRAIL;
+        TravelMessages.status("message.utilitysuite.autopilot.started", "trail", route.label());
+        return true;
     }
 
     private Run choose(LocalPlayer player, Minecraft mc) {
@@ -539,6 +632,62 @@ public final class TravelAutopilot implements IModule, IConfigurable {
         }
     }
 
+    private void tickTrail(LocalPlayer player) {
+        ChunkAgeTracker tracker = WorldScanner.activeChunkAge();
+        if (tracker != null && ++trailRetargetTicks % TRAIL_RETARGET_TICKS == 0) {
+            int pcx = player.getBlockX() >> 4;
+            int pcz = player.getBlockZ() >> 4;
+            if (trailVector.estimate(tracker, pcx, pcz, TRAIL_RADIUS_CHUNKS, TRAIL_LOOKAHEAD_CHUNKS,
+                    trailDirX, trailDirZ) && trailVector.valid()) {
+                trailDirX = trailVector.dx();
+                trailDirZ = trailVector.dz();
+                int tx = trailVector.targetChunkX();
+                int tz = trailVector.targetChunkZ();
+                if (tx != trailTargetCx || tz != trailTargetCz) {
+                    trailTargetCx = tx;
+                    trailTargetCz = tz;
+                    route = new RouteState(List.of(new RouteParser.Stop(
+                            (tx << 4) + 8, player.getBlockY(), (tz << 4) + 8, false, "Trail")));
+                    if (!trailFlight) {
+                        overland.begin();
+                    }
+                }
+            }
+        }
+        if (trailFlight) {
+            tickElytra(player);
+            return;
+        }
+        INavigator nav = Services.navigatorOrNull();
+        if (nav == null || !nav.isAvailable()) {
+            finish("message.utilitysuite.autopilot.no_navigator");
+            return;
+        }
+        switch (overland.tick(player, route, nav)) {
+            case ARRIVED -> {
+                if (tracker != null && trailVector.estimate(tracker, player.getBlockX() >> 4,
+                        player.getBlockZ() >> 4, TRAIL_RADIUS_CHUNKS, TRAIL_LOOKAHEAD_CHUNKS,
+                        trailDirX, trailDirZ) && trailVector.valid()
+                        && (trailVector.targetChunkX() != trailTargetCx
+                        || trailVector.targetChunkZ() != trailTargetCz)) {
+                    trailDirX = trailVector.dx();
+                    trailDirZ = trailVector.dz();
+                    trailTargetCx = trailVector.targetChunkX();
+                    trailTargetCz = trailVector.targetChunkZ();
+                    route = new RouteState(List.of(new RouteParser.Stop(
+                            (trailTargetCx << 4) + 8, player.getBlockY(), (trailTargetCz << 4) + 8, false, "Trail")));
+                    overland.begin();
+                } else {
+                    finish("message.utilitysuite.autopilot.arrived");
+                }
+            }
+            case FAILED -> finish("message.utilitysuite.autopilot.path_failed");
+            case INTERRUPTED -> finish("message.utilitysuite.autopilot.stopped");
+            default -> {
+            }
+        }
+    }
+
     private ControlLease leaseOrPause(LeaseRequest request) {
         ControlLease lease = slot.ensure(request);
         if (lease == null) {
@@ -560,12 +709,13 @@ public final class TravelAutopilot implements IModule, IConfigurable {
         ControlLease lease = slot.active();
         if (run == Run.BOAT) {
             boat.release(input, lease);
-        } else if (run == Run.ELYTRA || run == Run.BOUNCE) {
+        } else if (run == Run.ELYTRA || run == Run.BOUNCE || (run == Run.TRAIL && trailFlight)) {
             elytra.release(input, lease);
-        } else if (run == Run.OVERLAND || run == Run.PORTAL_HUB) {
+        } else if (run == Run.OVERLAND || run == Run.PORTAL_HUB || run == Run.TRAIL) {
             overland.cancel();
         }
         hub = null;
+        trailFlight = false;
         if (lease != null) {
             input.clearRotation(lease);
         }

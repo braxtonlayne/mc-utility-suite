@@ -2,6 +2,8 @@ package com.utilitysuite.world.overlays;
 
 import com.utilitysuite.core.api.ProfileConfig;
 import com.utilitysuite.core.api.SettingSpec;
+import com.utilitysuite.tools.packetlab.AcousticRadar;
+import com.utilitysuite.tools.packetlab.PacketLab;
 import com.utilitysuite.world.BlockPosPacking;
 import com.utilitysuite.world.WorldIds;
 import com.utilitysuite.world.WorldModule;
@@ -84,6 +86,16 @@ public final class WorldRadarModule extends WorldModule {
     private boolean mobs;
     private boolean tracers;
     private int maxMobs;
+    private boolean acousticPings;
+    private long acousticMaxAgeMs = 8000L;
+    private RenderContext acousticCtx;
+    private long acousticNowMs;
+    private double acousticMaxDistSq;
+    private final AcousticRadar.Visitor acousticLineVisitor = this::drawAcousticLine;
+    private final AcousticRadar.Visitor acousticLabelVisitor = this::drawAcousticLabel;
+    private static final String[] ACOUSTIC_LABELS = {
+            "Container", "Portal", "Explosion", "Piston", "Player", "Sound"
+    };
 
     private static final int MAX_MOBS = 128;
     private final LivingEntity[] mobList = new LivingEntity[MAX_MOBS];
@@ -131,7 +143,11 @@ public final class WorldRadarModule extends WorldModule {
                 SettingSpec.bool("show_other_items", "Show other items", false, "Rare drops",
                         "Also outline items on neither list (dimmer)."),
                 SettingSpec.integer("trail_window", "Trail window (ticks)", 60, 10, 200, "Advanced",
-                        "How long after a chunk arrives fluid updates count as 'new'.").asAdvanced());
+                        "How long after a chunk arrives fluid updates count as 'new'.").asAdvanced(),
+                SettingSpec.bool("acoustic_pings", "Acoustic pings", false, "Groups",
+                        "3D markers for recent sound and global packet activity (requires Packet Lab)."),
+                SettingSpec.integer("acoustic_max_age_sec", "Acoustic ping age (s)", 8, 1, 30, "Display",
+                        "How long acoustic ping markers remain visible."));
     }
 
     @Override
@@ -147,6 +163,8 @@ public final class WorldRadarModule extends WorldModule {
         maxMobs = integer(p, "max_mobs");
         radius = integer(p, "radius");
         trailRadius = integer(p, "trail_radius");
+        acousticPings = bool(p, "acoustic_pings");
+        acousticMaxAgeMs = integer(p, "acoustic_max_age_sec") * 1000L;
         itemFilter.set(text(p, "item_highlight"), text(p, "item_junk"), bool(p, "show_other_items"));
         itemVerdicts.clear();
         scanner.chunkAge.configure(integer(p, "trail_window"), 2);
@@ -355,6 +373,16 @@ public final class WorldRadarModule extends WorldModule {
         }
         if (aimArc) {
             drawAimArc(ctx, self, level);
+        }
+        if (acousticPings) {
+            AcousticRadar radar = PacketLab.acousticRadar();
+            if (radar != null) {
+                acousticCtx = ctx;
+                acousticNowMs = System.currentTimeMillis();
+                acousticMaxDistSq = r2;
+                radar.forEachActive(acousticNowMs, acousticMaxAgeMs, acousticLineVisitor);
+                acousticCtx = null;
+            }
         }
     }
 
@@ -576,5 +604,80 @@ public final class WorldRadarModule extends WorldModule {
                 }
             }
         }
+        if (acousticPings) {
+            AcousticRadar radar = PacketLab.acousticRadar();
+            if (radar != null) {
+                acousticCtx = ctx;
+                acousticNowMs = System.currentTimeMillis();
+                acousticMaxDistSq = r2;
+                radar.forEachActive(acousticNowMs, acousticMaxAgeMs, acousticLabelVisitor);
+                acousticCtx = null;
+            }
+        }
+    }
+
+    private void drawAcousticLine(boolean global, double x, double y, double z, double dx, double dz,
+                                  long timestampMs, int categoryId) {
+        long age = acousticNowMs - timestampMs;
+        float fade = acousticMaxAgeMs > 0 ? Math.max(0f, Math.min(1f, 1.0f - (float) age / (float) acousticMaxAgeMs))
+                : 1.0f;
+        int alpha = Math.max(0x28, Math.min(0xFF, (int) (fade * 255f)));
+        int argb = (alpha << 24) | (AcousticRadar.categoryColor(categoryId) & 0x00FFFFFF);
+        if (global) {
+            float dist = Math.min(radius * 0.5f, 16.0f);
+            float tx = (float) (dx * dist);
+            float tz = (float) (dz * dist);
+            WorldRenderKit.line(acousticCtx.lines, acousticCtx.pose, (float) (dx * 2.0), 0f, (float) (dz * 2.0),
+                    tx, 0f, tz, argb);
+            WorldRenderKit.box(acousticCtx.lines, acousticCtx.pose, tx - 0.25f, -0.25f, tz - 0.25f,
+                    tx + 0.25f, 0.25f, tz + 0.25f, argb);
+            return;
+        }
+        if (acousticCtx.distSq((int) Math.floor(x), (int) Math.floor(y), (int) Math.floor(z)) > acousticMaxDistSq) {
+            return;
+        }
+        float rx = acousticCtx.rx(x);
+        float ry = acousticCtx.ry(y);
+        float rz = acousticCtx.rz(z);
+        float half = 0.25f + 0.15f * (1.0f - fade);
+        WorldRenderKit.box(acousticCtx.lines, acousticCtx.pose, rx - half, ry - half, rz - half,
+                rx + half, ry + half, rz + half, argb);
+    }
+
+    private void drawAcousticLabel(boolean global, double x, double y, double z, double dx, double dz,
+                                   long timestampMs, int categoryId) {
+        long age = acousticNowMs - timestampMs;
+        float fade = acousticMaxAgeMs > 0 ? Math.max(0f, Math.min(1f, 1.0f - (float) age / (float) acousticMaxAgeMs))
+                : 1.0f;
+        int alpha = Math.max(0x40, Math.min(0xFF, (int) (fade * 255f)));
+        int argb = (alpha << 24) | (AcousticRadar.categoryColor(categoryId) & 0x00FFFFFF);
+        int catIdx = (categoryId >= 0 && categoryId < ACOUSTIC_LABELS.length) ? categoryId : AcousticRadar.OTHER;
+        String label = ACOUSTIC_LABELS[catIdx];
+        if (global) {
+            float dist = Math.min(radius * 0.5f, 16.0f);
+            float rx = (float) (dx * dist);
+            float tz = (float) (dz * dist);
+            Matrix4f m = acousticCtx.kit.beginLabel(acousticCtx.pose, rx, 0.45f, tz);
+            float w = acousticCtx.font.width(label);
+            WorldRenderKit.text(acousticCtx.font, acousticCtx.buffers, m, label, -w / 2f, argb);
+            return;
+        }
+        double d2 = acousticCtx.distSq((int) Math.floor(x), (int) Math.floor(y), (int) Math.floor(z));
+        if (d2 > acousticMaxDistSq) {
+            return;
+        }
+        int dist = (int) Math.sqrt(d2);
+        String distStr = WorldRenderKit.number(dist);
+        float w = acousticCtx.font.width(label) + acousticCtx.font.width(SPACE)
+                + acousticCtx.font.width(distStr) + acousticCtx.font.width(METERS);
+        float rx = acousticCtx.rx(x);
+        float ry = acousticCtx.ry(y + 0.5);
+        float rz = acousticCtx.rz(z);
+        Matrix4f m = acousticCtx.kit.beginLabel(acousticCtx.pose, rx, ry, rz);
+        float tx = -w / 2f;
+        tx = WorldRenderKit.text(acousticCtx.font, acousticCtx.buffers, m, label, tx, argb);
+        tx = WorldRenderKit.text(acousticCtx.font, acousticCtx.buffers, m, SPACE, tx, argb);
+        tx = WorldRenderKit.text(acousticCtx.font, acousticCtx.buffers, m, distStr, tx, argb);
+        WorldRenderKit.text(acousticCtx.font, acousticCtx.buffers, m, METERS, tx, argb);
     }
 }

@@ -7,6 +7,8 @@ import com.utilitysuite.core.api.Services;
 import com.utilitysuite.core.api.SettingSpec;
 import com.utilitysuite.world.WorldIds;
 import com.utilitysuite.world.WorldModule;
+import com.utilitysuite.world.overlays.ChunkAgeTracker;
+import com.utilitysuite.world.overlays.WorldScanner;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
@@ -67,6 +69,7 @@ public final class MinimapModule extends WorldModule {
     boolean dotHostile = true;
     boolean dotPlayers = true;
     boolean dotPassive = true;
+    boolean trailHeatmap;
     float opacity = 1f;
     int budget = 512;
 
@@ -76,6 +79,7 @@ public final class MinimapModule extends WorldModule {
     private ClientLevel sampledLevel;
     private MinimapPalette.Style sampledStyle;
     private int sampledZoom;
+    private boolean sampledTrailHeatmap;
 
     // Entity dots gathered on the tick.
     final Entity[] dots = new Entity[MAX_DOTS];
@@ -104,6 +108,8 @@ public final class MinimapModule extends WorldModule {
                 SettingSpec.bool("dot_hostile", "Hostile mobs", true, "Dots", "Red dots."),
                 SettingSpec.bool("dot_players", "Players", true, "Dots", "Amber dots."),
                 SettingSpec.bool("dot_passive", "Passive mobs", true, "Dots", "Green dots."),
+                SettingSpec.bool("trail_heatmap", "Trail heatmap", false, "",
+                        "Tint OLD explored chunks on the minimap."),
                 SettingSpec.integer("budget", "Columns per tick", 512, 64, 4096, "Advanced",
                         "How many map columns are sampled per tick.").asAdvanced());
     }
@@ -121,6 +127,7 @@ public final class MinimapModule extends WorldModule {
         dotHostile = bool(p, "dot_hostile");
         dotPlayers = bool(p, "dot_players");
         dotPassive = bool(p, "dot_passive");
+        trailHeatmap = bool(p, "trail_heatmap");
         budget = integer(p, "budget");
     }
 
@@ -178,10 +185,12 @@ public final class MinimapModule extends WorldModule {
         if (self == null || level == null || image == null) {
             return; // texture is created by the first frame
         }
-        if (level != sampledLevel || style != sampledStyle || zoom != sampledZoom) {
+        if (level != sampledLevel || style != sampledStyle || zoom != sampledZoom
+                || trailHeatmap != sampledTrailHeatmap) {
             sampledLevel = level;
             sampledStyle = style;
             sampledZoom = zoom;
+            sampledTrailHeatmap = trailHeatmap;
             ring.clear();
         }
         int cx = Math.floorDiv(self.getBlockX(), zoom);
@@ -242,7 +251,21 @@ public final class MinimapModule extends WorldModule {
         }
         boolean grid = style == MinimapPalette.Style.MILITARY
                 && (Math.floorMod(tx * z, 16) == 0 || Math.floorMod(tz * z, 16) == 0);
-        return MinimapPalette.apply(style, color.col, shade, water, grid);
+        int argb = MinimapPalette.apply(style, color.col, shade, water, grid);
+        if (trailHeatmap) {
+            ChunkAgeTracker tracker = WorldScanner.activeChunkAge();
+            if (tracker != null && tracker.stateOf(bx >> 4, bz >> 4) == ChunkAgeTracker.OLD) {
+                argb = tintOldTrail(argb);
+            }
+        }
+        return argb;
+    }
+
+    private static int tintOldTrail(int argb) {
+        int r = (((argb >> 16) & 0xFF) * 3 + 220) / 4;
+        int g = (((argb >> 8) & 0xFF) * 3 + 170) / 4;
+        int b = ((argb & 0xFF) * 3 + 40) / 4;
+        return (argb & 0xFF000000) | (r << 16) | (g << 8) | b;
     }
 
     private void gatherDots(LocalPlayer self, ClientLevel level) {

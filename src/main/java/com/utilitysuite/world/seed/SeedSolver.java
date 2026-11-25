@@ -6,6 +6,10 @@ import com.utilitysuite.world.spawn.SlimeChunks;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.OptionalLong;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 
 /**
@@ -54,15 +58,31 @@ public final class SeedSolver {
 
     public record Clues(long hashedSeed, boolean hasHashedSeed, int pillarSeed,
                         List<StructureClue> structures, List<ChunkClue> buriedTreasures,
-                        List<ChunkClue> slimeChunks) {
+                        List<ChunkClue> slimeChunks,
+                        List<BedrockPatternVerifier.Sample> bedrockSamples) {
         public Clues {
             structures = List.copyOf(structures);
             buriedTreasures = List.copyOf(buriedTreasures);
             slimeChunks = List.copyOf(slimeChunks);
+            bedrockSamples = bedrockSamples == null ? List.of() : List.copyOf(bedrockSamples);
+        }
+
+        public Clues(long hashedSeed, boolean hasHashedSeed, int pillarSeed,
+                     List<StructureClue> structures, List<ChunkClue> buriedTreasures,
+                     List<ChunkClue> slimeChunks) {
+            this(hashedSeed, hasHashedSeed, pillarSeed, structures, buriedTreasures, slimeChunks, List.of());
         }
 
         public int totalCount() {
             return structures.size() + buriedTreasures.size() + slimeChunks.size() + (pillarSeed >= 0 ? 1 : 0);
+        }
+
+        public boolean hasBedrockVerifier() {
+            return bedrockSamples.size() >= 16;
+        }
+
+        public boolean has64BitVerifier() {
+            return hasHashedSeed || hasBedrockVerifier();
         }
     }
 
@@ -79,6 +99,14 @@ public final class SeedSolver {
     private SeedSolver() {
     }
 
+    private static int workerCount() {
+        return Math.max(1, Math.min(4, Runtime.getRuntime().availableProcessors() - 1));
+    }
+
+    private static long effectiveMaxWork() {
+        return MAX_WORK * workerCount();
+    }
+
     /** Quickly assesses whether {@code clues} constrain both the 48-bit search and final 64-bit lift within budget. */
     public static Readiness assess(Clues clues) {
         if (clues == null) {
@@ -90,14 +118,15 @@ public final class SeedSolver {
                 ? estimatePillarWork(clues, compiled) : Long.MAX_VALUE;
         long sWork = compiled.size() >= 2 ? estimateStructureWork(clues, compiled) : Long.MAX_VALUE;
         long best = Math.min(pWork, sWork);
-        if (best <= MAX_WORK && entropy >= MIN_ENTROPY_BITS) {
+        long budget = effectiveMaxWork();
+        if (best <= budget && entropy >= MIN_ENTROPY_BITS) {
             return new Readiness(true, best, clues.pillarSeed() >= 0 && pWork <= sWork
                     ? "end pillars + structure sieve" : "structure bit sieve");
         }
         if (compiled.isEmpty() && clues.pillarSeed() < 0) {
             return new Readiness(false, best, "need structures or End pillars");
         }
-        if (best <= MAX_WORK) {
+        if (best <= budget) {
             int needed = Math.max(1, (int) Math.ceil((MIN_ENTROPY_BITS - entropy) / 8.5));
             return new Readiness(false, best, "need " + needed + " more structure/treasure clue(s)");
         }
@@ -130,7 +159,7 @@ public final class SeedSolver {
         }
         // Corrupted-clue fallback: if one clue was a false positive (e.g., player-built chest or altered temple),
         // retry dropping each individual clue once when enough clues remain to lift cleanly.
-        if (primary.status() == Status.NOT_FOUND && clues.hasHashedSeed()) {
+        if (primary.status() == Status.NOT_FOUND && clues.has64BitVerifier()) {
             int total = clues.structures().size() + clues.buriedTreasures().size() + clues.slimeChunks().size();
             if (total >= 4) {
                 int attempts = 0;
@@ -141,8 +170,8 @@ public final class SeedSolver {
                     List<StructureClue> sub = new ArrayList<>(clues.structures());
                     sub.remove(i);
                     attempts++;
-                    Result r = solveExact(new Clues(clues.hashedSeed(), true, clues.pillarSeed(), sub,
-                            clues.buriedTreasures(), clues.slimeChunks()), stop);
+                    Result r = solveExact(new Clues(clues.hashedSeed(), clues.hasHashedSeed(), clues.pillarSeed(),
+                            sub, clues.buriedTreasures(), clues.slimeChunks(), clues.bedrockSamples()), stop);
                     if (r.status() == Status.FOUND_WORLD_SEED || r.status() == Status.CANCELLED) {
                         return r;
                     }
@@ -151,8 +180,8 @@ public final class SeedSolver {
                     List<ChunkClue> sub = new ArrayList<>(clues.buriedTreasures());
                     sub.remove(i);
                     attempts++;
-                    Result r = solveExact(new Clues(clues.hashedSeed(), true, clues.pillarSeed(), clues.structures(),
-                            sub, clues.slimeChunks()), stop);
+                    Result r = solveExact(new Clues(clues.hashedSeed(), clues.hasHashedSeed(), clues.pillarSeed(),
+                            clues.structures(), sub, clues.slimeChunks(), clues.bedrockSamples()), stop);
                     if (r.status() == Status.FOUND_WORLD_SEED || r.status() == Status.CANCELLED) {
                         return r;
                     }
@@ -161,8 +190,8 @@ public final class SeedSolver {
                     List<ChunkClue> sub = new ArrayList<>(clues.slimeChunks());
                     sub.remove(i);
                     attempts++;
-                    Result r = solveExact(new Clues(clues.hashedSeed(), true, clues.pillarSeed(), clues.structures(),
-                            clues.buriedTreasures(), sub), stop);
+                    Result r = solveExact(new Clues(clues.hashedSeed(), clues.hasHashedSeed(), clues.pillarSeed(),
+                            clues.structures(), clues.buriedTreasures(), sub, clues.bedrockSamples()), stop);
                     if (r.status() == Status.FOUND_WORLD_SEED || r.status() == Status.CANCELLED) {
                         return r;
                     }
@@ -174,13 +203,13 @@ public final class SeedSolver {
 
     private static Result solveExact(Clues clues, BooleanSupplier cancelled) {
         List<CompiledStructure> compiled = compileStructures(clues.structures());
-        if (clues.hasHashedSeed() && estimateEntropyBits(clues, compiled) < MIN_ENTROPY_BITS) {
+        if (clues.has64BitVerifier() && estimateEntropyBits(clues, compiled) < MIN_ENTROPY_BITS) {
             return new Result(Status.NEED_MORE_CLUES, 0L, 0L, 0L, assess(clues).reason());
         }
         if (clues.pillarSeed() >= 0 && (!compiled.isEmpty() || !clues.buriedTreasures().isEmpty()
                 || clues.slimeChunks().size() >= 2)) {
             long pWork = estimatePillarWork(clues, compiled);
-            if (pWork <= MAX_WORK) {
+            if (pWork <= effectiveMaxWork()) {
                 Result r = solveWithPillars(clues, compiled, cancelled);
                 if (r.status() != Status.NOT_FOUND || r.candidatesTested() > 0) {
                     return r;
@@ -236,57 +265,69 @@ public final class SeedSolver {
         }
 
         long estimated = (long) low20Count * 65536L;
-        if (estimated > MAX_WORK) {
+        if (estimated > effectiveMaxWork()) {
             return new Result(Status.NEED_MORE_CLUES, 0L, 0L, 0L, "need one more clue alongside End pillars");
         }
 
-        WorldgenRng rng = WorldgenRng.legacy();
-        long tested = 0;
-        long uniqueSeed48 = -1L;
-        int seed48Count = 0;
-        int shaLifts = 0;
-        long stepS2 = 1L << 32;
-        long stepS1 = (stepS2 * INV_M) & MASK48;
-        long stepS0 = (stepS1 * INV_M) & MASK48;
+        final long[] finalLow20 = low20List;
+        final int finalCount = low20Count;
+        final long stepS2 = 1L << 32;
+        final long stepS1 = (stepS2 * INV_M) & MASK48;
+        final long stepS0 = (stepS1 * INV_M) & MASK48;
 
-        for (int idx = 0; idx < low20Count; idx++) {
-            long packed = low20List[idx];
-            long s2Lo16 = packed >>> 20;
-            long s2 = ((long) pillarSeed << 16) | s2Lo16;
-            long s1 = ((s2 - ADDEND) * INV_M) & MASK48;
-            long s0 = ((s1 - ADDEND) * INV_M) & MASK48;
+        AtomicInteger nextIdx = new AtomicInteger(0);
+        AtomicBoolean stopFlag = new AtomicBoolean(false);
+        AtomicLong totalTested = new AtomicLong(0);
+        AtomicInteger shaLifts = new AtomicInteger(0);
+        AtomicInteger seed48Count = new AtomicInteger(0);
+        AtomicLong uniqueSeed48 = new AtomicLong(-1L);
+        AtomicReference<Result> terminalResult = new AtomicReference<>();
 
-            for (int hi16 = 0; hi16 < 65536; hi16++) {
-                if ((hi16 & 4095) == 0 && cancelled.getAsBoolean()) {
-                    return new Result(Status.CANCELLED, 0L, 0L, tested, "cancelled");
-                }
-                tested++;
-                long seed48 = s0 ^ M;
-                if (matchesAllClues(seed48, compiled, clues, rng)) {
-                    if (clues.hasHashedSeed()) {
-                        if (++shaLifts > MAX_SHA_LIFTS) {
-                            return new Result(Status.NEED_MORE_CLUES, 0L, 0L, tested,
-                                    "too many 48-bit candidates; need 1 more clue");
+        runParallel(finalCount, () -> {
+            WorldgenRng rng = WorldgenRng.legacy();
+            long localTested = 0;
+            int idx;
+            while (!stopFlag.get() && (idx = nextIdx.getAndIncrement()) < finalCount) {
+                long packed = finalLow20[idx];
+                long s2Lo16 = packed >>> 20;
+                long s2 = ((long) pillarSeed << 16) | s2Lo16;
+                long s1 = ((s2 - ADDEND) * INV_M) & MASK48;
+                long s0 = ((s1 - ADDEND) * INV_M) & MASK48;
+
+                for (int hi16 = 0; hi16 < 65536; hi16++) {
+                    if ((hi16 & 4095) == 0 && (stopFlag.get() || cancelled.getAsBoolean())) {
+                        if (cancelled.getAsBoolean()) {
+                            stopFlag.set(true);
+                            terminalResult.compareAndSet(null,
+                                    new Result(Status.CANCELLED, 0L, 0L, totalTested.get() + localTested, "cancelled"));
                         }
-                        OptionalLong full = Sha256Long.liftToWorldSeed(seed48, clues.hashedSeed(), cancelled);
-                        if (full.isPresent()) {
-                            return new Result(Status.FOUND_WORLD_SEED, full.getAsLong(), seed48, tested,
-                                    "solved via End pillars");
-                        }
-                    } else {
-                        uniqueSeed48 = seed48;
-                        seed48Count++;
-                        if (seed48Count > 1) {
-                            return new Result(Status.NOT_FOUND, 0L, 0L, tested,
-                                    "multiple 48-bit seeds match; missing BiomeManager hash");
+                        totalTested.addAndGet(localTested);
+                        return;
+                    }
+                    localTested++;
+                    long seed48 = s0 ^ M;
+                    if (matchesAllClues(seed48, compiled, clues, rng)) {
+                        if (handleMatchedSeed48(seed48, clues, "solved via End pillars",
+                                totalTested.get() + localTested, shaLifts, seed48Count, uniqueSeed48,
+                                stopFlag, terminalResult, cancelled)) {
+                            totalTested.addAndGet(localTested);
+                            return;
                         }
                     }
+                    s0 = (s0 + stepS0) & MASK48;
                 }
-                s0 = (s0 + stepS0) & MASK48;
             }
+            totalTested.addAndGet(localTested);
+        });
+
+        Result terminal = terminalResult.get();
+        if (terminal != null) {
+            return terminal;
         }
-        if (!clues.hasHashedSeed() && seed48Count == 1) {
-            return new Result(Status.FOUND_STRUCTURE_SEED, 0L, uniqueSeed48, tested, "unique 48-bit structure seed");
+        long tested = totalTested.get();
+        if (!clues.has64BitVerifier() && seed48Count.get() == 1) {
+            return new Result(Status.FOUND_STRUCTURE_SEED, 0L, uniqueSeed48.get(), tested,
+                    "unique 48-bit structure seed");
         }
         return new Result(Status.NOT_FOUND, 0L, 0L, tested, "no matching seed with End pillars");
     }
@@ -383,97 +424,176 @@ public final class SeedSolver {
         int bound = anchor.bound();
         boolean pow2Anchor = (bound & (bound - 1)) == 0;
         long inner = pow2Anchor ? ((1L << 31) / bound) / twoD : (1L << 31) / lcm(bound, twoD);
-        if ((long) survivorCount * inner > MAX_WORK) {
+        if ((long) survivorCount * inner > effectiveMaxWork()) {
             return new Result(Status.NEED_MORE_CLUES, 0L, 0L, 0L,
                     "need 1-2 more structures (" + survivorCount + " low-bit candidates)");
         }
 
-        WorldgenRng rng = WorldgenRng.legacy();
-        long tested = 0;
-        long uniqueSeed48 = -1L;
-        int seed48Count = 0;
-        int shaLifts = 0;
-        int ox = anchor.ox();
-        int oz = anchor.oz();
-        long anchorT0 = anchor.t0();
+        final int[] finalSurvivors = survivors;
+        final int finalCount = survivorCount;
+        final int ox = anchor.ox();
+        final int oz = anchor.oz();
+        final long anchorT0 = anchor.t0();
+        final int zShift = pow2Anchor ? 31 - Integer.numberOfTrailingZeros(bound) : 0;
 
-        for (int idx = 0; idx < survivorCount; idx++) {
-            long lowB = survivors[idx] & maskB;
-            long s0Low = ((lowB + anchorT0) ^ M) & maskB;
-            long s1Low = (s0Low * M + ADDEND) & maskB;
-            long s1Low17 = s1Low & 0x1FFFFL;
-            int mod2d = (int) ((s1Low >>> 17) & (twoD - 1));
+        AtomicInteger nextIdx = new AtomicInteger(0);
+        AtomicBoolean stopFlag = new AtomicBoolean(false);
+        AtomicLong totalTested = new AtomicLong(0);
+        AtomicInteger shaLifts = new AtomicInteger(0);
+        AtomicInteger seed48Count = new AtomicInteger(0);
+        AtomicLong uniqueSeed48 = new AtomicLong(-1L);
+        AtomicReference<Result> terminalResult = new AtomicReference<>();
 
-            long startX;
-            long endX;
-            int stepX;
-            if (pow2Anchor) {
-                int shift = 31 - Integer.numberOfTrailingZeros(bound);
-                long lo = (long) ox << shift;
-                endX = (long) (ox + 1) << shift;
-                int diff = (mod2d - (int) (lo & (twoD - 1))) & (twoD - 1);
-                startX = lo + diff;
-                stepX = twoD;
-            } else {
-                int g = gcd(bound, twoD);
-                if (ox % g != mod2d % g) {
-                    continue;
+        runParallel(finalCount, () -> {
+            WorldgenRng rng = WorldgenRng.legacy();
+            long localTested = 0;
+            int idx;
+            while (!stopFlag.get() && (idx = nextIdx.getAndIncrement()) < finalCount) {
+                long lowB = finalSurvivors[idx] & maskB;
+                long s0Low = ((lowB + anchorT0) ^ M) & maskB;
+                long s1Low = (s0Low * M + ADDEND) & maskB;
+                long s1Low17 = s1Low & 0x1FFFFL;
+                int mod2d = (int) ((s1Low >>> 17) & (twoD - 1));
+
+                long startX;
+                long endX;
+                int stepX;
+                if (pow2Anchor) {
+                    int shift = 31 - Integer.numberOfTrailingZeros(bound);
+                    long lo = (long) ox << shift;
+                    endX = (long) (ox + 1) << shift;
+                    int diff = (mod2d - (int) (lo & (twoD - 1))) & (twoD - 1);
+                    startX = lo + diff;
+                    stepX = twoD;
+                } else {
+                    int g = gcd(bound, twoD);
+                    if (ox % g != mod2d % g) {
+                        continue;
+                    }
+                    long x = ox;
+                    int maskD = twoD - 1;
+                    while ((x & maskD) != mod2d) {
+                        x += bound;
+                    }
+                    startX = x;
+                    endX = 1L << 31;
+                    stepX = (bound / g) * twoD;
                 }
-                long x = ox;
-                int maskD = twoD - 1;
-                while ((x & maskD) != mod2d) {
-                    x += bound;
-                }
-                startX = x;
-                endX = 1L << 31;
-                stepX = (bound / g) * twoD;
-            }
 
-            long s1 = (startX << 17) | s1Low17;
-            long s2 = (s1 * M + ADDEND) & MASK48;
-            long stepS1 = (long) stepX << 17;
-            long stepS2 = (stepS1 * M) & MASK48;
-            int zShift = pow2Anchor ? 31 - Integer.numberOfTrailingZeros(bound) : 0;
+                long s1 = (startX << 17) | s1Low17;
+                long s2 = (s1 * M + ADDEND) & MASK48;
+                long stepS1 = (long) stepX << 17;
+                long stepS2 = (stepS1 * M) & MASK48;
 
-            for (long x = startX; x < endX; x += stepX) {
-                if ((tested & 65535L) == 0 && cancelled.getAsBoolean()) {
-                    return new Result(Status.CANCELLED, 0L, 0L, tested, "cancelled");
-                }
-                tested++;
-                int bits2 = (int) (s2 >>> 17);
-                boolean zOk = pow2Anchor ? (bits2 >>> zShift) == oz : (bits2 % bound) == oz;
-                if (zOk) {
-                    long s0 = ((s1 - ADDEND) * INV_M) & MASK48;
-                    long seed48 = ((s0 ^ M) - anchorT0) & MASK48;
-                    if (matchesAllClues(seed48, compiled, clues, rng)) {
-                        if (clues.hasHashedSeed()) {
-                            if (++shaLifts > MAX_SHA_LIFTS) {
-                                return new Result(Status.NEED_MORE_CLUES, 0L, 0L, tested,
-                                        "too many 48-bit candidates; need 1 more clue");
-                            }
-                            OptionalLong full = Sha256Long.liftToWorldSeed(seed48, clues.hashedSeed(), cancelled);
-                            if (full.isPresent()) {
-                                return new Result(Status.FOUND_WORLD_SEED, full.getAsLong(), seed48, tested,
-                                        "solved via structures + hashed seed");
-                            }
-                        } else {
-                            uniqueSeed48 = seed48;
-                            seed48Count++;
-                            if (seed48Count > 1) {
-                                return new Result(Status.NOT_FOUND, 0L, 0L, tested,
-                                        "multiple 48-bit seeds match; missing BiomeManager hash");
+                for (long x = startX; x < endX; x += stepX) {
+                    if ((localTested & 65535L) == 0 && (stopFlag.get() || cancelled.getAsBoolean())) {
+                        if (cancelled.getAsBoolean()) {
+                            stopFlag.set(true);
+                            terminalResult.compareAndSet(null,
+                                    new Result(Status.CANCELLED, 0L, 0L, totalTested.get() + localTested, "cancelled"));
+                        }
+                        totalTested.addAndGet(localTested);
+                        return;
+                    }
+                    localTested++;
+                    int bits2 = (int) (s2 >>> 17);
+                    boolean zOk = pow2Anchor ? (bits2 >>> zShift) == oz : (bits2 % bound) == oz;
+                    if (zOk) {
+                        long s0 = ((s1 - ADDEND) * INV_M) & MASK48;
+                        long seed48 = ((s0 ^ M) - anchorT0) & MASK48;
+                        if (matchesAllClues(seed48, compiled, clues, rng)) {
+                            if (handleMatchedSeed48(seed48, clues, "solved via structures",
+                                    totalTested.get() + localTested, shaLifts, seed48Count, uniqueSeed48,
+                                    stopFlag, terminalResult, cancelled)) {
+                                totalTested.addAndGet(localTested);
+                                return;
                             }
                         }
                     }
+                    s1 = (s1 + stepS1) & MASK48;
+                    s2 = (s2 + stepS2) & MASK48;
                 }
-                s1 = (s1 + stepS1) & MASK48;
-                s2 = (s2 + stepS2) & MASK48;
             }
+            totalTested.addAndGet(localTested);
+        });
+
+        Result terminal = terminalResult.get();
+        if (terminal != null) {
+            return terminal;
         }
-        if (!clues.hasHashedSeed() && seed48Count == 1) {
-            return new Result(Status.FOUND_STRUCTURE_SEED, 0L, uniqueSeed48, tested, "unique 48-bit structure seed");
+        long tested = totalTested.get();
+        if (!clues.has64BitVerifier() && seed48Count.get() == 1) {
+            return new Result(Status.FOUND_STRUCTURE_SEED, 0L, uniqueSeed48.get(), tested,
+                    "unique 48-bit structure seed");
         }
         return new Result(Status.NOT_FOUND, 0L, 0L, tested, "no matching seed");
+    }
+
+    private static boolean handleMatchedSeed48(long seed48, Clues clues, String solveLabel, long tested,
+                                               AtomicInteger shaLifts, AtomicInteger seed48Count,
+                                               AtomicLong uniqueSeed48, AtomicBoolean stopFlag,
+                                               AtomicReference<Result> terminalResult, BooleanSupplier cancelled) {
+        if (clues.has64BitVerifier()) {
+            if (shaLifts.incrementAndGet() > MAX_SHA_LIFTS) {
+                stopFlag.set(true);
+                terminalResult.compareAndSet(null, new Result(Status.NEED_MORE_CLUES, 0L, 0L, tested,
+                        "too many 48-bit candidates; need 1 more clue"));
+                return true;
+            }
+            BooleanSupplier liftCancel = () -> stopFlag.get() || cancelled.getAsBoolean();
+            if (clues.hasHashedSeed()) {
+                OptionalLong full = Sha256Long.liftToWorldSeed(seed48, clues.hashedSeed(), liftCancel);
+                if (full.isPresent() && (clues.bedrockSamples().isEmpty()
+                        || BedrockPatternVerifier.verifyWorldSeed(full.getAsLong(), clues.bedrockSamples()))) {
+                    stopFlag.set(true);
+                    terminalResult.compareAndSet(null, new Result(Status.FOUND_WORLD_SEED, full.getAsLong(),
+                            seed48, tested, solveLabel + " + hashed seed"));
+                    return true;
+                }
+            } else {
+                OptionalLong full = BedrockPatternVerifier.liftToWorldSeed(seed48, clues.bedrockSamples(), liftCancel);
+                if (full.isPresent()) {
+                    stopFlag.set(true);
+                    terminalResult.compareAndSet(null, new Result(Status.FOUND_WORLD_SEED, full.getAsLong(),
+                            seed48, tested, solveLabel + " + bedrock pattern"));
+                    return true;
+                }
+            }
+        } else {
+            uniqueSeed48.set(seed48);
+            if (seed48Count.incrementAndGet() > 1) {
+                stopFlag.set(true);
+                terminalResult.compareAndSet(null, new Result(Status.NOT_FOUND, 0L, 0L, tested,
+                        "multiple 48-bit seeds match; missing BiomeManager hash"));
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static void runParallel(int itemCount, Runnable worker) {
+        int threads = Math.min(workerCount(), Math.max(1, itemCount));
+        if (threads <= 1) {
+            worker.run();
+            return;
+        }
+        Thread[] pool = new Thread[threads - 1];
+        for (int i = 0; i < pool.length; i++) {
+            Thread t = new Thread(worker, "UtilitySuite-SeedWorker-" + i);
+            t.setDaemon(true);
+            t.setPriority(Thread.MIN_PRIORITY);
+            t.start();
+            pool[i] = t;
+        }
+        worker.run();
+        for (Thread t : pool) {
+            try {
+                t.join();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
     }
 
     // ---- Shared bit-filtering & exact verification helpers ---------------------------------------------------------

@@ -1,6 +1,7 @@
 package com.utilitysuite.world.overlays;
 
 import com.utilitysuite.world.BlockPosPacking;
+import com.utilitysuite.world.WorldFiles;
 import com.utilitysuite.world.WorldIds;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
 import it.unimi.dsi.fastutil.longs.LongArrayFIFOQueue;
@@ -10,16 +11,25 @@ import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import it.unimi.dsi.fastutil.objects.Reference2IntOpenHashMap;
 import net.minecraft.core.BlockPos;
 import net.minecraft.tags.FluidTags;
+import net.minecraft.world.level.BaseSpawner;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.WeatheringCopper;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.entity.SpawnerBlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.ChunkAccess;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.LevelChunkSection;
-import net.minecraft.world.level.chunk.status.ChunkStatus;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.material.FluidState;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
+import java.io.IOException;
+import java.nio.file.Path;
 import java.util.Set;
 import java.util.function.Predicate;
 
@@ -49,6 +59,8 @@ public final class WorldScanner {
     private static final int CAVE_CELL_MIN_OPEN = 24;
     private static final int SKIP_BUDGET = 256;
 
+    private static volatile ChunkAgeTracker activeChunkAge;
+
     private final Reference2IntOpenHashMap<Block> categoryCache = new Reference2IntOpenHashMap<>();
     private final LongOpenHashSet loadedChunks = new LongOpenHashSet();
     private final LongArrayFIFOQueue queue = new LongArrayFIFOQueue();
@@ -59,6 +71,8 @@ public final class WorldScanner {
     private final int[] cellOpen = new int[64];
     private final Predicate<BlockState> matcher = this::matches;
     private final Predicate<BlockState> fluidMatcher = s -> !s.getFluidState().isEmpty();
+    private final Predicate<BlockState> oxidizedCopperMatcher =
+            s -> s.getBlock() instanceof WeatheringCopper wc && wc.getAge() != WeatheringCopper.WeatherState.UNAFFECTED;
 
     private Level level;
     private String dimension = "";
@@ -83,6 +97,12 @@ public final class WorldScanner {
 
     public WorldScanner() {
         categoryCache.defaultReturnValue(-1);
+        activeChunkAge = this.chunkAge;
+    }
+
+    /** Most recently constructed scanner's chunk-age tracker (for minimap/autopilot integration). */
+    public static ChunkAgeTracker activeChunkAge() {
+        return activeChunkAge;
     }
 
     // ---- configuration ------------------------------------------------------------------------------------------
@@ -189,11 +209,81 @@ public final class WorldScanner {
         queueChunk(chunk, cx, cz);
         if (trackChunkAge) {
             boolean fluid = false;
+            boolean oxidizedCopper = false;
+            int nonAirSections = 0;
             LevelChunkSection[] secs = chunk.getSections();
-            for (int i = 0; i < secs.length && !fluid; i++) {
-                fluid = !secs[i].hasOnlyAir() && secs[i].maybeHas(fluidMatcher);
+            for (int i = 0; i < secs.length; i++) {
+                LevelChunkSection sec = secs[i];
+                if (sec == null || sec.hasOnlyAir()) {
+                    continue;
+                }
+                nonAirSections++;
+                if (!fluid && sec.maybeHas(fluidMatcher)) {
+                    fluid = true;
+                }
+                if (!oxidizedCopper && sec.maybeHas(oxidizedCopperMatcher)) {
+                    oxidizedCopper = true;
+                }
+            }
+            boolean spawnerActive = false;
+            if (chunk instanceof LevelChunk lc && !lc.getBlockEntities().isEmpty()) {
+                for (BlockEntity be : lc.getBlockEntities().values()) {
+                    if (be instanceof SpawnerBlockEntity sbe) {
+                        BaseSpawner spawner = sbe.getSpawner();
+                        if (spawner.getSpin() != 0.0 || spawner.getoSpin() != 0.0) {
+                            spawnerActive = true;
+                            break;
+                        }
+                    }
+                }
             }
             chunkAge.onChunkLoad(cx, cz, gameTime, fluid);
+            byte extraFlags = ChunkAgeTracker.FLAG_NONE;
+            if (oxidizedCopper) {
+                extraFlags |= ChunkAgeTracker.OXIDIZED_COPPER;
+            }
+            if (spawnerActive) {
+                extraFlags |= ChunkAgeTracker.SPAWNER_ACTIVE;
+            }
+            boolean modifiedSignals = oxidizedCopper || spawnerActive;
+            boolean paletteLooksOld = modifiedSignals && nonAirSections > 0;
+            chunkAge.onPaletteCheck(cx, cz, paletteLooksOld, modifiedSignals, extraFlags);
+        }
+    }
+
+    /** Persists recorded chunk-age trails to {@code file} via {@link WorldFiles}. */
+    public void saveTrails(Path file, boolean async) {
+        if (file == null) {
+            return;
+        }
+        ByteArrayOutputStream baos = new ByteArrayOutputStream(Math.max(64, chunkAge.size() * 10 + 16));
+        try (DataOutputStream out = new DataOutputStream(baos)) {
+            chunkAge.write(out);
+        } catch (IOException e) {
+            return;
+        }
+        byte[] data = baos.toByteArray();
+        if (async) {
+            WorldFiles.writeAsync(file, data);
+        } else {
+            WorldFiles.writeNow(file, data);
+        }
+    }
+
+    /** Loads recorded chunk-age trails from {@code file} via {@link WorldFiles}. */
+    public boolean loadTrails(Path file) {
+        if (file == null) {
+            return false;
+        }
+        byte[] data = WorldFiles.read(file);
+        if (data == null || data.length == 0) {
+            return false;
+        }
+        try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(data))) {
+            chunkAge.read(in);
+            return true;
+        } catch (IOException e) {
+            return false;
         }
     }
 

@@ -7,5 +7,7 @@ public enum AutopilotMode {
     BOAT,
     ELYTRA,
     /** Nether highway bounce: rhythmic jump-gliding along a flat tunnel (experimental). */
-    NETHER_BOUNCE
+    NETHER_BOUNCE,
+    /** Follow OLD-chunk exploration trails using TrailVector corridor estimation. */
+    TRAIL
 }

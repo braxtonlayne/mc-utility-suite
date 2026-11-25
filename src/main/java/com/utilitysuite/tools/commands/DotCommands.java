@@ -10,6 +10,7 @@ import com.utilitysuite.core.api.ProfileConfig;
 import com.utilitysuite.core.api.Services;
 import com.utilitysuite.core.api.SettingSpec;
 import com.utilitysuite.core.api.visual.NoticeKind;
+import com.utilitysuite.world.seed.SeedScannerModule;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
@@ -105,6 +106,10 @@ public final class DotCommands implements IModule, IConfigurable {
             case TOGGLE -> toggle(cmd.arg());
             case GOAL -> goal(cmd.arg());
             case UNKNOWN -> {
+                if ("seed".equals(cmd.name())) {
+                    seed(cmd.arg());
+                    return;
+                }
                 notice("Unknown command '" + cmd.name() + "' (not sent)", NoticeKind.ERROR);
                 reply(DotCommandParser.helpText(prefix), false); // the list of commands is output the user reads
             }
@@ -174,6 +179,17 @@ public final class DotCommands implements IModule, IConfigurable {
         }
         long id = goals.submit(r.request());
         notice("Queued job #" + id + ": " + r.request().label(), NoticeKind.DONE);
+    }
+
+    private void seed(String arg) {
+        SeedScannerModule scanner = Services.modules().find(SeedScannerModule.class).orElse(null);
+        if (scanner == null) {
+            notice("Seed scanner module is not loaded.", NoticeKind.ERROR);
+            return;
+        }
+        String trimmed = arg == null ? "" : arg.trim();
+        String[] args = trimmed.isEmpty() ? new String[0] : trimmed.split("\\s+");
+        reply(scanner.handleDotCommand(args), false);
     }
 
     /** Command feedback (what the command did) as a toast; lists and help stay in chat through {@link #reply}. */

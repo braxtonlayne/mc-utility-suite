@@ -1,5 +1,7 @@
 package com.utilitysuite.combat.assistant;
 
+import com.utilitysuite.tools.packetlab.ServerPhysicsMonitor;
+
 /**
  * Aim point: the point of the target's bounding box nearest to the player's eye (slightly inset so the crosshair ray
  * lands inside), optionally led by the target's velocity. Writes yaw/pitch in degrees (Minecraft convention) into a
@@ -8,13 +10,21 @@ package com.utilitysuite.combat.assistant;
 public final class AimSolver {
 
     private static final double INSET = 0.08;
+    private static final double MAX_EXTRA_LEAD_TICKS = 1.5;
 
     private AimSolver() {
     }
 
     /** @param out {@code out[0]} = yaw, {@code out[1]} = pitch */
     public static void solve(CombatSnapshot s, double leadTicks, float[] out) {
-        solve(s, s.tvx * leadTicks, s.tvy * leadTicks, s.tvz * leadTicks, out);
+        double effectiveLead = leadTicks;
+        if (leadTicks > 0.0) {
+            double extra = ServerPhysicsMonitor.current().extraLeadTicks();
+            if (extra > 0.0) {
+                effectiveLead += Math.min(extra, MAX_EXTRA_LEAD_TICKS);
+            }
+        }
+        solve(s, s.tvx * effectiveLead, s.tvy * effectiveLead, s.tvz * effectiveLead, out);
     }
 
     /**

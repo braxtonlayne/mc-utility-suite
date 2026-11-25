@@ -37,6 +37,7 @@ public final class SeedScannerModule extends WorldModule {
     public static final String ID = "seed_scanner";
     private static final int SLIME_SCAN_INTERVAL = 20;
     private static final int PILLAR_SCAN_INTERVAL = 20;
+    private static final int MAX_BEDROCK_SAMPLES = 64;
 
     private static final ExecutorService SOLVE_EXECUTOR = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "UtilitySuite-SeedScan");
@@ -65,6 +66,7 @@ public final class SeedScannerModule extends WorldModule {
     private final LongOpenHashSet seenTreasures = new LongOpenHashSet();
     private final List<SeedSolver.ChunkClue> slimeChunks = new ArrayList<>();
     private final LongOpenHashSet seenSlimes = new LongOpenHashSet();
+    private final List<BedrockPatternVerifier.Sample> bedrockSamples = new ArrayList<>();
     private final int[] pillarHeights = new int[EndPillars.COUNT];
     private int pillarSeed = -1;
     private long hashedSeed;
@@ -97,6 +99,14 @@ public final class SeedScannerModule extends WorldModule {
         @Override
         public void onSlimeChunk(int chunkX, int chunkZ) {
             recordSlimeChunk(chunkX, chunkZ);
+        }
+    };
+    private final ClientChunkClueScanner.BedrockSink bedrockSink = (layer, x, y, z, present) -> {
+        if (bedrockSamples.size() < MAX_BEDROCK_SAMPLES) {
+            bedrockSamples.add(new BedrockPatternVerifier.Sample(layer, x, y, z, present));
+            if (bedrockSamples.size() == 16) {
+                cluesDirty = true;
+            }
         }
     };
 
@@ -229,6 +239,9 @@ public final class SeedScannerModule extends WorldModule {
                 LevelChunk lc = level.getChunkSource().getChunk(cx, cz, false);
                 if (lc != null && !lc.isEmpty()) {
                     scanner.scanChunk(level, lc, sink);
+                    if (bedrockSamples.size() < MAX_BEDROCK_SAMPLES) {
+                        scanner.scanBedrock(level, lc, bedrockSink);
+                    }
                     budget--;
                 }
             }
@@ -273,6 +286,7 @@ public final class SeedScannerModule extends WorldModule {
         seenTreasures.clear();
         slimeChunks.clear();
         seenSlimes.clear();
+        bedrockSamples.clear();
         Arrays.fill(pillarHeights, 0);
         pillarSeed = -1;
         cluesDirty = false;
@@ -311,8 +325,57 @@ public final class SeedScannerModule extends WorldModule {
 
     public String clueSummary() {
         String pillars = pillarSeed >= 0 ? "pillars=ok" : "pillars=" + observedPillarCount() + "/10";
+        String bedrock = bedrockSamples.isEmpty() ? "" : ", " + bedrockSamples.size() + " bedrock";
         return structures.size() + " struct, " + buriedTreasures.size() + " treasure, "
-                + slimeChunks.size() + " slime, " + pillars;
+                + slimeChunks.size() + " slime, " + pillars + bedrock;
+    }
+
+    /** Handles {@code .seed} dot-commands ({@code status | add <type> <cx> <cz> | rescan | reset}). */
+    public String handleDotCommand(String[] args) {
+        if (args == null || args.length == 0 || "status".equalsIgnoreCase(args[0])) {
+            Long seed = detectedSeed;
+            if (seed != null) {
+                return "Seed: " + seed + " | " + clueSummary();
+            }
+            return "Status: " + status + " | Clues: " + clueSummary();
+        }
+        String sub = args[0].toLowerCase(java.util.Locale.ROOT);
+        switch (sub) {
+            case "add" -> {
+                if (args.length < 4) {
+                    return "Usage: .seed add <type> <cx> <cz>";
+                }
+                String type = args[1].toLowerCase(java.util.Locale.ROOT);
+                if (!StructureSpread.PLACEMENTS.containsKey(type)) {
+                    return "Unknown structure type '" + type + "'.";
+                }
+                int cx;
+                int cz;
+                try {
+                    cx = Integer.parseInt(args[2]);
+                    cz = Integer.parseInt(args[3]);
+                } catch (NumberFormatException e) {
+                    return "Usage: .seed add <type> <cx> <cz>";
+                }
+                addManualStructure(type, cx, cz);
+                return "Added " + type + " at (" + cx + ", " + cz + "). Clues: " + clueSummary();
+            }
+            case "rescan" -> {
+                rescanLoaded();
+                return "Rescanning loaded chunks...";
+            }
+            case "reset" -> {
+                resetClues();
+                return "Seed scanner clues cleared.";
+            }
+            case "solve" -> {
+                solveNow();
+                return "Solve requested (" + clueSummary() + ").";
+            }
+            default -> {
+                return "Usage: .seed status | add <type> <cx> <cz> | rescan | reset";
+            }
+        }
     }
 
     private ClientChunkClueScanner scanner() {
@@ -387,7 +450,8 @@ public final class SeedScannerModule extends WorldModule {
 
     private SeedSolver.Clues snapshotClues() {
         return new SeedSolver.Clues(hashedSeed, hasHashedSeed, pillarSeed,
-                List.copyOf(structures), List.copyOf(buriedTreasures), List.copyOf(slimeChunks));
+                List.copyOf(structures), List.copyOf(buriedTreasures), List.copyOf(slimeChunks),
+                List.copyOf(bedrockSamples));
     }
 
     private void maybeLaunchSolve() {

@@ -10,6 +10,7 @@ import io.netty.channel.Channel;
 import io.netty.channel.ChannelPipeline;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientPacketListener;
+import net.minecraft.client.multiplayer.PlayerInfo;
 import net.minecraft.network.Connection;
 import net.minecraft.network.protocol.PacketType;
 import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent;
@@ -49,18 +50,24 @@ public final class PacketLab implements IModule, IConfigurable {
     public static final int WINDOW_SECONDS = 300;
     private static final int RING_CAPACITY = 8192;
 
+    private static volatile PacketLab activeInstance;
+
     private final PacketRingBuffer ring = new PacketRingBuffer(RING_CAPACITY);
     private final PacketTypeTable types = new PacketTypeTable(PacketLab::typeName);
     private final RateRing packetRates = new RateRing(WINDOW_SECONDS, 4);
     private final RateRing eventRates = new RateRing(WINDOW_SECONDS, 5);
     private final TimelineEvents events = new TimelineEvents(512);
     private final CorrectionBursts bursts = new CorrectionBursts(3, 5000L);
+    private final AcousticRadar acousticRadar = new AcousticRadar();
+    private final ServerPhysicsMonitor physicsMonitor = new ServerPhysicsMonitor();
     private final PacketProbes.Probe probe = new PacketProbes.Probe(ring, types, packetRates);
     private final PacketProbes.Frame frameHandler = new PacketProbes.Frame(probe);
     private final PacketProbes.Typed typedHandler = new PacketProbes.Typed(probe);
 
     private boolean enabled;
     private long sessionStartMillis;
+    private long lastTickNs;
+    private int rttSampleCooldown;
 
     private static String typeName(Object type) {
         if (type instanceof PacketType<?> pt) {
@@ -110,6 +117,7 @@ public final class PacketLab implements IModule, IConfigurable {
             return;
         }
         eventRates.add(e.timeMillis() / 1000L, EV_CORRECTIONS, 1);
+        physicsMonitor.recordSetback(e.timeMillis());
         boolean repeated = bursts.record(e.timeMillis());
         events.add(e.timeMillis(), TimelineEvents.Kind.CORRECTION, String.format(Locale.ROOT,
                 "Position corrected by %.2f, %.2f, %.2f%s", e.dx(), e.dy(), e.dz(), repeated ? "  [REPEATED]" : ""));
@@ -206,20 +214,46 @@ public final class PacketLab implements IModule, IConfigurable {
         this.enabled = enabled;
         Connection c = currentConnection();
         if (enabled) {
+            activeInstance = this;
+            ServerPhysicsMonitor.setCurrent(physicsMonitor);
+            lastTickNs = 0L;
             install(c);
         } else {
+            if (activeInstance == this) {
+                activeInstance = null;
+            }
+            ServerPhysicsMonitor.setCurrent(null);
+            lastTickNs = 0L;
             uninstall(c);
         }
     }
 
     @Override
     public void onTick() {
-        // Event driven; nothing to do per tick.
+        long nowNs = System.nanoTime();
+        if (lastTickNs != 0L) {
+            physicsMonitor.recordTickIntervalNs(nowNs - lastTickNs);
+        }
+        lastTickNs = nowNs;
+        if (++rttSampleCooldown >= 20) {
+            rttSampleCooldown = 0;
+            Minecraft mc = Minecraft.getInstance();
+            ClientPacketListener conn = mc.getConnection();
+            if (conn != null && mc.player != null) {
+                PlayerInfo info = conn.getPlayerInfo(mc.player.getUUID());
+                if (info != null && info.getLatency() > 0) {
+                    physicsMonitor.recordRttMs(info.getLatency());
+                }
+            }
+        }
     }
 
     @Override
     public void onWorldUnload() {
         bursts.clear();
+        physicsMonitor.clear();
+        acousticRadar.clear();
+        lastTickNs = 0L;
     }
 
     // ---- read API (timeline screen, client thread) ------------------------------------------------------------------
@@ -248,6 +282,20 @@ public final class PacketLab implements IModule, IConfigurable {
         return bursts;
     }
 
+    /** Active acoustic radar instance when PacketLab is enabled, or {@code null} when disabled. */
+    public static AcousticRadar acousticRadar() {
+        PacketLab inst = activeInstance;
+        return inst != null ? inst.acousticRadar : null;
+    }
+
+    public AcousticRadar radar() {
+        return acousticRadar;
+    }
+
+    public ServerPhysicsMonitor physicsMonitor() {
+        return physicsMonitor;
+    }
+
     public long sessionStartMillis() {
         return sessionStartMillis;
     }
@@ -257,6 +305,8 @@ public final class PacketLab implements IModule, IConfigurable {
         events.clear();
         eventRates.clear();
         bursts.clear();
+        physicsMonitor.clear();
+        acousticRadar.clear();
         Connection c = currentConnection();
         if (c != null && c.channel() != null) {
             c.channel().eventLoop().execute(() -> {

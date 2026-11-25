@@ -20,6 +20,7 @@ import com.utilitysuite.world.minimap.MinimapModule;
 import com.utilitysuite.world.oresim.OreSimModule;
 import com.utilitysuite.world.overlays.WorldOverlaysModule;
 import com.utilitysuite.world.overlays.WorldRadarModule;
+import com.utilitysuite.world.seed.SeedDiffModule;
 import com.utilitysuite.world.seed.SeedScannerModule;
 import com.utilitysuite.world.seed.SeedLocatorModule;
 import com.utilitysuite.world.waypoints.WaypointsModule;
@@ -77,6 +78,7 @@ public final class WorldBootstrap {
         OreSimModule oreSim = new OreSimModule(knowledgeService, runtime.scanner());
         knowledge.setPredictionSource(oreSim.predictions());
         SeedScannerModule seedScanner = new SeedScannerModule(oreSim::profile, oreSim::onScannedSeed);
+        SeedDiffModule seedDiff = new SeedDiffModule(oreSim::profile);
         WorldRadarModule radar = new WorldRadarModule(runtime);
         ScoutCameraModule camera = new ScoutCameraModule();
         WaypointsModule waypoints = new WaypointsModule();
@@ -95,7 +97,8 @@ public final class WorldBootstrap {
         waypoints.subscribe(events);
 
         IModuleRegistry registry = Services.modules();
-        for (WorldModule m : new WorldModule[] {knowledge, overlays, oreSim, seedScanner, radar, camera, waypoints,
+        for (WorldModule m : new WorldModule[] {knowledge, overlays, oreSim, seedScanner, seedDiff, radar, camera,
+                waypoints,
                 minimap, lightOverlay, blastOverlay, spawnGeometry, seedLocator, freelook, renderFilters,
                 strongholdFinder, trialChambers}) {
             registry.register(m);

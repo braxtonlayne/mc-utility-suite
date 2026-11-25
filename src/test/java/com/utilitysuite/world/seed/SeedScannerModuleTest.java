@@ -67,4 +67,27 @@ class SeedScannerModuleTest {
         reloaded.onProfileLoaded(profile);
         assertEquals(Long.toString(expectedSeed), profile.getString(OreSimModule.ID, "scanned_seed", ""));
     }
+
+    @Test
+    void handlesDotCommandsForStatusAddRescanAndReset() {
+        SeedScannerModule scanner = new SeedScannerModule(GeneratorProfile::none, s -> { });
+        scanner.onProfileLoaded(profile);
+
+        String statusReply = scanner.handleDotCommand(new String[] {"status"});
+        assertTrue(statusReply.contains("0 struct"));
+
+        String addReply = scanner.handleDotCommand(new String[] {"add", "desert_pyramid", "5", "-3"});
+        assertTrue(addReply.contains("Added desert_pyramid"));
+        assertEquals(1, scanner.clueCount());
+
+        String badAdd = scanner.handleDotCommand(new String[] {"add", "desert_pyramid", "abc", "0"});
+        assertTrue(badAdd.startsWith("Usage:"));
+
+        String rescanReply = scanner.handleDotCommand(new String[] {"rescan"});
+        assertTrue(rescanReply.contains("Rescanning"));
+
+        String resetReply = scanner.handleDotCommand(new String[] {"reset"});
+        assertTrue(resetReply.contains("cleared"));
+        assertEquals(0, scanner.clueCount());
+    }
 }

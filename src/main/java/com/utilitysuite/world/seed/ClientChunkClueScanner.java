@@ -34,11 +34,20 @@ final class ClientChunkClueScanner {
         void onSlimeChunk(int chunkX, int chunkZ);
     }
 
+    interface BedrockSink {
+        void onBedrockSample(BedrockPatternVerifier.Layer layer, int x, int y, int z, boolean present);
+    }
+
     private static final Predicate<BlockState> DESERT_MARKER = s -> s.is(Blocks.BLUE_TERRACOTTA);
     private static final Predicate<BlockState> SWAMP_MARKER = s -> s.is(Blocks.CAULDRON);
     private static final Predicate<BlockState> JUNGLE_MARKER =
             s -> s.is(Blocks.DISPENSER) || s.is(Blocks.STICKY_PISTON);
     private static final Predicate<BlockState> IGLOO_MARKER = s -> s.is(Blocks.RED_BED);
+    private static final Predicate<BlockState> OUTPOST_MARKER = s -> s.is(Blocks.DARK_OAK_LOG);
+    private static final Predicate<BlockState> RUINED_PORTAL_MARKER = s -> s.is(Blocks.CRYING_OBSIDIAN);
+    private static final Predicate<BlockState> END_CITY_MARKER = s -> s.is(Blocks.PURPUR_BLOCK);
+    private static final int[] SAMPLE_LX = {2, 5, 11, 13};
+    private static final int[] SAMPLE_LZ = {2, 11, 5, 13};
 
     private final BlockPos.MutableBlockPos probe = new BlockPos.MutableBlockPos();
     private final List<Slime> slimeBuffer = new ArrayList<>();
@@ -48,25 +57,26 @@ final class ClientChunkClueScanner {
     }
 
     void scanChunk(ClientLevel level, LevelChunk chunk, ClueSink sink) {
-        if (level.dimension() != Level.OVERWORLD) {
-            return;
-        }
         int cx = chunk.getPos().x;
         int cz = chunk.getPos().z;
         int minX = cx << 4;
         int minZ = cz << 4;
 
+        if (level.dimension() == Level.END) {
+            scanEndCity(level, chunk, minX, minZ, cx, cz, sink);
+            return;
+        }
+        if (level.dimension() != Level.OVERWORLD) {
+            return;
+        }
+
         Holder<Biome> biome = level.getBiome(probe.set(minX + 8, 68, minZ + 8));
         if (biome.is(Biomes.BEACH) || biome.is(Biomes.SNOWY_BEACH) || biome.is(Biomes.STONY_SHORE)) {
             scanBuriedTreasure(level, minX, minZ, cx, cz, sink);
-            return;
-        }
-        if (biome.is(Biomes.DEEP_OCEAN) || biome.is(Biomes.DEEP_COLD_OCEAN)
+        } else if (biome.is(Biomes.DEEP_OCEAN) || biome.is(Biomes.DEEP_COLD_OCEAN)
                 || biome.is(Biomes.DEEP_LUKEWARM_OCEAN) || biome.is(Biomes.DEEP_FROZEN_OCEAN)) {
             scanOceanMonument(level, minX, minZ, cx, cz, sink);
-            return;
-        }
-        if (biome.is(Biomes.DESERT)) {
+        } else if (biome.is(Biomes.DESERT)) {
             scanDesertPyramid(level, chunk, minX, minZ, cx, cz, sink);
         } else if (biome.is(Biomes.SWAMP)) {
             scanSwampHut(level, chunk, minX, minZ, cx, cz, sink);
@@ -75,6 +85,56 @@ final class ClientChunkClueScanner {
         } else if (biome.is(Biomes.SNOWY_PLAINS) || biome.is(Biomes.SNOWY_TAIGA)
                 || biome.is(Biomes.SNOWY_SLOPES)) {
             scanIgloo(level, chunk, minX, minZ, cx, cz, sink);
+        }
+
+        // Ruined portals can generate in any Overworld biome (never Nether here).
+        scanRuinedPortal(level, chunk, minX, minZ, cx, cz, sink);
+
+        // Outposts never generate in dark forests (which are full of dark oak logs) or oceans/beaches.
+        if (!biome.is(Biomes.DARK_FOREST)
+                && !biome.is(Biomes.OCEAN) && !biome.is(Biomes.DEEP_OCEAN)
+                && !biome.is(Biomes.COLD_OCEAN) && !biome.is(Biomes.DEEP_COLD_OCEAN)
+                && !biome.is(Biomes.LUKEWARM_OCEAN) && !biome.is(Biomes.DEEP_LUKEWARM_OCEAN)
+                && !biome.is(Biomes.FROZEN_OCEAN) && !biome.is(Biomes.DEEP_FROZEN_OCEAN)
+                && !biome.is(Biomes.WARM_OCEAN) && !biome.is(Biomes.BEACH)) {
+            scanPillagerOutpost(level, chunk, minX, minZ, cx, cz, sink);
+        }
+    }
+
+    /** Samples deterministic bedrock/deepslate columns in loaded Overworld or Nether chunks. */
+    void scanBedrock(ClientLevel level, LevelChunk chunk, BedrockSink sink) {
+        int minX = chunk.getPos().x << 4;
+        int minZ = chunk.getPos().z << 4;
+        if (level.dimension() == Level.OVERWORLD) {
+            for (int i = 0; i < SAMPLE_LX.length; i++) {
+                int wx = minX + SAMPLE_LX[i];
+                int wz = minZ + SAMPLE_LZ[i];
+                for (int y = -63; y <= -60; y++) {
+                    BlockState bs = level.getBlockState(probe.set(wx, y, wz));
+                    sink.onBedrockSample(BedrockPatternVerifier.Layer.OVERWORLD_FLOOR, wx, y, wz, bs.is(Blocks.BEDROCK));
+                }
+                for (int y = 1; y <= 7; y += 2) {
+                    BlockState bs = level.getBlockState(probe.set(wx, y, wz));
+                    if (bs.is(Blocks.DEEPSLATE)) {
+                        sink.onBedrockSample(BedrockPatternVerifier.Layer.OVERWORLD_DEEPSLATE, wx, y, wz, true);
+                    } else if (bs.is(Blocks.STONE)) {
+                        sink.onBedrockSample(BedrockPatternVerifier.Layer.OVERWORLD_DEEPSLATE, wx, y, wz, false);
+                    }
+                }
+            }
+        } else if (level.dimension() == Level.NETHER) {
+            for (int i = 0; i < SAMPLE_LX.length; i++) {
+                int wx = minX + SAMPLE_LX[i];
+                int wz = minZ + SAMPLE_LZ[i];
+                for (int y = 1; y <= 4; y++) {
+                    BlockState bs = level.getBlockState(probe.set(wx, y, wz));
+                    sink.onBedrockSample(BedrockPatternVerifier.Layer.NETHER_FLOOR, wx, y, wz, bs.is(Blocks.BEDROCK));
+                }
+                for (int y = 123; y <= 126; y++) {
+                    BlockState bs = level.getBlockState(probe.set(wx, y, wz));
+                    sink.onBedrockSample(BedrockPatternVerifier.Layer.NETHER_ROOF, wx, y, wz, bs.is(Blocks.BEDROCK));
+                }
+            }
         }
     }
 
@@ -344,6 +404,166 @@ final class ClientChunkClueScanner {
                         }
                         if (hasTable && hasFurnace && snow >= 4) {
                             sink.onStructure("igloo", cx, cz);
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private void scanPillagerOutpost(ClientLevel level, LevelChunk chunk, int minX, int minZ, int cx, int cz,
+                                     ClueSink sink) {
+        LevelChunkSection[] sections = chunk.getSections();
+        int minSec = level.getMinSection();
+        for (int s = 0; s < sections.length; s++) {
+            int sy = (minSec + s) << 4;
+            if (sy + 15 < 60 || sy > 160) {
+                continue;
+            }
+            LevelChunkSection sec = sections[s];
+            if (sec.hasOnlyAir() || !sec.maybeHas(OUTPOST_MARKER)) {
+                continue;
+            }
+            for (int ly = 0; ly < 16; ly++) {
+                int wy = sy + ly;
+                if (wy < 60 || wy > 160) {
+                    continue;
+                }
+                for (int lx = 0; lx < 16; lx++) {
+                    for (int lz = 0; lz < 16; lz++) {
+                        if (!sec.getBlockState(lx, ly, lz).is(Blocks.DARK_OAK_LOG)) {
+                            continue;
+                        }
+                        int wx = minX + lx;
+                        int wz = minZ + lz;
+                        int logs = 0;
+                        int planks = 0;
+                        int cobble = 0;
+                        for (int dx = -4; dx <= 4; dx++) {
+                            for (int dz = -4; dz <= 4; dz++) {
+                                for (int dy = -5; dy <= 4; dy++) {
+                                    BlockState nb = level.getBlockState(probe.set(wx + dx, wy + dy, wz + dz));
+                                    if (nb.is(Blocks.DARK_OAK_LOG)) {
+                                        logs++;
+                                    } else if (nb.is(Blocks.DARK_OAK_PLANKS)) {
+                                        planks++;
+                                    } else if (nb.is(Blocks.COBBLESTONE) || nb.is(Blocks.MOSSY_COBBLESTONE)) {
+                                        cobble++;
+                                    }
+                                }
+                            }
+                        }
+                        if (logs >= 4 && planks >= 4 && cobble >= 4) {
+                            sink.onStructure("pillager_outpost", cx, cz);
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private void scanRuinedPortal(ClientLevel level, LevelChunk chunk, int minX, int minZ, int cx, int cz,
+                                  ClueSink sink) {
+        LevelChunkSection[] sections = chunk.getSections();
+        int minSec = level.getMinSection();
+        for (int s = 0; s < sections.length; s++) {
+            int sy = (minSec + s) << 4;
+            if (sy + 15 < -56 || sy > 160) {
+                continue;
+            }
+            LevelChunkSection sec = sections[s];
+            if (sec.hasOnlyAir() || !sec.maybeHas(RUINED_PORTAL_MARKER)) {
+                continue;
+            }
+            for (int ly = 0; ly < 16; ly++) {
+                int wy = sy + ly;
+                if (wy < -56 || wy > 160) {
+                    continue;
+                }
+                for (int lx = 0; lx < 16; lx++) {
+                    for (int lz = 0; lz < 16; lz++) {
+                        if (!sec.getBlockState(lx, ly, lz).is(Blocks.CRYING_OBSIDIAN)) {
+                            continue;
+                        }
+                        int wx = minX + lx;
+                        int wz = minZ + lz;
+                        int obsidian = 0;
+                        int netherSkirt = 0;
+                        for (int dx = -4; dx <= 4; dx++) {
+                            for (int dz = -4; dz <= 4; dz++) {
+                                for (int dy = -4; dy <= 4; dy++) {
+                                    BlockState nb = level.getBlockState(probe.set(wx + dx, wy + dy, wz + dz));
+                                    if (nb.is(Blocks.OBSIDIAN)) {
+                                        obsidian++;
+                                    } else if (nb.is(Blocks.NETHERRACK) || nb.is(Blocks.MAGMA_BLOCK)) {
+                                        netherSkirt++;
+                                    }
+                                }
+                            }
+                        }
+                        if (obsidian >= 2 && netherSkirt >= 2) {
+                            sink.onStructure("ruined_portal", cx, cz);
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private void scanEndCity(ClientLevel level, LevelChunk chunk, int minX, int minZ, int cx, int cz,
+                             ClueSink sink) {
+        if ((long) cx * cx + (long) cz * cz < 3600L) {
+            return;
+        }
+        Holder<Biome> biome = level.getBiome(probe.set(minX + 8, 64, minZ + 8));
+        if (!biome.is(Biomes.END_HIGHLANDS) && !biome.is(Biomes.END_MIDLANDS)) {
+            return;
+        }
+        LevelChunkSection[] sections = chunk.getSections();
+        int minSec = level.getMinSection();
+        for (int s = 0; s < sections.length; s++) {
+            int sy = (minSec + s) << 4;
+            if (sy + 15 < 55 || sy > 150) {
+                continue;
+            }
+            LevelChunkSection sec = sections[s];
+            if (sec.hasOnlyAir() || !sec.maybeHas(END_CITY_MARKER)) {
+                continue;
+            }
+            for (int ly = 0; ly < 16; ly++) {
+                int wy = sy + ly;
+                if (wy < 55 || wy > 150) {
+                    continue;
+                }
+                for (int lx = 0; lx < 16; lx++) {
+                    for (int lz = 0; lz < 16; lz++) {
+                        if (!sec.getBlockState(lx, ly, lz).is(Blocks.PURPUR_BLOCK)) {
+                            continue;
+                        }
+                        int wx = minX + lx;
+                        int wz = minZ + lz;
+                        int endStoneBricks = 0;
+                        int endRods = 0;
+                        int purpur = 0;
+                        for (int dx = -3; dx <= 3; dx++) {
+                            for (int dz = -3; dz <= 3; dz++) {
+                                for (int dy = -2; dy <= 5; dy++) {
+                                    BlockState nb = level.getBlockState(probe.set(wx + dx, wy + dy, wz + dz));
+                                    if (nb.is(Blocks.END_STONE_BRICKS)) {
+                                        endStoneBricks++;
+                                    } else if (nb.is(Blocks.END_ROD)) {
+                                        endRods++;
+                                    } else if (nb.is(Blocks.PURPUR_BLOCK) || nb.is(Blocks.PURPUR_PILLAR)) {
+                                        purpur++;
+                                    }
+                                }
+                            }
+                        }
+                        if (endStoneBricks >= 4 && endRods >= 1 && purpur >= 4) {
+                            sink.onStructure("end_city", cx, cz);
                             return;
                         }
                     }
