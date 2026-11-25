@@ -23,7 +23,10 @@ import com.utilitysuite.world.camera.ScoutCameraModule;
 import com.utilitysuite.world.minimap.MinimapModule;
 import com.utilitysuite.ui.ModulePanels;
 import com.utilitysuite.world.overlays.WorldOverlaysModule;
+import com.utilitysuite.world.seed.SeedLocatorModule;
 import com.utilitysuite.world.seed.SeedScannerModule;
+import com.utilitysuite.world.seed.StructureLocator;
+import com.utilitysuite.world.spawn.SlimeAfkFinder;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
@@ -63,11 +66,92 @@ public final class WorldTab {
                 + "/" + Services.modules().find(ScoutCameraModule.class).map(c -> c.isFreecamActive()).orElse(false)
                 + "/" + Services.modules().find(WorldOverlaysModule.class).map(IModule::isEnabled).orElse(false)
                 + "/" + Services.modules().find(MinimapModule.class).map(IModule::isEnabled).orElse(false)
-                + "/" + Services.modules().find(SeedScannerModule.class).map(s -> s.clueCount() + ":" + s.isSolving()).orElse("-");
+                + "/" + Services.modules().find(SeedScannerModule.class).map(s -> s.clueCount() + ":" + s.isSolving()).orElse("-")
+                + "/" + Services.modules().find(SeedLocatorModule.class).map(s -> s.snapshot().version()).orElse(-1);
+    }
+
+    /** Seed Locator card: nearest structure candidates and slime AFK spots with Add waypoint / Go. */
+    private static void seedLocatorRows(Panel p, SeedLocatorModule loc) {
+        SeedLocatorModule.Snapshot s = loc.snapshot();
+        if (!loc.isEnabled()) {
+            return;
+        }
+        if (!s.seedKnown()) {
+            p.paragraph(s.version() == 0 && loc.isSearching() ? "Searching..."
+                    : "Seed needed: single-player, the Seed Workbench or the seed scanner.", Panel.GRAY);
+            return;
+        }
+        if (s.structures().isEmpty() && s.slimeSpots().isEmpty()) {
+            p.paragraph(loc.isSearching() ? "Searching..." : "Nothing found in range.", Panel.GRAY);
+            return;
+        }
+        p.paragraph("Structures are candidates: the biome decides whether one really generates there.", Panel.GRAY);
+        for (StructureLocator.Candidate c : s.structures()) {
+            locatorRow(p, StructureLocator.label(c.type()) + " (candidate)", c.blockX(), c.blockZ(), s);
+        }
+        for (SlimeAfkFinder.Spot spot : s.slimeSpots()) {
+            locatorRow(p, "Slime AFK spot: " + spot.slimeChunks() + " slime chunks", spot.blockX(), spot.blockZ(), s);
+        }
+    }
+
+    private static void locatorRow(Panel p, String name, int x, int z, SeedLocatorModule.Snapshot s) {
+        int w = p.width();
+        int wpW = 66;
+        int goW = 34;
+        int btnGap = 6;
+        int textW = w - wpW - goW - btnGap - 12;
+        long dx = x - s.originX();
+        long dz = z - s.originZ();
+        int dist = (int) Math.round(Math.sqrt((double) (dx * dx + dz * dz)));
+        var row = p.listRow(null);
+        row.h = WP_ROW - 2;
+        row.tooltip(name + "\n" + x + ", " + z + " · " + dist + " blocks away");
+        var label = p.rowLabel(name, 4, textW, Panel.WHITE);
+        label.y -= 3;
+        var pos = p.rowLabel(x + " " + z + "  ·  " + dist + " m", 4, textW, Panel.GRAY);
+        pos.y += 9;
+        int shift = (WP_ROW - Panel.ROW) / 2;
+        p.button("Waypoint", "Add a waypoint here", w - wpW - btnGap - goW, wpW, PillButton.Style.SECONDARY,
+                b -> addLocatorWaypoint(p, name, x, z)).y += shift;
+        p.button("Go", "Path to " + name, w - goW, goW, PillButton.Style.SECONDARY,
+                b -> goToLocator(p, name, x, z)).y += shift;
+        p.nextRow();
+        p.gap(WP_ROW - Panel.ROW);
+    }
+
+    private static void addLocatorWaypoint(Panel p, String name, int x, int z) {
+        IWaypointService wps = Services.waypointsOrNull();
+        Minecraft mc = Minecraft.getInstance();
+        if (wps == null || mc.level == null || mc.player == null) {
+            p.toast("Waypoints are not available");
+            return;
+        }
+        wps.add(name, "Locator", x, mc.player.getBlockY(), z, mc.level.dimension().location().toString());
+        p.toast("Waypoint '" + name + "' added");
+        p.rebuild();
+    }
+
+    private static void goToLocator(Panel p, String name, int x, int z) {
+        INavigator nav = Services.navigatorOrNull();
+        Minecraft mc = Minecraft.getInstance();
+        if (nav == null || !nav.isAvailable() || mc.player == null) {
+            p.toast("Pathing is not available (Baritone not installed)");
+            return;
+        }
+        if (nav.goToLeased(SeedLocatorModule.ID, ControlPriority.TRAVEL, x, mc.player.getBlockY(), z, 8).isEmpty()) {
+            p.toast("Movement is busy or automation is stopped");
+            return;
+        }
+        p.toast("Going to " + name);
     }
 
     /** Custom rows inside World module cards (called once from the UI bootstrap). */
     public static void registerPanels() {
+        ModulePanels.register(SeedLocatorModule.ID, (p, m) -> {
+            if (m instanceof SeedLocatorModule loc) {
+                seedLocatorRows(p, loc);
+            }
+        });
         ModulePanels.register(MinimapModule.ID, (p, m) -> {
             if (m instanceof MinimapModule mm) {
                 QuickActions.actionRow(p, "Position and size", "Drag the map to move it, the corner to resize.",
