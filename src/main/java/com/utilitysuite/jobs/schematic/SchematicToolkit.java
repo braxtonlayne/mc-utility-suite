@@ -350,6 +350,54 @@ public final class SchematicToolkit implements IModule, IConfigurable {
         return true;
     }
 
+    /**
+     * Generates a volume on the schematic thread (shape voxeliser, map-art planner), registers it as
+     * {@code generated:<key>} and starts it like a schematic file at the anchor: ghost preview, Build Assist, bill of
+     * materials and supply trips all apply. Through the goal engine when it is loaded, else directly. Client thread.
+     *
+     * @param onDone called on the client thread with the volume, or null and the error message
+     */
+    public void startGenerated(String key, java.util.function.Supplier<SchematicVolume> generator, long anchor,
+                               boolean gatherOnly, java.util.function.BiConsumer<SchematicVolume, String> onDone) {
+        Minecraft mc = Minecraft.getInstance();
+        library.submit(generator).whenComplete((v, err) -> mc.execute(() -> {
+            if (err != null || v == null) {
+                Throwable c = err != null && err.getCause() != null ? err.getCause() : err;
+                onDone.accept(null, c == null ? "nothing generated" : String.valueOf(c.getMessage()));
+                return;
+            }
+            String path = library.registerGenerated(key, v);
+            com.utilitysuite.core.api.IGoalEngine goals = Services.goalsOrNull();
+            com.utilitysuite.core.api.IWorldKnowledgeService wk = Services.worldKnowledgeOrNull();
+            com.utilitysuite.core.api.DataSourceMode mode = wk == null
+                    ? com.utilitysuite.core.api.DataSourceMode.OBSERVED_ONLY : wk.routingMode();
+            GoalRequest.Build build = new GoalRequest.Build(path, anchor, gatherOnly,
+                    com.utilitysuite.core.api.CostProfile.FASTEST, mode);
+            if (goals != null) {
+                goals.submit(build);
+            } else {
+                handleBuild(build);
+            }
+            onDone.accept(v, null);
+        }));
+    }
+
+    /**
+     * Swaps in a new version of a generated design that is built directly (the symmetry layer): registers it and
+     * restarts the job at the anchor. No goal job and no walk to the site. Client thread.
+     */
+    public void replaceGenerated(String key, SchematicVolume v, long anchor) {
+        String path = library.registerGenerated(key, v);
+        handleBuild(new GoalRequest.Build(path, anchor, false, com.utilitysuite.core.api.CostProfile.FASTEST,
+                com.utilitysuite.core.api.DataSourceMode.OBSERVED_ONLY));
+    }
+
+    /** True while the current job builds the given generated key. */
+    public boolean isBuildingGenerated(String key) {
+        SchematicProject p = project;
+        return p != null && p.request.schematicPath().equals(SchematicLibrary.GENERATED_PREFIX + key);
+    }
+
     /** The current job's card, if any. */
     public Optional<SchematicJobCard> jobCard() {
         SchematicProject p = project;

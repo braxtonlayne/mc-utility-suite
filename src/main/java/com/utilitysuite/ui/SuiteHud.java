@@ -88,6 +88,8 @@ public final class SuiteHud implements IModule, IConfigurable, LayeredDraw.Layer
     private boolean lastHandOver;
     private String lastParkour;
     private String lastPearl;
+    private String lastBoss;
+    private String lastPiglin;
 
     // info strip sampling
     private final InfoStripText.TpsEstimator tpsEstimator = new InfoStripText.TpsEstimator(3_000_000_000L);
@@ -181,6 +183,14 @@ public final class SuiteHud implements IModule, IConfigurable, LayeredDraw.Layer
             lastPearl = pearl;
             pollNow = true;
         }
+        // Boss Helper and Piglin Guard hints: constant strings (or one rebuilt per shown change), compared by reference
+        String boss = com.utilitysuite.combat.boss.BossHelperModule.line();
+        String piglin = com.utilitysuite.tools.player.PiglinGuard.line();
+        if (boss != lastBoss || piglin != lastPiglin) {
+            lastBoss = boss;
+            lastPiglin = piglin;
+            pollNow = true;
+        }
         if (!pollNow && ++ticks % POLL_TICKS != 0) {
             return;
         }
@@ -203,6 +213,14 @@ public final class SuiteHud implements IModule, IConfigurable, LayeredDraw.Layer
         }
         if (pearl != null) {
             line.updateAutopilot(pearl); // constant strings (PearlCountdown), only while our pearl flies
+            return;
+        }
+        if (boss != null) {
+            line.updateAutopilot(boss);
+            return;
+        }
+        if (piglin != null) {
+            line.updateAutopilot(piglin);
             return;
         }
         IGoalEngine goals = Services.goalsOrNull();

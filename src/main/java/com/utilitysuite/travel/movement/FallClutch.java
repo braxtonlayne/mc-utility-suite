@@ -19,6 +19,7 @@ import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.tags.FluidTags;
+import net.minecraft.util.Mth;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.player.Inventory;
@@ -42,7 +43,16 @@ import net.minecraft.world.phys.HitResult;
  */
 final class FallClutch {
 
-    enum Phase { IDLE, POUR, PICKUP, RETURN, DEPLOY, GLIDE, STEER }
+    enum Phase { IDLE, POUR, PICKUP, RETURN, DEPLOY, GLIDE, STEER, FALLBACK }
+
+    /** Fallback chain (C8): boat, twisting vines, wind charge after everything above found nothing. Off by default. */
+    boolean fallbackChain = false;
+    final ClutchChain chain = new ClutchChain();
+    private final double[] chainHeights = new double[FallClutchPlanner.HORIZON + 1];
+    /** Hotbar slot per {@link ClutchChain.Fallback} (only the chain's new fallbacks are filled; -1: none). */
+    private final int[] chainSlot = new int[ClutchChain.CHAIN.length];
+    private ClutchChain.Fallback fallback;
+    private int fallbacks;
 
     /** Horizontal search radius (blocks) for water around the predicted landing. */
     static final int WATER_RADIUS = 4;
@@ -176,11 +186,15 @@ final class FallClutch {
                     ladder.offerWaterSteer(off, off >= 0);
                 }
                 ClutchLadder.Option best = ladder.best();
-                if (best == null) {
-                    return;
-                }
                 IAutopilot ap = Services.autopilotOrNull();
                 boolean scheduled = ap != null && ap.isOn() && ap.allows(IAutopilot.Reflex.FALL_CLUTCH);
+                if (best == null) {
+                    // everything above found nothing: the fallback chain (boat, twisting vines, wind charge)
+                    if (fallbackChain) {
+                        tryFallback(mc, p, now, ap, scheduled, w);
+                    }
+                    return;
+                }
                 if (best == ClutchLadder.Option.ELYTRA || best == ClutchLadder.Option.WATER_STEER) {
                     if (scheduled && !ap.mayAct(IAutopilot.Reflex.FALL_CLUTCH,
                             ladder.ticksNeeded(best), ladder.damageAverted())) {
@@ -235,7 +249,150 @@ final class FallClutch {
             case DEPLOY -> deployStep(p);
             case STEER -> steerStep(p);
             case GLIDE -> glideStep(mc, p);
+            case FALLBACK -> fallbackStep(mc, p, now, userF, userS, w);
         }
+    }
+
+    // ---- fallback chain (C8) -------------------------------------------------------------------------------------------
+
+    /** Bit set of the chain's new fallbacks in the hotbar; fills {@link #chainSlot}. */
+    private int fallbacksAtHand(LocalPlayer p) {
+        Inventory inv = p.getInventory();
+        java.util.Arrays.fill(chainSlot, -1);
+        int items = 0;
+        for (int i = 0; i < 9; i++) {
+            Item it = inv.getItem(i).getItem();
+            ClutchChain.Fallback f = it instanceof net.minecraft.world.item.BoatItem ? ClutchChain.Fallback.BOAT
+                    : it == Items.TWISTING_VINES ? ClutchChain.Fallback.TWISTING_VINES
+                    : it == Items.WIND_CHARGE && !p.getCooldowns().isOnCooldown(Items.WIND_CHARGE)
+                    ? ClutchChain.Fallback.WIND_CHARGE : null;
+            if (f != null && chainSlot[f.ordinal()] < 0) {
+                chainSlot[f.ordinal()] = i;
+                items |= f.bit();
+            }
+        }
+        return items & ClutchChain.NEW_FALLBACKS;
+    }
+
+    /** Chooses on the planner's current landing prediction; false when nothing is feasible. */
+    private boolean chooseFallback(Minecraft mc, LocalPlayer p, int items, MovementPhysics.Voxels w) {
+        if (!planner.lands()) {
+            return false;
+        }
+        planner.heights(chainHeights);
+        int lx = Mth.floor(planner.landX());
+        int lz = Mth.floor(planner.landZ());
+        int sy = Mth.floor(planner.landY() - 1.0e-6);
+        int cy = Mth.floor(planner.landY() + 1.0e-6);
+        boolean placeable = w.fullBlock(lx, sy, lz) && !w.solid(lx, cy, lz);
+        sup.set(lx, sy, lz);
+        return chain.choose(items, mc.level.dimensionType().ultraWarm(), chainHeights, planner.ticksToLand(),
+                p.getXRot(), ParkourBlocks.PLAN_DEG_PER_TICK, placeable) != null;
+    }
+
+    private void tryFallback(Minecraft mc, LocalPlayer p, MovementPhysics now, IAutopilot ap, boolean scheduled,
+                             MovementPhysics.Voxels w) {
+        int items = fallbacksAtHand(p);
+        if (items == 0 || !chooseFallback(mc, p, items, w)) {
+            return;
+        }
+        // start the look-down only when its time comes (no lease many ticks early)
+        int turn = FallClutchPlanner.turnTicks(Math.abs(chain.aimPitch() - p.getXRot()),
+                ParkourBlocks.PLAN_DEG_PER_TICK);
+        if (chain.useTick() > turn + LEAD_TICKS) {
+            return;
+        }
+        if (scheduled && !ap.mayAct(IAutopilot.Reflex.FALL_CLUTCH, chain.useTick() + 1, planner.landDamage())) {
+            ap.noteDeclined(IAutopilot.Reflex.FALL_CLUTCH, "another reflex goes first");
+            return;
+        }
+        if (!takeLease(ap, scheduled, ControlChannel.CAMERA, ControlChannel.HOTBAR, ControlChannel.WORLD_INTERACT)) {
+            return;
+        }
+        if (scheduled) {
+            ap.noteActed(IAutopilot.Reflex.FALL_CLUTCH, "fallback clutch");
+        }
+        fallback = chain.chosen();
+        slot = chainSlot[fallback.ordinal()];
+        heading = p.getYRot();
+        returnYaw = p.getYRot();
+        returnPitch = p.getXRot();
+        ticks = 0;
+        aim.reset();
+        note = "fallback planned";
+        if (p.getInventory().selected != slot) {
+            Services.input().selectHotbarSlot(lease, slot);
+        }
+        phase = Phase.FALLBACK;
+        fallbackStep(mc, p, now, 0, 0, w);
+    }
+
+    /**
+     * Looks down (yaw kept, smoothed and capped by the core) and uses the fallback on its tick: a boat or twisting
+     * vines on the landing block's top face once the crosshair is on it, a wind charge straight down.
+     */
+    private void fallbackStep(Minecraft mc, LocalPlayer p, MovementPhysics now, int userF, int userS,
+                              MovementPhysics.Voxels w) {
+        if (!leaseOk(ControlChannel.WORLD_INTERACT) || p.onGround() || p.isInWater() || ++ticks > 60
+                || (1 << chainFallbackOf(p.getInventory().getItem(slot).getItem())) != fallback.bit()) {
+            note = p.onGround() ? "landed before fallback" : "fallback item gone or lease lost";
+            finish(p);
+            return;
+        }
+        if (!planner.predictLanding(now, heading, p.isSprinting(), userF, userS, w)
+                || !chooseFallback(mc, p, fallback.bit(), w)) {
+            note = "fallback replan found nothing";
+            finish(p);
+            return;
+        }
+        aim.aim(Services.input(), lease, p.getYRot(), chain.aimPitch(), RotationMode.VISIBLE, 10f);
+        if (p.getInventory().selected != slot || chain.useTick() > 0) {
+            return;
+        }
+        BlockHitResult bhr = null;
+        if (fallback.placed) {
+            HitResult hr = p.pick(REACH, 1.0f, false);
+            if (!(hr instanceof BlockHitResult b) || b.getType() != HitResult.Type.BLOCK
+                    || !b.getBlockPos().equals(sup) || b.getDirection() != Direction.UP) {
+                note = "fallback aiming";
+                return;
+            }
+            bhr = b;
+        } else if (p.getXRot() < ClutchChain.THROW_MIN_PITCH) {
+            note = "fallback aiming";
+            return;
+        }
+        // direct game call: re-check the lease right before it
+        if (!leaseOk(ControlChannel.WORLD_INTERACT)) {
+            finish(p);
+            return;
+        }
+        InteractionResult r = bhr != null && fallback == ClutchChain.Fallback.TWISTING_VINES
+                ? mc.gameMode.useItemOn(p, InteractionHand.MAIN_HAND, bhr)
+                : mc.gameMode.useItem(p, InteractionHand.MAIN_HAND); // boats and wind charges pick their own target
+        lastUse = r;
+        note = r.consumesAction() ? "fallback used" : "fallback refused";
+        if (r.consumesAction()) {
+            p.swing(InteractionHand.MAIN_HAND);
+            fallbacks++;
+        }
+        startReturn();
+    }
+
+    /** Ordinal of the chain fallback an item is, or 31 (no bit) when none. */
+    private static int chainFallbackOf(Item it) {
+        if (it instanceof net.minecraft.world.item.BoatItem) {
+            return ClutchChain.Fallback.BOAT.ordinal();
+        }
+        if (it == Items.TWISTING_VINES) {
+            return ClutchChain.Fallback.TWISTING_VINES.ordinal();
+        }
+        return it == Items.WIND_CHARGE ? ClutchChain.Fallback.WIND_CHARGE.ordinal() : 31;
+    }
+
+    /** Fallback clutches used. */
+    int fallbacks() {
+        return fallbacks;
     }
 
     private boolean eligible(Minecraft mc, LocalPlayer p) {

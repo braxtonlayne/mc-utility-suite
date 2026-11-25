@@ -382,6 +382,16 @@ public final class FallClutchPlanner {
         return pz[ticks];
     }
 
+    /**
+     * Fills {@code out[0..ticksToLand()]} with the feet height above the predicted landing at the start of each tick
+     * (valid when {@link #lands()}; the {@link ClutchChain} input). Allocation free.
+     */
+    public void heights(double[] out) {
+        for (int t = 0; t <= ticks; t++) {
+            out[t] = Math.max(0.0, py[t] - landY);
+        }
+    }
+
     public float aimYaw() {
         return aimYaw;
     }

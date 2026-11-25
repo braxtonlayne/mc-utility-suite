@@ -79,22 +79,34 @@ public final class SettingsAccess {
     }
 
     public void setBool(SettingSpec s, boolean value) {
+        JsonElement before = copy(raw(s.key()));
         profile.set(moduleId, s.key(), value);
-        changed(s);
+        changed(s, before);
     }
 
     public void setNumber(SettingSpec s, double value) {
+        JsonElement before = copy(raw(s.key()));
         double v = SettingWidgetMapper.clamp(s, value);
         if (s.type() == SettingSpec.Type.INT) {
             profile.set(moduleId, s.key(), (int) Math.round(v));
         } else {
             profile.set(moduleId, s.key(), v);
         }
-        changed(s);
+        changed(s, before);
     }
 
     public void setString(SettingSpec s, String value) {
+        JsonElement before = copy(raw(s.key()));
         profile.set(moduleId, s.key(), value == null ? "" : value);
+        changed(s, before);
+    }
+
+    private static JsonElement copy(JsonElement e) {
+        return e == null ? null : e.deepCopy();
+    }
+
+    private void changed(SettingSpec s, JsonElement before) {
+        ConfigUndo.record(profile, moduleId, s.key(), before, raw(s.key()), onChanged);
         changed(s);
     }
 

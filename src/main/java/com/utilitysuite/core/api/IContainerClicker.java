@@ -27,6 +27,16 @@ public interface IContainerClicker {
      */
     boolean placeRecipe(ControlLease lease, String recipeId, boolean craftAll);
 
+    /**
+     * Enables or disables one grid slot of the open 1.21 Crafter (the slot-lock toggle a player makes by clicking an
+     * empty crafter slot). Sends the vanilla slot-state packet immediately. Needs HOTBAR.
+     *
+     * @return false when the lease is inactive or lacks HOTBAR, or the open menu is not a crafter
+     */
+    default boolean toggleSlotState(ControlLease lease, int slotIndex, boolean enabled) {
+        return false;
+    }
+
     /** Clicks still waiting for their delay. */
     int pending();
 

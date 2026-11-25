@@ -35,4 +35,9 @@ public interface IVisuals {
     default EffectLevel effects() {
         return EffectLevel.OFF;
     }
+
+    /** The context-morphing HUD factors; {@link IHudContext#NONE} (all 1) when the module is off or absent. */
+    default IHudContext context() {
+        return IHudContext.NONE;
+    }
 }

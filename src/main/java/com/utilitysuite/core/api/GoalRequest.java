@@ -54,6 +54,32 @@ public sealed interface GoalRequest {
         }
     }
 
+    /**
+     * Smelt {@code count} of an input item across the remembered furnaces ("furnaces 192 raw_iron").
+     *
+     * @param station only this station type ("minecraft:blast_furnace"), or null for any furnace type
+     */
+    record SmeltArray(String itemId, int count, String station, CostProfile cost, DataSourceMode dataSource)
+            implements GoalRequest {
+        public String label() {
+            return "Smelt " + count + " " + itemId + " in furnaces";
+        }
+    }
+
+    /**
+     * Brew {@code count} of a potion at the nearest remembered brewing stand ("brew 3 splash strong_healing").
+     *
+     * @param potion vanilla potion id without namespace ("strong_healing")
+     * @param form   DRINK, SPLASH or LINGERING
+     */
+    record Brew(String potion, String form, int count, CostProfile cost, DataSourceMode dataSource)
+            implements GoalRequest {
+        public String label() {
+            return "Brew " + count + " " + (form.equals("DRINK") ? "" : form.toLowerCase(java.util.Locale.ROOT) + " ")
+                    + potion;
+        }
+    }
+
     record Custom(String text, CostProfile cost, DataSourceMode dataSource) implements GoalRequest {
         public String label() {
             return text;

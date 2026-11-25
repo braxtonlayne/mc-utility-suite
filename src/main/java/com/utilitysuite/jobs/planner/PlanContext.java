@@ -59,6 +59,16 @@ public record PlanContext(Map<String, Integer> inventory, int pickaxeTier, List<
             }
             eligible.sort((a, b) -> Long.compare(PackedPos.distSq(a.packedPos(), origin),
                     PackedPos.distSq(b.packedPos(), origin)));
+            // Every ender chest opens the same shared inventory: keep only the nearest so it is not counted twice.
+            boolean enderSeen = false;
+            for (java.util.Iterator<StorageEntry> it = eligible.iterator(); it.hasNext(); ) {
+                if ("minecraft:ender_chest".equals(it.next().containerType())) {
+                    if (enderSeen) {
+                        it.remove();
+                    }
+                    enderSeen = true;
+                }
+            }
         }
         return new PlanContext(inv.counts(), inv.bestPickaxeTier(), eligible, dimension, origin, cost, credit,
                 nearbyStations, includeReturn, inv.carriedContainers());

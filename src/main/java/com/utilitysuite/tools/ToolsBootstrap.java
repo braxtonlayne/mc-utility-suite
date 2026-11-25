@@ -11,6 +11,7 @@ import com.utilitysuite.tools.player.AutoFish;
 import com.utilitysuite.tools.player.AutoReconnect;
 import com.utilitysuite.tools.player.AutoRespawn;
 import com.utilitysuite.tools.player.OffhandManager;
+import com.utilitysuite.tools.player.PiglinGuard;
 import com.utilitysuite.tools.player.QuickPearl;
 import com.utilitysuite.tools.rules.LocalRules;
 import net.neoforged.bus.api.EventPriority;
@@ -89,6 +90,13 @@ public final class ToolsBootstrap {
         Services.modules().register(autoReconnect);
         Services.modules().register(quickPearl);
         Services.modules().register(new com.utilitysuite.tools.enchant.EnchantSeedHelper());
+        com.utilitysuite.tools.enchant.AnvilPlanModule anvilPlan = new com.utilitysuite.tools.enchant.AnvilPlanModule();
+        Services.modules().register(anvilPlan);
+        bus.addListener(anvilPlan::onScreenRender);
+        PiglinGuard piglinGuard = new PiglinGuard();
+        Services.modules().register(piglinGuard);
+        bus.addListener(piglinGuard::onJoin);
+        bus.addListener(piglinGuard::onLeave);
 
         modBus.addListener(quickPearl::onRegisterKeys);
 

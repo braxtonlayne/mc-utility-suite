@@ -49,6 +49,19 @@ public final class WaypointsModule extends WorldModule {
     private final WaypointStore store = new WaypointStore(() -> trail);
     private KeyMapping addKey;
     private KeyMapping backKey;
+    /** Action-registry requests (wheel, palette), handled on the next tick like a key press. */
+    private boolean pendingAdd;
+    private boolean pendingBack;
+
+    /** Drops a waypoint at the player on the next tick (same as the Add Waypoint key). */
+    public void requestAddHere() {
+        pendingAdd = true;
+    }
+
+    /** Starts Take Me Back on the next tick (same as its key). */
+    public void requestTakeMeBack() {
+        pendingBack = true;
+    }
 
     private boolean beacons;
     private boolean breadcrumbsVisible;
@@ -178,6 +191,14 @@ public final class WaypointsModule extends WorldModule {
             addHere(player, dim);
         }
         while (backKey != null && backKey.consumeClick()) {
+            takeMeBack(player);
+        }
+        if (pendingAdd) {
+            pendingAdd = false;
+            addHere(player, dim);
+        }
+        if (pendingBack) {
+            pendingBack = false;
             takeMeBack(player);
         }
         if (++ticks % SAVE_CHECK_INTERVAL == 0) {

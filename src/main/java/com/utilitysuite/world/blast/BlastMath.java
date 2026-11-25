@@ -11,6 +11,8 @@ public final class BlastMath {
     public static final float POWER_CHARGED_CREEPER = 6.0f;
     public static final float POWER_TNT = 4.0f;
     public static final float POWER_END_CRYSTAL = 6.0f;
+    /** A bed (or respawn anchor) used outside the Overworld explodes with power 5 and sets fire. */
+    public static final float POWER_BED = 5.0f;
     /** Vanilla creeper max swell (ticks from first hiss to explosion). */
     public static final int CREEPER_FUSE = 30;
     public static final int TNT_FUSE = 80;
@@ -58,5 +60,42 @@ public final class BlastMath {
             LABELS[tenths] = s;
         }
         return s;
+    }
+
+    /**
+     * Vanilla entity damage from an explosion of {@code power} at {@code distance} blocks (explosion centre to the
+     * entity), given the fraction of rays that reach the entity ({@code exposure}, 0..1; vanilla's
+     * {@code Explosion.getSeenPercent}) and the world difficulty (0 peaceful .. 3 hard; explosions scale with
+     * difficulty for players). Armour and protection are ignored, so this is an upper bound.
+     */
+    public static float entityDamage(float power, double distance, double exposure, int difficulty) {
+        double diameter = power * 2.0;
+        if (power <= 0f || distance > diameter) {
+            return 0f;
+        }
+        double impact = (1.0 - distance / diameter) * Math.max(0.0, Math.min(1.0, exposure));
+        float dmg = (float) ((impact * impact + impact) / 2.0 * 7.0 * diameter + 1.0);
+        return switch (difficulty) {
+            case 0 -> 0f;
+            case 1 -> Math.min(dmg / 2f + 1f, dmg);
+            case 3 -> dmg * 1.5f;
+            default -> dmg;
+        };
+    }
+
+    /**
+     * Smallest distance (0.1-block steps) at which {@link #entityDamage} stays below {@code maxDamage}; just past the
+     * damage radius when even the vanilla floor of 1 damage inside the radius is too much.
+     */
+    public static double safeDistance(float power, double maxDamage, double exposure, int difficulty) {
+        double radius = damageRadius(power);
+        int steps = (int) Math.ceil(radius * 10);
+        for (int i = 0; i <= steps; i++) {
+            double d = i / 10.0;
+            if (entityDamage(power, d, exposure, difficulty) < maxDamage) {
+                return d;
+            }
+        }
+        return radius + 0.1;
     }
 }

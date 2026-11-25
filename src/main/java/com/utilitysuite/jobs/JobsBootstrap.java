@@ -89,6 +89,7 @@ public final class JobsBootstrap {
                 () -> ticks,
                 System::currentTimeMillis,
                 BackgroundWorker.executor()), new JobExecutor.Settings());
+        executor.setStationSource(storage); // furnaces / brewing stands remembered when opened
 
         // Typed commands follow the World tab's routing data source unless they say source=...; waypoints are
         // converted 8:1 into the current dimension like the World tab "Go".

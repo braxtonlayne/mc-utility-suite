@@ -219,4 +219,21 @@ public final class MinecraftInputBackend implements InputBackend {
         mc.gameMode.handlePlaceRecipe(p.containerMenu.containerId, recipe.get(), craftAll);
         return true;
     }
+
+    /**
+     * Same as clicking an empty crafter slot in CrafterScreen: update the client menu, then send the vanilla
+     * slot-state packet (MultiPlayerGameMode#handleSlotStateChanged). Only slots 0..8 of an open CrafterMenu.
+     */
+    @Override
+    public boolean setCrafterSlotEnabled(int slot, boolean enabled) {
+        Minecraft mc = Minecraft.getInstance();
+        LocalPlayer p = mc.player;
+        if (p == null || mc.gameMode == null || slot < 0 || slot > 8
+                || !(p.containerMenu instanceof net.minecraft.world.inventory.CrafterMenu menu)) {
+            return false;
+        }
+        menu.setSlotState(slot, enabled);
+        mc.gameMode.handleSlotStateChanged(slot, menu.containerId, enabled);
+        return true;
+    }
 }

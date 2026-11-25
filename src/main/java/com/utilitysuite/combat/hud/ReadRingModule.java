@@ -9,6 +9,7 @@ import com.utilitysuite.core.api.ModuleCategory;
 import com.utilitysuite.core.api.ProfileConfig;
 import com.utilitysuite.core.api.Services;
 import com.utilitysuite.core.api.SettingSpec;
+import com.utilitysuite.core.api.visual.IHudContext;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.client.renderer.MultiBufferSource;
@@ -73,7 +74,10 @@ public final class ReadRingModule implements IModule, IConfigurable {
         float cy = (float) (Mth.lerp(pt, e.yo, e.getY()) + e.getBbHeight() + LIFT - cam.y);
         float cz = (float) (Mth.lerp(pt, e.zo, e.getZ()) - cam.z);
         float charge = read.charge;
-        int arc = ReadRingGeometry.fill(verts, cx, cy, cz, radius, charge, showTilt ? read.tiltX : 0f,
+        // V6 context-morphing HUD: all factors are 1 while that module is off
+        IHudContext ctx = Services.visuals().context();
+        float opacity = this.opacity * ctx.hudAlpha() * ctx.tacticalAlpha();
+        int arc = ReadRingGeometry.fill(verts, cx, cy, cz, radius * ctx.tacticalScale(), charge, showTilt ? read.tiltX : 0f,
                 showTilt ? read.tiltZ : 0f);
 
         MultiBufferSource.BufferSource buffers = mc.renderBuffers().bufferSource();

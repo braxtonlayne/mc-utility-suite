@@ -5,17 +5,26 @@ import com.utilitysuite.core.api.IModuleRegistry;
 import com.utilitysuite.core.api.ISuiteEventBus;
 import com.utilitysuite.core.api.Services;
 import com.utilitysuite.core.input.KeybindManager;
+import com.utilitysuite.world.atmosphere.AtmosphereModule;
 import com.utilitysuite.world.blast.BlastOverlayModule;
+import com.utilitysuite.world.budget.RenderGovernorModule;
+import net.neoforged.neoforge.client.event.RenderFrameEvent;
+import net.neoforged.neoforge.client.event.RenderLivingEvent;
+import com.utilitysuite.world.replay.PipCameraModule;
+import com.utilitysuite.world.replay.ReplayTheatreModule;
 import com.utilitysuite.world.camera.FreelookModule;
 import com.utilitysuite.world.camera.ScoutCameraModule;
 import com.utilitysuite.world.filters.RenderFiltersModule;
 import com.utilitysuite.world.lighting.LightOverlayModule;
 import com.utilitysuite.world.spawn.SpawnGeometryModule;
+import com.utilitysuite.world.stealth.StealthVisionModule;
+import com.utilitysuite.world.fortress.FortressSpawnModule;
 import com.utilitysuite.world.stronghold.StrongholdFinderModule;
 import com.utilitysuite.world.trial.TrialChamberModule;
 import com.utilitysuite.world.knowledge.KnowledgeLedger;
 import com.utilitysuite.world.knowledge.WorldKnowledgeModule;
 import com.utilitysuite.world.knowledge.WorldKnowledgeService;
+import com.utilitysuite.world.atlas.WorldAtlasModule;
 import com.utilitysuite.world.minimap.MinimapModule;
 import com.utilitysuite.world.oresim.OreSimModule;
 import com.utilitysuite.world.overlays.WorldOverlaysModule;
@@ -23,6 +32,8 @@ import com.utilitysuite.world.overlays.WorldRadarModule;
 import com.utilitysuite.world.seed.SeedDiffModule;
 import com.utilitysuite.world.seed.SeedScannerModule;
 import com.utilitysuite.world.seed.SeedLocatorModule;
+import com.utilitysuite.world.sonar.CavityTomographyModule;
+import com.utilitysuite.world.sonar.SonarPulseModule;
 import com.utilitysuite.world.waypoints.WaypointsModule;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
@@ -85,22 +96,49 @@ public final class WorldBootstrap {
         MinimapModule minimap = new MinimapModule();
         LightOverlayModule lightOverlay = new LightOverlayModule();
         BlastOverlayModule blastOverlay = new BlastOverlayModule();
+        com.utilitysuite.world.blast.CrystalExposureModule crystalExposure =
+                new com.utilitysuite.world.blast.CrystalExposureModule();
+        com.utilitysuite.world.overlays.ProjectileRibbonModule projectileRibbon =
+                new com.utilitysuite.world.overlays.ProjectileRibbonModule();
         SpawnGeometryModule spawnGeometry = new SpawnGeometryModule(oreSim::profile);
         SeedLocatorModule seedLocator = new SeedLocatorModule(oreSim::profile);
         FreelookModule freelook = new FreelookModule();
         RenderFiltersModule renderFilters = new RenderFiltersModule();
         StrongholdFinderModule strongholdFinder = new StrongholdFinderModule();
         TrialChamberModule trialChambers = new TrialChamberModule(runtime);
+        SonarPulseModule sonar = new SonarPulseModule(oreSim.predictions());
+        CavityTomographyModule cavities = new CavityTomographyModule();
+        WorldAtlasModule atlas = new WorldAtlasModule();
+        com.utilitysuite.world.redstone.RedstoneTracerModule redstoneTracer =
+                new com.utilitysuite.world.redstone.RedstoneTracerModule();
+        com.utilitysuite.world.changes.ChangeTrackerModule changeTracker =
+                new com.utilitysuite.world.changes.ChangeTrackerModule();
+        StealthVisionModule stealthVision = new StealthVisionModule();
+        FortressSpawnModule fortressSpawns = new FortressSpawnModule(oreSim::profile);
+        AtmosphereModule atmosphere = new AtmosphereModule();
+        RenderGovernorModule governor = new RenderGovernorModule();
+        ReplayTheatreModule replay = new ReplayTheatreModule();
+        PipCameraModule pip = new PipCameraModule();
+        modBus.addListener(RegisterGuiLayersEvent.class, e -> {
+            e.registerBelow(VanillaGuiLayers.CHAT,
+                    ResourceLocation.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID, "pip_camera"), pip);
+            e.registerBelow(VanillaGuiLayers.CHAT,
+                    ResourceLocation.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID, "replay_splits"), replay);
+        });
         modBus.addListener(RegisterGuiLayersEvent.class, e -> e.registerBelow(VanillaGuiLayers.CHAT,
                 ResourceLocation.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID, "minimap"), minimap.hud()));
+        modBus.addListener(RegisterGuiLayersEvent.class, e -> e.registerBelow(VanillaGuiLayers.CHAT,
+                ResourceLocation.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID, "acoustic_edge_cues"),
+                new com.utilitysuite.world.overlays.AcousticEdgeHud(radar)));
         Services.registerWaypoints(waypoints.store());
         waypoints.subscribe(events);
 
         IModuleRegistry registry = Services.modules();
         for (WorldModule m : new WorldModule[] {knowledge, overlays, oreSim, seedScanner, seedDiff, radar, camera,
                 waypoints,
-                minimap, lightOverlay, blastOverlay, spawnGeometry, seedLocator, freelook, renderFilters,
-                strongholdFinder, trialChambers}) {
+                minimap, lightOverlay, blastOverlay, crystalExposure, projectileRibbon, spawnGeometry, seedLocator,
+                freelook, renderFilters, strongholdFinder, trialChambers, sonar, cavities, atlas, redstoneTracer,
+                changeTracker, stealthVision, fortressSpawns, atmosphere, governor, replay, pip}) {
             registry.register(m);
             runtime.add(m);
         }
@@ -108,6 +146,18 @@ public final class WorldBootstrap {
         // Keys: quick toggles from the core's key set, plus three of our own.
         KeybindManager.onPressed(KeybindManager.KeyId.TOGGLE_WORLD_OVERLAYS, overlays::toggleFromKey);
         KeybindManager.onPressed(KeybindManager.KeyId.TOGGLE_SCOUT_CAMERA, camera::toggleFreecam);
+        KeybindManager.onPressed(KeybindManager.KeyId.OPEN_WORLD_ATLAS, atlas::openScreen);
+        com.utilitysuite.core.api.ISuiteActions actions = Services.actionsOrNull();
+        if (actions != null) {
+            actions.register(new com.utilitysuite.core.api.SuiteAction("drop_waypoint", "Drop Waypoint",
+                    "add waypoint mark here", waypoints::requestAddHere));
+            actions.register(new com.utilitysuite.core.api.SuiteAction("take_me_back", "Take Me Back",
+                    "breadcrumbs return trail", waypoints::requestTakeMeBack));
+            actions.register(new com.utilitysuite.core.api.SuiteAction("open_world_atlas", "Open World Atlas",
+                    "map atlas 3d", atlas::openScreen));
+            actions.register(new com.utilitysuite.core.api.SuiteAction("sonar_pulse", "Sonar Pulse",
+                    "lidar scan pulse caves spawners", sonar::pulse));
+        }
         // Created in the registration event (not during parallel mod construction: KeyMapping keeps a global map).
         modBus.addListener((RegisterKeyMappingsEvent e) -> {
             KeyMapping zoomKey = key("zoom", GLFW.GLFW_KEY_Z);
@@ -121,6 +171,27 @@ public final class WorldBootstrap {
             e.register(freelookKey);
             freelook.setKey(freelookKey);
             waypoints.setKeys(addWaypointKey, takeMeBackKey);
+            KeyMapping sonarKey = key("sonar_pulse", InputConstants.UNKNOWN.getValue());
+            KeyMapping cavityKey = key("cavity_rescan", InputConstants.UNKNOWN.getValue());
+            e.register(sonarKey);
+            e.register(cavityKey);
+            sonar.setKey(sonarKey);
+            cavities.setKey(cavityKey);
+            KeyMapping snapshotKey = key("snapshot_chunks", InputConstants.UNKNOWN.getValue());
+            KeyMapping changeDiffKey = key("toggle_change_diff", InputConstants.UNKNOWN.getValue());
+            e.register(snapshotKey);
+            e.register(changeDiffKey);
+            changeTracker.setKeys(snapshotKey, changeDiffKey);
+            KeyMapping replayFreezeKey = key("replay_freeze", InputConstants.UNKNOWN.getValue());
+            KeyMapping parkourStartKey = key("parkour_start", InputConstants.UNKNOWN.getValue());
+            KeyMapping parkourFinishKey = key("parkour_finish", InputConstants.UNKNOWN.getValue());
+            KeyMapping pipParkKey = key("pip_park", InputConstants.UNKNOWN.getValue());
+            e.register(replayFreezeKey);
+            e.register(parkourStartKey);
+            e.register(parkourFinishKey);
+            e.register(pipParkKey);
+            replay.setKeys(replayFreezeKey, parkourStartKey, parkourFinishKey);
+            pip.setParkKey(pipParkKey);
         });
 
         // Mixin hooks.
@@ -136,7 +207,9 @@ public final class WorldBootstrap {
         IEventBus bus = NeoForge.EVENT_BUS;
         bus.addListener(runtime::onTick);
         bus.addListener((net.neoforged.neoforge.client.event.ClientTickEvent.Post e) -> freelook.pollKey());
+        bus.addListener((net.neoforged.neoforge.client.event.ClientTickEvent.Post e) -> replay.pollKeys());
         bus.addListener(runtime::onRender);
+        bus.addListener(projectileRibbon::onRenderLevel);
         bus.addListener((ChunkEvent.Load e) -> {
             runtime.onChunkLoad(e);
             if (e.getLevel().isClientSide()) {
@@ -157,6 +230,10 @@ public final class WorldBootstrap {
         bus.addListener((ViewportEvent.ComputeFov e) -> camera.onComputeFov(e));
         bus.addListener((ViewportEvent.ComputeCameraAngles e) -> freelook.onCameraAngles(e));
         bus.addListener((ViewportEvent.RenderFog e) -> camera.onFog(e));
+        bus.addListener((ViewportEvent.RenderFog e) -> atmosphere.onFog(e));
+        bus.addListener((ViewportEvent.ComputeFogColor e) -> atmosphere.onFogColor(e));
+        bus.addListener((RenderFrameEvent.Pre e) -> governor.onFrame(e));
+        bus.addListener(RenderLivingEvent.Pre.class, e -> governor.onRenderLiving(e));
         bus.addListener((CalculatePlayerTurnEvent e) -> camera.onTurnSensitivity(e));
         bus.addListener((RenderBlockScreenEffectEvent e) -> camera.onScreenEffect(e));
         bus.addListener((RenderGuiLayerEvent.Pre e) -> camera.onGuiLayer(e));

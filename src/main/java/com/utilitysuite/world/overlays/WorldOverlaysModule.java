@@ -201,6 +201,8 @@ public final class WorldOverlaysModule extends WorldModule {
         double r2 = WorldRuntime.sq(renderRadius);
         HighlightIndex idx = scanner.observed;
         int drawn = 0;
+        // FPS governor hint: fewer boxes while the render budget is tight (1.0 = the setting as is).
+        int maxBoxes = Math.max(1, (int) (this.maxBoxes * com.utilitysuite.core.api.RenderBudget.overlayScale()));
         for (int i = 0, n = idx.renderCount(); i < n && drawn < maxBoxes; i++) {
             int v = idx.renderValue(i);
             if ((HighlightIndex.categories(v) & mask) == 0 || exposedOnly && !HighlightIndex.exposed(v)) {

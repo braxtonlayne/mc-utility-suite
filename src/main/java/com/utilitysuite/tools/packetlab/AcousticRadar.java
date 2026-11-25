@@ -13,12 +13,16 @@ public final class AcousticRadar {
     public static final int PISTON = 3;
     public static final int PLAYER = 4;
     public static final int OTHER = 5;
-    public static final int CATEGORY_COUNT = 6;
+    public static final int FOOTSTEP = 6;
+    public static final int EATING = 7;
+    /** Warden heartbeat, sculk sensors and shriekers. */
+    public static final int SCULK = 8;
+    public static final int CATEGORY_COUNT = 9;
 
     public static final int DEFAULT_CAPACITY = 256;
 
     private static final String[] CATEGORY_NAMES = {
-            "Container", "Portal", "Explosion", "Piston", "Player", "Sound"
+            "Container", "Portal", "Explosion", "Redstone", "Player", "Sound", "Footsteps", "Eating", "Sculk"
     };
 
     private static final int[] CATEGORY_COLORS = {
@@ -27,7 +31,10 @@ public final class AcousticRadar {
             0xFFFF4040, // EXPLOSION: red
             0xFF60C0FF, // PISTON: cyan
             0xFFFFFFFF, // PLAYER: white
-            0xFFA0E080  // OTHER: soft green
+            0xFFA0E080, // OTHER: soft green
+            0xFFF0F0A0, // FOOTSTEP: pale yellow
+            0xFFFF90C0, // EATING: pink
+            0xFF20B0C0  // SCULK: deep teal
     };
 
     @FunctionalInterface
@@ -47,6 +54,8 @@ public final class AcousticRadar {
 
     private int head;
     private int size;
+    /** Total pings ever recorded; lets consumers pick up only new entries (see {@link #forEachSince}). */
+    private long written;
 
     public AcousticRadar() {
         this(DEFAULT_CAPACITY);
@@ -81,6 +90,7 @@ public final class AcousticRadar {
         if (size < capacity) {
             size++;
         }
+        written++;
     }
 
     public synchronized void recordGlobalBearing(double dx, double dz, long timestampMs, int categoryId) {
@@ -100,6 +110,7 @@ public final class AcousticRadar {
         if (size < capacity) {
             size++;
         }
+        written++;
     }
 
     /**
@@ -126,9 +137,36 @@ public final class AcousticRadar {
         return visited;
     }
 
+    /**
+     * Visits entries recorded after sequence number {@code sinceSeq}, oldest first (entries already overwritten are
+     * skipped). Allocates nothing.
+     *
+     * @return the sequence number to pass next time
+     */
+    public synchronized long forEachSince(long sinceSeq, Visitor visitor) {
+        if (sinceSeq > written || sinceSeq < 0) {
+            sinceSeq = 0; // sequence from another radar instance
+        }
+        int n = (int) Math.min(written - sinceSeq, size);
+        if (visitor != null) {
+            int start = (head - n + capacity) % capacity;
+            for (int i = 0; i < n; i++) {
+                int idx = (start + i) % capacity;
+                visitor.visit(globalFlag[idx], xs[idx], ys[idx], zs[idx], dxs[idx], dzs[idx], timestamps[idx],
+                        categories[idx]);
+            }
+        }
+        return written;
+    }
+
+    public synchronized long written() {
+        return written;
+    }
+
     public synchronized void clear() {
         head = 0;
         size = 0;
+        // 'written' keeps counting so consumers holding an older sequence number still pick up new pings
     }
 
     public synchronized int size() {
@@ -156,6 +194,15 @@ public final class AcousticRadar {
         if (path == null || path.isEmpty()) {
             return OTHER;
         }
+        if (path.contains("warden") || path.contains("sculk")) {
+            return SCULK;
+        }
+        if (path.endsWith(".eat") || path.contains(".burp") || path.endsWith(".drink")) {
+            return EATING;
+        }
+        if (path.endsWith(".step") || path.contains(".step.")) {
+            return FOOTSTEP;
+        }
         if (path.contains("chest") || path.contains("barrel") || path.contains("shulker_box")
                 || path.contains("hopper") || path.contains("dispenser") || path.contains("dropper")) {
             return CONTAINER;
@@ -168,7 +215,9 @@ public final class AcousticRadar {
                 || path.contains("firework_rocket.blast") || path.contains("firework_rocket.large_blast")) {
             return EXPLOSION;
         }
-        if (path.contains("piston")) {
+        if (path.contains("piston") || path.contains("lever") || path.contains("button.click")
+                || path.contains("pressure_plate") || path.contains("comparator") || path.contains("tripwire")
+                || path.contains("crafter")) {
             return PISTON;
         }
         if (path.startsWith("entity.player.") || path.contains(".player.")) {

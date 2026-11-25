@@ -47,6 +47,12 @@ public final class HudHost implements IHudHost {
     public boolean enabled = true;
     /** Samples {@link FrameClock} at the start of each frame; tests turn it off and drive the clock themselves. */
     public boolean sampleClock = true;
+    /**
+     * The context-morphing HUD (V6), or null. Advanced once per drawn frame; its {@link HudContextMachine#hudAlpha}
+     * multiplies every element that is not instant (danger states and toasts never fade).
+     */
+    public HudContextMachine context;
+    private float contextAlpha = 1f;
 
     public HudHost() {
         this(AnimStore.SHARED);
@@ -161,6 +167,13 @@ public final class HudHost implements IHudHost {
         if (sampleClock) {
             FrameClock.sample();
         }
+        HudContextMachine ctx = context;
+        if (ctx != null) {
+            ctx.advance(FrameClock.dtSeconds());
+            contextAlpha = ctx.hudAlpha();
+        } else {
+            contextAlpha = 1f;
+        }
         float sw = c.screenWidth();
         float sh = c.screenHeight();
         for (HudSlot slot : SLOTS) {
@@ -239,6 +252,6 @@ public final class HudHost implements IHudHost {
         if (instant[i]) {
             return 1f;
         }
-        return anim.progress(fadeKey[i], true, FADE_IN_S);
+        return anim.progress(fadeKey[i], true, FADE_IN_S) * contextAlpha;
     }
 }

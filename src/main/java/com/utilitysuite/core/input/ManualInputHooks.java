@@ -142,6 +142,9 @@ public final class ManualInputHooks {
      * already turns toward the ideal leaves it less to add). The co-steer's part is never scaled by the gain.
      */
     public static double onTurnYaw(double yawArg) {
+        if (LookCapture.active()) {
+            return LookCapture.yaw(yawArg); // action wheel open: the motion selects a slice, the camera stays
+        }
         ManualInputHooks h = instance;
         if (h == null) {
             return yawArg;
@@ -159,6 +162,9 @@ public final class ManualInputHooks {
      * math as yaw. Unchanged (the same double) unless a pitch request is live and the mouse moved.
      */
     public static double onTurnPitch(double pitchArg) {
+        if (LookCapture.active()) {
+            return LookCapture.pitch(pitchArg);
+        }
         ManualInputHooks h = instance;
         if (h == null || pitchArg == 0.0) {
             return pitchArg;

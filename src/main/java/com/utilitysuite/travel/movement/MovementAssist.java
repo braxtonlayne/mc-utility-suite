@@ -112,6 +112,7 @@ public final class MovementAssist implements IModule, IConfigurable, com.utility
     static final String K_CLUTCH_ELYTRA = "clutch_elytra";
     static final String K_GLIDE_GUARD = "glide_guard";
     static final String K_WATER_STEER = "clutch_water_steer";
+    static final String K_CLUTCH_CHAIN = "clutch_fallback_chain";
     static final String K_INTENT = "intent_assist";
     static final String K_TURN_GAIN = "turn_gain";
     static final String K_TURN_GAIN_STRENGTH = "turn_gain_strength";
@@ -1235,6 +1236,7 @@ public final class MovementAssist implements IModule, IConfigurable, com.utility
         clutch.elytraDeploy = p.getBool(ID, K_CLUTCH_ELYTRA, true);
         clutch.glideGuard = p.getBool(ID, K_GLIDE_GUARD, true);
         clutch.waterSteer = p.getBool(ID, K_WATER_STEER, true);
+        clutch.fallbackChain = p.getBool(ID, K_CLUTCH_CHAIN, false);
         if (!clutchOn) {
             clutch.releaseAll();
         }
@@ -1371,6 +1373,10 @@ public final class MovementAssist implements IModule, IConfigurable, com.utility
                 SettingSpec.bool(K_WATER_STEER, "Steer into water", true, "",
                         "Falling hard with water a few blocks from the landing: hold the movement keys that carry"
                                 + " you into it (keys only, the camera stays)."),
+                SettingSpec.bool(K_CLUTCH_CHAIN, "Fallback clutches", false, "",
+                        "When no water, block, elytra or water steer can break a fall: a boat or twisting vines"
+                                + " placed on the landing block, else a wind charge thrown straight down just before"
+                                + " impact. Each only when it is in the hotbar and the smoothed look-down fits in time."),
                 SettingSpec.bool(K_GLIDE_GUARD, "Glide pull-up", true, "",
                         "Gliding toward the ground fast enough to get hurt: raise the nose (smoothed) until safe."),
                 SettingSpec.bool(K_ESCAPE, "Escape path", true, "Overlay",

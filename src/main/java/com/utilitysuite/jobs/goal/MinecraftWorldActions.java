@@ -8,7 +8,12 @@ import com.utilitysuite.core.api.NestedContainer;
 import com.utilitysuite.core.api.RotationTarget;
 import com.utilitysuite.core.api.Services;
 import com.utilitysuite.core.api.SimKey;
+import com.utilitysuite.jobs.planner.BrewingPlanner;
 import com.utilitysuite.jobs.planner.FuelTable;
+import com.utilitysuite.jobs.planner.FurnaceBatchPlanner;
+import com.utilitysuite.jobs.planner.SlotTransfer;
+import com.utilitysuite.jobs.planner.StepKind;
+import net.minecraft.world.inventory.BrewingStandMenu;
 import com.utilitysuite.jobs.planner.Items;
 import com.utilitysuite.jobs.planner.PlanStep;
 import com.utilitysuite.jobs.storage.ShulkerItems;
@@ -69,7 +74,7 @@ import java.util.function.Supplier;
  */
 public final class MinecraftWorldActions implements WorldActions {
 
-    private enum Op { NONE, CRAFT, SMELT, FETCH, DEPOSIT, SHULKER }
+    private enum Op { NONE, CRAFT, SMELT, FETCH, DEPOSIT, SHULKER, STATION }
 
     private enum Phase { FIND, SELECT_ITEM, CLEAR_OBSTRUCTION, CLEAR_WALK, AIM_PLACE, WAIT_PLACED, OPEN, WAIT_OPEN, WORK, WAIT_CLICKS, COLLECT, BREAK, PICKUP, DONE }
 
@@ -297,7 +302,13 @@ public final class MinecraftWorldActions implements WorldActions {
                     afterClicks(player);
                 }
             }
-            case COLLECT -> collectSmelted(player);
+            case COLLECT -> {
+                if (op == Op.STATION) {
+                    stationTick(player);
+                } else {
+                    collectSmelted(player);
+                }
+            }
             case BREAK -> breakBox(mc, player);
             case PICKUP -> pickUpBox(player);
             case DONE -> {
@@ -507,8 +518,214 @@ public final class MinecraftWorldActions implements WorldActions {
                 phase = Phase.WAIT_CLICKS;
                 timer = 0;
             }
+            case STATION -> stationWork(player, menu);
             default -> fail("No operation");
         }
+    }
+
+    // ---- station steps (furnace arrays, brewing) ----------------------------------------------------------------------
+
+    /** BREW: index of the next ingredient in {@code step.blockIds()} (0 is the start potion key). */
+    private int brewIndex;
+    /** Ticks the current station wait may take before it fails. */
+    private int stationLimit;
+    private final Map<String, Integer> stationGot = new LinkedHashMap<>();
+
+    @Override
+    public void beginStation(PlanStep s, ControlLease l) {
+        start(Op.STATION, s, l);
+        stationGot.clear();
+        brewIndex = 1;
+        if (s.kind() == StepKind.FILL_BOTTLES) {
+            // Using bottles on water needs aimed world interaction, which is not automated yet: only accept bottles
+            // the player already filled.
+            int have = inv.counts().getOrDefault(BrewingPlanner.WATER, 0);
+            if (have >= s.count()) {
+                transferred = Map.of(s.itemId(), have);
+                result = Result.DONE;
+                phase = Phase.DONE;
+                op = Op.NONE;
+            } else {
+                fail("Fill " + (s.count() - have) + " water bottles by hand (bottle filling is not automated yet)");
+            }
+            return;
+        }
+        beginTransfer(s.storagePos(), Map.of());
+    }
+
+    private void stationWork(LocalPlayer player, AbstractContainerMenu menu) {
+        Inventory pinv = player.getInventory();
+        switch (step.kind()) {
+            case FURNACE_LOAD -> {
+                if (!(menu instanceof AbstractFurnaceMenu)) {
+                    fail("Opened block is not a furnace");
+                    return;
+                }
+                int moved = moveFromInventory(menu, pinv, step.itemId(), step.count(), FurnaceBatchPlanner.INPUT_SLOT);
+                if (moved < step.count()) {
+                    message = "only " + moved + "/" + step.count() + " " + step.itemId() + " carried";
+                }
+                if (!step.blockIds().isEmpty() && step.crafts() > 0) {
+                    moveFromInventory(menu, pinv, step.blockIds().get(0), step.crafts(), FurnaceBatchPlanner.FUEL_SLOT);
+                }
+                if (moved == 0) {
+                    fail("No " + step.itemId() + " carried to load");
+                    return;
+                }
+                phase = Phase.WAIT_CLICKS;
+                timer = 0;
+            }
+            case FURNACE_COLLECT -> {
+                if (!(menu instanceof AbstractFurnaceMenu)) {
+                    fail("Opened block is not a furnace");
+                    return;
+                }
+                stationLimit = Math.max(200, step.crafts()) + 400;
+                phase = Phase.COLLECT;
+                timer = 0;
+            }
+            case BREW -> {
+                if (!(menu instanceof BrewingStandMenu bm)) {
+                    fail("Opened block is not a brewing stand");
+                    return;
+                }
+                String startKey = step.blockIds().isEmpty() ? BrewingPlanner.WATER : step.blockIds().get(0);
+                int placed = 0;
+                for (int b = 0; b < BrewingPlanner.BOTTLE_SLOTS.length && placed < step.count(); b++) {
+                    if (menu.getSlot(BrewingPlanner.BOTTLE_SLOTS[b]).hasItem()) {
+                        continue;
+                    }
+                    int src = findPotion(menu, pinv, startKey, placed); // clicks are queued: skip slots already used
+                    if (src < 0) {
+                        break;
+                    }
+                    Services.clicker().queueClick(lease, src, 0, IContainerClicker.Click.PICKUP);
+                    Services.clicker().queueClick(lease, BrewingPlanner.BOTTLE_SLOTS[b], 0,
+                            IContainerClicker.Click.PICKUP);
+                    placed++;
+                }
+                if (placed == 0) {
+                    fail("No " + startKey + " bottles carried");
+                    return;
+                }
+                if (bm.getFuel() <= 0 && !menu.getSlot(BrewingPlanner.FUEL_SLOT).hasItem()) {
+                    moveFromInventory(menu, pinv, BrewingPlanner.BLAZE_POWDER, 1, BrewingPlanner.FUEL_SLOT);
+                }
+                stationLimit = 60; // first ingredient goes in once the bottle clicks are done
+                phase = Phase.COLLECT;
+                timer = 0;
+            }
+            default -> fail("Unsupported station step " + step.kind());
+        }
+    }
+
+    /** Polled in COLLECT: furnace output collection, or the brew sequence (one ingredient per finished brew). */
+    private void stationTick(LocalPlayer player) {
+        AbstractContainerMenu menu = player.containerMenu;
+        if (Services.clicker().pending() > 0) {
+            return;
+        }
+        if (step.kind() == StepKind.FURNACE_COLLECT) {
+            if (!(menu instanceof AbstractFurnaceMenu)) {
+                fail("Furnace closed while collecting");
+                return;
+            }
+            Slot out = menu.getSlot(AbstractFurnaceMenu.RESULT_SLOT);
+            boolean inputLeft = menu.getSlot(AbstractFurnaceMenu.INGREDIENT_SLOT).hasItem();
+            if (timer % 10 == 0 && out.hasItem()) {
+                stationGot.merge(inv.idOf(out.getItem().getItem()), out.getItem().getCount(), Integer::sum);
+                Services.clicker().queueClick(lease, AbstractFurnaceMenu.RESULT_SLOT, 0,
+                        IContainerClicker.Click.QUICK_MOVE);
+                return;
+            }
+            int got = 0;
+            for (int v : stationGot.values()) {
+                got += v;
+            }
+            if (got >= step.count() || (!inputLeft && !out.hasItem() && timer > 10)) {
+                transferred = Map.copyOf(stationGot);
+                finish(player, "Collected " + transferred);
+            } else if (timer > stationLimit) {
+                transferred = Map.copyOf(stationGot);
+                finish(player, "Collect timed out with " + got + "/" + step.count());
+            }
+            return;
+        }
+        // BREW
+        if (!(menu instanceof BrewingStandMenu bm)) {
+            fail("Brewing stand closed while brewing");
+            return;
+        }
+        if (bm.getBrewingTicks() > 0 || menu.getSlot(BrewingPlanner.INGREDIENT_SLOT).hasItem()) {
+            if (timer > stationLimit) {
+                fail("Brew did not finish (no fuel, or the ingredient does not apply)");
+            }
+            return;
+        }
+        if (brewIndex < step.blockIds().size()) {
+            if (bm.getFuel() <= 0 && moveFromInventory(menu, player.getInventory(), BrewingPlanner.BLAZE_POWDER, 1,
+                    BrewingPlanner.FUEL_SLOT) == 0 && !menu.getSlot(BrewingPlanner.FUEL_SLOT).hasItem()) {
+                fail("Out of blaze powder");
+                return;
+            }
+            String ing = step.blockIds().get(brewIndex++);
+            if (moveFromInventory(menu, player.getInventory(), ing, 1, BrewingPlanner.INGREDIENT_SLOT) == 0) {
+                fail("Missing " + ing + " for the brew");
+                return;
+            }
+            stationLimit = timer + BrewingPlanner.BREW_TICKS + 200;
+            return;
+        }
+        // all brews done: take the bottles
+        int bottles = 0;
+        for (int b : BrewingPlanner.BOTTLE_SLOTS) {
+            Slot s = menu.getSlot(b);
+            if (s.hasItem()) {
+                String id = inv.idOf(s.getItem().getItem());
+                String key = MinecraftInventoryView.potionKey(s.getItem(), id);
+                if (step.itemId().equals(key)) {
+                    bottles++;
+                }
+                Services.clicker().queueClick(lease, b, 0, IContainerClicker.Click.QUICK_MOVE);
+            }
+        }
+        transferred = bottles > 0 ? Map.of(step.itemId(), bottles) : Map.of();
+        phase = Phase.WAIT_CLICKS;
+        timer = 0;
+    }
+
+    /** Queues exact-count moves of {@code itemId} from the player's slots into {@code dst}; returns the count. */
+    private int moveFromInventory(AbstractContainerMenu menu, Inventory pinv, String itemId, int count, int dst) {
+        int left = count;
+        for (Slot s : menu.slots) {
+            if (left <= 0) {
+                break;
+            }
+            if (s.container != pinv || !s.hasItem() || !itemId.equals(inv.idOf(s.getItem().getItem()))) {
+                continue;
+            }
+            int n = Math.min(left, s.getItem().getCount());
+            for (SlotTransfer.Step c : SlotTransfer.exact(s.index, s.getItem().getCount(), dst, n)) {
+                Services.clicker().queueClick(lease, c.slot(), c.button(), c.click());
+            }
+            left -= n;
+        }
+        return count - left;
+    }
+
+    /** Player slot holding a bottle of the potion key, skipping the first {@code skip} matches; -1 when none. */
+    private int findPotion(AbstractContainerMenu menu, Inventory pinv, String key, int skip) {
+        int seen = 0;
+        for (Slot s : menu.slots) {
+            if (s.container != pinv || !s.hasItem()) {
+                continue;
+            }
+            String id = inv.idOf(s.getItem().getItem());
+            if (key.equals(MinecraftInventoryView.potionKey(s.getItem(), id)) && seen++ >= skip) {
+                return s.index;
+            }
+        }
+        return -1;
     }
 
     /**

@@ -19,6 +19,7 @@ import com.utilitysuite.combat.assistant.stages.HealWindowStage;
 import com.utilitysuite.combat.assistant.stages.ShieldDuelStage;
 import com.utilitysuite.combat.assistant.stages.ThreatFightStage;
 import com.utilitysuite.combat.coach.ThreatTracker;
+import com.utilitysuite.combat.hud.ChoreographyModule;
 import com.utilitysuite.combat.hud.ReadRingModule;
 import com.utilitysuite.combat.hud.TargetHud;
 import com.utilitysuite.combat.reflex.CombatReflexes;
@@ -102,8 +103,31 @@ public final class CombatBootstrap {
         Services.modules().register(allies);
         Services.modules().register(reflexes);
         Services.modules().register(trigger);
+        com.utilitysuite.combat.boss.BossHelperModule bossHelper = new com.utilitysuite.combat.boss.BossHelperModule();
+        Services.modules().register(bossHelper);
+        NeoForge.EVENT_BUS.addListener(bossHelper::onJoin);
+        NeoForge.EVENT_BUS.addListener(bossHelper::onLeave);
         Services.modules().register(targetHud);
         Services.modules().register(readRing);
+        ChoreographyModule choreography = new ChoreographyModule(
+                () -> {
+                    int t = assistant.targetId();
+                    return t >= 0 ? t : assistant.recentOpponentId();
+                });
+        Services.modules().register(choreography);
+        NeoForge.EVENT_BUS.addListener(choreography::onRenderLevel);
+        // M1 kinetic chain calculator (visual only, off by default)
+        com.utilitysuite.combat.hud.KineticChainModule kinetic = new com.utilitysuite.combat.hud.KineticChainModule();
+        Services.modules().register(kinetic);
+        NeoForge.EVENT_BUS.addListener(kinetic::onRenderLevel); // the readout is a HUD-host element (self-registers)
+        // Holo audio cues (off by default): reads the coach readout, so it is registered (and ticks) after the coach.
+        com.utilitysuite.combat.cues.HoloAudioCues cues = new com.utilitysuite.combat.cues.HoloAudioCues(
+                coach.readout());
+        Services.modules().register(cues);
+        Services.events().subscribe(com.utilitysuite.core.api.SuiteEvent.LeaseGranted.class,
+                e -> cues.onLeaseGranted());
+        Services.events().subscribe(com.utilitysuite.core.api.SuiteEvent.LeaseEnded.class,
+                e -> cues.onLeaseEnded(e.reason()));
         assistant.bindModuleRegistry(Services.modules());
 
         CombatEventBridge.install(assistant);

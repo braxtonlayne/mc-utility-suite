@@ -31,6 +31,7 @@ public final class Services {
     private static volatile IPlannedJump plannedJump;
     private static volatile IBlockChangeFeed blockChanges;
     private static volatile IAllyLookup allies;
+    private static volatile ISuiteActions actions;
     private static volatile IServerHealth serverHealth;
 
     private Services() {
@@ -125,6 +126,11 @@ public final class Services {
     public static void registerPlannedJump(IPlannedJump s) { plannedJump = s; }
     public static void registerBlockChanges(IBlockChangeFeed s) { blockChanges = s; }
     public static void registerAllies(IAllyLookup s) { allies = s; }
+    public static void registerActions(ISuiteActions s) { actions = s; }
+
+    /** Named suite actions (radial wheel, command palette), or null before the core registered the registry. */
+    public static ISuiteActions actionsOrNull() { return actions; }
+
     public static void registerServerHealth(IServerHealth s) { serverHealth = s; }
 
     /** Lag / TPS-drop guard signal. Never null: {@link IServerHealth#NONE} until the guard registers. */
@@ -139,7 +145,7 @@ public final class Services {
         navigator = null; worldKnowledge = null; storage = null; waypoints = null; autopilot = null; humanizer = null;
         bodySims = null; routePlanner = null; routeRunner = null; manualLook = null;
         sharedControl = null; visuals = null; plannedJump = null; blockChanges = null;
-        allies = null; serverHealth = null;
+        allies = null; actions = null; serverHealth = null;
     }
 
     private static <T> T require(T value, String name) {
