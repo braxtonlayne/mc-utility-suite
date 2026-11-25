@@ -68,6 +68,7 @@ public final class CombatSettings {
     public static final String FEINTS = "feints";
     public static final String RANK_DIAL = "rank_dial";
     public static final String PEARL_INTERCEPT = "pearl_intercept";
+    public static final String RANGED_AIM = "ranged_aim";
     public static final String HIT_CHOICE = "hit_choice";
     public static final String DUEL_MODE = "duel_mode";
     public static final String EXACT_WORLD = "exact_world";
@@ -129,6 +130,11 @@ public final class CombatSettings {
     public boolean feints = true;
     public boolean rankDial = false;
     public boolean pearlIntercept = true;
+    /**
+     * Bow, crossbow or trident in the main hand, target beyond melee reach and in sight: aim for the drop and lead
+     * ({@code RangedBallistics}), draw, release at full charge on a reached solution. Off by default.
+     */
+    public boolean rangedAim = false;
     /** Kind of hit to throw: AUTO picks per hit (sprint knockback, crit, sweep); the others force one. */
     public HitPlanner.Policy hitChoice = HitPlanner.Policy.AUTO;
     /** Never disengage: fleeing becomes a reset, range and sight never end the fight while the target is loaded. */
@@ -207,6 +213,7 @@ public final class CombatSettings {
         feints = p.getBool(id, FEINTS, true);
         rankDial = p.getBool(id, RANK_DIAL, false);
         pearlIntercept = p.getBool(id, PEARL_INTERCEPT, true);
+        rangedAim = p.getBool(id, RANGED_AIM, false);
         hitChoice = parseEnum(p.getString(id, HIT_CHOICE, ""), HitPlanner.Policy.AUTO);
         duelMode = p.getBool(id, DUEL_MODE, false);
         exactWorld = p.getBool(id, EXACT_WORLD, false);
@@ -317,6 +324,10 @@ public final class CombatSettings {
                 SettingSpec.bool(PEARL_INTERCEPT, "Chase ender pearls", true, "Tactics",
                         "When the target throws an ender pearl, run to where it will land instead of walking after"
                                 + " it. Needs Run routes when chasing or fleeing."),
+                SettingSpec.bool(RANGED_AIM, "Ranged aim (bow, crossbow, trident)", false, "Tactics",
+                        "With a bow, crossbow or trident in hand and the target out of melee reach and in sight: aim"
+                                + " for the arrow drop and the target's movement, draw, and release at full charge"
+                                + " once the smoothed aim is on the solution."),
                 SettingSpec.bool(AUTO_WEAPON, "Draw the best weapon", true, "Tactics",
                         "When a fight starts, switch to the hotbar weapon with the most damage per second."),
                 SettingSpec.bool(TACTIC_UTILITY, "Read the fight", true, "Tactics",

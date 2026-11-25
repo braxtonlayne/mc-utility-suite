@@ -78,6 +78,8 @@ public final class CombatBootstrap {
 
         // fight stages (settings must be in the module's list before it is registered)
         assistant.addStage(new ThreatFightStage(new McNearbyThreats())); // PRE_AIM
+        assistant.addStage(new com.utilitysuite.combat.assistant.stages.RangedShotStage(
+                new com.utilitysuite.combat.assistant.mc.McRangedFacts()));  // PRE_AIM, off unless ranged_aim
         ShieldDuelStage shieldDuel = new ShieldDuelStage(new McShieldFacts());
         assistant.addStage(shieldDuel);                                  // PRE_SWING
         reflexes.feedShieldStage(shieldDuel.threatFeed()); // one USE owner in a fight; the reflex keeps sensing
