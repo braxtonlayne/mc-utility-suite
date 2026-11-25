@@ -118,6 +118,26 @@ public final class StorageMemory implements IStorageIndex, StationJobPlanner.Sta
         return ender;
     }
 
+    /** True when the player carries an ender chest and a Silk Touch pickaxe (set by the module, read any thread). */
+    private volatile java.util.function.BooleanSupplier carriedEnderAccess = () -> false;
+
+    public void setCarriedEnderAccess(java.util.function.BooleanSupplier access) {
+        this.carriedEnderAccess = access == null ? () -> false : access;
+    }
+
+    @Override
+    public StorageEntry carriedEnderChest(String dimension) {
+        EnderChestMirror.Snapshot s = ender.snapshot();
+        if (!enderAsSource || !s.known() || !carriedEnderAccess.getAsBoolean()) {
+            return null;
+        }
+        if (clock.getAsLong() - s.timestampMillis() > maxAgeMillis) {
+            return null;
+        }
+        return new StorageEntry(com.utilitysuite.jobs.planner.EnderChestPlanner.CARRIED_POS, dimension, ENDER_CHEST,
+                s.contents(), s.timestampMillis(), false, s.nested());
+    }
+
     /**
      * When on, every remembered ender chest shows the mirrored contents in the snapshot (so the planner can FETCH from
      * the nearest one, including nested shulker boxes); {@link #count} counts the mirror once.

@@ -74,6 +74,7 @@ public final class JobsBootstrap {
 
         MinecraftInventoryView inventory = new MinecraftInventoryView();
         MinecraftWorldActions actions = new MinecraftWorldActions(() -> adapter, inventory);
+        storage.setCarriedEnderAccess(inventory::canUseCarriedEnderChest); // PLACE_CARRIED only with Silk Touch
 
         JobExecutor executor = new JobExecutor(new JobExecutor.Deps(
                 Services.arbiter(),

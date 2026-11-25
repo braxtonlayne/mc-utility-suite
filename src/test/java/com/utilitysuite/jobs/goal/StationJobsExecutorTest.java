@@ -151,6 +151,56 @@ class StationJobsExecutorTest {
     }
 
     @Test
+    void carriedEnderChestIsALastResortSourceOnlyWithSilkTouch() {
+        String pearl = "minecraft:ender_pearl";
+        long from = PackedPos.pack(0, 64, 0);
+        boolean[] access = {false};
+        storage.setCarriedEnderAccess(() -> access[0]);
+        storage.setEnderAsSource(true);
+        // the mirror is known (recorded at a chest in another dimension), no ender chest stands here
+        storage.record("minecraft:the_nether", PackedPos.pack(0, 70, 0), StorageMemory.ENDER_CHEST,
+                Map.of(pearl, 8), List.of());
+        PlanContext none = PlanContext.capture(inv, storage, DIM, from, CostProfile.FASTEST, Map.of(), Set.of(),
+                Set.of(), false);
+        assertTrue(none.storage().isEmpty(), "no carried chest or no Silk Touch: never offered");
+
+        access[0] = true;
+        PlanContext ctx = PlanContext.capture(inv, storage, DIM, from, CostProfile.FASTEST, Map.of(), Set.of(),
+                Set.of(), false);
+        assertEquals(1, ctx.storage().size());
+        assertEquals(com.utilitysuite.jobs.planner.EnderChestPlanner.CARRIED_POS, ctx.storage().get(0).packedPos());
+        assertEquals(8, ctx.storage().get(0).totalCount(pearl));
+
+        // a placed ender chest in range wins over placing the carried one
+        long placed = PackedPos.pack(3, 64, 0);
+        storage.record(DIM, placed, StorageMemory.ENDER_CHEST, Map.of(pearl, 8), List.of());
+        PlanContext near = PlanContext.capture(inv, storage, DIM, from, CostProfile.FASTEST, Map.of(), Set.of(),
+                Set.of(), false);
+        assertEquals(1, near.storage().size());
+        assertEquals(placed, near.storage().get(0).packedPos());
+        // once the carried fetch failed it is excluded like any other container
+        assertTrue(PlanContext.capture(inv, new StorageMemory(() -> 1000L, Long.MAX_VALUE / 4), DIM, from,
+                CostProfile.FASTEST, Map.of(), Set.of(), Set.of(), false).storage().isEmpty());
+    }
+
+    @Test
+    void carriedEnderChestFetchGoesThroughTheExecutor() {
+        String pearl = "minecraft:ender_pearl";
+        storage.setCarriedEnderAccess(() -> true);
+        storage.setEnderAsSource(true);
+        storage.record("minecraft:the_nether", PackedPos.pack(0, 70, 0), StorageMemory.ENDER_CHEST,
+                Map.of(pearl, 8), List.of());
+        actions.realChests.put(com.utilitysuite.jobs.planner.EnderChestPlanner.CARRIED_POS,
+                new java.util.HashMap<>(Map.of(pearl, 8)));
+        long id = exec.submit(new GoalRequest.Gather(pearl, 5, CostProfile.FASTEST, DataSourceMode.OBSERVED_ONLY));
+        tick(60);
+        assertTrue(actions.log.stream().anyMatch(s -> s.startsWith("fetch ") && s.contains(pearl)),
+                actions.log.toString());
+        assertEquals(5, inv.count(pearl));
+        assertEquals(JobStatus.COMPLETED, status(id));
+    }
+
+    @Test
     void parserBuildsStationGoals() {
         ItemNameMatcher m = new ItemNameMatcher(List.of(IRON, "minecraft:iron_ingot"));
         GoalParser p = new GoalParser(() -> m, n -> Optional.empty(), () -> DataSourceMode.OBSERVED_ONLY,

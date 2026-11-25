@@ -21,6 +21,16 @@ public final class EnderChestPlanner {
 
     public static final String ENDER_CHEST = "minecraft:ender_chest";
 
+    /**
+     * Storage position of the carried ender chest (PLACE_CARRIED): a FETCH from here places the carried chest next to
+     * the player, takes the items and mines the chest back with Silk Touch. Never a real block position.
+     */
+    public static final long CARRIED_POS = Long.MIN_VALUE + 1;
+
+    public static boolean isCarried(long packedPos) {
+        return packedPos == CARRIED_POS;
+    }
+
     private EnderChestPlanner() {
     }
 
