@@ -79,6 +79,9 @@ public final class TravelBootstrap {
                 new com.utilitysuite.travel.movement.GhostLineModule(movement, routeRunner);
         Services.modules().register(ghostLine);
         NeoForge.EVENT_BUS.addListener(ghostLine::onRenderLevel);
+        com.utilitysuite.travel.autopilot.BoatLineModule boatLine = new com.utilitysuite.travel.autopilot.BoatLineModule();
+        Services.modules().register(boatLine);
+        NeoForge.EVENT_BUS.addListener(boatLine::onRenderLevel);
         onAutopilotKey = autopilot::toggle;
         onBridgeKey = bridge::toggle;
         onBridgeMarkKey = bridge::mark;
