@@ -59,37 +59,157 @@ public final class PiglinAdvisor {
      */
     public static Decision barter(int ingotsInHand, List<Piglin> piglins, List<Drop> drops, int ticksSinceGive,
                                   int cadenceTicks, double collectRange, Set<String> pinnedJunk) {
+        BarterInputs in = new BarterInputs(Math.max(1, piglins.size()), Math.max(1, drops.size()));
         for (int i = 0; i < piglins.size(); i++) {
             Piglin p = piglins.get(i);
-            if (p.angry() && p.distance() <= AGGRO_RANGE) {
-                return Decision.NONE; // never barter next to a hostile piglin
+            in.addPiglin(p.entityId(), p.distance(), p.adult(), p.angry(), p.admiring());
+        }
+        for (int i = 0; i < drops.size(); i++) {
+            Drop d = drops.get(i);
+            in.addDrop(d.entityId(), d.distance(), isJunk(d.itemId(), pinnedJunk));
+        }
+        MutableDecision out = new MutableDecision();
+        barter(ingotsInHand, in, ticksSinceGive, cadenceTicks, collectRange, out);
+        return switch (out.act) {
+            case NONE -> Decision.NONE;
+            case WAIT -> Decision.WAIT;
+            default -> new Decision(out.act, out.targetId);
+        };
+    }
+
+    /**
+     * Reused, primitive decision inputs for the allocation-free {@link #barter(int, BarterInputs, int, int, double,
+     * MutableDecision)}: the client clears and refills one instance at the barter cadence. Entries past the capacity
+     * are dropped (the caller's own scan is capped the same way). Single thread.
+     */
+    public static final class BarterInputs {
+        final int[] piglinId;
+        final double[] piglinDist;
+        final boolean[] piglinAdult;
+        final boolean[] piglinAngry;
+        final boolean[] piglinAdmiring;
+        int piglins;
+        final int[] dropId;
+        final double[] dropDist;
+        final boolean[] dropJunk;
+        int drops;
+
+        public BarterInputs(int maxPiglins, int maxDrops) {
+            piglinId = new int[maxPiglins];
+            piglinDist = new double[maxPiglins];
+            piglinAdult = new boolean[maxPiglins];
+            piglinAngry = new boolean[maxPiglins];
+            piglinAdmiring = new boolean[maxPiglins];
+            dropId = new int[maxDrops];
+            dropDist = new double[maxDrops];
+            dropJunk = new boolean[maxDrops];
+        }
+
+        public void clear() {
+            piglins = 0;
+            drops = 0;
+        }
+
+        /** @return false when full (the piglin is ignored) */
+        public boolean addPiglin(int entityId, double distance, boolean adult, boolean angry, boolean admiring) {
+            int i = piglins;
+            if (i >= piglinId.length) {
+                return false;
+            }
+            piglinId[i] = entityId;
+            piglinDist[i] = distance;
+            piglinAdult[i] = adult;
+            piglinAngry[i] = angry;
+            piglinAdmiring[i] = admiring;
+            piglins = i + 1;
+            return true;
+        }
+
+        /** @param junk {@link #isJunk} for the drop's item (the client caches it per item type) */
+        public boolean addDrop(int entityId, double distance, boolean junk) {
+            int i = drops;
+            if (i >= dropId.length) {
+                return false;
+            }
+            dropId[i] = entityId;
+            dropDist[i] = distance;
+            dropJunk[i] = junk;
+            drops = i + 1;
+            return true;
+        }
+
+        public int piglinCount() {
+            return piglins;
+        }
+
+        public int dropCount() {
+            return drops;
+        }
+    }
+
+    /** Reused result holder of the allocation-free barter step. */
+    public static final class MutableDecision {
+        public Act act = Act.NONE;
+        /** Piglin to give/toss to, or the item entity to walk to; -1 for none. */
+        public int targetId = -1;
+
+        void set(Act a, int id) {
+            act = a;
+            targetId = id;
+        }
+    }
+
+    /**
+     * Allocation-free bartering loop step (same rules as the list-based {@link #barter(int, List, List, int, int,
+     * double, Set)}, which delegates here): writes the decision into {@code out} and returns its act.
+     */
+    public static Act barter(int ingotsInHand, BarterInputs in, int ticksSinceGive, int cadenceTicks,
+                             double collectRange, MutableDecision out) {
+        int n = in.piglins;
+        for (int i = 0; i < n; i++) {
+            if (in.piglinAngry[i] && in.piglinDist[i] <= AGGRO_RANGE) {
+                out.set(Act.NONE, -1); // never barter next to a hostile piglin
+                return Act.NONE;
             }
         }
-        Drop drop = bestDrop(drops, collectRange, pinnedJunk);
+        int drop = -1;
+        for (int i = 0; i < in.drops; i++) {
+            if (in.dropDist[i] > collectRange || in.dropJunk[i]) {
+                continue;
+            }
+            if (drop < 0 || in.dropDist[i] < in.dropDist[drop]) {
+                drop = i;
+            }
+        }
         if (ingotsInHand > 0 && ticksSinceGive >= cadenceTicks) {
-            Piglin best = null;
-            for (int i = 0; i < piglins.size(); i++) {
-                Piglin p = piglins.get(i);
-                if (!p.adult() || p.angry() || p.admiring() || p.distance() > TOSS_RANGE) {
+            int best = -1;
+            for (int i = 0; i < n; i++) {
+                if (!in.piglinAdult[i] || in.piglinAngry[i] || in.piglinAdmiring[i] || in.piglinDist[i] > TOSS_RANGE) {
                     continue;
                 }
-                if (best == null || p.distance() < best.distance()) {
-                    best = p;
+                if (best < 0 || in.piglinDist[i] < in.piglinDist[best]) {
+                    best = i;
                 }
             }
-            if (best != null) {
-                return new Decision(best.distance() <= GIVE_RANGE ? Act.GIVE : Act.TOSS, best.entityId());
+            if (best >= 0) {
+                Act a = in.piglinDist[best] <= GIVE_RANGE ? Act.GIVE : Act.TOSS;
+                out.set(a, in.piglinId[best]);
+                return a;
             }
         }
-        if (drop != null) {
-            return new Decision(Act.COLLECT, drop.entityId());
+        if (drop >= 0) {
+            out.set(Act.COLLECT, in.dropId[drop]);
+            return Act.COLLECT;
         }
-        for (int i = 0; i < piglins.size(); i++) {
-            if (piglins.get(i).admiring()) {
-                return Decision.WAIT; // loot is coming
+        for (int i = 0; i < n; i++) {
+            if (in.piglinAdmiring[i]) {
+                out.set(Act.WAIT, -1); // loot is coming
+                return Act.WAIT;
             }
         }
-        return ingotsInHand > 0 ? Decision.WAIT : Decision.NONE;
+        Act a = ingotsInHand > 0 ? Act.WAIT : Act.NONE;
+        out.set(a, -1);
+        return a;
     }
 
     /**
@@ -115,20 +235,6 @@ public final class PiglinAdvisor {
         }
         return BARTER_JUNK.contains(itemId) || InventoryPressurePolicy.DEFAULT_JUNK.contains(itemId)
                 || pinnedJunk.contains(itemId);
-    }
-
-    private static Drop bestDrop(List<Drop> drops, double range, Set<String> pinnedJunk) {
-        Drop best = null;
-        for (int i = 0; i < drops.size(); i++) {
-            Drop d = drops.get(i);
-            if (d.distance() > range || isJunk(d.itemId(), pinnedJunk)) {
-                continue;
-            }
-            if (best == null || d.distance() < best.distance()) {
-                best = d;
-            }
-        }
-        return best;
     }
 
     // --- Gold safety guard -----------------------------------------------------------------------------------
