@@ -27,7 +27,10 @@ import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.phys.shapes.VoxelShape;
 
 /**
- * Elytra autopilot. Phases: TAKEOFF (jump, deploy, first rocket), CRUISE (yaw to the stop, pitch from
+ * Elytra autopilot. Phases: TAKEOFF ({@link TakeoffSequence}: clear-air column check, jump, deploy on the second press,
+ * pitch up, first rocket; aborts with a status message), CRUISE (with the {@link BackupElytraSwap} mid-flight spare
+ * swap before the durability reserve), MEND (optional {@link MendLoop}: after a reserve landing, bottles o' enchanting
+ * at the feet, then take off again), CRUISE (yaw to the stop, pitch from
  * {@link ElytraPitchController} toward a terrain-following altitude, rockets via {@link RocketPolicy}), SEARCH (budgeted
  * {@link LandingSearch} while gliding gently), APPROACH (glide slope to the site, flare, land). Cruise is aborted into a
  * landing when {@link FlightReserve} says rockets or elytra durability reached the reserve, or when health/food are low.
@@ -44,7 +47,7 @@ final class ElytraDriver {
 
     private enum Phase {
         TAKEOFF("ELYTRA_TAKEOFF"), CRUISE("ELYTRA_CRUISE"), SEARCH("ELYTRA_SEARCH"), APPROACH("ELYTRA_APPROACH"),
-        BOUNCE("BOUNCE");
+        MEND("ELYTRA_MEND"), BOUNCE("BOUNCE");
 
         /** Constant status label (diagnostics HUD). */
         final String label;
@@ -76,6 +79,12 @@ final class ElytraDriver {
     private final UnloadedTerrainHold hold = new UnloadedTerrainHold();
     private final BounceGuard bounceGuard = new BounceGuard();
     private final FlightRestockHands restock = new FlightRestockHands();
+    private final TakeoffSequence takeoff = new TakeoffSequence();
+    private final BackupElytraSwap backup = new BackupElytraSwap();
+    private final MendLoop mend = new MendLoop();
+    /** Takeoff climb pitch (degrees, up is negative). */
+    private static final double TAKEOFF_PITCH = -25.0;
+    private boolean landToMend;
 
     private Phase phase = Phase.TAKEOFF;
     private int ticksSinceRocket = 1000;
@@ -103,6 +112,11 @@ final class ElytraDriver {
         rockets.configure(0.9, 6.0, rocketCooldown);
     }
 
+    /** "Land to mend" setting: at the durability reserve, land and mend with bottles o' enchanting. */
+    void setLandToMend(boolean on) {
+        this.landToMend = on;
+    }
+
     void begin(boolean bounce) {
         phase = bounce ? Phase.BOUNCE : Phase.TAKEOFF;
         ticksSinceRocket = 1000;
@@ -115,6 +129,9 @@ final class ElytraDriver {
         hold.reset();
         bounceGuard.reset();
         restock.reset();
+        takeoff.reset();
+        backup.reset();
+        mend.reset();
         search.cancel();
         keys.reset();
         aim.reset();
@@ -163,16 +180,32 @@ final class ElytraDriver {
         }
 
         switch (phase) {
-            case TAKEOFF -> tickTakeoff(player, input, lease, rocketCount);
+            case TAKEOFF -> {
+                if (tickTakeoff(player, input, lease, rocketCount)) {
+                    keys.releaseAll(input, lease);
+                    return Result.FAILED;
+                }
+            }
             case CRUISE -> {
+                tickBackupSwap(player, lease, durabilityLeft);
                 FlightReserve.Decision d = restock.adjust(player, lease, FlightReserve.evaluate(rocketCount,
                         reserveRockets, durabilityLeft, minDurability));
+                if (d == FlightReserve.Decision.ABORT_LOW_DURABILITY && backup.swapping()) {
+                    d = FlightReserve.Decision.CONTINUE; // the spare is going on: no landing for this one
+                }
                 if (d != FlightReserve.Decision.CONTINUE) {
-                    TravelMessages.status(d == FlightReserve.Decision.ABORT_LOW_ROCKETS
-                            ? "message.utilitysuite.autopilot.reserve_rockets"
-                            : restock.hasSpareElytra(player, durabilityLeft)
-                            ? "message.utilitysuite.autopilot.reserve_durability_spare"
-                            : "message.utilitysuite.autopilot.reserve_durability");
+                    if (d == FlightReserve.Decision.ABORT_LOW_DURABILITY && MendLoop.shouldLandToMend(landToMend,
+                            restock.hasMending(player, chest), countHotbar(player.getInventory(),
+                                    Items.EXPERIENCE_BOTTLE))) {
+                        mend.begin();
+                        TravelMessages.status("message.utilitysuite.autopilot.mend_landing");
+                    } else {
+                        TravelMessages.status(d == FlightReserve.Decision.ABORT_LOW_ROCKETS
+                                ? "message.utilitysuite.autopilot.reserve_rockets"
+                                : restock.hasSpareElytra(player, durabilityLeft)
+                                ? "message.utilitysuite.autopilot.reserve_durability_spare"
+                                : "message.utilitysuite.autopilot.reserve_durability");
+                    }
                     beginSearchAhead(player);
                 } else {
                     tickCruise(player, route, input, lease, rocketCount);
@@ -181,42 +214,120 @@ final class ElytraDriver {
             case SEARCH -> tickSearch(player, route, input, lease);
             case APPROACH -> {
                 if (player.onGround() && !player.isFallFlying()) {
-                    return Result.LANDED;
+                    return landedOrMend();
                 }
                 tickApproach(player, input, lease);
+            }
+            case MEND -> {
+                return tickMend(player, input, lease, chest, durabilityLeft);
             }
             default -> {
             }
         }
         if (player.onGround() && phase != Phase.TAKEOFF && !player.isFallFlying()) {
-            return Result.LANDED;
+            return landedOrMend();
+        }
+        return Result.RUNNING;
+    }
+
+    /** On the ground after a flight: the run is over, unless a land-to-mend stop is pending. */
+    private Result landedOrMend() {
+        if (mend.active()) {
+            phase = Phase.MEND;
+            return Result.RUNNING;
+        }
+        return Result.LANDED;
+    }
+
+    /** Cruise tick of the backup elytra swap (scans the inventory only when the worn elytra nears the reserve). */
+    private void tickBackupSwap(LocalPlayer player, ControlLease lease, int durabilityLeft) {
+        if (!backup.swapping() && (backup.gaveUp() || !BackupElytraSwap.due(durabilityLeft, minDurability))) {
+            return; // cheap early-out
+        }
+        int spare = backup.swapping() ? -1 : restock.pickBackupElytra(player, durabilityLeft);
+        if (backup.step(durabilityLeft, minDurability, spare, FlightRestockHands.safelyHigh(player), restock.busy())
+                == BackupElytraSwap.Action.SWAP) {
+            if (restock.queueElytraSwap(lease, spare)) {
+                TravelMessages.status("message.utilitysuite.autopilot.elytra_swapped");
+            } else {
+                backup.swapRejected();
+            }
+        }
+    }
+
+    private Result tickMend(LocalPlayer player, IInputSmoother input, ControlLease lease, ItemStack chest,
+                            int durabilityLeft) {
+        Inventory inv = player.getInventory();
+        int bottleSlot = hotbarSlotOf(inv, Items.EXPERIENCE_BOTTLE);
+        MendLoop.Action a = mend.step(player.onGround() && !player.isFallFlying(), player.getXRot(), durabilityLeft,
+                chest.getMaxDamage(), minDurability, countHotbar(inv, Items.EXPERIENCE_BOTTLE),
+                inv.getItem(inv.selected).is(Items.EXPERIENCE_BOTTLE));
+        switch (a) {
+            case AIM_DOWN -> aim.aim(input, lease, player.getYRot(), MendLoop.THROW_PITCH, RotationMode.VISIBLE, 1.0f);
+            case SELECT_BOTTLE -> {
+                aim.aim(input, lease, player.getYRot(), MendLoop.THROW_PITCH, RotationMode.VISIBLE, 1.0f);
+                if (bottleSlot >= 0) {
+                    input.selectHotbarSlot(lease, bottleSlot);
+                }
+            }
+            case THROW -> {
+                aim.aim(input, lease, player.getYRot(), MendLoop.THROW_PITCH, RotationMode.VISIBLE, 1.0f);
+                input.scheduleKeyTap(lease, SimKey.USE, 1, 2);
+            }
+            case TAKE_OFF -> {
+                mend.reset();
+                takeoff.reset();
+                ticksSinceRocket = 1000;
+                phase = Phase.TAKEOFF;
+                TravelMessages.status("message.utilitysuite.autopilot.mend_done");
+            }
+            case GIVE_UP -> {
+                mend.reset();
+                TravelMessages.status("message.utilitysuite.autopilot.mend_failed");
+                return Result.LANDED;
+            }
+            default -> {
+            }
         }
         return Result.RUNNING;
     }
 
     // ---- phases ---------------------------------------------------------------------------------------------------
 
-    private void tickTakeoff(LocalPlayer player, IInputSmoother input, ControlLease lease, int rocketCount) {
-        aim.aim(input, lease, player.getYRot(), -25.0, RotationMode.VISIBLE, 1.5f);
-        if (player.isFallFlying()) {
-            if (rocketCount > 0 && ticksSinceRocket > 40) {
-                requestRocket(player, input, lease);
+    /**
+     * Hands-free takeoff ({@link TakeoffSequence}): column check, jump, open the elytra with the second press, pitch
+     * up (smoothed by the core), one rocket, cruise. Returns true when the takeoff was aborted ({@link #failure}).
+     */
+    private boolean tickTakeoff(LocalPlayer player, IInputSmoother input, ControlLease lease, int rocketCount) {
+        aim.aim(input, lease, player.getYRot(), TAKEOFF_PITCH, RotationMode.VISIBLE, 1.5f);
+        boolean inWater = player.isInWater();
+        boolean clear = takeoff.phase() == TakeoffSequence.Phase.CHECK && (player.onGround() || inWater)
+                && TakeoffSequence.clearForTakeoff(solid.bind(player.level()), player.getBlockX(), player.getBlockY(),
+                player.getBlockZ());
+        TakeoffSequence.Action a = takeoff.step(clear, player.onGround(), inWater, airborneTicks,
+                player.getDeltaMovement().y, player.isFallFlying(), Math.abs(player.getXRot() - TAKEOFF_PITCH),
+                rocketCount, ticksSinceRocket <= TakeoffSequence.BOOST_TIMEOUT);
+        keys.set(input, lease, SimKey.JUMP, a == TakeoffSequence.Action.HOLD_JUMP);
+        switch (a) {
+            case JUMP, DEPLOY_JUMP -> input.scheduleKeyTap(lease, SimKey.JUMP, 1, 2);
+            case FIRE -> requestRocket(player, input, lease);
+            case CRUISE -> phase = Phase.CRUISE;
+            case ABORT_BLOCKED -> {
+                failure = "message.utilitysuite.autopilot.takeoff_blocked";
+                return true;
             }
-            if (airborneTicks > 10 || rocketCount == 0) {
-                phase = Phase.CRUISE;
+            case ABORT_NO_ROCKETS -> {
+                failure = "message.utilitysuite.autopilot.takeoff_no_rockets";
+                return true;
             }
-            return;
+            case ABORT_NO_DEPLOY -> {
+                failure = "message.utilitysuite.autopilot.takeoff_no_deploy";
+                return true;
+            }
+            default -> {
+            }
         }
-        if (keyCooldown > 0) {
-            return;
-        }
-        if (player.onGround()) {
-            input.scheduleKeyTap(lease, SimKey.JUMP, 1, 2);
-            keyCooldown = 8;
-        } else if (airborneTicks >= 3 && player.getDeltaMovement().y < 0.1) {
-            input.scheduleKeyTap(lease, SimKey.JUMP, 1, 2); // second press mid-air deploys the elytra
-            keyCooldown = 8;
-        }
+        return false;
     }
 
     private void tickCruise(LocalPlayer player, RouteState route, IInputSmoother input, ControlLease lease,
@@ -417,6 +528,26 @@ final class ElytraDriver {
             }
         }
         return n;
+    }
+
+    private static int countHotbar(Inventory inv, net.minecraft.world.item.Item item) {
+        int n = 0;
+        for (int i = 0; i < Inventory.getSelectionSize(); i++) {
+            ItemStack s = inv.getItem(i);
+            if (s.is(item)) {
+                n += s.getCount();
+            }
+        }
+        return n;
+    }
+
+    private static int hotbarSlotOf(Inventory inv, net.minecraft.world.item.Item item) {
+        for (int i = 0; i < Inventory.getSelectionSize(); i++) {
+            if (inv.getItem(i).is(item)) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     private static int rocketSlot(Inventory inv) {

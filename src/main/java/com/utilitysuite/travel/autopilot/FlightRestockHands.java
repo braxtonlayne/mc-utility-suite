@@ -4,7 +4,14 @@ import com.utilitysuite.core.api.ControlLease;
 import com.utilitysuite.core.api.IContainerClicker;
 import com.utilitysuite.core.api.Services;
 import net.minecraft.client.Minecraft;
+import com.utilitysuite.travel.mobility.ElytraSwapPlanner;
 import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.core.Holder;
+import net.minecraft.core.registries.Registries;
+import net.minecraft.world.item.enchantment.Enchantment;
+import net.minecraft.world.item.enchantment.EnchantmentHelper;
+import net.minecraft.world.item.enchantment.Enchantments;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.item.ElytraItem;
 import net.minecraft.world.item.ItemStack;
@@ -25,6 +32,11 @@ final class FlightRestockHands {
     private final int[] rocketCounts = new int[36];
     private final int[] hotbarKinds = new int[9];
     private final int[] elytraLeft = new int[36];
+    private final int[] elytraMax = new int[36];
+    private final boolean[] elytraMending = new boolean[36];
+    private final ElytraSwapPlanner swapPlan = new ElytraSwapPlanner();
+    private Holder<Enchantment> mending;
+    private Level mendingLevel;
 
     void reset() {
         plan.reset();
@@ -93,7 +105,58 @@ final class FlightRestockHands {
         return FlightRestock.spareElytraSlot(elytraLeft, wornUsesLeft, MIN_ELYTRA_GAIN) >= 0;
     }
 
-    private static boolean safelyHigh(LocalPlayer player) {
+    /**
+     * Inventory index of the backup elytra to swap in ({@link BackupElytraSwap#pickSpare}: Mending first, more than a
+     * quarter of its durability left), or -1. Only called once the worn elytra is near the reserve.
+     */
+    int pickBackupElytra(LocalPlayer player, int wornUsesLeft) {
+        Inventory inv = player.getInventory();
+        for (int i = 0; i < 36; i++) {
+            ItemStack s = inv.getItem(i);
+            boolean usable = s.getItem() instanceof ElytraItem && ElytraItem.isFlyEnabled(s);
+            elytraLeft[i] = usable ? s.getMaxDamage() - s.getDamageValue() - 1 : -1;
+            elytraMax[i] = usable ? s.getMaxDamage() : 0;
+            elytraMending[i] = usable && hasMending(player, s);
+        }
+        return BackupElytraSwap.pickSpare(elytraLeft, elytraMax, elytraMending, wornUsesLeft);
+    }
+
+    /** Queues the chest-slot swap with inventory index {@code inventoryIndex} (the clicks a player makes by hand). */
+    boolean queueElytraSwap(ControlLease lease, int inventoryIndex) {
+        if (Minecraft.getInstance().screen != null) {
+            return false;
+        }
+        int n = swapPlan.planSwap(inventoryIndex);
+        if (n == 0) {
+            return false;
+        }
+        IContainerClicker clicker = Services.clicker();
+        for (int i = 0; i < n; i++) {
+            if (!clicker.queueClick(lease, swapPlan.slot(i), swapPlan.button(i), swapPlan.click(i))) {
+                clicker.cancel(lease);
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** A screen is open or clicks are still queued. */
+    boolean busy() {
+        return Minecraft.getInstance().screen != null || Services.clicker().pending() > 0;
+    }
+
+    /** The item carries Mending (the registry holder is looked up once per level). */
+    boolean hasMending(LocalPlayer player, ItemStack s) {
+        Level level = player.level();
+        if (mendingLevel != level) {
+            mendingLevel = level;
+            mending = level.registryAccess().registryOrThrow(Registries.ENCHANTMENT)
+                    .getHolderOrThrow(Enchantments.MENDING);
+        }
+        return EnchantmentHelper.getItemEnchantmentLevel(mending, s) > 0;
+    }
+
+    static boolean safelyHigh(LocalPlayer player) {
         if (player.onGround()) {
             return false;
         }

@@ -5,9 +5,9 @@ package com.utilitysuite.travel.autopilot;
  * inventory (slots 9-35) may still hold more: this class says whether to swap a stack into the hotbar now, keep
  * flying while waiting for safe height or for a queued click to land, or give up and land.
  * <p>
- * Elytra durability stays a landing trigger: swapping the chest slot in the air unequips the glider for at least a
- * tick and the swap click can be dropped by the server, so the only durability aid here is {@link #spareElytraSlot},
- * which lets the driver tell the user a healthier elytra is in the inventory (to swap after landing).
+ * Elytra durability: a spare is swapped in mid-flight by {@link BackupElytraSwap} before the reserve; when that is not
+ * possible the reserve stays a landing trigger and {@link #spareElytraSlot} lets the driver tell the user a healthier
+ * elytra is in the inventory.
  * <p>
  * Hot path: no allocation; callers pass reusable arrays.
  */
