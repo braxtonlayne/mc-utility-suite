@@ -35,6 +35,7 @@ public record PlanStep(StepKind kind, String itemId, int count, int crafts, Stri
         return switch (kind) {
             case CRAFT, SMELT -> label + " (" + count + " " + itemId + ", " + crafts + "x " + recipeId + ")";
             case FETCH -> label + " (" + count + " " + itemId + " from container)";
+            case SHULKER_RESTOCK -> label + " (" + count + " " + itemId + " from " + String.join("/", blockIds) + ")";
             case GATHER, MINE -> label + " (" + count + " " + itemId + " from " + String.join("/", blockIds)
                     + (requiredTier > 0 ? ", tier " + requiredTier : "") + ")";
             default -> label;

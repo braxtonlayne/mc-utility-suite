@@ -29,6 +29,22 @@ final class Fakes {
 
     static final class Inventory implements IInventoryView {
         final Map<String, Integer> items = new HashMap<>();
+        /** Carried shulker boxes: box item id + mutable contents. */
+        final List<Map.Entry<String, Map<String, Integer>>> boxes = new ArrayList<>();
+
+        void addBox(String boxId, Map<String, Integer> contents) {
+            boxes.add(Map.entry(boxId, new HashMap<>(contents)));
+            add(boxId, 1);
+        }
+
+        @Override
+        public List<com.utilitysuite.core.api.NestedContainer> carriedContainers() {
+            List<com.utilitysuite.core.api.NestedContainer> out = new ArrayList<>();
+            for (Map.Entry<String, Map<String, Integer>> b : boxes) {
+                out.add(new com.utilitysuite.core.api.NestedContainer(b.getKey(), b.getValue()));
+            }
+            return out;
+        }
 
         void add(String id, int n) {
             items.merge(id, n, Integer::sum);
@@ -201,6 +217,34 @@ final class Fakes {
                     moved.put(k, got);
                 }
             });
+            transferred = moved;
+            pending = Result.DONE;
+        }
+
+        /** When set, every shulker unpack fails with this message (e.g. no placement spot). */
+        String restockFails;
+
+        @Override
+        public void beginShulkerRestock(String boxItemId, String itemId, int count, ControlLease lease) {
+            log.add("unpack " + boxItemId + " " + count + " " + itemId);
+            if (restockFails != null) {
+                message = restockFails;
+                transferred = Map.of();
+                pending = Result.FAILED;
+                return;
+            }
+            Map<String, Integer> moved = new LinkedHashMap<>();
+            for (Map.Entry<String, Map<String, Integer>> b : inv.boxes) {
+                int have = b.getValue().getOrDefault(itemId, 0);
+                if (have <= 0) {
+                    continue;
+                }
+                int got = Math.min(have, count);
+                b.getValue().put(itemId, have - got);
+                inv.add(itemId, got);
+                moved.put(itemId, got);
+                break;
+            }
             transferred = moved;
             pending = Result.DONE;
         }

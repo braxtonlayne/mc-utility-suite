@@ -17,6 +17,8 @@ public final class PlanEstimate {
     /** A furnace works through one item in 10 s. */
     static final int SMELT_PER_OP = 10;
     static final int FETCH = 20;
+    /** Place, open, take, close, break and pick up a shulker box. */
+    static final int SHULKER_RESTOCK = 12;
     static final int RETURN = 40;
     static final int TRAVEL = 45;
     static final int BUILD = 120;
@@ -40,6 +42,7 @@ public final class PlanEstimate {
             case CRAFT -> (long) Math.max(1, s.crafts()) * CRAFT_PER_OP;
             case SMELT -> (long) Math.max(1, s.crafts()) * SMELT_PER_OP;
             case FETCH -> FETCH;
+            case SHULKER_RESTOCK -> SHULKER_RESTOCK;
             case RETURN -> RETURN;
             case TRAVEL -> TRAVEL;
             case BUILD -> BUILD;

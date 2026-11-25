@@ -118,6 +118,7 @@ public final class StorageMemoryModule implements IModule, IConfigurable {
         AbstractContainerMenu menu = screen.getMenu();
         Container playerInv = mc.player.getInventory();
         Map<String, Integer> contents = new LinkedHashMap<>();
+        List<com.utilitysuite.core.api.NestedContainer> nested = new java.util.ArrayList<>();
         for (Slot s : menu.slots) {
             if (s.container == playerInv) {
                 continue;
@@ -125,9 +126,13 @@ public final class StorageMemoryModule implements IModule, IConfigurable {
             ItemStack st = s.getItem();
             if (!st.isEmpty()) {
                 contents.merge(BuiltInRegistries.ITEM.getKey(st.getItem()).toString(), st.getCount(), Integer::sum);
+                com.utilitysuite.core.api.NestedContainer box = ShulkerItems.read(st);
+                if (box != null && !box.contents().isEmpty()) {
+                    nested.add(box);
+                }
             }
         }
-        memory.record(pendingDim, pendingPos, pendingType, contents);
+        memory.record(pendingDim, pendingPos, pendingType, contents, nested);
         pendingPos = Long.MIN_VALUE;
         scheduleSave();
     }

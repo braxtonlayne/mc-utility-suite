@@ -16,6 +16,11 @@ public enum StepKind {
     RETURN,
     /** Path to a coordinate. */
     TRAVEL,
+    /**
+     * Place a carried shulker box next to the player, open it, take {@code count} of the item, close it, break it and
+     * pick it back up. {@code blockIds} holds the shulker box item id the planner expected to unpack.
+     */
+    SHULKER_RESTOCK,
     /** Hand off to the schematic toolkit. */
     BUILD
 }

@@ -4,12 +4,14 @@ import com.utilitysuite.core.api.ControlChannel;
 import com.utilitysuite.core.api.ControlLease;
 import com.utilitysuite.core.api.IContainerClicker;
 import com.utilitysuite.core.api.IInputSmoother;
+import com.utilitysuite.core.api.NestedContainer;
 import com.utilitysuite.core.api.RotationTarget;
 import com.utilitysuite.core.api.Services;
 import com.utilitysuite.core.api.SimKey;
 import com.utilitysuite.jobs.planner.FuelTable;
 import com.utilitysuite.jobs.planner.Items;
 import com.utilitysuite.jobs.planner.PlanStep;
+import com.utilitysuite.jobs.storage.ShulkerItems;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
@@ -27,6 +29,7 @@ import net.minecraft.world.inventory.AbstractFurnaceMenu;
 import net.minecraft.world.inventory.CraftingMenu;
 import net.minecraft.world.inventory.InventoryMenu;
 import net.minecraft.world.inventory.Slot;
+import net.minecraft.world.inventory.ShulkerBoxMenu;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.crafting.Ingredient;
 import net.minecraft.world.item.crafting.Recipe;
@@ -66,9 +69,9 @@ import java.util.function.Supplier;
  */
 public final class MinecraftWorldActions implements WorldActions {
 
-    private enum Op { NONE, CRAFT, SMELT, FETCH, DEPOSIT }
+    private enum Op { NONE, CRAFT, SMELT, FETCH, DEPOSIT, SHULKER }
 
-    private enum Phase { FIND, SELECT_ITEM, CLEAR_OBSTRUCTION, CLEAR_WALK, AIM_PLACE, WAIT_PLACED, OPEN, WAIT_OPEN, WORK, WAIT_CLICKS, COLLECT, DONE }
+    private enum Phase { FIND, SELECT_ITEM, CLEAR_OBSTRUCTION, CLEAR_WALK, AIM_PLACE, WAIT_PLACED, OPEN, WAIT_OPEN, WORK, WAIT_CLICKS, COLLECT, BREAK, PICKUP, DONE }
 
     private static final int OPEN_TIMEOUT = 200;
 
@@ -119,6 +122,9 @@ public final class MinecraftWorldActions implements WorldActions {
     private Map<String, Integer> wanted = Map.of();
     private final Map<String, Integer> before = new LinkedHashMap<>();
     private Map<String, Integer> transferred = Map.of();
+    /** SHULKER: the item being unpacked and how many boxes of the placed colour were carried before placing. */
+    private String restockItem;
+    private int boxBefore;
 
     public MinecraftWorldActions(Supplier<MiningDriver> driver, MinecraftInventoryView inv) {
         this.driver = driver;
@@ -171,6 +177,41 @@ public final class MinecraftWorldActions implements WorldActions {
     public void beginDeposit(long packedPos, Map<String, Integer> items, ControlLease l) {
         start(Op.DEPOSIT, null, l);
         beginTransfer(packedPos, items);
+    }
+
+    @Override
+    public void beginShulkerRestock(String boxItemId, String itemId, int count, ControlLease l) {
+        start(Op.SHULKER, null, l);
+        LocalPlayer player = Minecraft.getInstance().player;
+        String chosen = null;
+        if (player != null) {
+            Inventory pinv = player.getInventory();
+            for (int i = 0; i < 36; i++) {
+                NestedContainer box = ShulkerItems.read(pinv.items.get(i));
+                if (box != null && box.count(itemId) > 0
+                        && (chosen == null || box.containerItemId().equals(boxItemId))) {
+                    chosen = box.containerItemId();
+                }
+            }
+        }
+        if (chosen == null) {
+            fail("No carried shulker box holds " + itemId);
+            return;
+        }
+        station = chosen;
+        restockItem = itemId;
+        boxBefore = inv.count(chosen);
+        wanted = Map.of(itemId, count);
+        before.clear();
+        before.put(itemId, inv.count(itemId));
+        phase = Phase.SELECT_ITEM;
+        timer = 0;
+    }
+
+    /** True when the stack is a shulker box holding {@link #restockItem} (SELECT_ITEM phase only, not per tick). */
+    private boolean boxHolds(ItemStack stack) {
+        NestedContainer box = ShulkerItems.read(stack);
+        return box != null && box.count(restockItem) > 0;
     }
 
     private void beginTransfer(long packedPos, Map<String, Integer> items) {
@@ -257,6 +298,8 @@ public final class MinecraftWorldActions implements WorldActions {
                 }
             }
             case COLLECT -> collectSmelted(player);
+            case BREAK -> breakBox(mc, player);
+            case PICKUP -> pickUpBox(player);
             case DONE -> {
             }
         }
@@ -285,7 +328,7 @@ public final class MinecraftWorldActions implements WorldActions {
         int hotbar = -1;
         int main = -1;
         for (int i = 0; i < 36; i++) {
-            if (pinv.items.get(i).getItem() == item) {
+            if (pinv.items.get(i).getItem() == item && (op != Op.SHULKER || boxHolds(pinv.items.get(i)))) {
                 if (i < 9) {
                     hotbar = i;
                     break;
@@ -309,6 +352,11 @@ public final class MinecraftWorldActions implements WorldActions {
         }
         Services.input().selectHotbarSlot(lease, hotbar);
         long spot = findPlacementSpot(Minecraft.getInstance());
+        if (spot == Long.MIN_VALUE && op == Op.SHULKER) {
+            // Nothing placed yet: abort cleanly rather than digging or wandering with a box in hand.
+            fail("No safe spot next to the player to place the shulker box");
+            return;
+        }
         if (spot == Long.MIN_VALUE) {
             // Typically inside a tree canopy after chopping. Like a player: first break a leaf block next to you to make
             // room, then walk to open ground and look again, farther each try.
@@ -436,12 +484,16 @@ public final class MinecraftWorldActions implements WorldActions {
                 phase = Phase.WAIT_CLICKS;
                 timer = 0;
             }
-            case FETCH, DEPOSIT -> {
+            case FETCH, DEPOSIT, SHULKER -> {
+                if (op == Op.SHULKER && !(menu instanceof ShulkerBoxMenu)) {
+                    fail("Opened block is not a shulker box");
+                    return;
+                }
                 Inventory pinv = player.getInventory();
                 Map<String, Integer> left = new LinkedHashMap<>(wanted);
                 for (Slot s : menu.slots) {
                     boolean playerSlot = s.container == pinv;
-                    if (playerSlot == (op == Op.FETCH) || !s.hasItem()) {
+                    if (playerSlot == (op != Op.DEPOSIT) || !s.hasItem()) {
                         continue;
                     }
                     String id = inv.idOf(s.getItem().getItem());
@@ -631,7 +683,70 @@ public final class MinecraftWorldActions implements WorldActions {
                 transferred = Map.copyOf(moved);
                 finish(player, (op == Op.FETCH ? "Fetched " : "Deposited ") + transferred);
             }
+            case SHULKER -> {
+                int got = inv.count(restockItem) - before.getOrDefault(restockItem, 0);
+                transferred = got > 0 ? Map.of(restockItem, got) : Map.of();
+                if (!(player.containerMenu instanceof InventoryMenu)) {
+                    player.closeContainer();
+                }
+                selectBreakTool(player);
+                Services.input().setRotationTarget(lease, aimAt(player, BlockPos.getX(stationPos) + 0.5,
+                        BlockPos.getY(stationPos) + 0.5, BlockPos.getZ(stationPos) + 0.5));
+                phase = Phase.BREAK;
+                timer = 0;
+            }
             default -> finish(player, "");
+        }
+    }
+
+    /** A pickaxe on the hotbar breaks a shulker box fastest; the bare hand works too (it always drops). */
+    private void selectBreakTool(LocalPlayer player) {
+        Inventory pinv = player.getInventory();
+        for (int i = 0; i < 9; i++) {
+            ItemStack s = pinv.items.get(i);
+            if (!s.isEmpty() && inv.idOf(s.getItem()).endsWith("_pickaxe")) {
+                Services.input().selectHotbarSlot(lease, i);
+                return;
+            }
+        }
+    }
+
+    /** Holds attack on the placed box until it is gone, then walks onto its spot to pick the dropped box up. */
+    private void breakBox(Minecraft mc, LocalPlayer player) {
+        IInputSmoother input = Services.input();
+        if (!station.equals(blockAt(mc.level, stationPos))) {
+            input.setKeyHeld(lease, SimKey.ATTACK, false);
+            input.clearRotation(lease);
+            driver.get().gotoCoord(stationPos, 0);
+            phase = Phase.PICKUP;
+            timer = 0;
+            return;
+        }
+        if (timer > 200) {
+            input.setKeyHeld(lease, SimKey.ATTACK, false);
+            input.clearRotation(lease);
+            fail("Could not break the shulker box at " + BlockPos.getX(stationPos) + " " + BlockPos.getY(stationPos)
+                    + " " + BlockPos.getZ(stationPos) + " (left in place; items taken: " + transferred + ")");
+            return;
+        }
+        if (!input.isRotationSettled(2f) && timer < 30) {
+            return;
+        }
+        boolean onIt = mc.hitResult instanceof BlockHitResult bh && bh.getType() == HitResult.Type.BLOCK
+                && bh.getBlockPos().asLong() == stationPos;
+        input.setKeyHeld(lease, SimKey.ATTACK, onIt);
+    }
+
+    private void pickUpBox(LocalPlayer player) {
+        if (inv.count(station) >= boxBefore) {
+            driver.get().cancel();
+            finish(player, "Unpacked " + transferred + " from " + station);
+            return;
+        }
+        MiningDriver.Status st = driver.get().status();
+        if (timer > 160 || st == MiningDriver.Status.FAILED || st == MiningDriver.Status.UNAVAILABLE) {
+            driver.get().cancel();
+            fail("Shulker box dropped but was not picked up (items taken: " + transferred + ")");
         }
     }
 
@@ -688,6 +803,9 @@ public final class MinecraftWorldActions implements WorldActions {
     @Override
     public void abort() {
         if (op != Op.NONE) {
+            if (phase == Phase.BREAK && lease != null) {
+                Services.input().setKeyHeld(lease, SimKey.ATTACK, false);
+            }
             Minecraft mc = Minecraft.getInstance();
             if (mc.player != null && !(mc.player.containerMenu instanceof InventoryMenu)) {
                 mc.player.closeContainer();
@@ -962,7 +1080,16 @@ public final class MinecraftWorldActions implements WorldActions {
                         if (p.getBoundingBox().intersects(sx0, y, sz0, sx0 + 1, y + 1, sz0 + 1)) {
                             continue; // the block would go into the player
                         }
-                        if (chooseSupport(level, p, sx0, y, sz0, reach)) {
+                        if (op == Op.SHULKER) {
+                            // a box on the floor opens upward: the block above must be free, and not fluid
+                            BlockState above = level.getBlockState(probe.set(sx0, y + 1, sz0));
+                            probe.set(sx0, y, sz0);
+                            if (!above.isAir() || !above.getFluidState().isEmpty()) {
+                                continue;
+                            }
+                        }
+                        if (chooseSupport(level, p, sx0, y, sz0, reach)
+                                && (op != Op.SHULKER || supportFace == Direction.UP)) {
                             return spot;
                         }
                     }
