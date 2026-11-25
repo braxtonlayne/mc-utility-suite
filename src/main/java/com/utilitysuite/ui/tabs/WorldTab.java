@@ -148,6 +148,7 @@ public final class WorldTab {
 
     /** Custom rows inside World module cards (called once from the UI bootstrap). */
     public static void registerPanels() {
+        WorldExtraPanels.register();
         ModulePanels.register(SeedLocatorModule.ID, (p, m) -> {
             if (m instanceof SeedLocatorModule loc) {
                 seedLocatorRows(p, loc);

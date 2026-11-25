@@ -46,6 +46,7 @@ public final class ParkourSplits {
     private final double[] lz = new double[MAX_TICKS];
     private int liveLen;
     private boolean autoGhost = true;
+    private boolean newBest;
 
     public void setStart(double x, double y, double z) {
         sx = x;
@@ -164,6 +165,7 @@ public final class ParkourSplits {
                     lastRunTicks = elapsed;
                     if (bestTicks < 0 || elapsed < bestTicks) {
                         bestTicks = elapsed;
+                        newBest = true;
                         if (autoGhost) {
                             setGhost(lx, ly, lz, liveLen);
                         }
@@ -216,6 +218,30 @@ public final class ParkourSplits {
 
     public int ghostLength() {
         return ghostLen;
+    }
+
+    /** Copies the ghost track (absolute positions) into the arrays; returns the samples copied. */
+    public int copyGhost(double[] xs, double[] ys, double[] zs) {
+        int n = Math.min(ghostLen, xs.length);
+        System.arraycopy(gx, 0, xs, 0, n);
+        System.arraycopy(gy, 0, ys, 0, n);
+        System.arraycopy(gz, 0, zs, 0, n);
+        return n;
+    }
+
+    /** Drops the ghost and the personal best (the markers stay). */
+    public void clearGhost() {
+        ghostLen = 0;
+        bestTicks = -1;
+        lastRunTicks = -1;
+        newBest = false;
+    }
+
+    /** True once after a finished run set a new personal best (so it can be saved). */
+    public boolean consumeNewBest() {
+        boolean b = newBest;
+        newBest = false;
+        return b;
     }
 
     /** Ghost position at {@code tick} (clamped) into out[0..2]; false with no ghost. */

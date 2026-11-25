@@ -341,17 +341,112 @@ public final class ChangeTrackerModule extends WorldModule {
         Long2ObjectOpenHashMap<ChunkSnapshot> now = new Long2ObjectOpenHashMap<>(fresh);
         fresh.clear();
         diffing = true;
+        int gen = generation;
         WorldExecutor.get().execute(() -> {
             try {
                 SnapshotDiff d = new SnapshotDiff();
                 for (ChunkSnapshot cur : now.values()) {
                     d.compare(store.get(cur.chunkX, cur.chunkZ), cur, p -> !stillFull.contains(p));
                 }
-                diff = d.result();
+                if (gen == generation) { // a clear while this ran makes the result stale
+                    diff = d.result();
+                }
             } finally {
                 diffing = false;
             }
         });
+    }
+
+    // ---- clearing snapshots (module card + suite actions) ---------------------------------------------------------
+
+    /** Bumped by every clear, so a diff computed against cleared snapshots is dropped instead of published. */
+    private volatile int generation;
+
+    /** Stored snapshot chunks in the current dimension (0 before the module has ticked in a world). */
+    public int storedChunks() {
+        return store.size();
+    }
+
+    public boolean filesOpen() {
+        return profileId != null && dimension != null;
+    }
+
+    /** Forgets the snapshot of the chunk you stand in; its marks leave the overlay at once. Client thread. */
+    public String clearChunkUnderPlayer() {
+        LocalPlayer p = Minecraft.getInstance().player;
+        if (p == null || !filesOpen()) {
+            return notReady();
+        }
+        int cx = p.getBlockX() >> 4;
+        int cz = p.getBlockZ() >> 4;
+        if (!store.remove(cx, cz)) {
+            return "No snapshot of chunk " + cx + ", " + cz;
+        }
+        generation++;
+        diff = SnapshotDiff.withoutChunk(diff, cx, cz);
+        save(true);
+        return "Cleared the snapshot of chunk " + cx + ", " + cz;
+    }
+
+    /** Forgets every snapshot of the current dimension (and deletes its file). Client thread. */
+    public String clearDimension() {
+        if (!filesOpen()) {
+            return notReady();
+        }
+        int n = dropAllInMemory();
+        java.nio.file.Path f = file();
+        WorldExecutor.get().execute(() -> deleteQuietly(f));
+        return "Cleared " + n + " chunk snapshots in " + shortDim(dimension);
+    }
+
+    /** Forgets every snapshot of this world in every dimension (deletes all its change files). Client thread. */
+    public String clearAll() {
+        if (!filesOpen()) {
+            return notReady();
+        }
+        int n = dropAllInMemory();
+        java.nio.file.Path dir = WorldFiles.dir();
+        String prefix = WorldFiles.safe(profileId) + ".changes.";
+        WorldExecutor.get().execute(() -> {
+            try (java.nio.file.DirectoryStream<java.nio.file.Path> ds =
+                         java.nio.file.Files.newDirectoryStream(dir, prefix + "*.bin.gz")) {
+                for (java.nio.file.Path f : ds) {
+                    deleteQuietly(f);
+                }
+            } catch (java.io.IOException | RuntimeException e) {
+                UtilitySuiteMod.LOGGER.warn("Could not list change snapshot files", e);
+            }
+        });
+        return "Cleared all change snapshots of this world (" + n + " here)";
+    }
+
+    private int dropAllInMemory() {
+        int n = store.size();
+        generation++;
+        resetQueue();
+        diffRequested = false;
+        store.clear();
+        store.consumeDirty(); // the file is deleted instead of rewritten empty
+        diff = null;
+        status = "no snapshot";
+        return n;
+    }
+
+    private String notReady() {
+        return isEnabled() ? "Join a world first" : "Turn Change Tracker on first";
+    }
+
+    private static void deleteQuietly(java.nio.file.Path f) {
+        try {
+            java.nio.file.Files.deleteIfExists(f);
+        } catch (java.io.IOException e) {
+            UtilitySuiteMod.LOGGER.warn("Could not delete {}", f, e);
+        }
+    }
+
+    private static String shortDim(String dim) {
+        int i = dim.indexOf(':');
+        return i >= 0 ? dim.substring(i + 1) : dim;
     }
 
     /** Short status for the HUD/menu. */

@@ -45,6 +45,13 @@ public final class SnapshotStore {
         return chunks.size();
     }
 
+    /** Drops one chunk's snapshot. Returns false when there was none. */
+    public synchronized boolean remove(int chunkX, int chunkZ) {
+        boolean r = chunks.remove(BlockPosPacking.chunk(chunkX, chunkZ)) != null;
+        dirty |= r;
+        return r;
+    }
+
     public synchronized void clear() {
         chunks.clear();
         dirty = true;

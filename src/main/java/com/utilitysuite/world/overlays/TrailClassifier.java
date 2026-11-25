@@ -14,7 +14,9 @@ import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
  *   <li><b>Travel</b>: straight but none of the above; <b>Wander</b>: no dominant axis.</li>
  * </ul>
  * Direction points toward the cells observed most recently when observation ticks differ, otherwise away from the
- * viewer (the near end is taken as the start). Runs off-thread on a copied cell array; engine-free.
+ * viewer (the near end is taken as the start). When the cells carry timestamps (game ticks, else wall time) the trail's
+ * real speed is measured ({@link TrailRecency#speed}) and decides flight vs boat vs ground travel in place of the
+ * sparseness guess. Runs off-thread on a copied cell array; engine-free.
  */
 public final class TrailClassifier {
 
@@ -22,9 +24,19 @@ public final class TrailClassifier {
 
     public static final int MAX_SPINE = 16;
 
-    /** Classification of one segment. Spine points are chunk-centre coordinates (chunk units), start to end. */
+    /**
+     * Classification of one segment. Spine points are chunk-centre coordinates (chunk units), start to end.
+     * {@code speedBps} is the measured speed in blocks per second (local blocks, not Overworld-scaled), NaN when the
+     * cells carry too few timestamps; {@code latestWallMs}/{@code oldestWallMs} are the newest and oldest wall-clock
+     * stamps (0 = unknown) and {@code spineWallMs} the newest stamp per spine point (0 = unknown).
+     */
     public record Segment(Kind kind, double dirX, double dirZ, double lengthChunks, double widthChunks, int cells,
-                          long latestTick, double straightness, int lanes, float[] spineX, float[] spineZ) {
+                          long latestTick, double straightness, int lanes, float[] spineX, float[] spineZ,
+                          double speedBps, long latestWallMs, long oldestWallMs, long[] spineWallMs) {
+
+        public boolean hasSpeed() {
+            return !Double.isNaN(speedBps);
+        }
     }
 
     /** Tunable thresholds (defaults act like a careful human reading the map). */
@@ -34,6 +46,13 @@ public final class TrailClassifier {
     public double sparseFill = 0.75;
     public double boatWaterFraction = 0.6;
     public int zigzagMinLanes = 3;
+    /** Measured speed from which a dry trail is flight (sprint-jumping tops out near 7 b/s, horses near 14). */
+    public double elytraMinSpeed = 18.0;
+    /** Measured speed over water/ice above which it is flight rather than a boat (blue-ice boats top out near 72). */
+    public double boatMaxSpeed = 75.0;
+    /** Least game-tick span for a speed estimate (2 s) and the wall-clock fallback span (3 s). */
+    public long minTickSpan = 40;
+    public long minWallSpan = 3000;
 
     /**
      * Labels the 8-connected components of {@code n} packed chunk keys (packed as
@@ -92,6 +111,17 @@ public final class TrailClassifier {
      * @param viewerCx   viewer chunk position (used to orient when ticks do not)
      */
     public Segment classify(int[] cx, int[] cz, int n, boolean[] water, long[] ticks, boolean nether,
+                            double viewerCx, double viewerCz) {
+        return classify(cx, cz, n, water, ticks, null, nether, viewerCx, viewerCz);
+    }
+
+    /**
+     * Classifies one segment with per-cell timestamps.
+     *
+     * @param ticks  per cell: game time it was first seen (0 or null = unknown); orients the trail and gives its speed
+     * @param wallMs per cell: wall clock of that (0 or null = unknown); recency, and the speed fallback without ticks
+     */
+    public Segment classify(int[] cx, int[] cz, int n, boolean[] water, long[] ticks, long[] wallMs, boolean nether,
                             double viewerCx, double viewerCz) {
         if (n <= 0) {
             return null;
@@ -199,27 +229,37 @@ public final class TrailClassifier {
         }
         double wetFrac = (double) wet / n;
 
-        // Orientation: toward newer observations, else away from the viewer.
-        double sign = 0;
+        // Orientation: toward newer observations (game ticks, else wall time; unknown stamps skipped), else away from
+        // the viewer.
         long latest = Long.MIN_VALUE;
         if (ticks != null) {
-            double sa = 0;
-            double st = 0;
-            double sat = 0;
-            double saa = 0;
             for (int i = 0; i < n; i++) {
-                double a = (cx[i] - mx) * vx + (cz[i] - mz) * vz;
-                double t = ticks[i];
-                sa += a;
-                st += t;
-                sat += a * t;
-                saa += a * a;
                 latest = Math.max(latest, ticks[i]);
             }
-            double cov = sat / n - (sa / n) * (st / n);
-            if (Math.abs(cov) > 1e-6) {
-                sign = Math.signum(cov);
+        }
+        long latestWall = 0;
+        long oldestWall = 0;
+        if (wallMs != null) {
+            for (int i = 0; i < n; i++) {
+                long w = wallMs[i];
+                if (w > 0) {
+                    latestWall = Math.max(latestWall, w);
+                    oldestWall = oldestWall == 0 ? w : Math.min(oldestWall, w);
+                }
             }
+        }
+        double sign = orientation(cx, cz, n, mx, mz, vx, vz, ticks);
+        if (sign == 0) {
+            sign = orientation(cx, cz, n, mx, mz, vx, vz, wallMs);
+        }
+        // Real speed from the stamps: blocks along the axis against time.
+        double[] along = new double[n];
+        for (int i = 0; i < n; i++) {
+            along[i] = ((cx[i] - mx) * vx + (cz[i] - mz) * vz) * 16.0;
+        }
+        double speed = TrailRecency.speed(along, ticks, n, 20.0, minTickSpan);
+        if (Double.isNaN(speed)) {
+            speed = TrailRecency.speed(along, wallMs, n, 1000.0, minWallSpan);
         }
         if (sign == 0) {
             double toViewer = (viewerCx - mx) * vx + (viewerCz - mz) * vz;
@@ -235,6 +275,13 @@ public final class TrailClassifier {
             kind = Kind.WANDER;
         } else if (nether) {
             kind = Kind.NETHER_TUNNEL;
+        } else if (!Double.isNaN(speed)) {
+            // measured speed decides between flight, boats and ground travel
+            if (wetFrac >= boatWaterFraction) {
+                kind = speed > boatMaxSpeed ? Kind.ELYTRA_HIGHWAY : Kind.BOAT_RUN;
+            } else {
+                kind = speed >= elytraMinSpeed ? Kind.ELYTRA_HIGHWAY : Kind.TRAVEL;
+            }
         } else if (wetFrac >= boatWaterFraction) {
             kind = Kind.BOAT_RUN;
         } else if (length >= elytraMinLength && fill < sparseFill) {
@@ -247,6 +294,7 @@ public final class TrailClassifier {
         int bins = Math.max(2, Math.min(MAX_SPINE, aBins));
         double[] sumP = new double[bins];
         int[] cnt = new int[bins];
+        long[] binWall = new long[bins];
         for (int i = 0; i < n; i++) {
             double ux = cx[i] - mx;
             double uz = cz[i] - mz;
@@ -256,9 +304,13 @@ public final class TrailClassifier {
             int b = (int) Math.min(bins - 1, Math.max(0, (a - lo) / length * bins));
             sumP[b] += p;
             cnt[b]++;
+            if (wallMs != null && wallMs[i] > binWall[b]) {
+                binWall[b] = wallMs[i]; // newest stamp in the bin: how recently this stretch was made
+            }
         }
         float[] sx = new float[bins];
         float[] sz = new float[bins];
+        long[] sw = new long[bins];
         int k = 0;
         double lo = sign > 0 ? minA : -maxA;
         for (int b = 0; b < bins; b++) {
@@ -269,10 +321,46 @@ public final class TrailClassifier {
             double p = sumP[b] / cnt[b];
             sx[k] = (float) (mx + a * vx - p * vz);
             sz[k] = (float) (mz + a * vz + p * vx);
+            sw[k] = binWall[b];
             k++;
         }
         return new Segment(kind, vx, vz, nether ? length * 8 : length, width, n, latest, straightness, lanes,
-                java.util.Arrays.copyOf(sx, k), java.util.Arrays.copyOf(sz, k));
+                java.util.Arrays.copyOf(sx, k), java.util.Arrays.copyOf(sz, k), speed, latestWall, oldestWall,
+                java.util.Arrays.copyOf(sw, k));
+    }
+
+    /** Sign (+1/-1) of the covariance of along-axis position with time over cells with a stamp; 0 = undecided. */
+    private static double orientation(int[] cx, int[] cz, int n, double mx, double mz, double vx, double vz,
+                                      long[] times) {
+        if (times == null) {
+            return 0;
+        }
+        int m = 0;
+        long base = Long.MAX_VALUE;
+        for (int i = 0; i < n; i++) {
+            if (times[i] != 0) {
+                m++;
+                base = Math.min(base, times[i]);
+            }
+        }
+        if (m < 2) {
+            return 0;
+        }
+        double sa = 0;
+        double st = 0;
+        double sat = 0;
+        for (int i = 0; i < n; i++) {
+            if (times[i] == 0) {
+                continue;
+            }
+            double a = (cx[i] - mx) * vx + (cz[i] - mz) * vz;
+            double t = times[i] - base; // relative: epoch milliseconds would swamp the doubles
+            sa += a;
+            st += t;
+            sat += a * t;
+        }
+        double cov = sat / m - (sa / m) * (st / m);
+        return Math.abs(cov) > 1e-6 ? Math.signum(cov) : 0;
     }
 
     /**

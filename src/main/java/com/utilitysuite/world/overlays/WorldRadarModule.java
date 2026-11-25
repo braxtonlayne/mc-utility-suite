@@ -89,6 +89,12 @@ public final class WorldRadarModule extends WorldModule {
     private final AcousticRipples.RingVisitor ringVisitor = this::drawRing;
     private boolean trailClasses;
     private final TrailForensics trailForensics = new TrailForensics();
+    /** Trails fade to a floor over this long (0 = no fading). */
+    private long trailFadeMs;
+    /** World profile whose trail files the scanner uses (null until a world profile is loaded). */
+    private String trailProfile;
+    private static final int TRAIL_SAVE_TICKS = 600;
+    private static final int TRAIL_CELL = 0xA0FF4040;
     private static final String[] ACOUSTIC_LABELS = {
             "Container", "Portal", "Explosion", "Redstone", "Player", "Sound", "Footsteps", "Eating", "Sculk"
     };
@@ -149,8 +155,11 @@ public final class WorldRadarModule extends WorldModule {
                 SettingSpec.bool("acoustic_edge_cues", "Off-screen sound cues", false, "Display",
                         "Arrows at the screen edge point to acoustic pings outside your view."),
                 SettingSpec.bool("trail_classes", "Trail forensics", false, "Display",
-                        "Classifies new-chunk trails (elytra highway, boat run, Nether tunnel, search zig-zag) and "
-                                + "draws a direction arrow along each."));
+                        "Classifies new-chunk trails (elytra highway, boat run, Nether tunnel, search zig-zag) by "
+                                + "shape and measured speed, draws direction arrows along each and, near or looked "
+                                + "at, how long ago it was made."),
+                SettingSpec.integer("trail_fade_minutes", "Trail fade (minutes)", 0, 0, 10080, "Display",
+                        "Trails fade with age over this many minutes (to a faint floor). 0 = no fading."));
     }
 
     @Override
@@ -173,6 +182,13 @@ public final class WorldRadarModule extends WorldModule {
         trailClasses = bool(p, "trail_classes");
         if (!trailClasses) {
             trailForensics.clear();
+        }
+        trailFadeMs = integer(p, "trail_fade_minutes") * 60_000L;
+        String profile = p.profileId();
+        if (!"global".equals(profile) && !profile.equals(trailProfile)) {
+            trailProfile = profile; // trails persist per world and dimension (merged in on load)
+            scanner.setTrailFiles(dim -> com.utilitysuite.world.WorldFiles.file(profile,
+                    ".trails." + com.utilitysuite.world.WorldFiles.safe(dim) + ".bin"));
         }
         itemFilter.set(text(p, "item_highlight"), text(p, "item_junk"), bool(p, "show_other_items"));
         itemVerdicts.clear();
@@ -216,7 +232,10 @@ public final class WorldRadarModule extends WorldModule {
 
     @Override
     public void onTick() {
-        if (++ticks % GATHER_INTERVAL != 0) {
+        if (++ticks % TRAIL_SAVE_TICKS == 0) {
+            scanner.persistTrails(true); // debounced: only when the trails changed; written on the world executor
+        }
+        if (ticks % GATHER_INTERVAL != 0) {
             return;
         }
         Minecraft mc = Minecraft.getInstance();
@@ -475,6 +494,8 @@ public final class WorldRadarModule extends WorldModule {
         int pcz = self.getBlockZ() >> 4;
         float y = ctx.ry(self.getBlockY() - 1 + 0.02);
         int r = trailRadius;
+        long now = System.currentTimeMillis();
+        long fade = trailFadeMs;
         for (int dx = -r; dx <= r; dx++) {
             for (int dz = -r; dz <= r; dz++) {
                 int cx = pcx + dx;
@@ -484,11 +505,14 @@ public final class WorldRadarModule extends WorldModule {
                 }
                 float x0 = ctx.rx(cx << 4);
                 float z0 = ctx.rz(cz << 4);
-                WorldRenderKit.square(ctx.lines, ctx.pose, x0 + 0.5f, y, z0 + 0.5f, x0 + 15.5f, z0 + 15.5f, 0xA0FF4040);
+                int argb = fade <= 0 ? TRAIL_CELL
+                        : TrailRecency.withAlpha(TRAIL_CELL, TrailRecency.fade(scanner.chunkAge.seenWallOf(cx, cz),
+                        now, fade));
+                WorldRenderKit.square(ctx.lines, ctx.pose, x0 + 0.5f, y, z0 + 0.5f, x0 + 15.5f, z0 + 15.5f, argb);
             }
         }
         if (trailClasses) {
-            trailForensics.render(ctx, y + 0.5f);
+            trailForensics.render(ctx, y + 0.5f, now, fade);
         }
     }
 
@@ -618,7 +642,8 @@ public final class WorldRadarModule extends WorldModule {
             }
         }
         if (trails && trailClasses) {
-            trailForensics.renderLabels(ctx, ctx.ry(self.getBlockY() - 1 + 0.52));
+            trailForensics.renderLabels(ctx, ctx.ry(self.getBlockY() - 1 + 0.52), System.currentTimeMillis(),
+                    Minecraft.getInstance().gameRenderer.getMainCamera().getLookVector());
         }
         if (acousticPings) {
             AcousticRadar radar = PacketLab.acousticRadar();
