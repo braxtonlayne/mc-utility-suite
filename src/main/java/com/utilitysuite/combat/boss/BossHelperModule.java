@@ -133,7 +133,9 @@ public final class BossHelperModule implements IModule, IConfigurable {
             put(crystalRefs, c);
         } else if (e instanceof WitherSkull s) {
             put(skulls, s);
-        } else if (e instanceof AreaEffectCloud c && c.getParticle().getType() == ParticleTypes.DRAGON_BREATH) {
+        } else if (e instanceof AreaEffectCloud c) {
+            // every cloud: its particle (dragon breath or not) is synced data that arrives after the join (playtest
+            // 2026-11-25: checking it here tracked no breath cloud at all); readers filter with breath()
             put(clouds, c);
         }
     }
@@ -155,6 +157,11 @@ public final class BossHelperModule implements IModule, IConfigurable {
         } else if (e instanceof AreaEffectCloud) {
             remove(clouds, e);
         }
+    }
+
+    /** A tracked cloud that shows dragon breath (read when used: the particle syncs after the join). */
+    static boolean breath(AreaEffectCloud c) {
+        return c != null && c.getParticle().getType() == ParticleTypes.DRAGON_BREATH;
     }
 
     private static <T> void put(T[] arr, T v) {
@@ -208,7 +215,7 @@ public final class BossHelperModule implements IModule, IConfigurable {
 
     private boolean anyTracked() {
         for (int i = 0; i < MAX_TRACKED; i++) {
-            if (skulls[i] != null || clouds[i] != null) {
+            if (skulls[i] != null || breath(clouds[i])) {
                 return true;
             }
         }
@@ -220,7 +227,7 @@ public final class BossHelperModule implements IModule, IConfigurable {
         if (dragonHints) {
             for (int i = 0; i < MAX_TRACKED; i++) {
                 AreaEffectCloud c = clouds[i];
-                if (c != null && BossFightAdvisor.inCloud(px, py, pz, c.getX(), c.getY(), c.getZ(), c.getRadius(),
+                if (breath(c) && BossFightAdvisor.inCloud(px, py, pz, c.getX(), c.getY(), c.getZ(), c.getRadius(),
                         0.5)) {
                     return IN_BREATH;
                 }
@@ -430,7 +437,7 @@ public final class BossHelperModule implements IModule, IConfigurable {
         if (dragonHints) {
             for (int i = 0; i < MAX_TRACKED; i++) {
                 AreaEffectCloud c = clouds[i];
-                if (c == null || c.isRemoved()) {
+                if (!breath(c) || c.isRemoved()) {
                     continue;
                 }
                 boolean inside = BossFightAdvisor.inCloud(p.getX(), p.getY(), p.getZ(), c.getX(), c.getY(), c.getZ(),

@@ -120,6 +120,21 @@ class ServerStallDetectorTest {
         Services.resetForTests();
     }
 
+    /** /tick freeze: time packets keep arriving but the game time stands still (playtest 2026-11-25). */
+    @Test
+    void frozenWorldPausesWithinTwoPacketsAndRecovers() {
+        ServerStallDetector d = new ServerStallDetector();
+        long[] g = {1000};
+        long t = run(d, 0, g, 100, true, 20);
+        assertFalse(d.paused());
+        t = run(d, t, g, 40, true, 0); // two packets without game-time progress
+        assertTrue(d.paused());
+        assertEquals("low tps", d.reason());
+        run(d, t, g, 200, true, 20); // unfrozen
+        assertFalse(d.paused());
+        assertEquals(20.0, d.tps(), 2.0);
+    }
+
     @Test
     void tickIsAllocationFree() {
         ServerStallDetector d = new ServerStallDetector();

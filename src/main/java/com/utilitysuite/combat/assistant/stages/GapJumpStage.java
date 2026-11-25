@@ -6,6 +6,7 @@ import com.utilitysuite.combat.assistant.FightContext;
 import com.utilitysuite.combat.assistant.FightStage;
 import com.utilitysuite.combat.tactics.CombatGapJump;
 import com.utilitysuite.core.api.SimKey;
+import com.utilitysuite.travel.movement.JumpSearch;
 import com.utilitysuite.travel.movement.MovementPhysics;
 
 /**
@@ -24,6 +25,7 @@ public final class GapJumpStage implements FightStage {
     private final CombatGapJump gate;
     private final MovementPhysics body = new MovementPhysics();
     private int jumps;
+    private int runUps;
 
     public GapJumpStage(GapJumpFacts facts) {
         this(facts, new CombatGapJump());
@@ -65,6 +67,13 @@ public final class GapJumpStage implements FightStage {
         boolean hitReady = s.attackStrength >= 0.9f && s.inReach();
         if (gate.decide(body, yaw, true, s.effectiveHealth(), facts.safeWalk(), false, s.tx, s.tz, false, hitReady, w)
                 != CombatGapJump.Verdict.JUMP) {
+            if (CombatGapJump.REASON_VALIDATOR.equals(gate.reason()) && runUpLands(s, yaw, w)) {
+                // not at the edge yet (the fight's own spacing stops short of it): sprint up to the edge; the gate
+                // above approves the jump on the last supported tick
+                ctx.move(1, 0, true);
+                runUps++;
+                return true;
+            }
             return false;
         }
         ctx.move(1, 0, true);
@@ -73,7 +82,30 @@ public final class GapJumpStage implements FightStage {
         return true;
     }
 
+    /**
+     * Run-up check (playtest 2026-11-25: fight movement held ~0.9 blocks short of a 2-wide gap, so the validator never
+     * saw an edge): the edge is at least one more supported tick ahead along {@code yaw} (within
+     * {@link JumpSearch#EDGE_WALK_MAX}), and running to it and jumping there lands unhurt, no lower than now and closer
+     * to the target. On the edge tick itself the gate decides as before, so a refused jump never walks off.
+     */
+    private boolean runUpLands(CombatSnapshot s, float yaw, MovementPhysics.Voxels w) {
+        JumpSearch js = gate.search();
+        if (js.ticksToEdge(body, 1, 0, yaw, true, JumpSearch.EDGE_WALK_MAX, w) < 1) {
+            return false; // no edge ahead, or this is already the edge tick (the gate's call)
+        }
+        if (js.edgeRun(body, 1, 0, yaw, true, s.effectiveHealth(), w) <= JumpSearch.NO_LANDING / 2
+                || js.landDamage() > 0f || js.landY() < s.py - 0.5) {
+            return false;
+        }
+        double bx = s.px - s.tx, bz = s.pz - s.tz, lx = js.landX() - s.tx, lz = js.landZ() - s.tz;
+        return lx * lx + lz * lz < bx * bx + bz * bz;
+    }
+
     // ---- diagnostics and tests ------------------------------------------------------------------------------------
+
+    public int runUps() {
+        return runUps;
+    }
 
     public int jumps() {
         return jumps;
