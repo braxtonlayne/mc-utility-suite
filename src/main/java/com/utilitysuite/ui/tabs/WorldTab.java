@@ -13,6 +13,7 @@ import com.utilitysuite.core.CoreBootstrap;
 import com.utilitysuite.core.api.IConfigurable;
 import com.utilitysuite.core.api.ProfileConfig;
 import com.utilitysuite.core.api.SettingSpec;
+import com.utilitysuite.travel.autopilot.TravelAutopilot;
 import com.utilitysuite.ui.Panel;
 import com.utilitysuite.ui.SettingsAccess;
 import com.utilitysuite.ui.SettingWidgetMapper;
@@ -321,12 +322,24 @@ public final class WorldTab {
         }
     }
 
+    private static final String OVERWORLD = "minecraft:overworld";
+
     private static void goTo(Panel p, IWaypointService wps, Waypoint wp) {
         INavigator nav = Services.navigatorOrNull();
         Minecraft mc = Minecraft.getInstance();
         if (nav == null || !nav.isAvailable() || mc.level == null) {
             p.toast("Pathing is not available (Baritone not installed)");
             return;
+        }
+        // Far overworld waypoints: Travel Autopilot routes through recorded portals and the Nether when cheaper.
+        if (OVERWORLD.equals(wp.dimension())) {
+            long ow = wps.positionIn(wp, OVERWORLD);
+            Optional<TravelAutopilot> autopilot = Services.modules().find(TravelAutopilot.class);
+            if (autopilot.isPresent() && autopilot.get().goViaNetherHub(BlockPos.getX(ow), BlockPos.getY(ow),
+                    BlockPos.getZ(ow), wp.name())) {
+                p.toast("Going to " + wp.name() + " through the Nether");
+                return;
+            }
         }
         long pos = wps.positionIn(wp, mc.level.dimension().location().toString());
         if (nav.goToLeased(NAV_OWNER, ControlPriority.TRAVEL, BlockPos.getX(pos), BlockPos.getY(pos),
