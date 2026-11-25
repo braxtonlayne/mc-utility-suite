@@ -560,9 +560,9 @@ heavy planning off-thread, HUD discipline. Combat items wait until combat testin
 Tier 1 (project fit, immediately useful)
 - [x] J4 Baritone-free local pathfinder (bounded voxel A*, <= 64 blocks) behind INavigator when `baritoe` is
       absent, so waypoint Go / Take Me Back work without Baritone; live job ETA (EMA of completed steps) on the HUD line.
-- [ ] T1 Cross-dimension Nether-hub routing: overworld leg -> nearest Portals waypoint -> Nether transit at 8:1 ->
+- [x] T1 Cross-dimension Nether-hub routing: overworld leg -> nearest Portals waypoint -> Nether transit at 8:1 ->
       paired exit portal -> final leg; multi-leg state survives the dimension change and re-acquires the TRAVEL lease.
-- [ ] J1 Shulker-aware StorageMemory (DataComponents.CONTAINER in chests and inventory) and a SHULKER_RESTOCK
+- [x] J1 Shulker-aware StorageMemory (DataComponents.CONTAINER in chests and inventory) and a SHULKER_RESTOCK
       job step: place a carried shulker, take what the plan needs, break it with the right tool, pick it up.
 - [x] W8 Two-eye stronghold triangulator from thrown EyeOfEnder velocities, snapped to the vanilla ring bands,
       posted as a waypoint.
@@ -580,7 +580,7 @@ Tier 2 (bigger, own-world, seed- or combat-dependent)
 - [ ] C4 Wind-charge / fireball deflection and a pearl landing countdown. Combat: deferred.
 - [ ] C5 Parkour + combat movement fusion (gap jumps mid-fight via MovementPhysics). Combat: deferred.
 - [ ] J2 Villager bulk trading and librarian enchantment roller (opt-in, protected-area guards).
-- [ ] J3 Schematic auto-supply runs between layers and temporary scaffolding cleanup.
+- [x] J3 Schematic auto-supply runs between layers and temporary scaffolding cleanup.
 - [ ] W1 Client-side terrain and biome oracles for OreSim on remote servers (full value needs a known seed).
-- [ ] W2 Seed-powered structure and slime-cluster locator (spiral search, minimap markers, Add waypoint / Go).
+- [x] W2 Seed-powered structure and slime-cluster locator (spiral search, minimap markers, Add waypoint / Go).
 - [ ] W6 Enchanting-table xpSeed cracker and cheapest dummy-enchant sequence (single player).
