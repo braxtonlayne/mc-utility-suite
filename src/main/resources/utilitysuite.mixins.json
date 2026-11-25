@@ -25,12 +25,17 @@
     "world.ClientLevelBlockUpdateMixin",
     "world.ClientLevelDataTimeMixin",
     "world.ClientSoundPacketMixin",
+    "world.EntityRenderDispatcherCullMixin",
     "world.EntityTurnFreecamMixin",
     "world.GameRendererFiltersMixin",
+    "world.LevelRendererCullStateAccessor",
     "world.LevelRendererWeatherMixin",
     "world.LevelWeatherOverrideMixin",
     "world.LightTextureFullbrightMixin",
-    "world.ParticleEngineFilterMixin"
+    "world.MinecraftMainTargetAccessor",
+    "world.ParticleEngineFilterMixin",
+    "world.RenderStageSecondaryPassMixin",
+    "world.SectionOcclusionGraphAccessor"
   ],
   "injectors": {
     "defaultRequire": 1

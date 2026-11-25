@@ -233,6 +233,7 @@ public final class WorldBootstrap {
         bus.addListener((ViewportEvent.RenderFog e) -> atmosphere.onFog(e));
         bus.addListener((ViewportEvent.ComputeFogColor e) -> atmosphere.onFogColor(e));
         bus.addListener((RenderFrameEvent.Pre e) -> governor.onFrame(e));
+        bus.addListener((RenderFrameEvent.Pre e) -> pip.onRenderFrame(e)); // PiP full render: the second level pass
         bus.addListener(RenderLivingEvent.Pre.class, e -> governor.onRenderLiving(e));
         bus.addListener((CalculatePlayerTurnEvent e) -> camera.onTurnSensitivity(e));
         bus.addListener((RenderBlockScreenEffectEvent e) -> camera.onScreenEffect(e));
