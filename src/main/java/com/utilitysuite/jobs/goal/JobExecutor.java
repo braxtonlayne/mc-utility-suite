@@ -89,6 +89,10 @@ public final class JobExecutor implements LeaseListener {
         public int candidateRadius = 256;
         public int maxCandidates = 16;
         public boolean batchErrands = true;
+        /** Furnace-array and brewing goals ("furnaces 192 raw iron", "brew 3 splash strong_healing"). Off by default. */
+        public boolean stationJobs = false;
+        /** Remembered stations farther than this are not used. */
+        public int stationRange = 32;
         public boolean depositAfterGather = false;
         /** LIKE_A_PLAYER: no predicted or hidden ore targets; the backend mines only what it can see. */
         public MiningStyle miningStyle = MiningStyle.LIKE_A_PLAYER;
@@ -206,6 +210,48 @@ public final class JobExecutor implements LeaseListener {
 
     public void setBuildHandler(BuildHandler handler) {
         this.buildHandler = handler;
+    }
+
+    private com.utilitysuite.jobs.planner.StationJobPlanner.StationSource stationSource;
+
+    /** Remembered furnaces / brewing stands for station goals (StorageMemory); null disables station goals. */
+    public void setStationSource(com.utilitysuite.jobs.planner.StationJobPlanner.StationSource source) {
+        this.stationSource = source;
+    }
+
+    /** Plans a furnace-array or brewing goal on the client thread (cheap), or returns null for other requests. */
+    private Plan stationPlan(Job j) {
+        String dim = deps.actions().dimension();
+        long from = deps.actions().playerPos();
+        Map<String, Integer> inv = deps.inventory().get().counts();
+        IStorageIndex storage = deps.storage().get();
+        if (j.request instanceof GoalRequest.SmeltArray s) {
+            List<com.utilitysuite.jobs.planner.StationJobPlanner.KnownStation> st = stationSource == null ? List.of()
+                    : stationSource.stations(dim, from, settings.stationRange, Set.of(
+                    com.utilitysuite.jobs.planner.FurnaceBatchPlanner.FURNACE,
+                    com.utilitysuite.jobs.planner.FurnaceBatchPlanner.BLAST_FURNACE,
+                    com.utilitysuite.jobs.planner.FurnaceBatchPlanner.SMOKER));
+            if (s.station() != null) {
+                st = st.stream().filter(k -> k.type().equals(s.station())).toList();
+            }
+            return com.utilitysuite.jobs.planner.StationJobPlanner.smeltArray(s.itemId(), "*", s.count(), st, inv,
+                    storage, dim, from, com.utilitysuite.jobs.planner.FuelTable.vanilla());
+        }
+        if (j.request instanceof GoalRequest.Brew b) {
+            List<com.utilitysuite.jobs.planner.StationJobPlanner.KnownStation> st = stationSource == null ? List.of()
+                    : stationSource.stations(dim, from, settings.stationRange,
+                    Set.of(com.utilitysuite.jobs.planner.StationJobPlanner.BREWING_STAND));
+            long pos = st.isEmpty() ? PlanStep.NO_POS : st.get(0).pos();
+            com.utilitysuite.jobs.planner.BrewingPlanner.Form form;
+            try {
+                form = com.utilitysuite.jobs.planner.BrewingPlanner.Form.valueOf(b.form());
+            } catch (IllegalArgumentException e) {
+                form = com.utilitysuite.jobs.planner.BrewingPlanner.Form.DRINK;
+            }
+            return com.utilitysuite.jobs.planner.StationJobPlanner.brew(b.potion(), form, b.count(), pos, inv, storage,
+                    dim, from, 0);
+        }
+        return null;
     }
 
     // ---- queue API --------------------------------------------------------------------------------------------------
@@ -432,7 +478,46 @@ public final class JobExecutor implements LeaseListener {
             case CRAFT, SMELT -> tickCraft(j, step);
             case TRAVEL, RETURN -> tickTravel(j, step);
             case BUILD -> tickBuild(j, step);
+            case FURNACE_LOAD, FURNACE_COLLECT, BREW, FILL_BOTTLES -> tickStation(j, step);
         }
+    }
+
+    /**
+     * Furnace loads/collects, brews and bottle filling: one world action each. A failure pauses the job with the
+     * action's reason (station jobs have no alternative source to replan to); a short collect/brew completes with what
+     * it got and says so.
+     */
+    private void tickStation(Job j, PlanStep step) {
+        WorldActions a = deps.actions();
+        if (j.phase == Phase.START) {
+            a.beginStation(step, lease);
+            j.phase = Phase.WAIT_ACTION;
+            markChanged(j);
+            return;
+        }
+        WorldActions.Result r = a.poll();
+        if (r == WorldActions.Result.RUNNING) {
+            return;
+        }
+        if (r == WorldActions.Result.FAILED) {
+            if (step.kind() != StepKind.FURNACE_LOAD && step.kind() != StepKind.FILL_BOTTLES) {
+                deps.markStorageStale().accept(step.dimension(), step.storagePos());
+            }
+            if (replan(j, step, step.label() + " failed: " + a.message())) {
+                j.phase = Phase.START; // try the same station again; the budget pauses the job when it keeps failing
+            }
+            return;
+        }
+        if (step.kind() != StepKind.FURNACE_LOAD) {
+            int got = 0; // a collect may not know the output id up front ("*"): count everything it took
+            for (int v : a.transferred().values()) {
+                got += v;
+            }
+            if (got < step.count()) {
+                setReason(j, step.label() + " got " + got + "/" + step.count());
+            }
+        }
+        completeStep(j);
     }
 
     private Job pickNext() {
@@ -463,6 +548,19 @@ public final class JobExecutor implements LeaseListener {
                 return;
             }
             j.pendingPlan = travelPlan(t);
+            return;
+        }
+        if (j.request instanceof GoalRequest.SmeltArray || j.request instanceof GoalRequest.Brew) {
+            if (!settings.stationJobs) {
+                fail(j, "Furnace-array and brewing goals are off (Goal Engine > Station jobs)");
+                return;
+            }
+            Plan sp = stationPlan(j);
+            if (sp.steps().isEmpty()) {
+                fail(j, sp.warnings().isEmpty() ? "Nothing to do" : String.join("; ", sp.warnings()));
+                return;
+            }
+            j.pendingPlan = sp;
             return;
         }
         PlanContext ctx = context(j, Map.of(), true);
@@ -1438,7 +1536,8 @@ public final class JobExecutor implements LeaseListener {
             return MOVE_CHANNELS;
         }
         return switch (step.kind()) {
-            case CRAFT, SMELT, FETCH, SHULKER_RESTOCK, RETURN -> ALL_CHANNELS;
+            case CRAFT, SMELT, FETCH, SHULKER_RESTOCK, RETURN, FURNACE_LOAD, FURNACE_COLLECT, BREW, FILL_BOTTLES ->
+                    ALL_CHANNELS;
             default -> MOVE_CHANNELS;
         };
     }
@@ -1548,6 +1647,9 @@ public final class JobExecutor implements LeaseListener {
                 return j.origin;
             case FETCH:
             case TRAVEL:
+            case FURNACE_LOAD:
+            case FURNACE_COLLECT:
+            case BREW:
                 return step.storagePos();
             case GATHER:
             case MINE:

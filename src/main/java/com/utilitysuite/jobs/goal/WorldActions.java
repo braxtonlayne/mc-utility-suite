@@ -32,6 +32,14 @@ public interface WorldActions {
      */
     void beginShulkerRestock(String boxItemId, String itemId, int count, ControlLease lease);
 
+    /**
+     * Runs one station step ({@code FURNACE_LOAD}, {@code FURNACE_COLLECT}, {@code BREW}, {@code FILL_BOTTLES}): walks
+     * to and opens the remembered station at {@code step.storagePos()} and moves items with container clicks. A brew
+     * waits for each ingredient's brew time inside the action. {@link #transferred()} reports the items produced or
+     * collected (the step's {@code itemId}).
+     */
+    void beginStation(PlanStep step, ControlLease lease);
+
     Result poll();
 
     /** Human-readable result or failure reason of the last operation. */

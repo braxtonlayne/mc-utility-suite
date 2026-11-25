@@ -81,6 +81,14 @@ public final class StorageMemoryModule implements IModule, IConfigurable {
         };
     }
 
+    public static boolean isStationBlock(String blockId) {
+        return switch (blockId) {
+            case "minecraft:furnace", "minecraft:blast_furnace", "minecraft:smoker", "minecraft:brewing_stand",
+                 "minecraft:crafter" -> true;
+            default -> false;
+        };
+    }
+
     // ---- events -----------------------------------------------------------------------------------------------------
 
     /** Remembers which container block the player is about to open. */
@@ -89,6 +97,12 @@ public final class StorageMemoryModule implements IModule, IConfigurable {
             return;
         }
         String id = blockId(event.getLevel().getBlockState(event.getPos()).getBlock());
+        if (isStationBlock(id)) {
+            // furnaces / brewing stands / crafters: remembered by position for station jobs, contents not indexed
+            memory.rememberStation(event.getLevel().dimension().location().toString(), event.getPos().asLong(), id);
+            scheduleSave();
+            return;
+        }
         if (!isContainerBlock(id)) {
             return;
         }
@@ -223,6 +237,10 @@ public final class StorageMemoryModule implements IModule, IConfigurable {
     @Override
     public void onProfileLoaded(ProfileConfig profile) {
         memory.setMaxAgeMillis(3_600_000L * profile.getInt(ID, "stale_after_hours", 72));
+        memory.setEnderAsSource(profile.getBool(ID, "ender_chest_source", false));
+        if (FMLPaths.CONFIGDIR.get() == null) {
+            return; // no FML paths (unit tests): settings applied, nothing to load
+        }
         String file = FMLPaths.CONFIGDIR.get().resolve("utilitysuite").resolve("storage")
                 .resolve(ProfileIds.fileName(profile.profileId()) + ".json").toString();
         if (file.equals(profileFile)) {
@@ -281,11 +299,16 @@ public final class StorageMemoryModule implements IModule, IConfigurable {
     @Override
     public List<SettingSpec> settings() {
         return List.of(SettingSpec.integer("stale_after_hours", "Mark stale after (hours)", 72, 1, 24 * 30, "",
-                "Container contents older than this are not used for planning"));
+                "Container contents older than this are not used for planning"),
+                SettingSpec.bool("ender_chest_source", "Ender chest as a source", false, "",
+                        "Plans may take items from your ender chest (recorded whenever you open one) at the nearest"
+                                + " known ender chest, unpacking shulker boxes from it if needed"));
     }
 
     @Override
     public void onSettingChanged(String key) {
-        memory.setMaxAgeMillis(3_600_000L * Services.modState().profile().getInt(ID, "stale_after_hours", 72));
+        ProfileConfig p = Services.modState().profile();
+        memory.setMaxAgeMillis(3_600_000L * p.getInt(ID, "stale_after_hours", 72));
+        memory.setEnderAsSource(p.getBool(ID, "ender_chest_source", false));
     }
 }

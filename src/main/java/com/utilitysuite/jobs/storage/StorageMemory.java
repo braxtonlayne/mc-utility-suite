@@ -8,6 +8,8 @@ import com.utilitysuite.core.api.IStorageIndex;
 import com.utilitysuite.core.api.NestedContainer;
 import com.utilitysuite.core.api.StorageEntry;
 import com.utilitysuite.jobs.planner.PackedPos;
+import com.utilitysuite.jobs.planner.StationJobPlanner;
+import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 
 import java.util.ArrayList;
@@ -23,7 +25,7 @@ import java.util.function.LongSupplier;
  * dimension and {@code BlockPos.asLong()} in fastutil maps. An entry is stale when it was marked (block changed or a
  * fetch found it short) or when it is older than {@link #maxAgeMillis()}.
  */
-public final class StorageMemory implements IStorageIndex {
+public final class StorageMemory implements IStorageIndex, StationJobPlanner.StationSource {
 
     private static final class Record {
         final long pos;
@@ -80,11 +82,102 @@ public final class StorageMemory implements IStorageIndex {
             byDim.get(dimension).put(pos, r);
         }
         r.type = containerType;
-        r.contents = Map.copyOf(contents);
-        r.nested = List.copyOf(nested);
         r.timestamp = clock.getAsLong();
         r.marked = false;
+        if (ENDER_CHEST.equals(containerType)) {
+            // One shared inventory: the mirror holds the contents, the record only remembers where a chest stands.
+            ender.record(contents, nested, r.timestamp);
+            r.contents = Map.of();
+            r.nested = List.of();
+            for (Long2ObjectOpenHashMap<Record> m : byDim.values()) {
+                for (Record o : m.values()) {
+                    if (ENDER_CHEST.equals(o.type)) {
+                        o.marked = false;
+                    }
+                }
+            }
+        } else {
+            r.contents = Map.copyOf(contents);
+            r.nested = List.copyOf(nested);
+        }
         changed();
+    }
+
+    // ---- ender chest mirror and remembered stations -------------------------------------------------------------------
+
+    public static final String ENDER_CHEST = "minecraft:ender_chest";
+
+    private final EnderChestMirror ender = new EnderChestMirror();
+    private volatile boolean enderAsSource;
+    /** dimension -> packed pos -> station block id (furnaces, brewing stands, crafters) remembered when opened. */
+    private final Map<String, Long2ObjectOpenHashMap<String>> stations = new HashMap<>();
+    private volatile List<StationJobPlanner.KnownStation> stationSnapshot = List.of();
+    private volatile List<String> stationDims = List.of();
+
+    public EnderChestMirror enderMirror() {
+        return ender;
+    }
+
+    /**
+     * When on, every remembered ender chest shows the mirrored contents in the snapshot (so the planner can FETCH from
+     * the nearest one, including nested shulker boxes); {@link #count} counts the mirror once.
+     */
+    public void setEnderAsSource(boolean on) {
+        if (enderAsSource != on) {
+            enderAsSource = on;
+            publish();
+        }
+    }
+
+    public boolean enderAsSource() {
+        return enderAsSource;
+    }
+
+    public void rememberStation(String dimension, long pos, String type) {
+        String old = stations.computeIfAbsent(dimension, d -> new Long2ObjectOpenHashMap<>()).put(pos, type);
+        if (!type.equals(old)) {
+            dirty = true;
+            publishStations();
+        }
+    }
+
+    public void forgetStation(String dimension, long pos) {
+        Long2ObjectOpenHashMap<String> m = stations.get(dimension);
+        if (m != null && m.remove(pos) != null) {
+            dirty = true;
+            publishStations();
+        }
+    }
+
+    private void publishStations() {
+        List<StationJobPlanner.KnownStation> out = new ArrayList<>();
+        List<String> dims = new ArrayList<>();
+        for (Map.Entry<String, Long2ObjectOpenHashMap<String>> e : stations.entrySet()) {
+            for (Long2ObjectMap.Entry<String> s : e.getValue().long2ObjectEntrySet()) {
+                out.add(new StationJobPlanner.KnownStation(s.getLongKey(), s.getValue()));
+                dims.add(e.getKey());
+            }
+        }
+        stationSnapshot = List.copyOf(out);
+        stationDims = List.copyOf(dims);
+    }
+
+    /** Remembered stations of the types within {@code range} in the dimension, nearest first (any thread). */
+    @Override
+    public List<StationJobPlanner.KnownStation> stations(String dimension, long from, int range,
+                                                        java.util.Set<String> types) {
+        List<StationJobPlanner.KnownStation> all = stationSnapshot;
+        List<String> dims = stationDims;
+        List<StationJobPlanner.KnownStation> out = new ArrayList<>();
+        long r2 = (long) range * range;
+        for (int i = 0; i < all.size(); i++) {
+            StationJobPlanner.KnownStation s = all.get(i);
+            if (dims.get(i).equals(dimension) && types.contains(s.type()) && PackedPos.distSq(s.pos(), from) <= r2) {
+                out.add(s);
+            }
+        }
+        out.sort((a, b) -> Long.compare(PackedPos.distSq(a.pos(), from), PackedPos.distSq(b.pos(), from)));
+        return out;
     }
 
     /** Contents may no longer be accurate (block changed, fetch came up short). */
@@ -93,6 +186,16 @@ public final class StorageMemory implements IStorageIndex {
         Record r = m == null ? null : m.get(pos);
         if (r != null && !r.marked) {
             r.marked = true;
+            if (ENDER_CHEST.equals(r.type)) {
+                // the mirror was wrong: every ender chest shows the same contents
+                for (Long2ObjectOpenHashMap<Record> mm : byDim.values()) {
+                    for (Record o : mm.values()) {
+                        if (ENDER_CHEST.equals(o.type)) {
+                            o.marked = true;
+                        }
+                    }
+                }
+            }
             changed();
         }
     }
@@ -132,6 +235,9 @@ public final class StorageMemory implements IStorageIndex {
 
     public void clear() {
         byDim.clear();
+        stations.clear();
+        publishStations();
+        ender.clear();
         dirty = false;
         snapshot = List.of();
     }
@@ -168,6 +274,17 @@ public final class StorageMemory implements IStorageIndex {
         List<StorageEntry> out = new ArrayList<>();
         for (Long2ObjectOpenHashMap<Record> m : byDim.values()) {
             for (Record r : m.values()) {
+                if (ENDER_CHEST.equals(r.type)) {
+                    EnderChestMirror.Snapshot s = ender.snapshot();
+                    if (enderAsSource && s.known()) {
+                        boolean stale = r.marked || now - s.timestampMillis() > maxAgeMillis;
+                        out.add(new StorageEntry(r.pos, r.dimension, r.type, s.contents(), s.timestampMillis(), stale,
+                                s.nested()));
+                    } else {
+                        out.add(new StorageEntry(r.pos, r.dimension, r.type, Map.of(), r.timestamp, true, List.of()));
+                    }
+                    continue;
+                }
                 boolean stale = r.marked || now - r.timestamp > maxAgeMillis;
                 out.add(new StorageEntry(r.pos, r.dimension, r.type, r.contents, r.timestamp, stale, r.nested));
             }
@@ -185,8 +302,15 @@ public final class StorageMemory implements IStorageIndex {
     @Override
     public int count(String itemId, boolean includeStale) {
         int sum = 0;
+        boolean enderCounted = false;
         for (StorageEntry e : snapshot) {
             if (includeStale || !e.stale()) {
+                if (ENDER_CHEST.equals(e.containerType())) {
+                    if (enderCounted) {
+                        continue; // every ender chest shows the same shared inventory
+                    }
+                    enderCounted = true;
+                }
                 sum += e.totalCount(itemId);
             }
         }
@@ -251,12 +375,66 @@ public final class StorageMemory implements IStorageIndex {
             }
         }
         root.add("entries", arr);
+        EnderChestMirror.Snapshot es = ender.snapshot();
+        if (es.known()) {
+            JsonObject e = new JsonObject();
+            e.addProperty("ts", es.timestampMillis());
+            JsonObject c = new JsonObject();
+            es.contents().forEach(c::addProperty);
+            e.add("c", c);
+            e.add("n", nestedJson(es.nested()));
+            root.add("ender", e);
+        }
+        if (!stations.isEmpty()) {
+            JsonArray st = new JsonArray();
+            for (Map.Entry<String, Long2ObjectOpenHashMap<String>> d : stations.entrySet()) {
+                for (Long2ObjectMap.Entry<String> s : d.getValue().long2ObjectEntrySet()) {
+                    JsonObject o = new JsonObject();
+                    o.addProperty("p", s.getLongKey());
+                    o.addProperty("d", d.getKey());
+                    o.addProperty("t", s.getValue());
+                    st.add(o);
+                }
+            }
+            root.add("stations", st);
+        }
         return root.toString();
+    }
+
+    private static JsonArray nestedJson(List<NestedContainer> nested) {
+        JsonArray n = new JsonArray();
+        for (NestedContainer nc : nested) {
+            JsonObject b = new JsonObject();
+            b.addProperty("i", nc.containerItemId());
+            JsonObject bc = new JsonObject();
+            nc.contents().forEach(bc::addProperty);
+            b.add("c", bc);
+            n.add(b);
+        }
+        return n;
+    }
+
+    private static List<NestedContainer> readNested(JsonArray arr) {
+        List<NestedContainer> nested = new ArrayList<>();
+        if (arr == null) {
+            return nested;
+        }
+        for (JsonElement be : arr) {
+            JsonObject b = be.getAsJsonObject();
+            Map<String, Integer> bc = new LinkedHashMap<>();
+            for (Map.Entry<String, JsonElement> x : b.getAsJsonObject("c").entrySet()) {
+                bc.put(x.getKey(), x.getValue().getAsInt());
+            }
+            nested.add(new NestedContainer(b.get("i").getAsString(), bc));
+        }
+        return nested;
     }
 
     /** Replaces the index with the JSON contents. Malformed entries are skipped. */
     public void loadJson(String json) {
         byDim.clear();
+        stations.clear();
+        ender.clear();
         try {
             JsonObject root = JsonParser.parseString(json).getAsJsonObject();
             for (JsonElement el : root.getAsJsonArray("entries")) {
@@ -284,9 +462,25 @@ public final class StorageMemory implements IStorageIndex {
                 }
                 byDim.computeIfAbsent(r.dimension, d -> new Long2ObjectOpenHashMap<>()).put(r.pos, r);
             }
+            if (root.has("ender")) {
+                JsonObject e = root.getAsJsonObject("ender");
+                Map<String, Integer> c = new LinkedHashMap<>();
+                for (Map.Entry<String, JsonElement> x : e.getAsJsonObject("c").entrySet()) {
+                    c.put(x.getKey(), x.getValue().getAsInt());
+                }
+                ender.record(c, readNested(e.getAsJsonArray("n")), e.get("ts").getAsLong());
+            }
+            if (root.has("stations")) {
+                for (JsonElement el : root.getAsJsonArray("stations")) {
+                    JsonObject o = el.getAsJsonObject();
+                    stations.computeIfAbsent(o.get("d").getAsString(), d -> new Long2ObjectOpenHashMap<>())
+                            .put(o.get("p").getAsLong(), o.get("t").getAsString());
+                }
+            }
         } catch (RuntimeException e) {
             byDim.clear();
         }
+        publishStations();
         dirty = false;
         publish();
     }

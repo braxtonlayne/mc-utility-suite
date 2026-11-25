@@ -61,4 +61,9 @@ public interface InputBackend {
 
     /** Recipe-book placement into the open crafting menu. Returns false if no menu is open or the recipe is unknown. */
     boolean placeRecipe(String recipeId, boolean craftAll);
+
+    /** Crafter slot-lock toggle on the open crafter menu. Returns false when no crafter is open. */
+    default boolean setCrafterSlotEnabled(int slot, boolean enabled) {
+        return false;
+    }
 }
