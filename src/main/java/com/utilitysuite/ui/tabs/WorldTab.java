@@ -159,6 +159,13 @@ public final class WorldTab {
                         "Edit HUD layout", PillButton.Style.SECONDARY, mm::openLayoutEditor);
             }
         });
+        ModulePanels.register(com.utilitysuite.world.atlas.WorldAtlasModule.ID, (p, m) -> {
+            if (m instanceof com.utilitysuite.world.atlas.WorldAtlasModule atlas) {
+                QuickActions.actionRow(p, "Full-screen map", "2D/3D atlas with waypoints and seed pins. Also on the "
+                        + "Open World Atlas key (M by default).", "Open atlas", PillButton.Style.PRIMARY,
+                        atlas::openScreen);
+            }
+        });
         ModulePanels.register(SeedScannerModule.ID, (p, m) -> {
             if (m instanceof SeedScannerModule ss) {
                 p.paragraph(ss.statusLine() + "  ·  " + ss.clueSummary(), Panel.GRAY);

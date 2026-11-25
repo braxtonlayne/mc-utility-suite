@@ -15,7 +15,7 @@ import java.util.Arrays;
  * {@link #onPressed(KeyId, Runnable)} during construction; the core dispatches presses once per client tick.
  * <p>
  * Defaults: Open Menu = Right Shift, Stop-All = Backspace (unused by vanilla in game, large and easy to hit in a hurry),
- * Clean-Screen = F10 (unused by vanilla). Quick toggles and the hand-over hold key start unbound. All bindings only act in game (no screen open),
+ * Clean-Screen = F10 (unused by vanilla), World Atlas = M (unused by vanilla). Quick toggles and the hand-over hold key start unbound. All bindings only act in game (no screen open),
  * so typing Backspace in chat never triggers Stop-All.
  */
 public final class KeybindManager {
@@ -32,7 +32,9 @@ public final class KeybindManager {
         TOGGLE_SCOUT_CAMERA("toggle_scout_camera", GLFW.GLFW_KEY_RIGHT_ALT), // freecam (Freelook holds Left Alt)
         TOGGLE_AUTOPILOT("toggle_autopilot", InputConstants.UNKNOWN.getValue()),
         /** Hold to hand the whole body to the autopilot (read with {@link #isHeld}; unbound by default). */
-        HAND_OVER("hand_over", InputConstants.UNKNOWN.getValue());
+        HAND_OVER("hand_over", InputConstants.UNKNOWN.getValue()),
+        /** Opens the full-screen World Atlas. M is not bound by vanilla 1.21.1. */
+        OPEN_WORLD_ATLAS("open_world_atlas", GLFW.GLFW_KEY_M);
 
         private static final KeyId[] VALUES = values();
 
