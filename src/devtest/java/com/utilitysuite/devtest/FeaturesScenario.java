@@ -30,7 +30,8 @@ final class FeaturesScenario {
 
     /** Every module this scenario switches on (all switched off again by the cleanup step). */
     private static final String[] MODULES = {WorldAtlasModule.ID, SonarPulseModule.ID, CavityTomographyModule.ID,
-            "redstone_tracer", "boat_line", HoloCardModule.ID, ReplayTheatreModule.ID, "anvil_planner"};
+            "redstone_tracer", "boat_line", HoloCardModule.ID, ReplayTheatreModule.ID, "anvil_planner",
+            com.utilitysuite.world.replay.PipCameraModule.ID};
 
     private FeaturesScenario() {
     }
@@ -49,6 +50,7 @@ final class FeaturesScenario {
         boat(s);
         holoCards(s);
         replay(s);
+        pip(s);
         palette(s);
         anvil(s);
         shapes(s);
@@ -225,6 +227,24 @@ final class FeaturesScenario {
             s.check("feature: holo card at a chest", on(HoloCardModule.ID) && key != HoloCardBook.NO_TARGET,
                     "shown key " + key + ", card " + m.book().card.kind + " '" + m.book().card.title + "', " + hitInfo());
         });
+    }
+
+    private static void pip(Scenario s) {
+        s.run("pip full render on", () -> {
+            H.enable(com.utilitysuite.world.replay.PipCameraModule.ID, true);
+            H.setting(com.utilitysuite.world.replay.PipCameraModule.ID, "render", "FULL");
+        });
+        s.waitTicks(40);
+        Shots.add(s, "pip-full-render");
+        s.run("pip result", () -> {
+            IModule m = module(com.utilitysuite.world.replay.PipCameraModule.ID);
+            boolean valid = Boolean.TRUE.equals(field(m, "fullValid"));
+            boolean failed = Boolean.TRUE.equals(field(m, "fullFailed"));
+            s.check("feature: picture-in-picture full render draws a frame", on(com.utilitysuite.world.replay.PipCameraModule.ID)
+                            && valid && !failed,
+                    H.fields(m, "fullValid", "fullFailed", "rendererMod", "renderMode"));
+        });
+        s.run("pip off", () -> H.enable(com.utilitysuite.world.replay.PipCameraModule.ID, false));
     }
 
     private static void replay(Scenario s) {
