@@ -12,6 +12,8 @@ import com.utilitysuite.core.config.ProfileIds;
 import com.utilitysuite.core.input.InputSettings;
 import com.utilitysuite.core.input.KeybindManager;
 import com.utilitysuite.tools.ToolsBootstrap;
+import com.utilitysuite.tools.enchant.EnchantPlanner;
+import com.utilitysuite.tools.enchant.EnchantSeedHelper;
 import com.utilitysuite.tools.inventory.PinnedSlots;
 import com.utilitysuite.tools.inventory.SmartInventory;
 import com.utilitysuite.tools.packetlab.LatencySimulator;
@@ -194,6 +196,61 @@ public final class ToolsTab {
                 rulesPanel(p, rules);
             }
         });
+        ModulePanels.register(EnchantSeedHelper.ID, (p, m) -> {
+            if (m instanceof EnchantSeedHelper eh) {
+                enchantPanel(p, eh);
+            }
+        });
+    }
+
+    private static final String K_ENCHANT_TABLE = "tools.enchant_table";
+
+    private static void enchantPanel(Panel p, EnchantSeedHelper eh) {
+        int w = p.width();
+        EnchantSeedHelper.Snapshot s = eh.snapshot();
+        p.paragraph("Single player: reads your enchantment seed and shows what the table offers for the held item."
+                + " Advice only; it never clicks. On a server, open a table with items in it while this is on:"
+                + " each distinct table state narrows the seed.", Panel.DIM);
+        if (Minecraft.getInstance().getSingleplayerServer() == null) {
+            p.dynamic(() -> "Seed cracker: " + eh.crackStatus(), Panel.GRAY);
+        }
+        QuickActions.actionRow(p, "Held item", s.item().isEmpty() ? s.status() : s.item() + "  ·  seed " + s.seed(),
+                "Refresh", PillButton.Style.SECONDARY, () -> {
+                    eh.refresh();
+                    p.rebuild();
+                });
+        if (s.offers().isEmpty()) {
+            return;
+        }
+        List<String> choices = new ArrayList<>();
+        choices.add("");
+        choices.addAll(s.choices());
+        String cur = choices.contains(eh.targetId()) ? eh.targetId() : "";
+        p.rowLabel("Wanted", 0, 60, Panel.GRAY);
+        p.cycle(choices, cur, id -> id.isEmpty() ? "(any: cheapest reroll)" : EnchantPlanner.prettyName(id), 64,
+                w - 64, id -> {
+                    eh.setTargetId(id);
+                    p.rebuild();
+                });
+        p.nextRow();
+        EnchantPlanner.Plan plan = eh.plan();
+        int color = switch (plan.kind()) {
+            case MATCH -> Panel.GREEN;
+            case MATCH_NEEDS_LEVELS -> Panel.YELLOW;
+            default -> Panel.GRAY;
+        };
+        p.paragraph(EnchantPlanner.advice(plan, eh.targetId(), eh.minLevel()), color);
+        if (p.collapsible(K_ENCHANT_TABLE, "Offers by bookshelf count", eh.maxShelves() + 1)) {
+            for (EnchantPlanner.Offer o : s.offers()) {
+                if (o.cost() <= 0) {
+                    continue;
+                }
+                boolean hit = !eh.targetId().isEmpty() && o.contains(eh.targetId(), eh.minLevel());
+                p.text(o.bookshelves() + " shelves  slot " + (o.slot() + 1) + "  [" + o.cost() + "]  "
+                        + EnchantPlanner.describe(o.enchants()), hit ? Panel.GREEN : Panel.GRAY);
+            }
+            p.endCollapsible();
+        }
     }
 
     private static void rulesPanel(Panel p, LocalRules rules) {
