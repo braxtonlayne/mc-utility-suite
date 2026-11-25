@@ -335,9 +335,12 @@ public final class CombatSettings {
                 SettingSpec.bool(ENGAGE_REQUIRES_LOS, "Require line of sight", true, "Proactive",
                         "Only go after targets you can see. Off lets it pick targets behind walls (less legit)."),
                 SettingSpec.bool(OPPONENT_MEMORY, "Remember opponents", false, "Proactive",
-                        "Remember how each player fought you on this server (strafe side, shield use, pearl-out"
-                                + " health, ranged or mace habits, reach). The next fight starts from that read and a"
-                                + " one-line hint is shown."),
+                        "Remember how each player fought you on this server (strafe side, shield use, reach, when"
+                                + " and how often they pearl, bow/crossbow/trident range and draw time, mace dives and"
+                                + " wind-charge launches). The next fight starts from that read and a one-line hint is"
+                                + " shown; with the matching options on, the pearl countdown line pre-warns a likely"
+                                + " pearl-out, deflection looks further ahead for wind-charge throwers, and spacing"
+                                + " widens while a known mace diver is above you."),
                 SettingSpec.bool(FOOD_OBJECTIVE, "Hunt for food when out", true, "Proactive",
                         "When you have no food and none in nearby chests the assistant remembers, hunt nearby cows,"
                                 + " pigs, sheep, chickens and rabbits and pick up the drops, but only while you are not"

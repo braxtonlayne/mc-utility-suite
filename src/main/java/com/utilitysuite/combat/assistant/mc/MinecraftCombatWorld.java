@@ -352,6 +352,23 @@ public final class MinecraftCombatWorld implements CombatWorld, LineOfSight.Soli
      * allocate; the census runs every {@value #SWEEP_SCAN_INTERVAL} samples (one small AABB and the level's section
      * walk, like the proactive scan) and is reused in between.
      */
+    /** {@code HabitRecorder.HELD_*} of an item (type checks only, no allocation). */
+    static int heldKind(net.minecraft.world.item.Item item) {
+        if (item instanceof net.minecraft.world.item.CrossbowItem) {
+            return com.utilitysuite.combat.tactics.memory.HabitRecorder.HELD_CROSSBOW;
+        }
+        if (item instanceof net.minecraft.world.item.BowItem) {
+            return com.utilitysuite.combat.tactics.memory.HabitRecorder.HELD_BOW;
+        }
+        if (item instanceof net.minecraft.world.item.TridentItem) {
+            return com.utilitysuite.combat.tactics.memory.HabitRecorder.HELD_TRIDENT;
+        }
+        if (item instanceof net.minecraft.world.item.MaceItem) {
+            return com.utilitysuite.combat.tactics.memory.HabitRecorder.HELD_MACE;
+        }
+        return com.utilitysuite.combat.tactics.memory.HabitRecorder.HELD_OTHER;
+    }
+
     private void sampleHitChoice(LocalPlayer p, LivingEntity t, ClientLevel lvl, CombatSnapshot out) {
         out.ownAttackSpeed = p.getAttributeValue(Attributes.ATTACK_SPEED);
         out.ownAttackDamage = ownAttackDamage(p);
@@ -365,6 +382,7 @@ public final class MinecraftCombatWorld implements CombatWorld, LineOfSight.Soli
         out.targetUsingItem = t.isUsingItem() && !t.isBlocking();
         out.targetHeavyHitter = t instanceof IronGolem || t instanceof Ravager || t instanceof Hoglin
                 || t instanceof Zoglin || t instanceof Warden;
+        out.targetHeld = heldKind(t.isUsingItem() ? t.getUseItem().getItem() : t.getMainHandItem().getItem());
         if (t.getId() != sweepTargetId || ++sweepScanClock >= SWEEP_SCAN_INTERVAL) {
             sweepScanClock = 0;
             sweepTargetId = t.getId();

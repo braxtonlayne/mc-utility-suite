@@ -7,6 +7,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.utilitysuite.combat.assistant.CombatSettings;
 import com.utilitysuite.combat.assistant.CombatSnapshot;
 import com.utilitysuite.combat.assistant.FightContext;
+import com.utilitysuite.combat.tactics.memory.OpponentMemory;
+import com.utilitysuite.combat.tactics.memory.RecalledHabits;
 import java.lang.reflect.Proxy;
 import org.junit.jupiter.api.Test;
 
@@ -57,6 +59,7 @@ class DeflectStageTest {
     }
 
     final CombatSettings cs = new CombatSettings();
+    RecalledHabits recalled = RecalledHabits.NONE;
     int attacks;
     float aimYaw = Float.NaN;
 
@@ -71,6 +74,8 @@ class DeflectStageTest {
                     case "aimAt":
                         aimYaw = (Float) args[0];
                         return null;
+                    case "recalledHabits":
+                        return recalled;
                     default:
                         Class<?> r = m.getReturnType();
                         if (r == boolean.class) {
@@ -121,6 +126,24 @@ class DeflectStageTest {
         f.z = 2.5;
         assertTrue(st.step(snapshot(0f), ctx));
         assertEquals(1, attacks);
+    }
+
+    @Test
+    void rememberedWindChargeThrowerWidensTheReadinessHorizon() {
+        cs.deflectProjectiles = true;
+        Facts f = new Facts();
+        f.z = 50; // 50 ticks out: beyond the normal 40-tick horizon
+        DeflectStage st = new DeflectStage(f);
+        assertFalse(st.step(snapshot(0f), ctx));
+        RecalledHabits r = new RecalledHabits();
+        OpponentMemory.Profile p = new OpponentMemory.Profile();
+        p.fights = 3;
+        p.windShotsPerMin = 2.0;
+        r.fill(p);
+        recalled = r;
+        assertTrue(st.step(snapshot(0f), ctx)); // a known thrower: start the look now
+        assertEquals(0f, aimYaw, 1e-3);
+        assertEquals(0, attacks);
     }
 
     @Test

@@ -54,6 +54,8 @@ public final class CombatBootstrap {
             new com.utilitysuite.combat.tactics.PearlCountdown();
     private static ArenaVoxels pearlVoxels;
     private static volatile String pearlLine;
+    /** Pearl countdown line while a remembered pearl-escaper is near its usual pearl-out health (constant). */
+    static final String PEARL_PREWARN = "Opponent usually pearls out about now";
     private static ReadState readState;
     private static ReadRingModule readRing;
 
@@ -159,6 +161,8 @@ public final class CombatBootstrap {
         bus.addListener(ClientPlayerNetworkEvent.LoggingOut.class, event -> threats.clear());
         bus.addListener(pearls::onJoin);
         bus.addListener(pearls::onLeave);
+        // C6 opponent habits: the engaged target's pearls, shots and wind charges (no-op unless "Opponent memory")
+        bus.addListener(new com.utilitysuite.combat.assistant.mc.ProjectileHabitFeed(assistant)::onJoin);
         bus.addListener(ClientPlayerNetworkEvent.LoggingOut.class, event -> pearls.clear());
         bus.addListener(readRing::onRenderLevel);
         // the autopilot's totem reflex runs here while the Combat Assistant module itself is off
@@ -170,6 +174,9 @@ public final class CombatBootstrap {
                 // own pearl in flight: constant status-line string or null (one field compare when the setting is off)
                 pearlLine = pearlCountdown.tick(assistant.config().pearlCountdown, pearls, mc.player.getId(),
                         pearlVoxels);
+                if (pearlLine == null && assistant.config().pearlCountdown && assistant.opponentPearlLikely()) {
+                    pearlLine = PEARL_PREWARN; // C6: a remembered pearl-escaper is near its usual pearl-out health
+                }
             } else {
                 pearlLine = null;
             }

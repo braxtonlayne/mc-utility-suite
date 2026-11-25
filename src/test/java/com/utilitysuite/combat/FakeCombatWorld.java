@@ -37,6 +37,8 @@ public final class FakeCombatWorld implements CombatWorld {
         public double attackSpeed = 4.0;
         public int hurtTime;
         public float yaw;
+        /** HabitRecorder.HELD_* of the held item. */
+        public int held;
 
         E(int id, String name) {
             this.id = id;
@@ -209,6 +211,7 @@ public final class FakeCombatWorld implements CombatWorld {
         out.lineOfSight = lineOfSight;
         out.crosshairOnTarget = crosshairOnTarget;
         out.targetOnGround = t.onGround;
+        out.targetHeld = t.held;
         out.pvx = s.pvx;
         out.pvy = s.pvy;
         out.pvz = s.pvz;
