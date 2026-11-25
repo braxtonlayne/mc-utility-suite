@@ -93,6 +93,9 @@ public final class WorldBootstrap {
         TrialChamberModule trialChambers = new TrialChamberModule(runtime);
         modBus.addListener(RegisterGuiLayersEvent.class, e -> e.registerBelow(VanillaGuiLayers.CHAT,
                 ResourceLocation.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID, "minimap"), minimap.hud()));
+        modBus.addListener(RegisterGuiLayersEvent.class, e -> e.registerBelow(VanillaGuiLayers.CHAT,
+                ResourceLocation.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID, "acoustic_edge_cues"),
+                new com.utilitysuite.world.overlays.AcousticEdgeHud(radar)));
         Services.registerWaypoints(waypoints.store());
         waypoints.subscribe(events);
 
