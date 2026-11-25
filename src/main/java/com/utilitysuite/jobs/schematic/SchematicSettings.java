@@ -13,14 +13,15 @@ public record SchematicSettings(boolean buildAssist, boolean silentRotation, int
                                 int ghostDistance, boolean anyPlanksWhenHidden, boolean deepslateAsStone,
                                 String scaffoldItem, String strictItems, int projectChests, int layersPerPhase,
                                 int swapSlot, boolean autoNavigate, boolean walkToReach,
-                                boolean requireLineOfSight) {
+                                boolean requireLineOfSight, boolean autoSupply, int maxTripDistance,
+                                boolean cleanupScaffold) {
 
     public static final String GROUP_ASSIST = "Build Assist";
     public static final String GROUP_PREVIEW = "Preview";
     public static final String GROUP_MATERIALS = "Materials";
 
     public static final SchematicSettings DEFAULTS = new SchematicSettings(true, false, 4, 20, 4.0, 2048, 100, true,
-            48, true, false, "minecraft:dirt", "", 2, 4, 8, true, true, true);
+            48, true, false, "minecraft:dirt", "", 2, 4, 8, true, true, true, true, 96, true);
 
     public static List<SettingSpec> specs() {
         SchematicSettings d = DEFAULTS;
@@ -46,6 +47,14 @@ public record SchematicSettings(boolean buildAssist, boolean silentRotation, int
                                 + "Off: hidden faces are placed directly (servers only check reach)"),
                 SettingSpec.text("scaffoldItem", "Scaffold block", d.scaffoldItem, GROUP_ASSIST,
                         "Temporary support block, removed at the end"),
+                SettingSpec.bool("cleanupScaffold", "Clean up scaffolding", d.cleanupScaffold, GROUP_ASSIST,
+                        "When the build completes, break blocks the builder placed outside the schematic "
+                                + "(pillars and bridges used to reach spots), top-down"),
+                SettingSpec.bool("autoSupply", "Auto-supply between layers", d.autoSupply, GROUP_MATERIALS,
+                        "When a layer is done or a block runs out, fetch what the next layer lacks from remembered "
+                                + "chests, then come back"),
+                SettingSpec.integer("maxTripDistance", "Max supply trip distance", d.maxTripDistance, 16, 512,
+                        GROUP_MATERIALS, "Only chests within this many blocks are used for a supply trip"),
                 SettingSpec.bool("ghostPreview", "Ghost preview", d.ghostPreview, GROUP_PREVIEW,
                         "Outline missing and wrong blocks at the anchor"),
                 SettingSpec.integer("ghostDistance", "Preview distance", d.ghostDistance, 8, 128, GROUP_PREVIEW,
@@ -87,7 +96,10 @@ public record SchematicSettings(boolean buildAssist, boolean silentRotation, int
                 clamp(p.getInt(id, "swapSlot", d.swapSlot + 1), 1, 9) - 1,
                 p.getBool(id, "autoNavigate", d.autoNavigate),
                 p.getBool(id, "walkToReach", d.walkToReach),
-                p.getBool(id, "requireLineOfSight", d.requireLineOfSight));
+                p.getBool(id, "requireLineOfSight", d.requireLineOfSight),
+                p.getBool(id, "autoSupply", d.autoSupply),
+                clamp(p.getInt(id, "maxTripDistance", d.maxTripDistance), 16, 512),
+                p.getBool(id, "cleanupScaffold", d.cleanupScaffold));
     }
 
     /** The substitution rules these settings describe. */

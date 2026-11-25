@@ -344,6 +344,13 @@ public final class JobsTab {
             toolkit.cancel();
             p.rebuild();
         });
+        int scaffold = toolkit.scaffoldCount();
+        if (scaffold > 0) {
+            p.button("Remove scaffolding (" + scaffold + ")", null, 204, 150, PillButton.Style.SECONDARY, b -> {
+                toolkit.removeScaffolding();
+                p.rebuild();
+            });
+        }
         p.nextRow();
     }
 

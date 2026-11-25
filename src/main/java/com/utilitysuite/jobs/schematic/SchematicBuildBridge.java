@@ -7,6 +7,7 @@ import com.utilitysuite.core.api.JobStatus;
 import com.utilitysuite.core.api.Services;
 import com.utilitysuite.jobs.goal.BuildHandler;
 import com.utilitysuite.jobs.schematic.bom.MaterialRestock;
+import com.utilitysuite.jobs.schematic.bom.SupplyTrip;
 import com.utilitysuite.jobs.schematic.mc.BuildAssist;
 import net.minecraft.core.BlockPos;
 
@@ -36,7 +37,7 @@ import java.util.Set;
  */
 final class SchematicBuildBridge implements BuildHandler {
 
-    /** Remembered containers farther than this from the player are not used for a restock. */
+    /** Default max supply trip distance (the "Max supply trip distance" setting is used at runtime). */
     static final int RESTOCK_RADIUS = 96;
     /** Safety cap on restock rounds per schematic + anchor (rounds that fetch nothing must not loop forever). */
     static final int MAX_RESTOCK_ROUNDS = 32;
@@ -51,7 +52,17 @@ final class SchematicBuildBridge implements BuildHandler {
 
     SchematicBuildBridge(SchematicToolkit toolkit) {
         this.toolkit = toolkit;
-        toolkit.setRestockHook(this::requestRestock);
+        toolkit.setRestockHook(new BuildAssist.RestockHook() {
+            @Override
+            public boolean requestRestock(Map<String, Integer> wanted, long fromPacked, String dimension) {
+                return SchematicBuildBridge.this.requestRestock(wanted, fromPacked, dimension);
+            }
+
+            @Override
+            public boolean requestSupply(Map<String, Integer> shortfall, long fromPacked, String dimension) {
+                return SchematicBuildBridge.this.requestSupply(shortfall, fromPacked, dimension);
+            }
+        }, () -> active != null && !active.gatherOnly() && !failed);
     }
 
     @Override
@@ -143,12 +154,40 @@ final class SchematicBuildBridge implements BuildHandler {
         }
         IStorageIndex storage = Services.storageOrNull();
         Map<String, Integer> fetch = MaterialRestock.fromNearbyStorage(wanted, storage, dimension, fromPacked,
-                RESTOCK_RADIUS);
+                toolkit.currentSettings().maxTripDistance());
         if (fetch.isEmpty()) {
             return false;
         }
         restockRounds.merge(key, 1, Integer::sum);
         pendingRestock = fetch;
+        return true;
+    }
+
+    /**
+     * Auto-supply between layers for a goal-job build: the next layer's shortfall, fetched in whole stacks from
+     * remembered chests within the max trip distance; the hand-over waits for the next status poll, as for restock.
+     */
+    private boolean requestSupply(Map<String, Integer> shortfall, long fromPacked, String dimension) {
+        if (active == null || active.gatherOnly() || failed || Services.goalsOrNull() == null
+                || pendingRestock != null) {
+            return false;
+        }
+        Optional<SchematicJobCard> card = toolkit.jobCard();
+        if (card.isEmpty()) {
+            return false;
+        }
+        String key = key(card.get());
+        if (restockRounds.getOrDefault(key, 0) >= MAX_RESTOCK_ROUNDS) {
+            return false;
+        }
+        SupplyTrip.Decision d = SupplyTrip.decide(shortfall, Services.storageOrNull(), dimension, fromPacked,
+                toolkit.currentSettings().maxTripDistance(), SchematicToolkit::stackSize,
+                SchematicToolkit.SUPPLY_STACKS_PER_ITEM);
+        if (!d.trip()) {
+            return false;
+        }
+        restockRounds.merge(key, 1, Integer::sum);
+        pendingRestock = d.fetch();
         return true;
     }
 
