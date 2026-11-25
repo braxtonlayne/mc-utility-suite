@@ -34,11 +34,15 @@ public final class PenSweepModule extends FieldModule {
     private final String[] types = new String[CAP];
     private final boolean[] adult = new boolean[CAP];
     private final boolean[] ready = new boolean[CAP];
+    private final boolean[] love = new boolean[CAP];
     private final boolean[] sheared = new boolean[CAP];
     private final boolean[] inPen = new boolean[CAP];
     private final double[] distSq = new double[CAP];
     private final Animal[] animals = new Animal[CAP];
     private final PenRules.Means means = new PenRules.Means();
+    /** Tick this sweep fed each animal (entity id), for the breeding cooldown the client cannot see. */
+    private final it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap fedAt = new it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap();
+    private static final int MAX_FED = 256;
     private int count;
 
     private int radius = 8;
@@ -53,6 +57,7 @@ public final class PenSweepModule extends FieldModule {
     public PenSweepModule() {
         super(ID, ControlPriority.GOAL);
         means.food = this::carriesFood;
+        fedAt.defaultReturnValue(Long.MIN_VALUE);
     }
 
     @Override
@@ -83,10 +88,10 @@ public final class PenSweepModule extends FieldModule {
             return;
         }
         scan(mc, player);
-        int i = PenRules.pick(types, adult, ready, sheared, inPen, distSq, count, means);
+        int i = PenRules.pick(types, adult, ready, love, sheared, inPen, distSq, count, means);
         if (i >= 0 && distSq[i] <= REACH * REACH) {
             target = animals[i];
-            action = PenRules.actionFor(i, types, adult, ready, sheared, count, means);
+            action = PenRules.actionFor(i, types, adult, ready, love, sheared, count, means);
         }
         java.util.Arrays.fill(animals, 0, count, null);
     }
@@ -109,6 +114,12 @@ public final class PenSweepModule extends FieldModule {
             return;
         }
         int r = hands.tickEntity(player, target, SimKey.USE, REACH);
+        if (r == FieldHands.DONE && action == PenRules.Action.BREED) {
+            if (fedAt.size() >= MAX_FED) {
+                fedAt.clear();
+            }
+            fedAt.put(target.getId(), tick);
+        }
         if (r != FieldHands.RUNNING) {
             finish();
         }
@@ -161,7 +172,9 @@ public final class PenSweepModule extends FieldModule {
             animals[count] = a;
             types[count] = a.getType().builtInRegistryHolder().key().location().toString();
             adult[count] = !a.isBaby();
-            ready[count] = a.getAge() == 0 && !a.isInLove();
+            long fed = fedAt.get(a.getId());
+            ready[count] = PenRules.breedReady(adult[count], fed, tick);
+            love[count] = PenRules.inLove(fed, tick);
             sheared[count] = !(a instanceof Sheep s) || s.isSheared();
             inPen[count] = PenRules.inPen(a.getX(), a.getY(), a.getZ(), penX - radius, Integer.MIN_VALUE / 2,
                     penZ - radius, penX + radius, Integer.MAX_VALUE / 2, penZ + radius);

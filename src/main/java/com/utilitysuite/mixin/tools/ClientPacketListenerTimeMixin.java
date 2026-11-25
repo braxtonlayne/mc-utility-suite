@@ -25,7 +25,7 @@ public abstract class ClientPacketListenerTimeMixin {
 
     @Inject(method = "handleSetTime", at = @At("TAIL"))
     private void utilitysuite$serverHeartbeat(ClientboundSetTimePacket packet, CallbackInfo ci) {
-        ServerTickFeed.onTimePacket(System.currentTimeMillis());
+        ServerTickFeed.onTimePacket(System.currentTimeMillis(), packet.getGameTime());
         LagGuard.onServerTimePacket(packet.getGameTime());
     }
 }

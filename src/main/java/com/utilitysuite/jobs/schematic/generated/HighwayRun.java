@@ -71,7 +71,13 @@ public final class HighwayRun {
 
     /** True once the last segment is published and the player reached the end. */
     public boolean finished(int progressSteps) {
-        return segments > 0 && published >= segments - 1 && progressSteps >= totalSteps;
+        return allPublished() && progressSteps >= totalSteps;
+    }
+
+    /** True once the last segment is published (a full-width dig is done when its queue is empty, wherever the player
+     *  stands: the dig walk stops within reach of the last cells, short of the end step). */
+    public boolean allPublished() {
+        return segments > 0 && published >= segments - 1;
     }
 
     /** Last step of the published road (segment {@code i} covers steps {@code i*len .. (i+1)*len-1}); -1 when none. */

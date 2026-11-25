@@ -21,10 +21,12 @@ class HighwayRunTest {
         // A teleport far ahead still publishes one at a time, in order.
         assertEquals(2, r.nextToPublish(100, 16));
         r.markPublished(2);
+        assertFalse(r.allPublished());
         r.markPublished(3);
         assertEquals(-1, r.nextToPublish(100, 16));
         assertFalse(r.finished(99));
         assertTrue(r.finished(100));
+        assertTrue(r.allPublished());
     }
 
     @Test

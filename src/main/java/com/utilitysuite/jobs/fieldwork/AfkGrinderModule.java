@@ -12,6 +12,7 @@ import net.minecraft.core.Holder;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.world.entity.monster.Monster;
 import net.minecraft.world.item.AxeItem;
+import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.SwordItem;
 import net.minecraft.world.item.TieredItem;
@@ -83,7 +84,10 @@ public final class AfkGrinderModule extends FieldModule {
         if (!hands.ensureLease()) {
             return;
         }
-        if (swapWeapons && tick % 20 == 0) {
+        // Also checked at once while no weapon is in hand: the first hits used to land with whatever was held (fist
+        // swings every 5 ticks) until the 20-tick check swapped to the sword (playtest find).
+        Item inHand = player.getMainHandItem().getItem();
+        if (swapWeapons && (tick % 20 == 0 || !(inHand instanceof SwordItem || inHand instanceof AxeItem))) {
             int slot = pickWeapon(mc.level, player);
             if (slot < 0) {
                 status = "No weapon safe to use";
@@ -92,6 +96,7 @@ public final class AfkGrinderModule extends FieldModule {
             }
             if (slot != player.getInventory().selected) {
                 hands.selectSlot(slot);
+                return; // the swap restarts the attack charge: no swing this tick
             }
         }
         if (target == null || !target.isAlive() || player.distanceToSqr(target) > reach * reach) {
