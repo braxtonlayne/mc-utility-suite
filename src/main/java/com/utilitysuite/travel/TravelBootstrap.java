@@ -82,6 +82,14 @@ public final class TravelBootstrap {
         com.utilitysuite.travel.autopilot.BoatLineModule boatLine = new com.utilitysuite.travel.autopilot.BoatLineModule();
         Services.modules().register(boatLine);
         NeoForge.EVENT_BUS.addListener(boatLine::onRenderLevel);
+        // M2 elytra HUD (off by default): GUI layer above the crosshair plus the world footprint ring
+        com.utilitysuite.travel.hud.ElytraHudModule elytraHud = new com.utilitysuite.travel.hud.ElytraHudModule();
+        Services.modules().register(elytraHud);
+        NeoForge.EVENT_BUS.addListener(elytraHud::onRenderLevel);
+        modBus.addListener(net.neoforged.neoforge.client.event.RegisterGuiLayersEvent.class,
+                event -> event.registerAbove(net.neoforged.neoforge.client.gui.VanillaGuiLayers.CROSSHAIR,
+                        net.minecraft.resources.ResourceLocation.fromNamespaceAndPath(
+                                com.utilitysuite.UtilitySuiteMod.MOD_ID, "elytra_hud"), elytraHud::render));
         onAutopilotKey = autopilot::toggle;
         onBridgeKey = bridge::toggle;
         onBridgeMarkKey = bridge::mark;
