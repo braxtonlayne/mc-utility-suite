@@ -120,7 +120,7 @@ public final class JobsBootstrap {
         Services.modules().register(cropWork);
         Services.modules().register(new PenSweepModule());
         Services.modules().register(new AfkGrinderModule());
-        Services.modules().register(new com.utilitysuite.jobs.fieldwork.DebrisBlastModule());
+        Services.modules().register(new com.utilitysuite.jobs.fieldwork.DebrisBlastModule(veinWork, lavaPlug));
 
         IEventBus bus = NeoForge.EVENT_BUS;
         bus.addListener((ClientTickEvent.Post e) -> {

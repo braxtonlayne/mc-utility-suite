@@ -90,6 +90,66 @@ public final class LavaPlugModule extends FieldModule {
         onBroken(player, level, broken);
     }
 
+    /**
+     * Plugs the nearest lava source within {@code radius} (a cube) of (x, y, z) that is in reach, the same way as a
+     * source a break exposed (filler block from {@link FieldRules#PLUG_ITEMS}, support face toward the player, smoothed
+     * look, lease at SURVIVAL priority). For other field modules' hand-offs, e.g. Debris Blasting after a blast; runs
+     * whether or not Lava Plug itself is switched on. True when a plug run started or one is already under way.
+     * Bounded scan ({@code (2r+1)^3} cells, radius capped at 4), on call only. Client thread.
+     */
+    public boolean plugAround(int x, int y, int z, int radius) {
+        if (isBusy()) {
+            return true;
+        }
+        Minecraft mc = Minecraft.getInstance();
+        LocalPlayer player = mc.player;
+        ClientLevel level = mc.level;
+        if (player == null || level == null) {
+            return false;
+        }
+        int r = Math.max(0, Math.min(4, radius));
+        double reach = player.blockInteractionRange() - 0.5;
+        double best = reach * reach;
+        long bestCell = Long.MIN_VALUE;
+        for (int dx = -r; dx <= r; dx++) {
+            for (int dy = -r; dy <= r; dy++) {
+                for (int dz = -r; dz <= r; dz++) {
+                    side.set(x + dx, y + dy, z + dz);
+                    FluidState f = level.getFluidState(side);
+                    if (!f.is(FluidTags.LAVA) || !f.isSource()) {
+                        continue;
+                    }
+                    double ex = side.getX() + 0.5 - player.getX(), ey = side.getY() + 0.5 - player.getEyeY();
+                    double ez = side.getZ() + 0.5 - player.getZ();
+                    double d = ex * ex + ey * ey + ez * ez;
+                    if (d <= best) {
+                        best = d;
+                        bestCell = side.asLong();
+                    }
+                }
+            }
+        }
+        if (bestCell == Long.MIN_VALUE) {
+            return false;
+        }
+        int lx = BlockPos.getX(bestCell), ly = BlockPos.getY(bestCell), lz = BlockPos.getZ(bestCell);
+        String plugId = FieldRules.plugItem(inventory);
+        if (plugId == null || !chooseSupport(level, player, lx, ly, lz)) {
+            return false;
+        }
+        plug = inventory.itemOf(plugId);
+        lavaCell = bestCell;
+        previousSlot = player.getInventory().selected; // read only, restored through the core
+        phase = 0;
+        runTicks = 0;
+        return true;
+    }
+
+    /** True while a plug run is under way. */
+    public boolean isBusy() {
+        return lavaCell != Long.MIN_VALUE;
+    }
+
     /** Budgeted re-scan: the 6 neighbours of the broken cell only. */
     private void onBroken(LocalPlayer player, ClientLevel level, long broken) {
         int bx = BlockPos.getX(broken), by = BlockPos.getY(broken), bz = BlockPos.getZ(broken);

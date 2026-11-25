@@ -169,6 +169,34 @@ public final class VeinWorkModule extends FieldModule {
         }
     }
 
+    /**
+     * Starts a vein run at a block that is still standing (another field module's hand-off, e.g. ancient debris a
+     * Debris Blasting blast revealed): that block and its connected same-type neighbours are mined exactly like a
+     * user-armed vein (hazard probes, reach, optional short walk). Runs whether or not Vein Work itself is switched on.
+     * False when a run is already armed or under way, or the cell holds nothing. Client thread.
+     */
+    public boolean arm(int x, int y, int z) {
+        Minecraft mc = Minecraft.getInstance();
+        if (isBusy() || mc.level == null) {
+            return false;
+        }
+        BlockState s = mc.level.getBlockState(cursor.set(x, y, z));
+        if (s.isAir() || s.canBeReplaced()) {
+            return false;
+        }
+        level = mc.level;
+        target = s.getBlock();
+        collector.beginAt(BlockPos.asLong(x, y, z), false, cap);
+        scanning = true;
+        lavaWarned = false;
+        return true;
+    }
+
+    /** True while a vein run is armed, scanning or mining. */
+    public boolean isBusy() {
+        return armed != Long.MIN_VALUE || scanning || running;
+    }
+
     private void tickArmed(ClientLevel lvl) {
         if (tick - armedSince > ARM_TICKS) {
             armed = Long.MIN_VALUE;

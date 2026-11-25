@@ -51,6 +51,15 @@ public final class VeinCollector {
     }
 
     /**
+     * As {@link #begin}, but the start cell is still standing and is itself part of the vein (queued first), e.g. a
+     * block revealed by a blast rather than one the user just broke.
+     */
+    public void beginAt(long start, boolean tree, int cap) {
+        begin(start, tree, cap);
+        found.add(start);
+    }
+
+    /**
      * Expands the flood fill by up to {@code budget} lookups.
      *
      * @return true when the fill is complete (frontier empty or cap reached)
