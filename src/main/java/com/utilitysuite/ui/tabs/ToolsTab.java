@@ -159,6 +159,7 @@ public final class ToolsTab {
                         }).selected(pinned);
             }
             p.nextRow();
+            loadoutsCard(p, inv);
             p.dynamic(() -> inv.lastResult().isEmpty() ? "" : "Last: " + inv.lastResult(), Panel.GRAY);
         });
         ModulePanels.register(PacketLab.ID, (p, m) -> {
@@ -208,6 +209,83 @@ public final class ToolsTab {
                 enchantPanel(p, eh);
             }
         });
+    }
+
+    private static final String K_LOADOUT_NEW = "tools.loadout.new";
+    private static final String K_LOADOUT_RENAME = "tools.loadout.rename";
+    private static final String K_LOADOUT_RENAMING = "tools.loadout.renaming";
+
+    /**
+     * Gear loadouts: the suggested presets (Save current / Equip) and custom loadouts (Equip / Rename / Delete), plus a
+     * name field to save the current gear under a new name. Custom names also appear in the command palette.
+     */
+    private static void loadoutsCard(Panel p, SmartInventory inv) {
+        int w = p.width();
+        p.subheading("Loadouts");
+        java.util.Map<String, com.utilitysuite.tools.inventory.loadout.Loadout> saved = new java.util.LinkedHashMap<>();
+        for (com.utilitysuite.tools.inventory.loadout.Loadout l : inv.loadouts()) {
+            saved.put(l.name().toLowerCase(java.util.Locale.ROOT), l);
+        }
+        for (String preset : com.utilitysuite.tools.inventory.loadout.Loadout.PRESET_NAMES) {
+            var l = saved.get(preset.toLowerCase(java.util.Locale.ROOT));
+            p.listRow(null);
+            p.rowLabel(l == null ? preset + "  (empty)" : preset + "  (" + l.filledSlots() + " items)", 4, w - 120,
+                    l == null ? Panel.GRAY : Panel.WHITE);
+            p.button("Save", "Save your armour, offhand and hotbar as " + preset, w - 112, 52,
+                    PillButton.Style.SECONDARY, b -> {
+                        p.toast(inv.saveLoadout(preset));
+                        p.rebuild();
+                    });
+            p.button("Equip", l == null ? "Save it first" : "Equip " + preset, w - 56, 56,
+                    PillButton.Style.PRIMARY, b -> p.toast(inv.equipLoadout(preset)));
+            p.nextRow();
+        }
+        String renaming = p.state(K_LOADOUT_RENAMING, "");
+        for (com.utilitysuite.tools.inventory.loadout.Loadout l : inv.loadouts()) {
+            if (com.utilitysuite.tools.inventory.loadout.LoadoutBook.isPreset(l.name())) {
+                continue;
+            }
+            String name = l.name();
+            boolean open = name.equalsIgnoreCase(renaming);
+            p.listRow(null);
+            p.rowLabel(name + "  (" + l.filledSlots() + " items)", 4, w - 186, Panel.WHITE);
+            p.button("Equip", "Equip " + name, w - 178, 56, PillButton.Style.PRIMARY,
+                    b -> p.toast(inv.equipLoadout(name)));
+            p.button(open ? "Cancel" : "Rename", open ? "Keep the name" : "Rename " + name, w - 118, 60,
+                    PillButton.Style.SECONDARY, b -> {
+                        p.setState(K_LOADOUT_RENAMING, open ? "" : name);
+                        p.setState(K_LOADOUT_RENAME, open ? "" : name);
+                        p.toast(open ? "Rename cancelled" : "Type the new name, then Apply");
+                        p.rebuild();
+                    }).selected(open);
+            p.button("Delete", "Delete " + name, w - 54, 54, PillButton.Style.DANGER_SOFT, b -> {
+                p.toast(inv.deleteLoadout(name));
+                p.rebuild();
+            });
+            p.nextRow();
+            if (open) {
+                p.textField(K_LOADOUT_RENAME, "new name", 0, w - 70);
+                p.button("Apply", "Rename " + name, w - 64, 64, PillButton.Style.PRIMARY, b -> {
+                    p.toast(inv.renameLoadout(name, p.state(K_LOADOUT_RENAME, "")));
+                    p.setState(K_LOADOUT_RENAMING, "");
+                    p.rebuild();
+                });
+                p.nextRow();
+            }
+        }
+        p.textField(K_LOADOUT_NEW, "custom loadout name", 0, w - 104);
+        p.button("Save current", "Save your armour, offhand and hotbar under this name", w - 98, 98,
+                PillButton.Style.PRIMARY, b -> {
+                    String n = p.state(K_LOADOUT_NEW, "").trim();
+                    if (n.isEmpty()) {
+                        p.toast("Type a name first");
+                        return;
+                    }
+                    p.toast(inv.saveLoadout(n));
+                    p.setState(K_LOADOUT_NEW, "");
+                    p.rebuild();
+                });
+        p.nextRow();
     }
 
     private static final String K_ENCHANT_TABLE = "tools.enchant_table";

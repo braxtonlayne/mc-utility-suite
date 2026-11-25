@@ -395,6 +395,69 @@ public final class SmartInventory implements IModule, IConfigurable, LeaseListen
         return loadouts.all();
     }
 
+    /** Renames a saved loadout (command palette entries follow). */
+    public String renameLoadout(String from, String to) {
+        if (!loadouts.rename(from, to)) {
+            lastResult = to == null || to.isBlank() ? "Type a new name first"
+                    : loadouts.get(from) == null ? "No loadout named " + from : "A loadout named " + to.trim()
+                    + " already exists";
+            return lastResult;
+        }
+        persistLoadouts();
+        lastResult = "Renamed " + from + " to " + to.trim();
+        return lastResult;
+    }
+
+    /** Deletes a saved loadout (its command palette entries go too). */
+    public String deleteLoadout(String name) {
+        if (!loadouts.remove(name)) {
+            lastResult = "No loadout named " + name;
+            return lastResult;
+        }
+        persistLoadouts();
+        lastResult = "Deleted loadout " + name;
+        return lastResult;
+    }
+
+    private void persistLoadouts() {
+        Services.modState().profile().set(ID, K_LOADOUTS, loadouts.encode());
+        Services.modState().markDirty();
+        syncLoadoutActions();
+    }
+
+    /** Custom-named loadouts registered as palette actions (presets have fixed actions). */
+    private final java.util.Set<String> customActionKeys = new java.util.HashSet<>();
+
+    /** Registers equip actions for custom-named loadouts and drops the ones whose loadout is gone. */
+    private void syncLoadoutActions() {
+        com.utilitysuite.core.api.ISuiteActions actions = Services.actionsOrNull();
+        if (actions == null) {
+            return;
+        }
+        java.util.Set<String> keep = new java.util.HashSet<>();
+        for (Loadout l : loadouts.all()) {
+            if (LoadoutBook.isPreset(l.name())) {
+                continue;
+            }
+            String key = LoadoutBook.actionKey(l.name());
+            if (key.isEmpty()) {
+                continue;
+            }
+            keep.add(key);
+            String name = l.name();
+            actions.register(new com.utilitysuite.core.api.SuiteAction("equip_loadout_custom_" + key,
+                    "Equip loadout " + name, "gear kit armor hotbar swap custom " + key,
+                    () -> postResult(equipLoadout(name))));
+        }
+        for (String old : customActionKeys) {
+            if (!keep.contains(old)) {
+                actions.unregister("equip_loadout_custom_" + old);
+            }
+        }
+        customActionKeys.clear();
+        customActionKeys.addAll(keep);
+    }
+
     /** Saves the current armour, offhand and hotbar under {@code name} (replacing one with the same name). */
     public String saveLoadout(String name) {
         LocalPlayer player = Minecraft.getInstance().player;
@@ -407,8 +470,7 @@ public final class SmartInventory implements IModule, IConfigurable, LeaseListen
             return lastResult;
         }
         loadouts.put(l);
-        Services.modState().profile().set(ID, K_LOADOUTS, loadouts.encode());
-        Services.modState().markDirty();
+        persistLoadouts();
         lastResult = "Saved loadout " + l.name() + " (" + l.filledSlots() + " items)";
         return lastResult;
     }
@@ -561,6 +623,7 @@ public final class SmartInventory implements IModule, IConfigurable, LeaseListen
         guiMoveSneak = p.getBool(ID, K_GUI_MOVE_SNEAK, false);
         scanInterval = clamp(p.getInt(ID, K_SCAN_INTERVAL, 10), 2, 40);
         loadouts = LoadoutBook.decode(p.getString(ID, K_LOADOUTS, ""));
+        syncLoadoutActions();
     }
 
     private static int clamp(int v, int lo, int hi) {
