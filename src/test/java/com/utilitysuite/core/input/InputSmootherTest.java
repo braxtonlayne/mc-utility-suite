@@ -83,6 +83,28 @@ class InputSmootherTest {
     }
 
     @Test
+    void attackHoldFlagFollowsTheHeldKeyAndItsLease() {
+        ControlLease l = lease(ControlChannel.WORLD_INTERACT);
+        assertFalse(InputSmoother.automationHoldsAttack());
+        smoother.scheduleKeyTap(l, SimKey.ATTACK, 1, 1);
+        assertFalse(InputSmoother.automationHoldsAttack(), "a tap is not a hold");
+        smoother.setKeyHeld(l, SimKey.ATTACK, true);
+        assertTrue(InputSmoother.automationHoldsAttack(), "held under a live lease: keep mining unfocused");
+        smoother.setKeyHeld(l, SimKey.ATTACK, false);
+        assertFalse(InputSmoother.automationHoldsAttack());
+        smoother.setKeyHeld(l, SimKey.ATTACK, true);
+        l.close();
+        assertFalse(InputSmoother.automationHoldsAttack(), "an ended lease never keeps the break going");
+        if (AllocationProbe.supported()) {
+            ControlLease m = lease(ControlChannel.WORLD_INTERACT);
+            smoother.setKeyHeld(m, SimKey.ATTACK, true);
+            boolean[] sink = new boolean[1];
+            long bytes = AllocationProbe.measure(100_000, () -> sink[0] ^= InputSmoother.automationHoldsAttack());
+            assertTrue(bytes < 2048, "attack-hold check allocated " + bytes + " bytes over 100k calls");
+        }
+    }
+
+    @Test
     void heldKeysAreReassertedAndReleasedToPhysicalState() {
         ControlLease l = lease(ControlChannel.MOVEMENT);
         smoother.setKeyHeld(l, SimKey.JUMP, true);

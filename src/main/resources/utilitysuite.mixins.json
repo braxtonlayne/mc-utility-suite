@@ -11,6 +11,7 @@
     "combat.ClientPacketListenerDamageMixin",
     "combat.ClientPacketListenerTotemPopMixin",
     "input.LocalPlayerSprintWithholdMixin",
+    "input.MinecraftAttackHoldMixin",
     "input.RecipeBookComponentAccessor",
     "tools.ClientPacketListenerTimeMixin",
     "travel.ClientPacketListenerCorrectionMixin",

@@ -128,6 +128,26 @@ public final class InputSmoother implements IInputSmoother, IContainerClicker {
         this.random = random;
         this.curve = new RotationCurve(random);
         this.tracker = new RotationTracker(random);
+        current = this;
+    }
+
+    /** The live smoother (last constructed), read by the attack-hold mixin. Client thread. */
+    private static InputSmoother current;
+
+    /**
+     * True while automation holds the attack key with a live lease. {@code MinecraftAttackHoldMixin} lets vanilla keep
+     * mining then even when the mouse is not grabbed (window unfocused, e.g. alt-tabbed during a job): vanilla only
+     * continues a block break while the mouse is grabbed, so a held ATTACK would otherwise never break anything.
+     * Allocation free.
+     */
+    public static boolean automationHoldsAttack() {
+        InputSmoother s = current;
+        if (s == null) {
+            return false;
+        }
+        int k = SimKey.ATTACK.ordinal();
+        ControlLease owner = s.keyOwner[k];
+        return s.managed[k] && s.held[k] && owner != null && owner.isActive();
     }
 
     /** The pursuit controller tracking targets use (for tests and diagnostics). */
