@@ -31,7 +31,7 @@ final class FeaturesScenario {
     /** Every module this scenario switches on (all switched off again by the cleanup step). */
     private static final String[] MODULES = {WorldAtlasModule.ID, SonarPulseModule.ID, CavityTomographyModule.ID,
             "redstone_tracer", "boat_line", HoloCardModule.ID, ReplayTheatreModule.ID, "anvil_planner",
-            com.utilitysuite.world.replay.PipCameraModule.ID};
+            com.utilitysuite.world.replay.PipCameraModule.ID, "atmosphere"};
 
     private FeaturesScenario() {
     }
@@ -51,6 +51,7 @@ final class FeaturesScenario {
         holoCards(s);
         replay(s);
         pip(s);
+        sky(s);
         palette(s);
         anvil(s);
         shapes(s);
@@ -227,6 +228,29 @@ final class FeaturesScenario {
             s.check("feature: holo card at a chest", on(HoloCardModule.ID) && key != HoloCardBook.NO_TARGET,
                     "shown key " + key + ", card " + m.book().card.kind + " '" + m.book().card.title + "', " + hitInfo());
         });
+    }
+
+    private static void sky(Scenario s) {
+        double[] vanilla = new double[3];
+        s.cmd("time set 6000");
+        s.run("sky vanilla", () -> {
+            var c = H.mc().level.getSkyColor(H.p().getEyePosition(), 1f);
+            vanilla[0] = c.x; vanilla[1] = c.y; vanilla[2] = c.z;
+        });
+        s.run("atmosphere sky ramp on", () -> {
+            H.enable("atmosphere", true);
+            H.setting("atmosphere", "preset", "SKY_RAMP");
+        });
+        s.waitTicks(10);
+        Shots.add(s, "atmosphere-sky-ramp");
+        s.run("sky result", () -> {
+            var c = H.mc().level.getSkyColor(H.p().getEyePosition(), 1f);
+            double d = Math.abs(c.x - vanilla[0]) + Math.abs(c.y - vanilla[1]) + Math.abs(c.z - vanilla[2]);
+            s.check("feature: atmosphere recolours the sky", on("atmosphere") && d > 0.02,
+                    String.format("vanilla (%.3f %.3f %.3f) -> (%.3f %.3f %.3f), delta %.3f",
+                            vanilla[0], vanilla[1], vanilla[2], c.x, c.y, c.z, d));
+        });
+        s.run("atmosphere off", () -> H.enable("atmosphere", false));
     }
 
     private static void pip(Scenario s) {
