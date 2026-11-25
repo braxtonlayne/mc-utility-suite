@@ -11,6 +11,8 @@ import com.utilitysuite.world.camera.ScoutCameraModule;
 import com.utilitysuite.world.filters.RenderFiltersModule;
 import com.utilitysuite.world.lighting.LightOverlayModule;
 import com.utilitysuite.world.spawn.SpawnGeometryModule;
+import com.utilitysuite.world.stronghold.StrongholdFinderModule;
+import com.utilitysuite.world.trial.TrialChamberModule;
 import com.utilitysuite.world.knowledge.KnowledgeLedger;
 import com.utilitysuite.world.knowledge.WorldKnowledgeModule;
 import com.utilitysuite.world.knowledge.WorldKnowledgeService;
@@ -40,6 +42,7 @@ import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
 import net.neoforged.neoforge.client.event.ViewportEvent;
 import net.neoforged.neoforge.client.settings.KeyConflictContext;
 import net.neoforged.neoforge.common.NeoForge;
+import net.neoforged.neoforge.event.entity.EntityJoinLevelEvent;
 import net.neoforged.neoforge.event.level.ChunkEvent;
 import org.lwjgl.glfw.GLFW;
 
@@ -82,6 +85,8 @@ public final class WorldBootstrap {
         SpawnGeometryModule spawnGeometry = new SpawnGeometryModule(oreSim::profile);
         FreelookModule freelook = new FreelookModule();
         RenderFiltersModule renderFilters = new RenderFiltersModule();
+        StrongholdFinderModule strongholdFinder = new StrongholdFinderModule();
+        TrialChamberModule trialChambers = new TrialChamberModule(runtime);
         modBus.addListener(RegisterGuiLayersEvent.class, e -> e.registerBelow(VanillaGuiLayers.CHAT,
                 ResourceLocation.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID, "minimap"), minimap.hud()));
         Services.registerWaypoints(waypoints.store());
@@ -89,7 +94,8 @@ public final class WorldBootstrap {
 
         IModuleRegistry registry = Services.modules();
         for (WorldModule m : new WorldModule[] {knowledge, overlays, oreSim, seedScanner, radar, camera, waypoints,
-                minimap, lightOverlay, blastOverlay, spawnGeometry, freelook, renderFilters}) {
+                minimap, lightOverlay, blastOverlay, spawnGeometry, freelook, renderFilters, strongholdFinder,
+                trialChambers}) {
             registry.register(m);
             runtime.add(m);
         }
@@ -136,6 +142,7 @@ public final class WorldBootstrap {
             }
         });
         bus.addListener((ChunkEvent.Unload e) -> runtime.onChunkUnload(e));
+        bus.addListener((EntityJoinLevelEvent e) -> strongholdFinder.onEntityJoin(e));
         bus.addListener((ClientPlayerNetworkEvent.LoggingOut e) -> runtime.onWorldUnload());
         bus.addListener((ClientChatReceivedEvent.System e) -> oreSim.onChat(e));
         bus.addListener((MovementInputUpdateEvent e) -> camera.onMovementInput(e));
