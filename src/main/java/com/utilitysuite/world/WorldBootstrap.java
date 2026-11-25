@@ -10,6 +10,8 @@ import com.utilitysuite.world.blast.BlastOverlayModule;
 import com.utilitysuite.world.budget.RenderGovernorModule;
 import net.neoforged.neoforge.client.event.RenderFrameEvent;
 import net.neoforged.neoforge.client.event.RenderLivingEvent;
+import com.utilitysuite.world.replay.PipCameraModule;
+import com.utilitysuite.world.replay.ReplayTheatreModule;
 import com.utilitysuite.world.camera.FreelookModule;
 import com.utilitysuite.world.camera.ScoutCameraModule;
 import com.utilitysuite.world.filters.RenderFiltersModule;
@@ -115,6 +117,14 @@ public final class WorldBootstrap {
         FortressSpawnModule fortressSpawns = new FortressSpawnModule(oreSim::profile);
         AtmosphereModule atmosphere = new AtmosphereModule();
         RenderGovernorModule governor = new RenderGovernorModule();
+        ReplayTheatreModule replay = new ReplayTheatreModule();
+        PipCameraModule pip = new PipCameraModule();
+        modBus.addListener(RegisterGuiLayersEvent.class, e -> {
+            e.registerBelow(VanillaGuiLayers.CHAT,
+                    ResourceLocation.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID, "pip_camera"), pip);
+            e.registerBelow(VanillaGuiLayers.CHAT,
+                    ResourceLocation.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID, "replay_splits"), replay);
+        });
         modBus.addListener(RegisterGuiLayersEvent.class, e -> e.registerBelow(VanillaGuiLayers.CHAT,
                 ResourceLocation.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID, "minimap"), minimap.hud()));
         modBus.addListener(RegisterGuiLayersEvent.class, e -> e.registerBelow(VanillaGuiLayers.CHAT,
@@ -128,7 +138,7 @@ public final class WorldBootstrap {
                 waypoints,
                 minimap, lightOverlay, blastOverlay, crystalExposure, projectileRibbon, spawnGeometry, seedLocator,
                 freelook, renderFilters, strongholdFinder, trialChambers, sonar, cavities, atlas, redstoneTracer,
-                changeTracker, stealthVision, fortressSpawns, atmosphere, governor}) {
+                changeTracker, stealthVision, fortressSpawns, atmosphere, governor, replay, pip}) {
             registry.register(m);
             runtime.add(m);
         }
@@ -161,6 +171,16 @@ public final class WorldBootstrap {
             e.register(snapshotKey);
             e.register(changeDiffKey);
             changeTracker.setKeys(snapshotKey, changeDiffKey);
+            KeyMapping replayFreezeKey = key("replay_freeze", InputConstants.UNKNOWN.getValue());
+            KeyMapping parkourStartKey = key("parkour_start", InputConstants.UNKNOWN.getValue());
+            KeyMapping parkourFinishKey = key("parkour_finish", InputConstants.UNKNOWN.getValue());
+            KeyMapping pipParkKey = key("pip_park", InputConstants.UNKNOWN.getValue());
+            e.register(replayFreezeKey);
+            e.register(parkourStartKey);
+            e.register(parkourFinishKey);
+            e.register(pipParkKey);
+            replay.setKeys(replayFreezeKey, parkourStartKey, parkourFinishKey);
+            pip.setParkKey(pipParkKey);
         });
 
         // Mixin hooks.
@@ -176,6 +196,7 @@ public final class WorldBootstrap {
         IEventBus bus = NeoForge.EVENT_BUS;
         bus.addListener(runtime::onTick);
         bus.addListener((net.neoforged.neoforge.client.event.ClientTickEvent.Post e) -> freelook.pollKey());
+        bus.addListener((net.neoforged.neoforge.client.event.ClientTickEvent.Post e) -> replay.pollKeys());
         bus.addListener(runtime::onRender);
         bus.addListener(projectileRibbon::onRenderLevel);
         bus.addListener((ChunkEvent.Load e) -> {
