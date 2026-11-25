@@ -27,6 +27,76 @@ public final class HudStatusLine {
     private String itemId = "";
     private float fraction = -1f;
     private int rebuilds;
+    /** {@link #etaKey} of the shown ETA (-1: none) and its text ("~4m"). */
+    private int etaKey = -1;
+    private String etaText = "";
+    /** The goal line without the ETA suffix, kept so an ETA change does not re-run {@link #format}. */
+    private String baseText = "";
+    private String baseProgress = "";
+
+    /**
+     * Updates the job's live ETA (seconds, -1 unknown). Returns true when the text changed. Allocation free unless the
+     * shown value changed: whole minutes from one minute on, else seconds rounded up to five (see {@link #etaKey}).
+     */
+    public boolean updateEta(int etaSeconds) {
+        int key = label == null || status == null ? -1 : etaKey(etaSeconds);
+        if (key == etaKey) {
+            return false;
+        }
+        etaKey = key;
+        etaText = etaText(key);
+        if (label == null || status == null) {
+            return false;
+        }
+        progressText = withEta(baseProgress);
+        return set(withEtaLine(baseText));
+    }
+
+    /** The ETA as shown ("~4m", "~45s"), or empty. */
+    public String etaText() {
+        return etaText;
+    }
+
+    /**
+     * The value the HUD shows for an ETA: {@code 1000 + minutes} (rounded up) from one minute on, else the seconds
+     * rounded up to a multiple of five (at least 5); -1 for none. The text changes exactly when this value changes.
+     */
+    public static int etaKey(int etaSeconds) {
+        if (etaSeconds < 0) {
+            return -1;
+        }
+        if (etaSeconds >= 60) {
+            return 1000 + (etaSeconds + 59) / 60;
+        }
+        return Math.max(5, (etaSeconds + 4) / 5 * 5);
+    }
+
+    static String etaText(int key) {
+        if (key < 0) {
+            return "";
+        }
+        return key >= 1000 ? "~" + (key - 1000) + "m" : "~" + key + "s";
+    }
+
+    private String withEta(String progress) {
+        baseProgress = progress;
+        if (etaText.isEmpty()) {
+            return progress;
+        }
+        return progress.isEmpty() ? etaText : progress + " · " + etaText;
+    }
+
+    private String withEtaLine(String line) {
+        baseText = line;
+        return etaText.isEmpty() ? line : line + " · ETA " + etaText;
+    }
+
+    private void clearEta() {
+        etaKey = -1;
+        etaText = "";
+        baseText = "";
+        baseProgress = "";
+    }
 
     /** Updates from a job snapshot. Returns true when the text changed. */
     public boolean update(JobSnapshot s) {
@@ -48,12 +118,12 @@ public final class HudStatusLine {
         current = cur;
         target = tgt;
         step = now;
-        progressText = tgt > 0 ? Math.max(0, cur) + "/" + tgt : "";
+        progressText = withEta(tgt > 0 ? Math.max(0, cur) + "/" + tgt : "");
         fraction = tgt > 0 ? Math.max(0f, Math.min(1f, Math.max(0, cur) / (float) tgt)) : -1f;
         String d = detail(st, now);
         detailText = d.isEmpty() ? prettyLabel(goalLabel == null ? "" : goalLabel) : d;
         itemId = itemIdOf(goalLabel);
-        return set(format(goalLabel, st, cur, tgt, now));
+        return set(withEtaLine(format(goalLabel, st, cur, tgt, now)));
     }
 
     /** Updates from the schematic toolkit's card line (when no goal job runs). */
@@ -71,6 +141,7 @@ public final class HudStatusLine {
         progressText = "";
         detailText = statusLine;
         fraction = -1f;
+        clearEta();
         itemId = "";
         return set("[Build] " + statusLine);
     }
@@ -96,6 +167,7 @@ public final class HudStatusLine {
         progressText = "";
         detailText = constantLine;
         fraction = -1f;
+        clearEta();
         itemId = "";
         return set(constantLine);
     }
@@ -117,6 +189,7 @@ public final class HudStatusLine {
         progressText = "";
         detailText = "";
         fraction = -1f;
+        clearEta();
         itemId = "";
         return set("");
     }

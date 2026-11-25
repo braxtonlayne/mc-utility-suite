@@ -197,6 +197,7 @@ public final class SuiteHud implements IModule, IConfigurable, LayeredDraw.Layer
         Optional<JobSnapshot> job = goals == null ? Optional.empty() : goals.activeJob();
         if (job.isPresent() && !job.get().status().isTerminal()) {
             line.update(job.get()); // the status line re-measures itself when the text was rebuilt
+            line.updateEta(goals.activeJobEtaSeconds()); // an int compare; text rebuilt only when the shown ETA changes
         } else {
             SchematicToolkit t = SchematicBootstrap.toolkit();
             Optional<SchematicJobCard> card = t == null || !t.isEnabled() ? Optional.empty() : t.jobCard();

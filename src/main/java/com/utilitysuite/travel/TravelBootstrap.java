@@ -27,6 +27,9 @@ import net.neoforged.neoforge.common.NeoForge;
  */
 public final class TravelBootstrap {
 
+    /** Baritone's mod id (sic); travel must not import the jobs.baritone adapter, so the id is repeated here. */
+    private static final String BARITONE_MOD_ID = "baritoe";
+
     private static TerrainAssist terrain;
     private static TravelAutopilot autopilot;
     private static BridgeAssist bridge;
@@ -62,6 +65,16 @@ public final class TravelBootstrap {
                 new com.utilitysuite.travel.pursuit.MinecraftRouteRunner(worldShapes, bodySims);
         Services.registerRouteRunner(routeRunner);
         NeoForge.EVENT_BUS.addListener(ClientTickEvent.Post.class, routeRunner::onTick);
+        // Without Baritone, waypoint Go / Take Me Back / overland legs use the bounded local navigator instead
+        // (replaces the unavailable Baritone navigator JobsBootstrap registered). Registered after the route runner.
+        net.neoforged.fml.ModList mods = net.neoforged.fml.ModList.get();
+        if (mods == null || !mods.isLoaded(BARITONE_MOD_ID)) {
+            com.utilitysuite.travel.navigator.LocalNavigator localNav =
+                    new com.utilitysuite.travel.navigator.LocalNavigator();
+            Services.registerNavigator(localNav);
+            NeoForge.EVENT_BUS.addListener(ClientTickEvent.Post.class, localNav::onTick);
+            Services.events().subscribe(SuiteEvent.StopAll.class, e -> localNav.cancelAll());
+        }
         com.utilitysuite.travel.movement.GhostLineModule ghostLine =
                 new com.utilitysuite.travel.movement.GhostLineModule(movement, routeRunner);
         Services.modules().register(ghostLine);
