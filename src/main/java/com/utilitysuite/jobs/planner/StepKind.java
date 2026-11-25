@@ -36,5 +36,12 @@ public enum StepKind {
      */
     BREW,
     /** Fill {@code count} glass bottles with water at a nearby water source or water cauldron. */
-    FILL_BOTTLES
+    FILL_BOTTLES,
+    /** Open the crafter at {@code storagePos} and save its slot locks and items as template {@code itemId} (name). */
+    CRAFTER_SAVE,
+    /**
+     * Open the crafter at {@code storagePos} and apply the template encoded in {@code blockIds[0]}
+     * ({@link CrafterTemplate#encode}): clear wrong items, toggle slot locks, seed items.
+     */
+    CRAFTER_APPLY
 }

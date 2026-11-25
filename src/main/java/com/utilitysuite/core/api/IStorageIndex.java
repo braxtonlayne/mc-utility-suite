@@ -21,4 +21,9 @@ public interface IStorageIndex {
     default StorageEntry carriedEnderChest(String dimension) {
         return null;
     }
+
+    /** Names of the saved crafter templates ("crafter save <name>"), oldest first. */
+    default List<String> crafterTemplateNames() {
+        return List.of();
+    }
 }

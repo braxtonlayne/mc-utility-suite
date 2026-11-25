@@ -26,6 +26,36 @@ public final class StationJobPlanner {
     /** Remembered stations (StorageMemory), nearest first. */
     public interface StationSource {
         List<KnownStation> stations(String dimension, long from, int range, java.util.Set<String> types);
+
+        /** Saved crafter template by name (case-insensitive), or null. */
+        default CrafterTemplate crafterTemplate(String name) {
+            return null;
+        }
+    }
+
+    /**
+     * One CRAFTER_SAVE or CRAFTER_APPLY step at the nearest remembered crafter ({@code crafters} nearest first).
+     *
+     * @param template the saved template for apply (null fails the plan with a warning); ignored for save
+     */
+    public static Plan crafter(boolean apply, String name, CrafterTemplate template, List<KnownStation> crafters,
+                               String dim) {
+        if (crafters.isEmpty()) {
+            return new Plan(List.of(), Map.of(), List.of("No remembered crafter nearby: open the crafter once first"),
+                    Map.of());
+        }
+        long pos = crafters.get(0).pos();
+        if (!apply) {
+            return new Plan(List.of(new PlanStep(StepKind.CRAFTER_SAVE, name, 0, 0, null, List.of(), 0, pos, dim,
+                    StepRole.TARGET, "Save crafter template " + name, "Save crafter " + name)), Map.of(), List.of(),
+                    Map.of());
+        }
+        if (template == null) {
+            return new Plan(List.of(), Map.of(), List.of("No crafter template named " + name), Map.of());
+        }
+        return new Plan(List.of(new PlanStep(StepKind.CRAFTER_APPLY, template.name(), 0, 0, null,
+                List.of(template.encode()), 0, pos, dim, StepRole.TARGET, "Apply crafter template " + template.name(),
+                "Apply crafter " + template.name())), Map.of(), List.of(), Map.of());
     }
 
     /**

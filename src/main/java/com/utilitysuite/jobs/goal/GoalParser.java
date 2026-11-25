@@ -92,7 +92,7 @@ public final class GoalParser {
     }
 
     private static final List<String> VERBS = List.of("gather", "mine", "collect", "get", "craft", "make", "smelt",
-            "build", "goto", "travel", "furnaces", "brew");
+            "build", "goto", "travel", "furnaces", "brew", "crafter");
 
     private final Supplier<ItemNameMatcher> matcher;
     private final Function<String, Optional<WaypointTarget>> waypoints;
@@ -186,6 +186,7 @@ public final class GoalParser {
             case "go", "travel", "walk" -> parseTravel(rest, cost, source);
             case "furnaces", "smelt-array", "blast", "smoke" -> parseSmeltArray(verb, rest, cost, source);
             case "brew" -> parseBrew(rest, cost, source);
+            case "crafter" -> parseCrafter(rest, cost, source);
             default -> ParseResult.error("Unknown verb '" + verb + "'", closestVerbs(verb));
         };
     }
@@ -240,6 +241,20 @@ public final class GoalParser {
             default -> null;
         };
         return ParseResult.ok(new GoalRequest.SmeltArray(g.itemId(), g.count(), station, cost, source));
+    }
+
+    /** "crafter save buckets" (nearest remembered crafter), "crafter apply buckets". */
+    private static ParseResult parseCrafter(List<String> rest, CostProfile cost, DataSourceMode source) {
+        List<String> examples = List.of("crafter save buckets", "crafter apply buckets");
+        if (rest.size() < 2) {
+            return ParseResult.error("Usage: crafter save|apply <name>", examples);
+        }
+        String action = rest.get(0).toLowerCase(Locale.ROOT);
+        if (!action.equals("save") && !action.equals("apply")) {
+            return ParseResult.error("Unknown crafter action '" + action + "'", examples);
+        }
+        String name = String.join(" ", rest.subList(1, rest.size())).replace('|', '/');
+        return ParseResult.ok(new GoalRequest.Crafter(action.equals("apply"), name, cost, source));
     }
 
     /** "brew 3 splash strong_healing", "brew 2 long swiftness", "brew lingering weakness". */

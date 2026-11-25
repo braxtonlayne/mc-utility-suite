@@ -201,6 +201,58 @@ class StationJobsExecutorTest {
     }
 
     @Test
+    void crafterTemplatesSaveApplyAndPersist() {
+        exec.settings().stationJobs = true;
+        long crafter = PackedPos.pack(2, 64, 0);
+        storage.rememberStation(DIM, crafter, "minecraft:crafter");
+        String[] items = {"minecraft:iron_ingot", null, "minecraft:iron_ingot", null, "minecraft:iron_ingot", null,
+                null, null, null};
+        com.utilitysuite.jobs.planner.CrafterTemplate t = com.utilitysuite.jobs.planner.CrafterTemplate.capture(
+                "Buckets", "minecraft:bucket", 0b111_000_000, items);
+        storage.putCrafterTemplate(t);
+        assertEquals(List.of("Buckets"), storage.crafterTemplateNames());
+        assertEquals(t, storage.crafterTemplate("buckets"));
+
+        long id = exec.submit(new GoalRequest.Crafter(true, "buckets", CostProfile.FASTEST,
+                DataSourceMode.OBSERVED_ONLY));
+        tick(20);
+        assertTrue(actions.log.contains("station CRAFTER_APPLY 0 Buckets"), actions.log.toString());
+        assertEquals(JobStatus.COMPLETED, status(id));
+
+        long save = exec.submit(new GoalRequest.Crafter(false, "Rails", CostProfile.FASTEST,
+                DataSourceMode.OBSERVED_ONLY));
+        tick(20);
+        assertTrue(actions.log.contains("station CRAFTER_SAVE 0 Rails"), actions.log.toString());
+        assertEquals(JobStatus.COMPLETED, status(save));
+
+        long missing = exec.submit(new GoalRequest.Crafter(true, "nope", CostProfile.FASTEST,
+                DataSourceMode.OBSERVED_ONLY));
+        tick(20);
+        assertEquals(JobStatus.FAILED, status(missing));
+
+        // compact persistence alongside the storage JSON
+        String json = storage.toJson();
+        assertTrue(json.contains("\"crafters\":[\"Buckets|minecraft:bucket|448|"), json);
+        StorageMemory copy = new StorageMemory(() -> 1000L, Long.MAX_VALUE / 4);
+        copy.loadJson(json);
+        assertEquals(t, copy.crafterTemplate("Buckets"));
+        assertEquals(List.of("Buckets"), copy.crafterTemplateNames());
+    }
+
+    @Test
+    void parserBuildsCrafterCommands() {
+        GoalParser p = new GoalParser(() -> new ItemNameMatcher(List.of()), n -> Optional.empty(),
+                () -> DataSourceMode.OBSERVED_ONLY, () -> 0L, () -> DIM);
+        var save = assertInstanceOf(GoalRequest.Crafter.class, p.parse("crafter save iron buckets").request());
+        assertFalse(save.apply());
+        assertEquals("iron buckets", save.name());
+        var apply = assertInstanceOf(GoalRequest.Crafter.class, p.parse("crafter apply buckets").request());
+        assertTrue(apply.apply());
+        assertFalse(p.parse("crafter load buckets").isOk());
+        assertFalse(p.parse("crafter save").isOk());
+    }
+
+    @Test
     void parserBuildsStationGoals() {
         ItemNameMatcher m = new ItemNameMatcher(List.of(IRON, "minecraft:iron_ingot"));
         GoalParser p = new GoalParser(() -> m, n -> Optional.empty(), () -> DataSourceMode.OBSERVED_ONLY,

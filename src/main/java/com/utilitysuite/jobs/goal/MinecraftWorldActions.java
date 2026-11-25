@@ -9,6 +9,7 @@ import com.utilitysuite.core.api.RotationTarget;
 import com.utilitysuite.core.api.Services;
 import com.utilitysuite.core.api.SimKey;
 import com.utilitysuite.jobs.planner.BrewingPlanner;
+import com.utilitysuite.jobs.planner.CrafterTemplate;
 import com.utilitysuite.jobs.planner.EnderChestPlanner;
 import com.utilitysuite.jobs.planner.PackedPos;
 import com.utilitysuite.jobs.planner.WaterFill;
@@ -831,6 +832,34 @@ public final class MinecraftWorldActions implements WorldActions {
                 phase = Phase.COLLECT;
                 timer = 0;
             }
+            case CRAFTER_SAVE -> {
+                if (!(menu instanceof net.minecraft.world.inventory.CrafterMenu cm)) {
+                    fail("Opened block is not a crafter");
+                    return;
+                }
+                CrafterTemplate t = CrafterTemplate.capture(step.itemId(), null, crafterMask(cm),
+                        crafterItems(menu));
+                java.util.function.Consumer<CrafterTemplate> sink = crafterSink;
+                if (sink != null) {
+                    sink.accept(t);
+                }
+                finish(player, "Saved crafter template " + t.name());
+            }
+            case CRAFTER_APPLY -> {
+                if (!(menu instanceof net.minecraft.world.inventory.CrafterMenu)) {
+                    fail("Opened block is not a crafter");
+                    return;
+                }
+                try {
+                    crafterTarget = CrafterTemplate.decode(step.blockIds().get(0));
+                } catch (RuntimeException e) {
+                    fail("Bad crafter template " + step.itemId());
+                    return;
+                }
+                crafterPasses = 0;
+                phase = Phase.COLLECT; // stationTick converges the crafter on the template, one fix round per pass
+                timer = 0;
+            }
             default -> fail("Unsupported station step " + step.kind());
         }
     }
@@ -839,6 +868,10 @@ public final class MinecraftWorldActions implements WorldActions {
     private void stationTick(LocalPlayer player) {
         AbstractContainerMenu menu = player.containerMenu;
         if (Services.clicker().pending() > 0) {
+            return;
+        }
+        if (step.kind() == StepKind.CRAFTER_APPLY) {
+            crafterApplyTick(player, menu);
             return;
         }
         if (step.kind() == StepKind.FURNACE_COLLECT) {
@@ -907,6 +940,85 @@ public final class MinecraftWorldActions implements WorldActions {
         }
         transferred = bottles > 0 ? Map.of(step.itemId(), bottles) : Map.of();
         phase = Phase.WAIT_CLICKS;
+        timer = 0;
+    }
+
+    // ---- crafter templates ------------------------------------------------------------------------------------------
+
+    private volatile java.util.function.Consumer<CrafterTemplate> crafterSink;
+    private CrafterTemplate crafterTarget;
+    private int crafterPasses;
+    /** Fix rounds before giving up (clear, then toggle + seed, then a check; one spare). */
+    private static final int MAX_CRAFTER_PASSES = 4;
+
+    /** Where CRAFTER_SAVE puts captured templates (StorageMemory, persisted with the storage JSON). */
+    public void setCrafterTemplateSink(java.util.function.Consumer<CrafterTemplate> sink) {
+        this.crafterSink = sink;
+    }
+
+    private static int crafterMask(net.minecraft.world.inventory.CrafterMenu cm) {
+        int mask = 0;
+        for (int i = 0; i < CrafterTemplate.SLOTS; i++) {
+            if (cm.isSlotDisabled(i)) {
+                mask |= 1 << i;
+            }
+        }
+        return mask;
+    }
+
+    private String[] crafterItems(AbstractContainerMenu menu) {
+        String[] items = new String[CrafterTemplate.SLOTS];
+        for (int i = 0; i < CrafterTemplate.SLOTS; i++) {
+            ItemStack s = menu.getSlot(i).getItem();
+            items[i] = s.isEmpty() ? null : inv.idOf(s.getItem());
+        }
+        return items;
+    }
+
+    /**
+     * One fix round once the previous round's clicks are done: diff the open crafter with the template, then take
+     * wrong items out (QUICK_MOVE) or, when nothing is left to clear, toggle slot locks and seed items. Vanilla only
+     * toggles empty slots, hence clears go first in their own round. Done when the diff is empty.
+     */
+    private void crafterApplyTick(LocalPlayer player, AbstractContainerMenu menu) {
+        if (!(menu instanceof net.minecraft.world.inventory.CrafterMenu cm)) {
+            fail("Crafter closed while applying the template");
+            return;
+        }
+        if (timer < 3) {
+            return; // let the server echo the last round's slot changes
+        }
+        List<CrafterTemplate.Fix> fixes = crafterTarget.diff(crafterMask(cm), crafterItems(menu));
+        if (fixes.isEmpty()) {
+            finish(player, "Crafter set to template " + crafterTarget.name());
+            return;
+        }
+        if (crafterPasses++ >= MAX_CRAFTER_PASSES) {
+            fail("Crafter still differs from " + crafterTarget.name() + " (" + fixes.size() + " fixes left)");
+            return;
+        }
+        boolean cleared = false;
+        for (CrafterTemplate.Fix f : fixes) {
+            if (f.kind() == CrafterTemplate.FixKind.CLEAR) {
+                Services.clicker().queueClick(lease, f.slot(), 0, IContainerClicker.Click.QUICK_MOVE);
+                cleared = true;
+            }
+        }
+        if (!cleared) {
+            Inventory pinv = player.getInventory();
+            for (CrafterTemplate.Fix f : fixes) {
+                if (f.kind() == CrafterTemplate.FixKind.TOGGLE
+                        && !Services.clicker().toggleSlotState(lease, f.slot(), f.enable())) {
+                    fail("Could not toggle crafter slot " + f.slot());
+                    return;
+                }
+                if (f.kind() == CrafterTemplate.FixKind.SEED && moveFromInventory(menu, pinv, f.itemId(), 1,
+                        f.slot()) == 0) {
+                    fail("No " + f.itemId() + " carried to seed crafter slot " + f.slot());
+                    return;
+                }
+            }
+        }
         timer = 0;
     }
 
