@@ -54,6 +54,8 @@ public final class SkillEstimator {
     private final int[] ownHits = new int[MAX_OPPONENTS];
     private final int[] ownMisses = new int[MAX_OPPONENTS];
     private final double[] shown = new double[MAX_OPPONENTS];
+    /** A remembered prior from an earlier session is reported before {@link #MIN_SAMPLES} events. */
+    private final boolean[] seeded = new boolean[MAX_OPPONENTS];
     private long clock;
 
     public SkillEstimator() {
@@ -104,6 +106,7 @@ public final class SkillEstimator {
         ownHits[s] = 0;
         ownMisses[s] = 0;
         shown[s] = UNKNOWN_SKILL;
+        seeded[s] = false;
     }
 
     /** Counts the event and moves the reported skill one bounded step toward the raw estimate. */
@@ -192,10 +195,23 @@ public final class SkillEstimator {
     /** Estimated skill 0..1; {@link #UNKNOWN_SKILL} until {@link #samples} reaches a minimum. */
     public double skill(int id) {
         int s = slotOf(id);
-        if (s < 0 || samples[s] < MIN_SAMPLES) {
+        if (s < 0 || (samples[s] < MIN_SAMPLES && !seeded[s])) {
             return UNKNOWN_SKILL;
         }
         return shown[s];
+    }
+
+    /**
+     * Seeds the reported skill from cross-session memory when engaging a known opponent (before any event of this
+     * fight). Live events then move it with the usual bounded steps once {@link #MIN_SAMPLES} are in.
+     */
+    public void seedPrior(int id, double skill) {
+        int s = slotFor(id);
+        if (samples[s] > 0) {
+            return;
+        }
+        shown[s] = clamp01(skill);
+        seeded[s] = true;
     }
 
     /** Events seen for this opponent. */

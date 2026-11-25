@@ -153,6 +153,10 @@ public final class ProFeelLayer {
         int samples(int id);
 
         void clear();
+
+        /** Seeds a remembered skill before the fight's first event (cross-session opponent memory). */
+        default void seedPrior(int id, double skill) {
+        }
     }
 
     // =================================================================================================================
@@ -290,6 +294,20 @@ public final class ProFeelLayer {
 
     public void useSkill(Skill s) {
         skill = s;
+    }
+
+    /** The live skill estimate for an opponent (opponent memory reads it when a fight ends). */
+    public double skillOf(int id) {
+        return skill.skill(id);
+    }
+
+    public int skillSamples(int id) {
+        return skill.samples(id);
+    }
+
+    /** Seeds a remembered skill prior on engage. */
+    public void seedSkill(int id, double prior) {
+        skill.seedPrior(id, prior);
     }
 
     public void usePearlLanding(PearlIntercept.Landing landing) {
@@ -992,6 +1010,11 @@ public final class ProFeelLayer {
             @Override
             public int samples(int id) {
                 return e.samples(id);
+            }
+
+            @Override
+            public void seedPrior(int id, double skill) {
+                e.seedPrior(id, skill);
             }
 
             @Override

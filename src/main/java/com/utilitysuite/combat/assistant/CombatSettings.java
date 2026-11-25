@@ -62,6 +62,7 @@ public final class CombatSettings {
     public static final String ENGAGE_REQUIRES_LOS = "engage_requires_los";
     public static final String HOLD_GAP = "tactic_hold_gap";
     public static final String FOOD_OBJECTIVE = "food_objective";
+    public static final String OPPONENT_MEMORY = "opponent_memory";
     public static final String FOOD_RANGE = "food_range";
     public static final String EDGE_KNOCK = "tactic_edge_knock";
     public static final String TACTIC_UTILITY = "tactic_utility";
@@ -101,6 +102,8 @@ public final class CombatSettings {
     public double engageRange = 8.0;
     public boolean holdGap = true;
     public boolean foodObjective = true;
+    /** Cross-session opponent memory (C6); off by default. */
+    public boolean opponentMemory;
     public double foodRange = 12.0;
     public boolean edgeKnock = true;
     public boolean tacticUtility = true;
@@ -207,6 +210,7 @@ public final class CombatSettings {
         engageRequiresLos = p.getBool(id, ENGAGE_REQUIRES_LOS, true);
         holdGap = p.getBool(id, HOLD_GAP, true);
         foodObjective = p.getBool(id, FOOD_OBJECTIVE, true);
+        opponentMemory = p.getBool(id, OPPONENT_MEMORY, false);
         edgeKnock = p.getBool(id, EDGE_KNOCK, true);
         tacticUtility = p.getBool(id, TACTIC_UTILITY, true);
         autoWeapon = p.getBool(id, AUTO_WEAPON, true);
@@ -330,6 +334,10 @@ public final class CombatSettings {
                                 + " radius)."),
                 SettingSpec.bool(ENGAGE_REQUIRES_LOS, "Require line of sight", true, "Proactive",
                         "Only go after targets you can see. Off lets it pick targets behind walls (less legit)."),
+                SettingSpec.bool(OPPONENT_MEMORY, "Remember opponents", false, "Proactive",
+                        "Remember how each player fought you on this server (strafe side, shield use, pearl-out"
+                                + " health, ranged or mace habits, reach). The next fight starts from that read and a"
+                                + " one-line hint is shown."),
                 SettingSpec.bool(FOOD_OBJECTIVE, "Hunt for food when out", true, "Proactive",
                         "When you have no food and none in nearby chests the assistant remembers, hunt nearby cows,"
                                 + " pigs, sheep, chickens and rabbits and pick up the drops, but only while you are not"

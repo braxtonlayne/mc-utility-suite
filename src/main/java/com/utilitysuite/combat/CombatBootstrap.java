@@ -67,6 +67,15 @@ public final class CombatBootstrap {
         MinecraftCombatWorld world = new MinecraftCombatWorld();
         assistant = new CombatAssistant(world, allies.roster(), Services.arbiter(), Services.input(),
                 Services.clicker(), System::currentTimeMillis);
+        // C6 cross-session opponent memory: one small JSON, debounced writes; only used with the setting on
+        assistant.useOpponentMemory(new com.utilitysuite.combat.tactics.memory.OpponentMemoryStore(
+                FMLPaths.CONFIGDIR.get().resolve(UtilitySuiteMod.MOD_ID).resolve("combat").resolve("opponents.json")),
+                hint -> {
+                    if (!Services.modState().isCleanScreen()) {
+                        Services.visuals().notices().post(com.utilitysuite.core.api.visual.NoticeKind.INFO, hint,
+                                null);
+                    }
+                });
         // pro-feel units: the arena read and pearl landings over the live level, pearls from entity events, the read
         pearls = new PearlWatch();
         pearlVoxels = new ArenaVoxels();
