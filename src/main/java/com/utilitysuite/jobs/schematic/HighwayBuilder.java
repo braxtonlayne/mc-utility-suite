@@ -87,6 +87,8 @@ public final class HighwayBuilder implements IModule, IConfigurable {
     }
 
     private boolean enabled;
+    private static final int BEGIN_RETRY_TICKS = 40;
+    private int beginRetry;
     private Settings settings = Settings.DEFAULTS;
     private HighwayRun run;
     private String dimension;
@@ -131,6 +133,7 @@ public final class HighwayBuilder implements IModule, IConfigurable {
             return;
         }
         enabled = on;
+        beginRetry = 0;
         if (!on) {
             reset();
         }
@@ -150,9 +153,16 @@ public final class HighwayBuilder implements IModule, IConfigurable {
         if (player == null || mc.level == null) {
             return;
         }
-        if (run == null && !begin(player, mc.level.dimension().location().toString())) {
-            enabled = false;
-            return;
+        if (run == null) {
+            // Stay on and wait (status says what is missing); retry every 2 s so setting a target later starts the run.
+            if (beginRetry > 0) {
+                beginRetry--;
+                return;
+            }
+            if (!begin(player, mc.level.dimension().location().toString())) {
+                beginRetry = BEGIN_RETRY_TICKS;
+                return;
+            }
         }
         int progress = run.progress(player.getX(), player.getZ());
         int next = run.nextToPublish(progress, settings.lookahead());

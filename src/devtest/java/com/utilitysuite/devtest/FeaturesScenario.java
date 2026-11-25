@@ -95,6 +95,30 @@ final class FeaturesScenario {
                 + (Arena.cx + lx) + " " + (Arena.FLOOR + ly) + " " + (Arena.cz + lz);
     }
 
+
+    /** Points the camera at an arena-relative spot directly (the tp "facing" rotation did not stick in the 2026-11-25 run). */
+    private static void lookAt(double lx, double ly, double lz) {
+        var p = H.p();
+        double dx = Arena.cx + lx - p.getX();
+        double dy = Arena.FLOOR + ly - p.getEyeY();
+        double dz = Arena.cz + lz - p.getZ();
+        float yaw = (float) (Math.toDegrees(Math.atan2(dz, dx)) - 90.0);
+        float pitch = (float) -Math.toDegrees(Math.atan2(dy, Math.sqrt(dx * dx + dz * dz)));
+        p.setYRot(yaw);
+        p.setXRot(pitch);
+        p.yRotO = yaw;
+        p.xRotO = pitch;
+    }
+
+    /** What the crosshair hits, for the report. */
+    private static String hitInfo() {
+        var hit = H.mc().hitResult;
+        if (hit instanceof net.minecraft.world.phys.BlockHitResult bh && hit.getType() == net.minecraft.world.phys.HitResult.Type.BLOCK) {
+            return "hit " + bh.getBlockPos().toShortString() + " " + H.mc().level.getBlockState(bh.getBlockPos()).getBlock();
+        }
+        return "hit " + (hit == null ? "null" : hit.getType()) + ", pitch " + H.p().getXRot() + ", yaw " + H.p().getYRot();
+    }
+
     // ---- features -------------------------------------------------------------------------------------------------
 
     private static void atlas(Scenario s) {
@@ -150,6 +174,8 @@ final class FeaturesScenario {
                 + " minecraft:lever[face=floor,powered=true]");
         s.cmd(() -> Arena.fill(-6, 1, 4, -6, 1, 6, "minecraft:redstone_wire"));
         s.cmd(() -> face(-5.5, 0.5, -5.5, 1.1, 3.5));
+        s.waitTicks(2);
+        s.run("aim at the lever", () -> lookAt(-5.5, 1.1, 3.5));
         s.run("tracer on", () -> H.enable("redstone_tracer", true));
         s.waitTicks(30);
         s.run("tracer result", () -> {
@@ -157,7 +183,7 @@ final class FeaturesScenario {
             Object nodes = m == null ? null : field(m, "nodes");
             boolean traced = nodes instanceof Integer n && n > 0;
             s.check("feature: redstone tracer traces a lever + dust line", on("redstone_tracer") && traced,
-                    m == null ? "no module" : H.fields(m, "nodes", "tracedPos"));
+                    (m == null ? "no module" : H.fields(m, "nodes", "tracedPos")) + ", " + hitInfo());
         });
     }
 
@@ -185,6 +211,8 @@ final class FeaturesScenario {
         s.cmd(() -> "setblock " + (Arena.cx - 3) + " " + (Arena.FLOOR + 1) + " " + (Arena.cz + 3)
                 + " minecraft:chest");
         s.cmd(() -> face(-2.5, 0.5, -2.5, 1.5, 3.5));
+        s.waitTicks(2);
+        s.run("aim at the chest", () -> lookAt(-2.5, 1.5, 3.5));
         s.run("holo cards on", () -> H.enable(HoloCardModule.ID, true));
         HoloCardModule[] mod = new HoloCardModule[1];
         s.waitUpTo("card shown", 60, () -> {
@@ -195,7 +223,7 @@ final class FeaturesScenario {
             HoloCardModule m = H.module(HoloCardModule.ID);
             long key = m.book().shownKey();
             s.check("feature: holo card at a chest", on(HoloCardModule.ID) && key != HoloCardBook.NO_TARGET,
-                    "shown key " + key + ", card " + m.book().card.kind + " '" + m.book().card.title + "'");
+                    "shown key " + key + ", card " + m.book().card.kind + " '" + m.book().card.title + "', " + hitInfo());
         });
     }
 
