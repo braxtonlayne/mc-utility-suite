@@ -89,6 +89,25 @@ public final class SchematicLibrary {
         return null;
     }
 
+    /** Prefix of a build path naming a generated (in-memory) volume instead of a file. */
+    public static final String GENERATED_PREFIX = "generated:";
+    private final java.util.Map<String, SchematicVolume> generated = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * Registers a generated volume (shape, map art, symmetry layer) under {@code generated:<key>} so a
+     * {@code GoalRequest.Build} can name it like a file, including supply-trip resubmits. Replaces an earlier one.
+     */
+    public String registerGenerated(String key, SchematicVolume volume) {
+        String path = GENERATED_PREFIX + key;
+        generated.put(path, volume);
+        return path;
+    }
+
+    /** The generated volume for a {@code generated:} path, or null. */
+    public SchematicVolume generated(String path) {
+        return generated.get(path);
+    }
+
     public CompletableFuture<SchematicVolume> load(Path file) {
         return CompletableFuture.supplyAsync(() -> {
             try {

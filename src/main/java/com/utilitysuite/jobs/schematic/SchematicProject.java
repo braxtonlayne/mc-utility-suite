@@ -74,6 +74,13 @@ final class SchematicProject {
         this.anchorZ = anchorZ;
         this.library = library;
         this.loading = library.submit(() -> {
+            if (request.schematicPath().startsWith(SchematicLibrary.GENERATED_PREFIX)) {
+                SchematicVolume g = library.generated(request.schematicPath());
+                if (g == null) {
+                    throw new IllegalStateException("Generated design is gone: " + request.schematicPath());
+                }
+                return g;
+            }
             java.nio.file.Path file = library.resolve(request.schematicPath());
             if (file == null) {
                 throw new IllegalStateException("Schematic not found: " + request.schematicPath() + " (looked in "
