@@ -12,6 +12,11 @@ public interface ISuiteActions {
     /** Adds (or replaces, same id) an action. */
     void register(SuiteAction action);
 
+    /** Removes an action (dynamic entries such as user-named loadouts). Returns false when there was none. */
+    default boolean unregister(String id) {
+        return false;
+    }
+
     /** Every action in registration order (a snapshot). */
     List<SuiteAction> all();
 

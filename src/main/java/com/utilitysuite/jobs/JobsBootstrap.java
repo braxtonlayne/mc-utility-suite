@@ -106,6 +106,12 @@ public final class JobsBootstrap {
 
         Services.modules().register(storageModule);
         Services.modules().register(engine);
+        com.utilitysuite.jobs.storage.hall.HallSorterModule hallSorter =
+                new com.utilitysuite.jobs.storage.hall.HallSorterModule(storage, actions);
+        Services.modules().register(hallSorter);
+        if (modBus != null) {
+            modBus.addListener(hallSorter::onRegisterKeys);
+        }
         Services.modules().register(survival);
 
         // field modules (all off by default): Auto-Torch, Lava Plug, Vein Work, Crop Work

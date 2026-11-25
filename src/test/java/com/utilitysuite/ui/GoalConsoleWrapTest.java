@@ -14,6 +14,14 @@ class GoalConsoleWrapTest {
     }
 
     @Test
+    void sortHallIsRecognisedButNotGoals() {
+        assertTrue(GoalConsole.isSortHall("  Sort   HALL "));
+        assertTrue(GoalConsole.isSortHall("sort storage"));
+        assertEquals(false, GoalConsole.isSortHall("sort hall 64 diamonds"));
+        assertEquals(false, GoalConsole.isSortHall("get 64 cobblestone"));
+    }
+
+    @Test
     void wrapsAtWordBoundaries() {
         List<String> lines = GoalConsole.wrap("Could not read that goal", 12 * 6, GoalConsoleWrapTest::w);
         assertEquals(List.of("Could not", "read that", "goal"), lines);

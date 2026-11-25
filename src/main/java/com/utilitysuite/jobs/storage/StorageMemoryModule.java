@@ -133,22 +133,47 @@ public final class StorageMemoryModule implements IModule, IConfigurable {
         Container playerInv = mc.player.getInventory();
         Map<String, Integer> contents = new LinkedHashMap<>();
         List<com.utilitysuite.core.api.NestedContainer> nested = new java.util.ArrayList<>();
+        int containerSlots = 0;
+        for (Slot s : menu.slots) {
+            if (s.container != playerInv) {
+                containerSlots++;
+            }
+        }
+        ChestSlots perSlot = new ChestSlots(containerSlots);
+        int slotIndex = -1;
         for (Slot s : menu.slots) {
             if (s.container == playerInv) {
                 continue;
             }
+            slotIndex++;
             ItemStack st = s.getItem();
             if (!st.isEmpty()) {
-                contents.merge(BuiltInRegistries.ITEM.getKey(st.getItem()).toString(), st.getCount(), Integer::sum);
+                String itemId = BuiltInRegistries.ITEM.getKey(st.getItem()).toString();
+                perSlot.put(slotIndex, itemId, st.getCount(), st.getMaxStackSize(), variantKey(st));
+                contents.merge(itemId, st.getCount(), Integer::sum);
                 com.utilitysuite.core.api.NestedContainer box = ShulkerItems.read(st);
                 if (box != null && !box.contents().isEmpty()) {
                     nested.add(box);
                 }
             }
         }
-        memory.record(pendingDim, pendingPos, pendingType, contents, nested);
+        memory.record(pendingDim, pendingPos, pendingType, contents, nested, perSlot);
         pendingPos = Long.MIN_VALUE;
         scheduleSave();
+    }
+
+    /** Stored enchantments of an enchanted book as a sorted key; "" for everything else. Close-time only. */
+    private static String variantKey(ItemStack st) {
+        net.minecraft.world.item.enchantment.ItemEnchantments stored =
+                st.get(net.minecraft.core.component.DataComponents.STORED_ENCHANTMENTS);
+        if (stored == null || stored.isEmpty()) {
+            return "";
+        }
+        Map<String, Integer> e = new java.util.TreeMap<>();
+        for (var entry : stored.entrySet()) {
+            entry.getKey().unwrapKey().ifPresent(k -> e.put(k.location().toString(), entry.getIntValue()));
+        }
+        return ChestSlots.enchantKey(e);
     }
 
     // ---- IModule ----------------------------------------------------------------------------------------------------

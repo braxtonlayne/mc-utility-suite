@@ -24,6 +24,11 @@ public final class SuiteActionRegistry implements ISuiteActions {
     }
 
     @Override
+    public synchronized boolean unregister(String id) {
+        return id != null && actions.remove(id) != null;
+    }
+
+    @Override
     public synchronized List<SuiteAction> all() {
         return new ArrayList<>(actions.values());
     }

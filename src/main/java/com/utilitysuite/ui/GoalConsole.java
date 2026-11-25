@@ -38,10 +38,28 @@ public final class GoalConsole {
         if (text.isEmpty()) {
             return false;
         }
+        if (isSortHall(text)) {
+            com.utilitysuite.core.api.ISuiteActions actions = Services.actionsOrNull();
+            if (actions == null || !actions.run("sort_hall")) {
+                s.setStatus("The hall sorter is not loaded");
+            } else {
+                s.setState(K_GOAL, "");
+                s.clearGoalField();
+                s.setStatus("Sort hall: see the notice for the result");
+            }
+            s.requestRebuild();
+            return true;
+        }
         if (text.equals(s.state(K_PREVIEWED, ""))) {
             return submit(s);
         }
         return preview(s);
+    }
+
+    /** "sort hall" / "sort storage" (any case, extra spaces): runs the Hall Sorter instead of a goal parse. */
+    static boolean isSortHall(String text) {
+        String t = text.trim().toLowerCase(java.util.Locale.ROOT).replaceAll("\\s+", " ");
+        return t.equals("sort hall") || t.equals("sort storage") || t.equals("sort the hall");
     }
 
     /** True when the current text has been previewed and the Start pill should show. */

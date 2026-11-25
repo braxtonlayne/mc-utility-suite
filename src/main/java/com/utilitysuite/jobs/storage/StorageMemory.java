@@ -33,6 +33,8 @@ public final class StorageMemory implements IStorageIndex, StationJobPlanner.Sta
         String type;
         Map<String, Integer> contents;
         List<NestedContainer> nested = List.of();
+        /** Per-slot contents when the capture had them (null for old saves / item-count-only records). */
+        ChestSlots slots;
         long timestamp;
         boolean marked;
 
@@ -76,6 +78,12 @@ public final class StorageMemory implements IStorageIndex, StationJobPlanner.Sta
      */
     public void record(String dimension, long pos, String containerType, Map<String, Integer> contents,
                        List<NestedContainer> nested) {
+        record(dimension, pos, containerType, contents, nested, null);
+    }
+
+    /** As above, plus the per-slot contents (hall sorter input; null when not captured). */
+    public void record(String dimension, long pos, String containerType, Map<String, Integer> contents,
+                       List<NestedContainer> nested, ChestSlots slots) {
         Record r = byDim.computeIfAbsent(dimension, d -> new Long2ObjectOpenHashMap<>()).get(pos);
         if (r == null) {
             r = new Record(pos, dimension);
@@ -89,6 +97,7 @@ public final class StorageMemory implements IStorageIndex, StationJobPlanner.Sta
             ender.record(contents, nested, r.timestamp);
             r.contents = Map.of();
             r.nested = List.of();
+            r.slots = null;
             for (Long2ObjectOpenHashMap<Record> m : byDim.values()) {
                 for (Record o : m.values()) {
                     if (ENDER_CHEST.equals(o.type)) {
@@ -99,8 +108,109 @@ public final class StorageMemory implements IStorageIndex, StationJobPlanner.Sta
         } else {
             r.contents = Map.copyOf(contents);
             r.nested = List.copyOf(nested);
+            r.slots = slots;
         }
         changed();
+    }
+
+    // ---- hall sorter: per-slot contents and category tags --------------------------------------------------------------
+
+    /** dimension -> packed pos -> manual category tag (StorageCategories id). */
+    private final Map<String, Long2ObjectOpenHashMap<String>> tags = new HashMap<>();
+
+    /** The manual category tag of a container, or "" (client thread). */
+    public String tag(String dimension, long pos) {
+        Long2ObjectOpenHashMap<String> m = tags.get(dimension);
+        String t = m == null ? null : m.get(pos);
+        return t == null ? "" : t;
+    }
+
+    /** Sets (or with null/"" clears) a container's category tag. */
+    public void setTag(String dimension, long pos, String tag) {
+        Long2ObjectOpenHashMap<String> m = tags.computeIfAbsent(dimension, d -> new Long2ObjectOpenHashMap<>());
+        String old = tag == null || tag.isEmpty() ? m.remove(pos) : m.put(pos, tag);
+        if (!java.util.Objects.equals(old, tag == null || tag.isEmpty() ? null : tag)) {
+            dirty = true;
+        }
+    }
+
+    /** Advances the tag through none, then every category in order, then none again. Returns the new tag. */
+    public String cycleTag(String dimension, long pos) {
+        String cur = tag(dimension, pos);
+        String[] all = com.utilitysuite.jobs.storage.hall.StorageCategories.ALL;
+        String next = all[0];
+        for (int i = 0; i < all.length; i++) {
+            if (all[i].equals(cur)) {
+                next = i + 1 < all.length ? all[i + 1] : "";
+                break;
+            }
+        }
+        setTag(dimension, pos, next);
+        return next;
+    }
+
+    /**
+     * Fills {@code out} with up to {@code out.length} positions of captured containers within {@code radius} whose
+     * used-slot share is at least {@code ratio}; returns how many. No per-entry allocation (client thread; call on a
+     * budget, not every tick).
+     */
+    public int nearlyFull(String dimension, long center, int radius, double ratio, long[] out) {
+        Long2ObjectOpenHashMap<Record> m = byDim.get(dimension);
+        if (m == null) {
+            return 0;
+        }
+        long r2 = (long) radius * radius;
+        int n = 0;
+        for (Record r : m.values()) {
+            if (n >= out.length) {
+                break;
+            }
+            ChestSlots s = r.slots;
+            if (s != null && s.size() > 0 && !ENDER_CHEST.equals(r.type) && PackedPos.distSq(r.pos, center) <= r2
+                    && s.usedSlots() >= s.size() * ratio) {
+                out[n++] = r.pos;
+            }
+        }
+        return n;
+    }
+
+    /** Per-slot contents last captured for a container, or null. */
+    public ChestSlots slots(String dimension, long pos) {
+        Long2ObjectOpenHashMap<Record> m = byDim.get(dimension);
+        Record r = m == null ? null : m.get(pos);
+        return r == null ? null : r.slots;
+    }
+
+    /**
+     * Hall sorter input: every non-ender container in the dimension within {@code radius} of {@code center} with
+     * captured slots, nearest first, as planner chests (tag = manual tag or "" for inference). Client thread.
+     */
+    public List<com.utilitysuite.jobs.storage.hall.HallSortPlanner.Chest> hallChests(String dimension, long center,
+                                                                                   int radius) {
+        List<Record> picked = new ArrayList<>();
+        Long2ObjectOpenHashMap<Record> m = byDim.get(dimension);
+        long r2 = (long) radius * radius;
+        if (m != null) {
+            for (Record r : m.values()) {
+                if (r.slots != null && !ENDER_CHEST.equals(r.type) && PackedPos.distSq(r.pos, center) <= r2) {
+                    picked.add(r);
+                }
+            }
+        }
+        picked.sort((a, b) -> Long.compare(PackedPos.distSq(a.pos, center), PackedPos.distSq(b.pos, center)));
+        List<com.utilitysuite.jobs.storage.hall.HallSortPlanner.Chest> out = new ArrayList<>(picked.size());
+        for (Record r : picked) {
+            ChestSlots s = r.slots;
+            var c = new com.utilitysuite.jobs.storage.hall.HallSortPlanner.Chest(r.pos, tag(dimension, r.pos),
+                    s.size());
+            for (int i = 0; i < s.size(); i++) {
+                if (s.item(i) != null && s.count(i) > 0) {
+                    c.put(i, s.item(i), s.variant(i), s.count(i), s.max(i));
+                }
+            }
+            out.add(c);
+        }
+        return out;
     }
 
     // ---- ender chest mirror and remembered stations -------------------------------------------------------------------
@@ -236,6 +346,7 @@ public final class StorageMemory implements IStorageIndex, StationJobPlanner.Sta
     public void clear() {
         byDim.clear();
         stations.clear();
+        tags.clear();
         publishStations();
         ender.clear();
         dirty = false;
@@ -371,6 +482,14 @@ public final class StorageMemory implements IStorageIndex, StationJobPlanner.Sta
                     }
                     o.add("n", n);
                 }
+                if (r.slots != null) {
+                    o.addProperty("sl", r.slots.size());
+                    JsonArray si = new JsonArray();
+                    for (String s : r.slots.encode()) {
+                        si.add(s);
+                    }
+                    o.add("si", si);
+                }
                 arr.add(o);
             }
         }
@@ -397,6 +516,19 @@ public final class StorageMemory implements IStorageIndex, StationJobPlanner.Sta
                 }
             }
             root.add("stations", st);
+        }
+        JsonArray tg = new JsonArray();
+        for (Map.Entry<String, Long2ObjectOpenHashMap<String>> d : tags.entrySet()) {
+            for (Long2ObjectMap.Entry<String> t : d.getValue().long2ObjectEntrySet()) {
+                JsonObject o = new JsonObject();
+                o.addProperty("p", t.getLongKey());
+                o.addProperty("d", d.getKey());
+                o.addProperty("g", t.getValue());
+                tg.add(o);
+            }
+        }
+        if (!tg.isEmpty()) {
+            root.add("tags", tg);
         }
         return root.toString();
     }
@@ -434,6 +566,7 @@ public final class StorageMemory implements IStorageIndex, StationJobPlanner.Sta
     public void loadJson(String json) {
         byDim.clear();
         stations.clear();
+        tags.clear();
         ender.clear();
         try {
             JsonObject root = JsonParser.parseString(json).getAsJsonObject();
@@ -460,6 +593,13 @@ public final class StorageMemory implements IStorageIndex, StationJobPlanner.Sta
                     }
                     r.nested = List.copyOf(nested);
                 }
+                if (o.has("sl") && o.has("si")) {
+                    List<String> si = new ArrayList<>();
+                    for (JsonElement s : o.getAsJsonArray("si")) {
+                        si.add(s.getAsString());
+                    }
+                    r.slots = ChestSlots.decode(o.get("sl").getAsInt(), si);
+                }
                 byDim.computeIfAbsent(r.dimension, d -> new Long2ObjectOpenHashMap<>()).put(r.pos, r);
             }
             if (root.has("ender")) {
@@ -475,6 +615,13 @@ public final class StorageMemory implements IStorageIndex, StationJobPlanner.Sta
                     JsonObject o = el.getAsJsonObject();
                     stations.computeIfAbsent(o.get("d").getAsString(), d -> new Long2ObjectOpenHashMap<>())
                             .put(o.get("p").getAsLong(), o.get("t").getAsString());
+                }
+            }
+            if (root.has("tags")) {
+                for (JsonElement el : root.getAsJsonArray("tags")) {
+                    JsonObject o = el.getAsJsonObject();
+                    tags.computeIfAbsent(o.get("d").getAsString(), d -> new Long2ObjectOpenHashMap<>())
+                            .put(o.get("p").getAsLong(), o.get("g").getAsString());
                 }
             }
         } catch (RuntimeException e) {
