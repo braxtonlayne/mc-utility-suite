@@ -6,15 +6,21 @@ import com.utilitysuite.core.api.ModuleCategory;
 import com.utilitysuite.core.api.ProfileConfig;
 import com.utilitysuite.core.api.Services;
 import com.utilitysuite.core.api.SettingSpec;
+import com.utilitysuite.core.api.visual.HoloToken;
+import com.utilitysuite.core.api.visual.IHoloWorld;
+import com.utilitysuite.core.api.visual.IVisuals;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.particles.ParticleTypes;
+import net.minecraft.util.Mth;
 import net.minecraft.world.entity.AreaEffectCloud;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.boss.enderdragon.EndCrystal;
 import net.minecraft.world.entity.boss.enderdragon.EnderDragon;
 import net.minecraft.world.entity.boss.wither.WitherBoss;
 import net.minecraft.world.entity.projectile.WitherSkull;
+import net.minecraft.world.phys.Vec3;
+import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
 import net.neoforged.neoforge.event.entity.EntityJoinLevelEvent;
 import net.neoforged.neoforge.event.entity.EntityLeaveLevelEvent;
 
@@ -25,6 +31,13 @@ import java.util.List;
  * in dragon breath, wither armour phase ("melee only") and incoming wither skulls. Entities are tracked from
  * join/leave events (no world scans); the tick only reads tracked fields and swaps between constant strings, rebuilding
  * the dragon line only when its phase or shown second changes. Off by default; Clean-Screen hides it (SuiteHud).
+ * <p>
+ * World overlays (setting, on with the module): the full-draw bow arc to the nearest end crystal ({@link BossArc}
+ * from the {@link com.utilitysuite.combat.tactics.RangedBallistics} solution, solid up to the first block in the way,
+ * dashed red past it; the crystal tag then reads BLOCKED), straight trajectories of incoming wither skulls, and the
+ * radius ring of every dragon-breath cloud. The arc and its line-of-sight walk are recomputed every half second on the
+ * tick; the render callback only offsets cached points by the camera and hands them to the Shell's batched world kit
+ * ({@link IHoloWorld}), which draws nothing in Clean-Screen.
  */
 public final class BossHelperModule implements IModule, IConfigurable {
 
@@ -44,6 +57,20 @@ public final class BossHelperModule implements IModule, IConfigurable {
     private boolean enabled;
     private boolean dragonHints = true;
     private boolean witherHints = true;
+    private boolean worldOverlays = true;
+    public static final String K_OVERLAYS = "world_overlays";
+
+    // world overlays (allocated once)
+    private static final int SKULL_TICKS = 40;
+    private static final double SKULL_MAX_LEN = 32.0;
+    private final double[] arc = new double[BossArc.MAX_POINTS * 3];
+    private int arcCount;
+    private int arcBlockedAt = -1;
+    private final float[] arcClear = new float[BossArc.MAX_POINTS * 3];
+    private final float[] arcPast = new float[BossArc.MAX_POINTS * 3];
+    private final boolean[] skullIncoming = new boolean[MAX_TRACKED];
+    private final double[] skullEnd = new double[3];
+    private final BossArc.BlockProbe arcProbe = this::blocksArrow;
 
     private EnderDragon dragon;
     private WitherBoss wither;
@@ -161,6 +188,19 @@ public final class BossHelperModule implements IModule, IConfigurable {
             return;
         }
         line = compute(p);
+        if (worldOverlays && witherHints) {
+            double cy = p.getY() + p.getBbHeight() * 0.5;
+            for (int i = 0; i < MAX_TRACKED; i++) {
+                WitherSkull s = skulls[i];
+                boolean in = false;
+                if (s != null && !s.isRemoved()) {
+                    Vec3 v = s.getDeltaMovement();
+                    in = BossFightAdvisor.skullIncoming(s.getX(), s.getY(), s.getZ(), v.x, v.y, v.z, s.isDangerous(),
+                            p.getX(), cy, p.getZ(), 1.5, SKULL_TICKS);
+                }
+                skullIncoming[i] = in;
+            }
+        }
         if (++markTicks % 10 == 0) {
             publishMarks(p); // crystal cage/range is budgeted: every half second
         }
@@ -257,14 +297,26 @@ public final class BossHelperModule implements IModule, IConfigurable {
                 }
             }
         }
+        arcCount = 0;
         if (best != null && slot(marks, M_CRYSTAL) >= 0) {
             boolean caged = BossFightAdvisor.caged(ironBarsAround(p, best));
             double dx = best.getX() - p.getX(), dz = best.getZ() - p.getZ();
             BossFightAdvisor.ShotVerdict sv = BossFightAdvisor.bowShot(ballistics, Math.sqrt(dx * dx + dz * dz),
                     best.getY() + 1.0 - p.getEyeY(), caged, true);
+            if (sv == BossFightAdvisor.ShotVerdict.CLEAR && worldOverlays) {
+                // the solve above left the elevation: trace the arc and walk it for blocks in the way
+                arcCount = BossArc.fill(p.getX(), p.getEyeY(), p.getZ(), best.getX(), best.getZ(),
+                        ballistics.elevationDeg(),
+                        com.utilitysuite.combat.tactics.RangedBallistics.BOW_FULL_SPEED, arc);
+                arcBlockedAt = arcCount >= 2 ? BossArc.firstBlocked(arc, arcCount, arcProbe) : -1;
+                if (arcBlockedAt >= 0) {
+                    sv = BossFightAdvisor.ShotVerdict.BLOCKED;
+                }
+            }
             String word = switch (sv) {
                 case CAGED -> "CAGED";
                 case OUT_OF_RANGE -> "OUT OF RANGE";
+                case BLOCKED -> "BLOCKED";
                 default -> "BOW RANGE";
             };
             marks.setEntity(markSlot[M_CRYSTAL], com.utilitysuite.core.api.visual.MarkKind.OBJECTIVE, best.getId(),
@@ -312,6 +364,87 @@ public final class BossHelperModule implements IModule, IConfigurable {
         } else {
             clear(marks, M_SKULL);
         }
+    }
+
+    /** Arc line-of-sight probe: any collision shape stops an arrow (fire and air do not). Client thread. */
+    private boolean blocksArrow(int x, int y, int z) {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.level == null) {
+            return false;
+        }
+        cursor.set(x, y, z);
+        return !mc.level.getBlockState(cursor).getCollisionShape(mc.level, cursor).isEmpty();
+    }
+
+    // ---- world overlays (Shell world kit, batched) ---------------------------------------------------------------
+
+    /** Draws the cached arc, incoming skull lines and breath rings. Nothing when idle, off or in Clean-Screen. */
+    public void onRenderLevel(RenderLevelStageEvent event) {
+        if (!enabled || !worldOverlays || event.getStage() != RenderLevelStageEvent.Stage.AFTER_PARTICLES) {
+            return;
+        }
+        if (dragon == null && wither == null && !anyTracked()) {
+            return;
+        }
+        IVisuals visuals = Services.visualsOrNull();
+        IHoloWorld world = visuals != null ? visuals.world() : null;
+        Minecraft mc = Minecraft.getInstance();
+        LocalPlayer p = mc.player;
+        if (world == null || p == null) {
+            return; // no world pass (Clean-Screen, no Shell)
+        }
+        Vec3 cam = event.getCamera().getPosition();
+        float pt = event.getPartialTick().getGameTimeDeltaPartialTick(false);
+        if (dragonHints && dragon != null && arcCount >= 2) {
+            // solid up to the point before the blocked segment, dashed red from there on
+            int clearEnd = arcBlockedAt >= 0 ? arcBlockedAt + 1 : arcCount;
+            if (clearEnd >= 2) {
+                for (int i = 0; i < clearEnd; i++) {
+                    put(arcClear, i, arc, i, cam);
+                }
+                world.polyline(arcClear, clearEnd, 0f, HoloToken.ACCENT, 0.85f);
+            }
+            if (arcBlockedAt >= 0) {
+                int past = arcCount - arcBlockedAt;
+                for (int i = 0; i < past; i++) {
+                    put(arcPast, i, arc, arcBlockedAt + i, cam);
+                }
+                world.polyline(arcPast, past, 0.4f, HoloToken.DANGER, 0.85f);
+            }
+        }
+        if (witherHints) {
+            for (int i = 0; i < MAX_TRACKED; i++) {
+                WitherSkull s = skulls[i];
+                if (s == null || !skullIncoming[i] || s.isRemoved()) {
+                    continue;
+                }
+                double x = Mth.lerp(pt, s.xo, s.getX()), y = Mth.lerp(pt, s.yo, s.getY()) + s.getBbHeight() * 0.5;
+                double z = Mth.lerp(pt, s.zo, s.getZ());
+                Vec3 v = s.getDeltaMovement();
+                BossArc.skullEnd(x, y, z, v.x, v.y, v.z, SKULL_TICKS, SKULL_MAX_LEN, skullEnd);
+                world.ribbon((float) (x - cam.x), (float) (y - cam.y), (float) (z - cam.z),
+                        (float) (skullEnd[0] - cam.x), (float) (skullEnd[1] - cam.y), (float) (skullEnd[2] - cam.z),
+                        s.isDangerous() ? HoloToken.DANGER : HoloToken.WARN, 0.9f);
+            }
+        }
+        if (dragonHints) {
+            for (int i = 0; i < MAX_TRACKED; i++) {
+                AreaEffectCloud c = clouds[i];
+                if (c == null || c.isRemoved()) {
+                    continue;
+                }
+                boolean inside = BossFightAdvisor.inCloud(p.getX(), p.getY(), p.getZ(), c.getX(), c.getY(), c.getZ(),
+                        c.getRadius(), 0.5);
+                world.ring((float) (c.getX() - cam.x), (float) (c.getY() + 0.05 - cam.y), (float) (c.getZ() - cam.z),
+                        c.getRadius(), inside ? HoloToken.DANGER : HoloToken.WARN, inside ? 0.9f : 0.6f);
+            }
+        }
+    }
+
+    private static void put(float[] dst, int di, double[] src, int si, Vec3 cam) {
+        dst[di * 3] = (float) (src[si * 3] - cam.x);
+        dst[di * 3 + 1] = (float) (src[si * 3 + 1] - cam.y);
+        dst[di * 3 + 2] = (float) (src[si * 3 + 2] - cam.z);
     }
 
     /** Iron bars in the 8 horizontal neighbours of the crystal's block and the block above. */
@@ -366,6 +499,8 @@ public final class BossHelperModule implements IModule, IConfigurable {
         java.util.Arrays.fill(skulls, null);
         java.util.Arrays.fill(clouds, null);
         java.util.Arrays.fill(crystalRefs, null);
+        java.util.Arrays.fill(skullIncoming, false);
+        arcCount = 0;
         clearMarks();
         lastPhase = -1;
         line = null;
@@ -377,13 +512,17 @@ public final class BossHelperModule implements IModule, IConfigurable {
                 SettingSpec.bool(K_DRAGON, "Ender dragon hints", true, "",
                         "Dragon phase, perch countdown and odds, and a warning while standing in dragon breath."),
                 SettingSpec.bool(K_WITHER, "Wither hints", true, "",
-                        "Armour phase (below half health arrows bounce: melee only) and incoming skulls."));
+                        "Armour phase (below half health arrows bounce: melee only) and incoming skulls."),
+                SettingSpec.bool(K_OVERLAYS, "World overlays", true, "",
+                        "Bow arc to the nearest crystal (red past a block in the way), incoming skull lines and "
+                                + "dragon-breath rings."));
     }
 
     @Override
     public void onProfileLoaded(ProfileConfig p) {
         dragonHints = p.getBool(ID, K_DRAGON, true);
         witherHints = p.getBool(ID, K_WITHER, true);
+        worldOverlays = p.getBool(ID, K_OVERLAYS, true);
     }
 
     @Override

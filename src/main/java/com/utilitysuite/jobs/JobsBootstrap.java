@@ -117,6 +117,7 @@ public final class JobsBootstrap {
         Services.modules().register(survival);
 
         // field modules (all off by default): Auto-Torch, Lava Plug, Vein Work, Crop Work
+        Services.registerBlockWork(new com.utilitysuite.jobs.fieldwork.FieldBlockWork());
         AutoTorchModule autoTorch = new AutoTorchModule(inventory);
         LavaPlugModule lavaPlug = new LavaPlugModule(inventory);
         VeinWorkModule veinWork = new VeinWorkModule();
@@ -127,7 +128,7 @@ public final class JobsBootstrap {
         Services.modules().register(cropWork);
         Services.modules().register(new PenSweepModule());
         Services.modules().register(new AfkGrinderModule());
-        Services.modules().register(new com.utilitysuite.jobs.fieldwork.DebrisBlastModule());
+        Services.modules().register(new com.utilitysuite.jobs.fieldwork.DebrisBlastModule(veinWork, lavaPlug));
 
         IEventBus bus = NeoForge.EVENT_BUS;
         bus.addListener((ClientTickEvent.Post e) -> {

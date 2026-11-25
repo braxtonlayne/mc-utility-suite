@@ -123,4 +123,22 @@ class VeinCollectorTest {
         });
         assertTrue(bytes < 64 * 1024, "allocated " + bytes + " bytes over 2000 runs");
     }
+
+    @Test
+    void beginAtQueuesTheStandingStartBlockToo() {
+        // Debris Blasting hand-off: the revealed block is still there and must be mined with its neighbours.
+        LongOpenHashSet blocks = new LongOpenHashSet();
+        blocks.add(PackedPos.pack(0, 15, 0));
+        blocks.add(PackedPos.pack(1, 15, 0));
+        VeinCollector c = new VeinCollector();
+        c.beginAt(PackedPos.pack(0, 15, 0), false, 256);
+        runToEnd(c, in(blocks), 64);
+        assertEquals(2, c.size());
+        assertTrue(c.contains(PackedPos.pack(0, 15, 0)));
+        assertTrue(c.contains(PackedPos.pack(1, 15, 0)));
+
+        c.begin(PackedPos.pack(0, 15, 0), false, 256);
+        runToEnd(c, in(blocks), 64);
+        assertEquals(1, c.size(), "begin (user already broke the start) leaves the start out");
+    }
 }

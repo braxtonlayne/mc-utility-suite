@@ -28,8 +28,9 @@ import java.util.List;
  * N blocks it digs a two-deep side pocket, places a bed (or TNT), waits for the player to step back to the safe stand
  * distance (the player walks: the module never moves the body), places a blast-shield block ahead of the feet,
  * measures the real cover with vanilla's explosion seen-percent, and only then triggers (uses the bed / lights the TNT
- * with flint and steel). After the blast it plugs exposed lava with filler blocks ({@link FieldRules#PLUG_ITEMS}, as
- * Lava Plug does) and mines revealed ancient debris in reach. Every look is smoothed and every action goes through the
+ * with flint and steel). After the blast it hands exposed lava to {@link LavaPlugModule#plugAround} (filler blocks from
+ * {@link FieldRules#PLUG_ITEMS}) and revealed ancient debris in reach to {@link VeinWorkModule#arm} (hazard probes,
+ * connected debris), releasing its own hands while they work. Every look is smoothed and every action goes through the
  * core lease ({@link FieldHands}); safety aborts come from the cycle (low health, lava at the feet, no shield block,
  * unsafe stand spot) and switch the module off with a status message.
  */
@@ -53,8 +54,13 @@ public final class DebrisBlastModule extends FieldModule {
     private long tick;
     private String status = "";
 
-    public DebrisBlastModule() {
+    private final VeinWorkModule veinWork;
+    private final LavaPlugModule lavaPlug;
+
+    public DebrisBlastModule(VeinWorkModule veinWork, LavaPlugModule lavaPlug) {
         super(ID, ControlPriority.GOAL);
+        this.veinWork = veinWork;
+        this.lavaPlug = lavaPlug;
     }
 
     public String status() {
@@ -88,6 +94,18 @@ public final class DebrisBlastModule extends FieldModule {
             stopWork();
             return;
         }
+        if (p == DebrisBlastCycle.Phase.PLUG_LAVA || p == DebrisBlastCycle.Phase.MINE_DEBRIS) {
+            hands.release(); // the hand-off modules take their own leases
+            if (p == DebrisBlastCycle.Phase.PLUG_LAVA) {
+                plugLava(player);
+            } else {
+                mineDebris(player);
+            }
+            return;
+        }
+        if (veinWork.isBusy() || lavaPlug.isBusy()) {
+            return; // a hand-off from the previous phase is still finishing
+        }
         if (!hands.ensureLease()) {
             return;
         }
@@ -98,8 +116,6 @@ public final class DebrisBlastModule extends FieldModule {
             case RETREAT -> status = "Step back to " + (int) Math.ceil(cycle.standDistance() - 0.5) + " blocks";
             case PLACE_SHIELD -> placeShield(mc, player);
             case TRIGGER -> trigger(mc, player);
-            case PLUG_LAVA -> plugLava(mc, level, player);
-            case MINE_DEBRIS -> mineDebris(mc, level, player);
             default -> {
             }
         }
@@ -313,37 +329,36 @@ public final class DebrisBlastModule extends FieldModule {
         status = tnt ? "Lighting TNT: step back behind the shield" : "Using the bed";
     }
 
-    private void plugLava(Minecraft mc, ClientLevel level, LocalPlayer player) {
+    /** Hands the scanned lava source to Lava Plug (one plug run at a time); the area re-scan keeps the count true. */
+    private void plugLava(LocalPlayer player) {
+        if (lavaPlug.isBusy()) {
+            status = "Plugging lava";
+            return;
+        }
         if (player.distanceToSqr(lavaX + 0.5, lavaY + 0.5, lavaZ + 0.5) > REACH * REACH) {
             status = "Lava out of reach: move closer";
             return;
         }
-        Item plug = plugItem(player.getInventory());
-        if (plug == null) {
-            return;
-        }
-        for (Direction d : FACES) {
-            cursor.set(lavaX + d.getStepX(), lavaY + d.getStepY(), lavaZ + d.getStepZ());
-            if (level.getBlockState(cursor).isFaceSturdy(level, cursor, d.getOpposite())) {
-                if (place(mc, player, plug, cursor.getX(), cursor.getY(), cursor.getZ(), d.getOpposite())) {
-                    obs.exposedLava = Math.max(0, obs.exposedLava - 1);
-                }
-                status = "Plugging lava";
-                return;
-            }
+        if (lavaPlug.plugAround(lavaX, lavaY, lavaZ, 0)) {
+            obs.exposedLava = Math.max(0, obs.exposedLava - 1);
+            status = "Plugging lava";
         }
     }
 
-    private void mineDebris(Minecraft mc, ClientLevel level, LocalPlayer player) {
+    /** Hands the scanned debris to Vein Work, which mines it and any connected debris with its hazard probes. */
+    private void mineDebris(LocalPlayer player) {
+        if (veinWork.isBusy()) {
+            status = "Mining ancient debris";
+            return;
+        }
         if (player.distanceToSqr(debrisX + 0.5, debrisY + 0.5, debrisZ + 0.5) > REACH * REACH) {
             status = "Ancient debris at " + debrisX + " " + debrisY + " " + debrisZ;
             return;
         }
-        int r = hands.tickBreak(mc, player, debrisX, debrisY, debrisZ, relaxed, !relaxed);
-        if (r == FieldHands.DONE) {
+        if (veinWork.arm(debrisX, debrisY, debrisZ)) {
             obs.debrisVisible = Math.max(0, obs.debrisVisible - 1);
+            status = "Mining ancient debris";
         }
-        status = "Mining ancient debris";
     }
 
     /** Holds the item and uses it on a face. True once the use was sent. */

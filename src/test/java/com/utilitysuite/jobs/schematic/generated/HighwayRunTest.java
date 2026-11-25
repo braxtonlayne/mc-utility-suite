@@ -44,4 +44,21 @@ class HighwayRunTest {
         assertEquals(PackedPos.pack(5, 70, -27), p[0]);
         assertEquals(PackedPos.pack(5, 70, -29), p[2]);
     }
+
+    @Test
+    void boatHandOffTargetsTheEndOfEachNewlyCompletedSegmentOnce() {
+        HighwayRun r = new HighwayRun(0, 64, 0, 100, 0, 32);
+        assertEquals(-1, r.boatHandoffStep(0, 6, -1), "nothing published yet");
+        r.markPublished(0);
+        assertEquals(31, r.publishedEndStep());
+        assertEquals(31, r.boatHandoffStep(0, 6, -1));
+        assertEquals(-1, r.boatHandoffStep(5, 6, 31), "already handed off");
+        assertEquals(-1, r.boatHandoffStep(28, 6, -1), "too close to the end to be worth it");
+        r.markPublished(1);
+        assertEquals(63, r.boatHandoffStep(30, 6, 31));
+        r.markPublished(3);
+        assertEquals(100, r.publishedEndStep(), "clamped to the last step");
+        assertEquals(100, r.stepX(100));
+        assertEquals(0, r.stepZ(100));
+    }
 }

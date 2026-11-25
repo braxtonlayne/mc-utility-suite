@@ -5,7 +5,12 @@ import com.utilitysuite.core.api.ControlLease;
 import com.utilitysuite.core.api.ControlPriority;
 import com.utilitysuite.core.api.IConfigurable;
 import com.utilitysuite.core.api.IContainerClicker;
+import com.utilitysuite.core.api.IInputSmoother;
 import com.utilitysuite.core.api.IModule;
+import com.utilitysuite.core.api.INavigator;
+import com.utilitysuite.core.api.NavigationRun;
+import com.utilitysuite.core.api.RotationTarget;
+import com.utilitysuite.core.api.SimKey;
 import com.utilitysuite.core.api.LeaseEndReason;
 import com.utilitysuite.core.api.LeaseListener;
 import com.utilitysuite.core.api.LeaseRequest;
@@ -17,8 +22,10 @@ import com.utilitysuite.jobs.survival.PiglinAdvisor;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EquipmentSlot;
+import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.monster.piglin.AbstractPiglin;
 import net.minecraft.world.item.ArmorItem;
 import net.minecraft.world.item.ItemStack;
@@ -31,6 +38,7 @@ import net.minecraft.world.phys.HitResult;
 import net.neoforged.neoforge.event.entity.EntityJoinLevelEvent;
 import net.neoforged.neoforge.event.entity.EntityLeaveLevelEvent;
 
+import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Optional;
@@ -40,6 +48,12 @@ import java.util.Optional;
  * armour is worn (optionally equips a gold piece from the inventory into an empty armour slot with one shift-click
  * under a HOTBAR lease), and a warning while the crosshair is on a container next to bastion blocks (opening it angers
  * piglins). Piglins are tracked from join/leave events; the check runs every 10 ticks and only in the Nether.
+ * <p>
+ * Opt-in bartering follows {@link PiglinAdvisor#barter} every half second: a calm, non-admiring adult in give range
+ * is handed the ingot (smoothed look, then a USE tap on it through {@link IInputSmoother#tapOnEntity} under a
+ * WORLD_INTERACT + CAMERA lease), one further away gets a tossed ingot, and with "Collect barter loot" on, worthwhile
+ * drops within a few blocks are walked to through a leased navigator run (short range only). Item entities are
+ * tracked from join/leave events like piglins; manual input or Stop-All ends any step.
  */
 public final class PiglinGuard implements IModule, IConfigurable, LeaseListener {
 
@@ -63,6 +77,25 @@ public final class PiglinGuard implements IModule, IConfigurable, LeaseListener 
     private int sinceGive = 1_000;
     public static final String K_BARTER = "barter_toss";
     public static final String K_BARTER_CADENCE = "barter_cadence_ticks";
+    public static final String K_BARTER_COLLECT = "barter_collect";
+    public static final String K_BARTER_HAND = "barter_hand_over";
+
+    /** Drops further than this are left (the walk stays short). */
+    static final double COLLECT_RANGE = 6.0;
+    private static final int MAX_DROPS = 64;
+    private static final int GIVE_TIMEOUT_TICKS = 40;
+
+    private boolean barterCollect;
+    private boolean barterHand = true;
+    private final ItemEntity[] drops = new ItemEntity[MAX_DROPS];
+    // reused decision inputs (records are built only at the half-second barter cadence)
+    private final List<PiglinAdvisor.Piglin> piglinView = new ArrayList<>(MAX_PIGLINS);
+    private final List<PiglinAdvisor.Drop> dropView = new ArrayList<>(MAX_DROPS);
+    private NavigationRun collectRun;
+    private AbstractPiglin giveTarget;
+    private int giveTicks;
+    private ControlLease handLease;
+    private LeaseRequest handRequest;
 
     private final AbstractPiglin[] piglins = new AbstractPiglin[MAX_PIGLINS];
     private final BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
@@ -100,11 +133,21 @@ public final class PiglinGuard implements IModule, IConfigurable, LeaseListener 
         this.enabled = enabled;
         if (!enabled) {
             line = null;
-            releaseLease();
+            stopAll();
         }
     }
 
     public void onJoin(EntityJoinLevelEvent event) {
+        if (enabled && barter && barterCollect && event.getLevel().isClientSide()
+                && event.getEntity() instanceof ItemEntity item) {
+            for (int i = 0; i < MAX_DROPS; i++) {
+                if (drops[i] == null || drops[i].isRemoved()) {
+                    drops[i] = item;
+                    return;
+                }
+            }
+            return;
+        }
         if (event.getLevel().isClientSide() && event.getEntity() instanceof AbstractPiglin p) {
             for (int i = 0; i < MAX_PIGLINS; i++) {
                 if (piglins[i] == null) {
@@ -117,6 +160,14 @@ public final class PiglinGuard implements IModule, IConfigurable, LeaseListener 
 
     public void onLeave(EntityLeaveLevelEvent event) {
         Entity e = event.getEntity();
+        if (event.getLevel().isClientSide() && e instanceof ItemEntity) {
+            for (int i = 0; i < MAX_DROPS; i++) {
+                if (drops[i] == e) {
+                    drops[i] = null;
+                }
+            }
+            return;
+        }
         if (event.getLevel().isClientSide() && e instanceof AbstractPiglin) {
             for (int i = 0; i < MAX_PIGLINS; i++) {
                 if (piglins[i] == e) {
@@ -133,6 +184,9 @@ public final class PiglinGuard implements IModule, IConfigurable, LeaseListener 
         }
         if (lease != null && Services.clicker().pending() == 0) {
             releaseLease();
+        }
+        if (giveTarget != null) {
+            tickGive(); // per tick only while handing an ingot over
         }
         if (++ticks % PERIOD != 0) {
             return;
@@ -169,35 +223,68 @@ public final class PiglinGuard implements IModule, IConfigurable, LeaseListener 
     }
 
     /**
-     * Opt-in barter toss: with gold ingots in the main hand and a calm adult piglin within a few blocks that is not
-     * already admiring, throws one ingot (a THROW click on the selected hotbar slot under a HOTBAR lease) at the set
-     * cadence. Piglins walk to dropped gold themselves. Stops when any piglin in range is aggressive.
+     * Opt-in barter step (every {@value #PERIOD} ticks): with gold ingots in the main hand, follows
+     * {@link PiglinAdvisor#barter}. GIVE hands the ingot to the piglin (USE tap through the core, when "Hand over" is
+     * on; otherwise tossed), TOSS throws one ingot (a THROW click on the selected hotbar slot under a HOTBAR lease),
+     * COLLECT walks to a worthwhile drop within {@link #COLLECT_RANGE} under a leased navigator run. Never next to a
+     * hostile piglin. The decision inputs are rebuilt at this cadence only.
      */
     private void barterStep(Minecraft mc, LocalPlayer p) {
         sinceGive += PERIOD;
-        if (mc.screen != null) {
+        if (mc.screen != null || giveTarget != null) {
             return;
+        }
+        if (collectRun != null) {
+            if (collectRun.isActive()) {
+                return; // walking to a drop
+            }
+            collectRun = null;
         }
         ItemStack hand = p.getMainHandItem();
         int ingots = hand.is(Items.GOLD_INGOT) ? hand.getCount() : 0;
-        boolean hostile = false;
-        double idle = Double.POSITIVE_INFINITY;
+        piglinView.clear();
         for (int i = 0; i < MAX_PIGLINS; i++) {
             AbstractPiglin g = piglins[i];
             if (g == null || !g.isAlive()) {
                 continue;
             }
-            double d = Math.sqrt(g.distanceToSqr(p));
-            if (g.isAggressive() && d <= PiglinAdvisor.AGGRO_RANGE) {
-                hostile = true;
-            } else if (!g.isBaby() && g.getOffhandItem().isEmpty()) {
-                idle = Math.min(idle, d);
+            piglinView.add(new PiglinAdvisor.Piglin(g.getId(), Math.sqrt(g.distanceToSqr(p)), !g.isBaby(),
+                    g.isAggressive(), !g.getOffhandItem().isEmpty()));
+        }
+        dropView.clear();
+        if (barterCollect) {
+            for (int i = 0; i < MAX_DROPS; i++) {
+                ItemEntity d = drops[i];
+                if (d == null || d.isRemoved()) {
+                    drops[i] = null;
+                    continue;
+                }
+                double dist = Math.sqrt(d.distanceToSqr(p));
+                if (dist <= COLLECT_RANGE) {
+                    dropView.add(new PiglinAdvisor.Drop(d.getId(),
+                            BuiltInRegistries.ITEM.getKey(d.getItem().getItem()).toString(), dist));
+                }
             }
         }
-        PiglinAdvisor.Act act = PiglinAdvisor.giveStep(ingots, hostile, idle, sinceGive, cadenceTicks);
-        if (act != PiglinAdvisor.Act.GIVE && act != PiglinAdvisor.Act.TOSS) {
-            return;
+        PiglinAdvisor.Decision dec = PiglinAdvisor.barter(ingots, piglinView, dropView, sinceGive, cadenceTicks,
+                barterCollect ? COLLECT_RANGE : 0.0, java.util.Set.of());
+        switch (dec.act()) {
+            case GIVE -> {
+                if (barterHand && mc.level.getEntity(dec.targetId()) instanceof AbstractPiglin g) {
+                    giveTarget = g;
+                    giveTicks = 0;
+                } else {
+                    toss(p);
+                }
+            }
+            case TOSS -> toss(p);
+            case COLLECT -> collect(mc, dec.targetId());
+            default -> {
+            }
         }
+    }
+
+    private void toss(LocalPlayer p) {
         if (lease == null || !lease.isActive()) {
             if (request == null) {
                 request = new LeaseRequest(ID, ControlPriority.IDLE, EnumSet.of(ControlChannel.HOTBAR), 0, this);
@@ -210,6 +297,69 @@ public final class PiglinGuard implements IModule, IConfigurable, LeaseListener 
         // InventoryMenu hotbar slots are 36..44; THROW with button 0 drops one item
         Services.clicker().queueClick(lease, 36 + p.getInventory().selected, 0, IContainerClicker.Click.THROW);
         sinceGive = 0;
+    }
+
+    /** Walks to the drop through a leased navigator run (short range: the decision only offers nearby drops). */
+    private void collect(Minecraft mc, int entityId) {
+        INavigator nav = Services.navigatorOrNull();
+        Entity e = mc.level.getEntity(entityId);
+        if (nav == null || !nav.isAvailable() || e == null) {
+            return;
+        }
+        collectRun = nav.goToLeased(ID, ControlPriority.IDLE, e.getBlockX(), e.getBlockY(), e.getBlockZ(), 0)
+                .orElse(null);
+    }
+
+    /**
+     * Hands the ingot over: smoothed visible look at the piglin's body, then one USE tap once the crosshair is on it
+     * (the core checks the lease, the settled rotation and the crosshair). Gives up when the piglin turns hostile, starts
+     * admiring something else, leaves give range, the ingots run out or the aim times out.
+     */
+    private void tickGive() {
+        Minecraft mc = Minecraft.getInstance();
+        LocalPlayer p = mc.player;
+        AbstractPiglin g = giveTarget;
+        if (p == null || g == null || !g.isAlive() || g.isAggressive() || !g.getOffhandItem().isEmpty()
+                || !p.getMainHandItem().is(Items.GOLD_INGOT) || mc.screen != null
+                || g.distanceToSqr(p) > PiglinAdvisor.GIVE_RANGE * PiglinAdvisor.GIVE_RANGE
+                || ++giveTicks > GIVE_TIMEOUT_TICKS) {
+            endGive();
+            return;
+        }
+        if (handLease == null || !handLease.isActive()) {
+            if (handRequest == null) {
+                handRequest = new LeaseRequest(ID, ControlPriority.IDLE,
+                        EnumSet.of(ControlChannel.WORLD_INTERACT, ControlChannel.CAMERA), 0, this);
+            }
+            handLease = Services.arbiter().request(handRequest).orElse(null);
+            if (handLease == null) {
+                endGive();
+                return;
+            }
+        }
+        IInputSmoother input = Services.input();
+        if (giveTicks == 1 || giveTicks % 5 == 0) {
+            double dx = g.getX() - p.getX(), dy = g.getY() + g.getBbHeight() * 0.5 - p.getEyeY();
+            double dz = g.getZ() - p.getZ();
+            float yaw = (float) (Math.toDegrees(Math.atan2(dz, dx)) - 90.0);
+            float pitch = (float) -Math.toDegrees(Math.atan2(dy, Math.sqrt(dx * dx + dz * dz)));
+            input.setRotationTarget(handLease, RotationTarget.visible(yaw, pitch));
+        }
+        if (input.tapOnEntity(handLease, SimKey.USE, g.getId())) {
+            sinceGive = 0;
+            endGive();
+        }
+    }
+
+    private void endGive() {
+        giveTarget = null;
+        giveTicks = 0;
+        ControlLease l = handLease;
+        handLease = null;
+        if (l != null && l.isActive()) {
+            Services.input().releaseFor(l);
+            Services.arbiter().release(l);
+        }
     }
 
     /** Same decision as {@link PiglinAdvisor#guard} without building the worn-armour list. */
@@ -294,6 +444,16 @@ public final class PiglinGuard implements IModule, IConfigurable, LeaseListener 
         return false;
     }
 
+    /** Ends a hand-over or a walk to a drop and every lease (switch-off, Stop-All, world unload). */
+    private void stopAll() {
+        endGive();
+        if (collectRun != null && collectRun.isActive()) {
+            collectRun.cancel();
+        }
+        collectRun = null;
+        releaseLease();
+    }
+
     private void releaseLease() {
         ControlLease l = lease;
         lease = null;
@@ -308,18 +468,23 @@ public final class PiglinGuard implements IModule, IConfigurable, LeaseListener 
         if (l == lease) {
             lease = null;
         }
+        if (l == handLease) {
+            handLease = null;
+            giveTarget = null; // manual input wins: drop the hand-over
+        }
     }
 
     @Override
     public void onStopAll() {
-        releaseLease();
+        stopAll();
     }
 
     @Override
     public void onWorldUnload() {
         java.util.Arrays.fill(piglins, null);
+        java.util.Arrays.fill(drops, null);
         line = null;
-        releaseLease();
+        stopAll();
     }
 
     @Override
@@ -334,13 +499,19 @@ public final class PiglinGuard implements IModule, IConfigurable, LeaseListener 
                         "With gold ingots in your main hand, toss one to a calm adult piglin within 6 blocks that is"
                                 + " not already admiring one. Stops when a piglin turns hostile."),
                 SettingSpec.integer(K_BARTER_CADENCE, "Barter cadence", 20, 10, 200, "ticks",
-                        "Minimum ticks between two tossed ingots."));
+                        "Minimum ticks between two tossed ingots."),
+                SettingSpec.bool(K_BARTER_HAND, "Hand over in reach", true, "",
+                        "Within 3 blocks, hand the ingot to the piglin (look at it, then use) instead of tossing."),
+                SettingSpec.bool(K_BARTER_COLLECT, "Collect barter loot", false, "",
+                        "Walk to worthwhile drops within 6 blocks (junk like gravel and soul sand is left)."));
     }
 
     @Override
     public void onProfileLoaded(ProfileConfig p) {
         barter = p.getBool(ID, K_BARTER, false);
         cadenceTicks = p.getInt(ID, K_BARTER_CADENCE, 20);
+        barterHand = p.getBool(ID, K_BARTER_HAND, true);
+        barterCollect = p.getBool(ID, K_BARTER_COLLECT, false);
         autoEquip = p.getBool(ID, K_AUTO_EQUIP, false);
         containerWarn = p.getBool(ID, K_CONTAINER_WARN, true);
     }

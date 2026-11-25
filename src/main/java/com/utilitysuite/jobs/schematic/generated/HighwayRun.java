@@ -74,6 +74,32 @@ public final class HighwayRun {
         return segments > 0 && published >= segments - 1 && progressSteps >= totalSteps;
     }
 
+    /** Last step of the published road (segment {@code i} covers steps {@code i*len .. (i+1)*len-1}); -1 when none. */
+    public int publishedEndStep() {
+        return published < 0 ? -1 : Math.min(totalSteps, (published + 1) * segmentLength - 1);
+    }
+
+    /**
+     * Ice-road boat hand-off: the step to drive to (the end of the published road) when it lies at least
+     * {@code minAhead} steps beyond the player's progress and is not the step already handed off; -1 otherwise.
+     * A newly completed segment moves the end forward, so the boat run is extended once per segment.
+     */
+    public int boatHandoffStep(int progressSteps, int minAhead, int lastHandoffStep) {
+        int end = publishedEndStep();
+        if (end < 0 || end == lastHandoffStep || end - progressSteps < minAhead) {
+            return -1;
+        }
+        return end;
+    }
+
+    public int stepX(int step) {
+        return sx + step * dx;
+    }
+
+    public int stepZ(int step) {
+        return sz + step * dz;
+    }
+
     /** Feet cells of the centre line for steps {@code from..to}, packed with {@link PackedPos}. */
     public long[] centrePath(int from, int to) {
         int n = Math.max(0, to - from + 1);
