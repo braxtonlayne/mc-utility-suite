@@ -91,6 +91,8 @@ public final class WorldBootstrap {
         RenderFiltersModule renderFilters = new RenderFiltersModule();
         StrongholdFinderModule strongholdFinder = new StrongholdFinderModule();
         TrialChamberModule trialChambers = new TrialChamberModule(runtime);
+        com.utilitysuite.world.changes.ChangeTrackerModule changeTracker =
+                new com.utilitysuite.world.changes.ChangeTrackerModule();
         modBus.addListener(RegisterGuiLayersEvent.class, e -> e.registerBelow(VanillaGuiLayers.CHAT,
                 ResourceLocation.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID, "minimap"), minimap.hud()));
         modBus.addListener(RegisterGuiLayersEvent.class, e -> e.registerBelow(VanillaGuiLayers.CHAT,
@@ -103,7 +105,7 @@ public final class WorldBootstrap {
         for (WorldModule m : new WorldModule[] {knowledge, overlays, oreSim, seedScanner, seedDiff, radar, camera,
                 waypoints,
                 minimap, lightOverlay, blastOverlay, spawnGeometry, seedLocator, freelook, renderFilters,
-                strongholdFinder, trialChambers}) {
+                strongholdFinder, trialChambers, changeTracker}) {
             registry.register(m);
             runtime.add(m);
         }
@@ -124,6 +126,11 @@ public final class WorldBootstrap {
             e.register(freelookKey);
             freelook.setKey(freelookKey);
             waypoints.setKeys(addWaypointKey, takeMeBackKey);
+            KeyMapping snapshotKey = key("snapshot_chunks", InputConstants.UNKNOWN.getValue());
+            KeyMapping changeDiffKey = key("toggle_change_diff", InputConstants.UNKNOWN.getValue());
+            e.register(snapshotKey);
+            e.register(changeDiffKey);
+            changeTracker.setKeys(snapshotKey, changeDiffKey);
         });
 
         // Mixin hooks.

@@ -36,6 +36,11 @@ public final class SnapshotStore {
         return chunks.get(BlockPosPacking.chunk(chunkX, chunkZ));
     }
 
+    /** Immutable copy of every stored snapshot. */
+    public synchronized java.util.List<ChunkSnapshot> all() {
+        return java.util.List.copyOf(chunks.values());
+    }
+
     public synchronized int size() {
         return chunks.size();
     }
