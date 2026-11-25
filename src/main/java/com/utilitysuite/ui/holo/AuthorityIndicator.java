@@ -5,6 +5,7 @@ import com.utilitysuite.core.api.visual.HoloToken;
 import com.utilitysuite.core.api.visual.HudElement;
 import com.utilitysuite.core.api.visual.HudSlot;
 import com.utilitysuite.core.api.visual.IHoloCanvas;
+import com.utilitysuite.core.api.visual.IHudContext;
 import com.utilitysuite.core.api.visual.TextRole;
 
 /**
@@ -92,29 +93,31 @@ public final class AuthorityIndicator implements HudElement {
 
     @Override
     public void draw(IHoloCanvas c, float x, float y, float alpha) {
-        float a = alpha * visibility;
+        IHudContext ctx = Visuals.contextNow(); // V6: quiet outside combat, pop on combat or fall start
+        float a = alpha * visibility * ctx.tacticalAlpha();
         if (a <= 0f) {
             return;
         }
-        float bx = x - W * 0.5f;
+        float w = W * ctx.tacticalScale();
+        float bx = x - w * 0.5f;
         float by = y + GAP;
         float s = share < 0f ? 0f : Math.min(1f, share);
-        float split = W * (1f - s);
+        float split = w * (1f - s);
         if (split > 0f) {
             c.plate(bx, by, split, H, HoloToken.MANUAL, a * 0.85f);
         }
-        if (split < W) {
+        if (split < w) {
             HoloToken t = planLost ? HoloToken.DANGER : full ? HoloToken.SYNC : HoloToken.ACCENT;
-            c.plate(bx + split, by, W - split, H, t, a);
+            c.plate(bx + split, by, w - split, H, t, a);
         }
         if (override || planLost) {
             float pulse = 0.55f + 0.45f * (float) Math.sin(FrameClock.nowMs() * 0.025);
             HoloToken t = planLost ? HoloToken.DANGER : HoloToken.WARN;
-            c.hLine(bx - 1f, bx + W + 1f, by - 1f, t, a * pulse);
-            c.hLine(bx - 1f, bx + W + 1f, by + H, t, a * pulse);
+            c.hLine(bx - 1f, bx + w + 1f, by - 1f, t, a * pulse);
+            c.hLine(bx - 1f, bx + w + 1f, by + H, t, a * pulse);
         }
         if (latched) {
-            float lx = bx + W + 4f;
+            float lx = bx + w + 4f;
             float ly = by - 1f;
             c.hLine(lx + 1f, lx + 4f, ly - 3f, HoloToken.MANUAL, a);
             c.vLine(lx + 1f, ly - 3f, ly, HoloToken.MANUAL, a);

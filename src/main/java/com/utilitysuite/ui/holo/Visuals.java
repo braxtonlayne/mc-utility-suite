@@ -3,6 +3,7 @@ package com.utilitysuite.ui.holo;
 import com.utilitysuite.core.api.visual.AuthorityState;
 import com.utilitysuite.core.api.visual.EffectLevel;
 import com.utilitysuite.core.api.visual.IHoloWorld;
+import com.utilitysuite.core.api.visual.IHudContext;
 import com.utilitysuite.core.api.visual.IHudHost;
 import com.utilitysuite.core.api.visual.INoticeBoard;
 import com.utilitysuite.core.api.visual.IVisuals;
@@ -18,6 +19,7 @@ public final class Visuals implements IVisuals {
 
     private static volatile INoticeBoard notices = INoticeBoard.NONE;
     private static volatile IHoloWorld world;
+    private static volatile IHudContext context = IHudContext.NONE;
 
     private final HudHost host;
 
@@ -36,6 +38,21 @@ public final class Visuals implements IVisuals {
      */
     public static void useWorld(IHoloWorld kit) {
         world = kit;
+    }
+
+    /** Installs the context-morphing HUD source (start-up, once). Null restores {@link IHudContext#NONE}. */
+    public static void useContext(IHudContext ctx) {
+        context = ctx != null ? ctx : IHudContext.NONE;
+    }
+
+    /** The installed context source for Shell-internal layers ({@link IHudContext#NONE} when none). */
+    static IHudContext contextNow() {
+        return context;
+    }
+
+    @Override
+    public IHudContext context() {
+        return context;
     }
 
     @Override

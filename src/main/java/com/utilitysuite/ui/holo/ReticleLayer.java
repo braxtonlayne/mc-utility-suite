@@ -6,6 +6,7 @@ import com.utilitysuite.core.api.visual.HoloToken;
 import com.utilitysuite.core.api.visual.HudElement;
 import com.utilitysuite.core.api.visual.HudSlot;
 import com.utilitysuite.core.api.visual.IHoloCanvas;
+import com.utilitysuite.core.api.visual.IHudContext;
 import com.utilitysuite.core.api.visual.IWorldMarks;
 import com.utilitysuite.core.api.visual.MarkKind;
 import com.utilitysuite.core.api.visual.TextRole;
@@ -46,6 +47,8 @@ public final class ReticleLayer implements HudElement {
     private final AnimStore anim;
     private final int[] seenGeneration = new int[IWorldMarks.SLOTS];
     private final float[] r = new float[4];
+    /** This frame's context-morphing size factor (1 when the module is off). */
+    private float popScale = 1f;
 
     public ReticleLayer(ScreenProjector projector, IWorldMarks marks) {
         this(projector, marks, AnimStore.SHARED);
@@ -81,6 +84,9 @@ public final class ReticleLayer implements HudElement {
     @Override
     public void draw(IHoloCanvas c, float x, float y, float alpha) {
         IWorldMarks m = marks;
+        IHudContext ctx = Visuals.contextNow(); // V6: quiet outside combat, pop on combat or fall start
+        alpha *= ctx.tacticalAlpha();
+        popScale = ctx.tacticalScale();
         float sw = c.screenWidth();
         float sh = c.screenHeight();
         int detailed = 0;
@@ -155,7 +161,7 @@ public final class ReticleLayer implements HudElement {
     private void primary(IHoloCanvas c, IWorldMarks m, int s, int gen, int flags, float dist, float a, float right,
                          float top) {
         ScreenProjector.expandToMin(r, 0, MIN_BOX);
-        float scale = lockScale(s, gen);
+        float scale = lockScale(s, gen) * popScale;
         if (scale != 1f) {
             float cx = (r[0] + r[2]) * 0.5f;
             float cy = (r[1] + r[3]) * 0.5f;
