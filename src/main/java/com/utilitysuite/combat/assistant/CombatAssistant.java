@@ -4,6 +4,7 @@ import com.utilitysuite.combat.allies.AllyRoster;
 import com.utilitysuite.combat.tactics.CombatVoxels;
 import com.utilitysuite.combat.tactics.ComboKeeper;
 import com.utilitysuite.combat.tactics.FeintPlanner;
+import com.utilitysuite.combat.tactics.PotionPlanner;
 import com.utilitysuite.combat.tactics.GearRead;
 import com.utilitysuite.combat.tactics.HitPlanner;
 import com.utilitysuite.combat.tactics.HitTradeSolver;
@@ -237,6 +238,8 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
     private int routeRuns;
     private TacticUtility.Tactic broadTactic = TacticUtility.Tactic.FIGHT;
     private long tacticClock;
+    /** Tactic clock of the target's last totem pop (post-pop pressure). */
+    private long lastOpponentPopAt = Long.MIN_VALUE / 2;
     private int lastTargetHealthId = -1;
     private float lastTargetHealth;
     /** Assumed DPS floors before any hit was seen (a sword at full charge is ~7). */
@@ -395,6 +398,19 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
     // =================================================================================================================
     // Triggers (called from the client event bridge; client thread)
     // =================================================================================================================
+
+    /** An entity popped a totem (entity event 35, via the target HUD's pop detection). Opens the pressure window. */
+    public void onTotemPop(int entityId) {
+        if (state == CombatState.ENGAGED && entityId == targetId) {
+            lastOpponentPopAt = tacticClock;
+        }
+    }
+
+    /** Post-pop pressure: the opponent popped recently and health is above the critical threshold. */
+    private boolean popPressureHolds(CombatSnapshot s) {
+        return settings.popPressure && PotionPlanner.pressureHoldsRetreat(
+                tacticClock - lastOpponentPopAt < settings.pressureTicks, s.effectiveHealth(), settings.pressureCritical);
+    }
 
     /** The local player started a manual attack on an entity ({@code AttackEntityEvent}). Confirmed by the damage event. */
     public void onLocalAttack(int targetEntityId) {
@@ -784,7 +800,7 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         if (settings.sustain) {
             maybePullConsumable(s);
             SustainPlanner.Action a = SustainPlanner.decide(s, settings.lowHealth, lastHitDamage, settings.totems,
-                    settings.gapples);
+                    settings.gapples, popPressureHolds(s));
             if (a == SustainPlanner.Action.EQUIP_TOTEM && totemCooldown == 0 && !s.screenOpen
                     && clicker.queueClick(lease, SustainPlanner.menuSlotOf(s.totemInvSlot), OFFHAND_BUTTON,
                     IContainerClicker.Click.SWAP)) {
