@@ -19,10 +19,14 @@ import com.utilitysuite.travel.TravelMessages;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
+import net.minecraft.resources.ResourceKey;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.vehicle.Boat;
 import net.minecraft.world.item.ElytraItem;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
@@ -53,7 +57,18 @@ public final class TravelAutopilot implements IModule, IConfigurable {
     static final String K_ROCKET_COOLDOWN = "rocket_cooldown";
     static final String K_LAND_TO_MEND = "elytra_land_to_mend";
 
-    private enum Run { IDLE, OVERLAND, BOAT, ELYTRA, BOUNCE }
+    static final String K_HUB = "nether_hub";
+    static final String K_HUB_MIN = "nether_hub_min_distance";
+    static final String K_HUB_FACTOR = "nether_hub_cost_factor";
+
+    private enum Run { IDLE, OVERLAND, BOAT, ELYTRA, BOUNCE, PORTAL_HUB }
+
+    // Nether-hub routing (overland runs only)
+    private boolean hubEnabled = true;
+    private int hubMinDistance = 1000;
+    private double hubCostFactor = 1.5;
+    private PortalHubRoute hub;
+    private final BlockPos.MutableBlockPos portalProbe = new BlockPos.MutableBlockPos();
 
     private boolean enabled = true;
     private Run run = Run.IDLE;
@@ -133,6 +148,7 @@ public final class TravelAutopilot implements IModule, IConfigurable {
             case OVERLAND -> tickOverland(player);
             case BOAT -> tickBoat(player);
             case ELYTRA, BOUNCE -> tickElytra(player);
+            case PORTAL_HUB -> tickHub(player);
             default -> {
             }
         }
@@ -151,6 +167,7 @@ public final class TravelAutopilot implements IModule, IConfigurable {
         cancelNavigator();
         run = Run.IDLE;
         route = null;
+        hub = null;
         slot.reset();
     }
 
@@ -179,6 +196,10 @@ public final class TravelAutopilot implements IModule, IConfigurable {
         Run r = run;
         if (r == Run.IDLE) {
             return null;
+        }
+        PortalHubRoute h = hub;
+        if (r == Run.PORTAL_HUB && h != null) {
+            return h.phase().name();
         }
         return r == Run.ELYTRA || r == Run.BOUNCE ? elytra.phaseLabel() : r.name();
     }
@@ -229,6 +250,11 @@ public final class TravelAutopilot implements IModule, IConfigurable {
         slot.reset();
         landingForSafety = false;
         pausedNotified = false;
+        hub = null;
+        if (chosen == Run.OVERLAND && parsed.stops().size() == 1
+                && tryStartHub(player, dimension, parsed.stops().get(0))) {
+            return true;
+        }
         switch (chosen) {
             case OVERLAND -> overland.begin();
             case BOAT -> boat.begin();
@@ -328,6 +354,164 @@ public final class TravelAutopilot implements IModule, IConfigurable {
         }
     }
 
+    // ---- nether hub -----------------------------------------------------------------------------------------------
+
+    /**
+     * Waypoint "Go": starts a Nether-hub route to an overworld position when the player is in the overworld, hub
+     * routing is on and a portal route is cheaper than walking. Returns false (nothing started) otherwise, so the
+     * caller paths directly.
+     */
+    public boolean goViaNetherHub(int x, int y, int z, String label) {
+        Minecraft mc = Minecraft.getInstance();
+        LocalPlayer player = mc.player;
+        if (player == null || mc.level == null || !enabled || !hubEnabled
+                || Services.arbiter().isAutomationStopped()) {
+            return false;
+        }
+        INavigator nav = Services.navigatorOrNull();
+        if (nav == null || !nav.isAvailable() || dimensionOf(player) != PortalHubPlanner.OVERWORLD) {
+            return false;
+        }
+        if (run != Run.IDLE) {
+            finish(null);
+        }
+        slot.reset();
+        landingForSafety = false;
+        pausedNotified = false;
+        return tryStartHub(player, PortalHubPlanner.OVERWORLD, new RouteParser.Stop(x, y, z, true, label));
+    }
+
+    private boolean tryStartHub(LocalPlayer player, String dimension, RouteParser.Stop target) {
+        hub = null;
+        if (!hubEnabled || !PortalHubPlanner.OVERWORLD.equals(dimension)) {
+            return false;
+        }
+        PortalHubPlanner.Plan plan = PortalHubPlanner.plan(player.getBlockX(), player.getBlockZ(), target.x(),
+                target.hasY() ? target.y() : player.getBlockY(), target.z(), recordedPortals(),
+                new PortalHubPlanner.Config(hubMinDistance, hubCostFactor, 64, 256));
+        if (plan == null) {
+            return false;
+        }
+        hub = new PortalHubRoute(plan, target);
+        run = Run.PORTAL_HUB;
+        startHubLeg(player);
+        TravelMessages.status("message.utilitysuite.autopilot.hub_started", target.label(),
+                (int) plan.directCost(), (int) plan.hubCost());
+        return true;
+    }
+
+    /** Recorded Portals waypoints (overworld and nether), read once when a route starts. */
+    private static List<PortalHubPlanner.Portal> recordedPortals() {
+        IWaypointService wps = Services.waypointsOrNull();
+        if (wps == null) {
+            return List.of();
+        }
+        List<PortalHubPlanner.Portal> out = new ArrayList<>();
+        for (Waypoint w : wps.all()) {
+            if (PortalHubPlanner.GROUP_PORTALS.equals(w.group())) {
+                out.add(new PortalHubPlanner.Portal(w.dimension(), w.x(), w.y(), w.z()));
+            }
+        }
+        return out;
+    }
+
+    /** Interned dimension id without allocating (resource keys are canonical). */
+    private static String dimensionOf(LocalPlayer player) {
+        ResourceKey<Level> key = player.level().dimension();
+        if (key == Level.NETHER) {
+            return PortalHubPlanner.NETHER;
+        }
+        return key == Level.OVERWORLD ? PortalHubPlanner.OVERWORLD : "other";
+    }
+
+    /** Starts a fresh leased navigator leg for the hub's current walking phase (a new lease after a dimension change). */
+    private void startHubLeg(LocalPlayer player) {
+        RouteParser.Stop s = hub.currentStop();
+        if (s == null) {
+            overland.cancel();
+            return;
+        }
+        if (!s.hasY() && PortalHubPlanner.NETHER.equals(hub.expectedDimension())) {
+            // No surface heightmap in the nether (it would return the roof): keep the player's height.
+            s = new RouteParser.Stop(s.x(), player.getBlockY(), s.z(), true, s.label());
+        }
+        route = new RouteState(List.of(s));
+        if (hub.legEndsInPortal()) {
+            overland.begin(0);
+        } else {
+            overland.begin();
+        }
+        hubStatus();
+    }
+
+    private void hubStatus() {
+        switch (hub.phase()) {
+            case TO_ENTRY -> TravelMessages.status("message.utilitysuite.autopilot.hub_to_entry",
+                    hub.plan().entry().x(), hub.plan().entry().z());
+            case IN_ENTRY_PORTAL, IN_EXIT_PORTAL -> TravelMessages.status("message.utilitysuite.autopilot.hub_portal");
+            case NETHER_LEG -> TravelMessages.status("message.utilitysuite.autopilot.hub_nether",
+                    hub.plan().exitNether().x(), hub.plan().exitNether().z());
+            case AWAIT_PORTAL -> TravelMessages.status("message.utilitysuite.autopilot.hub_await_portal");
+            case FINAL_LEG -> TravelMessages.status("message.utilitysuite.autopilot.hub_final", route.label());
+            default -> {
+            }
+        }
+    }
+
+    private void tickHub(LocalPlayer player) {
+        PortalHubRoute h = hub;
+        if (h == null) {
+            finish(null);
+            return;
+        }
+        if (player.isDeadOrDying()) {
+            finish("message.utilitysuite.autopilot.stopped");
+            return;
+        }
+        if (h.onDimension(dimensionOf(player))) {
+            overland.cancel();
+            if (h.phase() == PortalHubRoute.Phase.FAILED) {
+                finish("message.utilitysuite.autopilot.hub_failed_" + h.failure());
+                return;
+            }
+            startHubLeg(player);
+            return;
+        }
+        if (h.isWalking()) {
+            INavigator nav = Services.navigatorOrNull();
+            if (nav == null || !nav.isAvailable()) {
+                finish("message.utilitysuite.autopilot.no_navigator");
+                return;
+            }
+            switch (overland.tick(player, route, nav)) {
+                case ARRIVED -> {
+                    h.onLegArrived();
+                    if (h.phase() == PortalHubRoute.Phase.DONE) {
+                        finish("message.utilitysuite.autopilot.arrived");
+                    } else {
+                        hubStatus();
+                    }
+                }
+                case FAILED -> finish("message.utilitysuite.autopilot.path_failed");
+                case INTERRUPTED -> finish("message.utilitysuite.autopilot.stopped");
+                default -> {
+                }
+            }
+            return;
+        }
+        // Waiting in (or for) a portal: two block-state reads into a reused position, no allocation.
+        int x = player.getBlockX();
+        int y = player.getBlockY();
+        int z = player.getBlockZ();
+        Level level = player.level();
+        boolean inPortal = level.getBlockState(portalProbe.set(x, y, z)).is(Blocks.NETHER_PORTAL)
+                || level.getBlockState(portalProbe.set(x, y + 1, z)).is(Blocks.NETHER_PORTAL);
+        h.tickWait(inPortal);
+        if (h.phase() == PortalHubRoute.Phase.FAILED) {
+            finish("message.utilitysuite.autopilot.hub_failed_" + h.failure());
+        }
+    }
+
     private void tickBoat(LocalPlayer player) {
         ControlLease lease = leaseOrPause(boatRequest);
         if (lease == null) {
@@ -378,9 +562,10 @@ public final class TravelAutopilot implements IModule, IConfigurable {
             boat.release(input, lease);
         } else if (run == Run.ELYTRA || run == Run.BOUNCE) {
             elytra.release(input, lease);
-        } else if (run == Run.OVERLAND) {
+        } else if (run == Run.OVERLAND || run == Run.PORTAL_HUB) {
             overland.cancel();
         }
+        hub = null;
         if (lease != null) {
             input.clearRotation(lease);
         }
@@ -439,7 +624,16 @@ public final class TravelAutopilot implements IModule, IConfigurable {
                 SettingSpec.bool(K_LAND_TO_MEND, "Land to mend", false, "Elytra",
                         "At the elytra reserve with no spare elytra: if the worn one has Mending and bottles o' "
                                 + "enchanting are in the hotbar, land, throw them at your feet until it is repaired, "
-                                + "then take off again."));
+                                + "then take off again."),
+                SettingSpec.bool(K_HUB, "Nether hub routing", true, "Nether hub",
+                        "Overland trips to a far overworld destination go through recorded Portals waypoints when "
+                                + "that is cheaper: walk to a portal, cross the Nether at 1:8, take a portal back. "
+                                + "Never lights or builds portals."),
+                SettingSpec.integer(K_HUB_MIN, "Minimum distance", 1000, 200, 30000, "Nether hub",
+                        "Only consider a Nether route for destinations at least this far (overworld blocks)."),
+                SettingSpec.decimal(K_HUB_FACTOR, "Nether cost factor", 1.5, 1.0, 8.0, "Nether hub",
+                        "How much one Nether block costs compared with one overworld block (hazards, slow ground).")
+                        .asAdvanced());
     }
 
     @Override
@@ -456,6 +650,9 @@ public final class TravelAutopilot implements IModule, IConfigurable {
         }
         minHealth = (float) p.getDouble(ID, K_MIN_HEALTH, 8.0);
         minFood = p.getInt(ID, K_MIN_FOOD, 6);
+        hubEnabled = p.getBool(ID, K_HUB, true);
+        hubMinDistance = p.getInt(ID, K_HUB_MIN, 1000);
+        hubCostFactor = p.getDouble(ID, K_HUB_FACTOR, 1.5);
         int arrival = p.getInt(ID, K_ARRIVAL, 3);
         overland.configure(arrival);
         boat.configure(p.getInt(ID, K_RAY_RANGE, 24), arrival);

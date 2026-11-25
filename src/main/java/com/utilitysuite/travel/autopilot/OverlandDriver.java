@@ -26,6 +26,7 @@ final class OverlandDriver {
     private int idleTicks;
     private int arrivalRadius = 3;
     private NavigationRun current;
+    private int radiusOverride = -1;
 
     void configure(int arrivalRadius) {
         this.arrivalRadius = arrivalRadius;
@@ -35,6 +36,13 @@ final class OverlandDriver {
         cancel();
         issued = false;
         idleTicks = 0;
+        radiusOverride = -1;
+    }
+
+    /** Like {@link #begin()} with a fixed arrival radius for this leg (portal legs walk onto the portal block: 0). */
+    void begin(int radius) {
+        begin();
+        radiusOverride = radius;
     }
 
     /** Cancels the running leg (pathfinder + lease), if any. */
@@ -55,7 +63,7 @@ final class OverlandDriver {
                         : player.getBlockY();
             }
             Optional<NavigationRun> r = nav.goToLeased(TravelAutopilot.ID, ControlPriority.TRAVEL, route.x(), y,
-                    route.z(), arrivalRadius);
+                    route.z(), radiusOverride >= 0 ? radiusOverride : arrivalRadius);
             if (r.isEmpty()) {
                 // Movement held by something more important, the user, or automation is stopped.
                 return Result.INTERRUPTED;
