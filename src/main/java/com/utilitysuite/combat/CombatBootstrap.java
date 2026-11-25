@@ -112,6 +112,7 @@ public final class CombatBootstrap {
         Services.modules().register(bossHelper);
         NeoForge.EVENT_BUS.addListener(bossHelper::onJoin);
         NeoForge.EVENT_BUS.addListener(bossHelper::onLeave);
+        NeoForge.EVENT_BUS.addListener(bossHelper::onRenderLevel);
         Services.modules().register(targetHud);
         Services.modules().register(readRing);
         ChoreographyModule choreography = new ChoreographyModule(
