@@ -532,6 +532,16 @@ public final class InputSmoother implements IInputSmoother, IContainerClicker {
     }
 
     @Override
+    public boolean tapOnEntity(ControlLease lease, SimKey key, int entityId) {
+        if ((key != SimKey.ATTACK && key != SimKey.USE) || entityId < 0
+                || !valid(lease, ControlChannel.WORLD_INTERACT) || !isRotationSettled(3.0f)
+                || backend.crosshairEntityId() != entityId) {
+            return false;
+        }
+        return scheduleKeyTap(lease, key, 1, 1);
+    }
+
+    @Override
     public boolean isKeyHeldByAutomation(SimKey key) {
         return managed[key.ordinal()];
     }

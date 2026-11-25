@@ -61,4 +61,9 @@ public interface InputBackend {
 
     /** Recipe-book placement into the open crafting menu. Returns false if no menu is open or the recipe is unknown. */
     boolean placeRecipe(String recipeId, boolean craftAll);
+
+    /** Network id of the entity under the vanilla crosshair, or -1 when the crosshair is not on an entity. */
+    default int crosshairEntityId() {
+        return -1;
+    }
 }

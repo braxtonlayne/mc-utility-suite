@@ -2,7 +2,9 @@ package com.utilitysuite.jobs;
 
 import com.utilitysuite.core.api.Services;
 import com.utilitysuite.jobs.baritone.BaritoneAdapter;
+import com.utilitysuite.jobs.fieldwork.AfkGrinderModule;
 import com.utilitysuite.jobs.fieldwork.AutoTorchModule;
+import com.utilitysuite.jobs.fieldwork.PenSweepModule;
 import com.utilitysuite.jobs.fieldwork.CropWorkModule;
 import com.utilitysuite.jobs.fieldwork.LavaPlugModule;
 import com.utilitysuite.jobs.fieldwork.VeinWorkModule;
@@ -114,6 +116,9 @@ public final class JobsBootstrap {
         Services.modules().register(lavaPlug);
         Services.modules().register(veinWork);
         Services.modules().register(cropWork);
+        Services.modules().register(new PenSweepModule());
+        Services.modules().register(new AfkGrinderModule());
+        Services.modules().register(new com.utilitysuite.jobs.fieldwork.DebrisBlastModule());
 
         IEventBus bus = NeoForge.EVENT_BUS;
         bus.addListener((ClientTickEvent.Post e) -> {

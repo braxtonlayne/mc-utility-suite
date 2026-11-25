@@ -219,4 +219,11 @@ public final class MinecraftInputBackend implements InputBackend {
         mc.gameMode.handlePlaceRecipe(p.containerMenu.containerId, recipe.get(), craftAll);
         return true;
     }
+
+    @Override
+    public int crosshairEntityId() {
+        net.minecraft.world.phys.HitResult hr = Minecraft.getInstance().hitResult;
+        return hr instanceof net.minecraft.world.phys.EntityHitResult ehr
+                && hr.getType() == net.minecraft.world.phys.HitResult.Type.ENTITY ? ehr.getEntity().getId() : -1;
+    }
 }
