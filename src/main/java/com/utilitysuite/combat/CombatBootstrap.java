@@ -108,6 +108,10 @@ public final class CombatBootstrap {
                 });
         Services.modules().register(choreography);
         NeoForge.EVENT_BUS.addListener(choreography::onRenderLevel);
+        // M1 kinetic chain calculator (visual only, off by default)
+        com.utilitysuite.combat.hud.KineticChainModule kinetic = new com.utilitysuite.combat.hud.KineticChainModule();
+        Services.modules().register(kinetic);
+        NeoForge.EVENT_BUS.addListener(kinetic::onRenderLevel); // the readout is a HUD-host element (self-registers)
         assistant.bindModuleRegistry(Services.modules());
 
         CombatEventBridge.install(assistant);

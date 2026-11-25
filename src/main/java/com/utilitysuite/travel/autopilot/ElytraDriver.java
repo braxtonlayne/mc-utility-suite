@@ -47,7 +47,7 @@ final class ElytraDriver {
 
     private enum Phase {
         TAKEOFF("ELYTRA_TAKEOFF"), CRUISE("ELYTRA_CRUISE"), SEARCH("ELYTRA_SEARCH"), APPROACH("ELYTRA_APPROACH"),
-        MEND("ELYTRA_MEND"), BOUNCE("BOUNCE");
+        MEND("ELYTRA_MEND"), BOUNCE("BOUNCE"), RIPTIDE("ELYTRA_RIPTIDE");
 
         /** Constant status label (diagnostics HUD). */
         final String label;
@@ -85,6 +85,12 @@ final class ElytraDriver {
     /** Takeoff climb pitch (degrees, up is negative). */
     private static final double TAKEOFF_PITCH = -25.0;
     private boolean landToMend;
+    /** T3 "Riptide launch" setting (off by default): take off with a Riptide trident in rain or water. */
+    private boolean riptideLaunch;
+    private boolean riptideTried;
+    private final RiptideLaunchPlanner riptidePlanner = new RiptideLaunchPlanner();
+    private final RiptideLaunchPlanner.Plan riptidePlan = new RiptideLaunchPlanner.Plan();
+    private final RiptideSequence riptide = new RiptideSequence();
 
     private Phase phase = Phase.TAKEOFF;
     private int ticksSinceRocket = 1000;
@@ -117,8 +123,14 @@ final class ElytraDriver {
         this.landToMend = on;
     }
 
+    void setRiptideLaunch(boolean on) {
+        this.riptideLaunch = on;
+    }
+
     void begin(boolean bounce) {
         phase = bounce ? Phase.BOUNCE : Phase.TAKEOFF;
+        riptideTried = false;
+        riptide.reset();
         ticksSinceRocket = 1000;
         keyCooldown = 0;
         pendingRocketSlot = -1;
@@ -180,8 +192,11 @@ final class ElytraDriver {
         }
 
         switch (phase) {
+            case RIPTIDE -> tickRiptide(player, route, input, lease);
             case TAKEOFF -> {
-                if (tickTakeoff(player, input, lease, rocketCount)) {
+                if (maybeStartRiptide(player, route)) {
+                    tickRiptide(player, route, input, lease);
+                } else if (tickTakeoff(player, input, lease, rocketCount)) {
                     keys.releaseAll(input, lease);
                     return Result.FAILED;
                 }
@@ -224,7 +239,7 @@ final class ElytraDriver {
             default -> {
             }
         }
-        if (player.onGround() && phase != Phase.TAKEOFF && !player.isFallFlying()) {
+        if (player.onGround() && phase != Phase.TAKEOFF && phase != Phase.RIPTIDE && !player.isFallFlying()) {
             return landedOrMend();
         }
         return Result.RUNNING;
@@ -328,6 +343,74 @@ final class ElytraDriver {
             }
         }
         return false;
+    }
+
+    /**
+     * T3: switches a fresh takeoff to the Riptide launch when the setting is on, a Riptide trident is in the main hand,
+     * the player is wet (rain or water) and standing or swimming. Plans the launch pitch once (off the tick hot path:
+     * once per takeoff). Tried at most once per run; any abort falls back to the rocket takeoff.
+     */
+    private boolean maybeStartRiptide(LocalPlayer player, RouteState route) {
+        if (!riptideLaunch || riptideTried || takeoff.phase() != TakeoffSequence.Phase.CHECK || player.isFallFlying()
+                || !(player.onGround() || player.isInWater()) || !player.isInWaterOrRain()) {
+            return false;
+        }
+        riptideTried = true;
+        int level = riptideLevel(player);
+        if (level <= 0 || !riptidePlanner.plan(riptidePlan, level, player.onGround(), true).feasible) {
+            return false;
+        }
+        riptide.reset();
+        phase = Phase.RIPTIDE;
+        return true;
+    }
+
+    /** Riptide level of the main-hand trident (from the vanilla spin strength 1.5 + 0.75 per level), 0 when none. */
+    private static int riptideLevel(LocalPlayer player) {
+        ItemStack held = player.getMainHandItem();
+        if (!held.is(Items.TRIDENT)) {
+            return 0;
+        }
+        float s = net.minecraft.world.item.enchantment.EnchantmentHelper.getTridentSpinAttackStrength(held, player);
+        return s <= 0f ? 0 : 1 + Math.max(0, Math.round((s - 1.5f) / 0.75f));
+    }
+
+    /**
+     * Riptide launch ({@link RiptideSequence}): aim along the route at the planned pitch through the smoother, hold use
+     * under the lease to charge, release, tap jump at the apex to open the elytra, then cruise. Aborts and landings fall
+     * back to the rocket takeoff.
+     */
+    private void tickRiptide(LocalPlayer player, RouteState route, IInputSmoother input, ControlLease lease) {
+        double bearing = route.bearing(player.getX(), player.getZ());
+        RiptideSequence.Phase rp = riptide.phase();
+        if (rp == RiptideSequence.Phase.AIM || rp == RiptideSequence.Phase.CHARGE) {
+            aim.aim(input, lease, bearing, riptidePlan.pitch, RotationMode.VISIBLE, 1.5f);
+        } else {
+            // the arc is already set by the throw; level the nose for the glide hand-off
+            aim.aim(input, lease, bearing, com.utilitysuite.travel.movement.ElytraGlideSim.BEST_GLIDE_PITCH,
+                    RotationMode.VISIBLE, 1.0f);
+        }
+        double err = Math.abs(player.getXRot() - riptidePlan.pitch)
+                + Math.abs(Angles.delta(player.getYRot(), bearing));
+        // per tick only the cheap item check: the enchantment level was read once when the launch started
+        RiptideSequence.Action a = riptide.step(player.getMainHandItem().is(Items.TRIDENT), player.isInWaterOrRain(), err,
+                player.getDeltaMovement().y, player.onGround(), player.isFallFlying(), true);
+        switch (a) {
+            case HOLD_USE -> keys.set(input, lease, SimKey.USE, true);
+            case RELEASE_USE -> keys.set(input, lease, SimKey.USE, false);
+            case DEPLOY_JUMP -> input.scheduleKeyTap(lease, SimKey.JUMP, 1, 2);
+            case GLIDE -> {
+                keys.set(input, lease, SimKey.USE, false);
+                phase = Phase.CRUISE;
+            }
+            case LANDED, ABORT_DRY, ABORT_NO_TRIDENT, ABORT_AIM -> {
+                keys.set(input, lease, SimKey.USE, false);
+                takeoff.reset();
+                phase = Phase.TAKEOFF;
+            }
+            default -> {
+            }
+        }
     }
 
     private void tickCruise(LocalPlayer player, RouteState route, IInputSmoother input, ControlLease lease,

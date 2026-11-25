@@ -8,11 +8,16 @@ import com.utilitysuite.core.api.ModuleCategory;
 import com.utilitysuite.core.api.ProfileConfig;
 import com.utilitysuite.core.api.Services;
 import com.utilitysuite.core.api.SettingSpec;
+import com.utilitysuite.core.api.visual.HoloToken;
+import com.utilitysuite.core.api.visual.HudElement;
+import com.utilitysuite.core.api.visual.HudSlot;
+import com.utilitysuite.core.api.visual.IHoloCanvas;
+import com.utilitysuite.core.api.visual.IHudHost;
+import com.utilitysuite.core.api.visual.IVisuals;
+import com.utilitysuite.core.api.visual.TextRole;
 import com.utilitysuite.travel.movement.ElytraGlideSim;
 import com.utilitysuite.travel.movement.GlideFootprint;
-import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.RenderType;
@@ -24,15 +29,16 @@ import java.util.List;
 
 /**
  * M2 fighter-jet elytra HUD (off by default). While gliding: a centred artificial horizon with a pitch ladder every 10
- * degrees, a flight-path marker from the velocity, airspeed and sink rate, a stall chevron below the glide-stall speed,
- * a wave-glide cue arrow when the dive/climb pattern would beat a straight glide, and in the world a zero-rocket glide
- * footprint ring ({@link GlideFootprint}) over the terrain heightmap.
+ * degrees, a flight-path marker from the velocity, airspeed and vertical speed, a stall chevron below the glide-stall
+ * speed, a wave-glide cue arrow when the dive/climb pattern would beat a straight glide, and in the world a zero-rocket
+ * glide footprint ring ({@link GlideFootprint}) over the terrain heightmap.
  * <p>
- * Budget: the footprint computes {@link #HEADINGS_PER_TICK} headings per client tick (a full ring every few ticks);
- * the ring draws with one batched line buffer in {@link RenderLevelStageEvent}. Every HUD string is precomputed, so
- * the render path allocates nothing. Nothing is drawn unless gliding; Clean-Screen and F1 hide everything.
+ * The screen part is a {@link HudElement} in the CROSSHAIR slot, drawn through the HUD kit with theme tokens (the host
+ * applies the HUD scale, opacity, Clean-Screen and hidden-GUI gates). Budget: the footprint computes
+ * {@link #HEADINGS_PER_TICK} headings per client tick (a full ring every few ticks); the ring draws with one batched
+ * line buffer in {@link RenderLevelStageEvent}. Nothing is drawn unless gliding.
  */
-public final class ElytraHudModule implements IModule, IConfigurable {
+public final class ElytraHudModule implements IModule, IConfigurable, HudElement {
 
     public static final String ID = "elytra_hud";
     public static final String K_LADDER = "pitch_ladder";
@@ -44,22 +50,7 @@ public final class ElytraHudModule implements IModule, IConfigurable {
     static final int HEADINGS_PER_TICK = 2;
     static final int MAX_GLIDE_TICKS = 1200;
     static final int WAVE_EVERY = 20;
-    private static final int MAX_SPEED_LABEL = 200;
-    private static final String[] SPEED = new String[MAX_SPEED_LABEL + 1];
-    private static final String[] SINK = new String[2 * MAX_SPEED_LABEL + 1];
-    private static final String[] RUNG = new String[19];
-
-    static {
-        for (int i = 0; i <= MAX_SPEED_LABEL; i++) {
-            SPEED[i] = "SPD " + i + " m/s";
-        }
-        for (int i = -MAX_SPEED_LABEL; i <= MAX_SPEED_LABEL; i++) {
-            SINK[i + MAX_SPEED_LABEL] = "V/S " + (i > 0 ? "+" : "") + i + " m/s";
-        }
-        for (int i = 0; i < RUNG.length; i++) {
-            RUNG[i] = Integer.toString(Math.abs(i * 10 - 90));
-        }
-    }
+    private static final String SPD = "SPD", VS = "V/S", STALL = "STALL", DIVE = "DIVE -40", CLIMB = "CLIMB +40";
 
     private final GlideFootprint footprint = new GlideFootprint(HEADINGS, MAX_GLIDE_TICKS);
     private final ElytraGlideSim waveScratch = new ElytraGlideSim();
@@ -69,6 +60,7 @@ public final class ElytraHudModule implements IModule, IConfigurable {
     private boolean showFootprint = true;
     private boolean wave = true;
     private double stallSpeed = 0.5;
+    private boolean hosted;
 
     // tick state (client thread)
     private boolean gliding;
@@ -87,6 +79,13 @@ public final class ElytraHudModule implements IModule, IConfigurable {
         if (!enabled) {
             gliding = false;
             return;
+        }
+        if (!hosted) {
+            IVisuals v = Services.visualsOrNull();
+            if (v != null && v.hud() != IHudHost.NONE) {
+                v.hud().register(this);
+                hosted = true;
+            }
         }
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer p = mc.player;
@@ -135,87 +134,90 @@ public final class ElytraHudModule implements IModule, IConfigurable {
         return enabled && gliding && mc.player != null && !mc.options.hideGui && !Services.modState().isCleanScreen();
     }
 
-    /** GUI layer: horizon, ladder, flight-path marker, readouts, stall chevron, wave cue. */
-    public void render(GuiGraphics g, DeltaTracker delta) {
+    // ---- HUD element ------------------------------------------------------------------------------------------------
+
+    @Override
+    public HudSlot slot() {
+        return HudSlot.CROSSHAIR;
+    }
+
+    @Override
+    public boolean wantsDraw() {
+        return enabled && gliding && Minecraft.getInstance().player != null;
+    }
+
+    /** Horizon, ladder, flight-path marker, readouts, stall chevron and wave cue around the crosshair (cx, cy). */
+    @Override
+    public void draw(IHoloCanvas c, float cx, float cy, float alpha) {
         Minecraft mc = Minecraft.getInstance();
-        if (!visible(mc)) {
+        LocalPlayer p = mc.player;
+        if (p == null) {
             return;
         }
-        LocalPlayer p = mc.player;
-        int w = g.guiWidth(), h = g.guiHeight();
-        int cx = w / 2, cy = h / 2;
+        float h = c.screenHeight(), w = c.screenWidth();
         double fov = Math.max(30, mc.options.fov().get());
-        double k = h / fov; // pixels per degree (vertical)
+        float k = (float) (h / fov); // pixels per degree (vertical)
         float pitch = p.getXRot();
-        int green = 0xC040FF70;
         if (ladder) {
-            for (int i = 0; i < RUNG.length; i++) {
-                int elev = 90 - i * 10;
-                int y = (int) Math.round(cy - (elev + pitch) * k);
+            for (int elev = 90; elev >= -90; elev -= 10) {
+                float y = cy - (elev + pitch) * k;
                 if (y < cy - h / 3 || y > cy + h / 3) {
                     continue;
                 }
                 if (elev == 0) {
-                    g.fill(cx - 70, y, cx - 12, y + 1, green);
-                    g.fill(cx + 12, y, cx + 70, y + 1, green);
-                } else {
-                    int half = 22;
-                    if (elev > 0) {
-                        g.fill(cx - 30 - half, y, cx - 30, y + 1, green);
-                        g.fill(cx + 30, y, cx + 30 + half, y + 1, green);
-                    } else { // below the horizon: dashed rungs
-                        for (int d = 0; d < half; d += 6) {
-                            g.fill(cx - 30 - half + d, y, cx - 30 - half + d + 3, y + 1, green);
-                            g.fill(cx + 30 + d, y, cx + 33 + d, y + 1, green);
-                        }
-                    }
-                    g.drawString(mc.font, RUNG[i], cx + 30 + half + 3, y - 4, green, false);
+                    c.hLine(cx - 70, cx - 12, y, HoloToken.ACCENT, alpha);
+                    c.hLine(cx + 12, cx + 70, y, HoloToken.ACCENT, alpha);
+                    continue;
                 }
+                float half = 22;
+                if (elev > 0) {
+                    c.hLine(cx - 30 - half, cx - 30, y, HoloToken.LINE_STRONG, alpha);
+                    c.hLine(cx + 30, cx + 30 + half, y, HoloToken.LINE_STRONG, alpha);
+                } else { // below the horizon: dashed rungs
+                    for (int d = 0; d < half; d += 6) {
+                        c.hLine(cx - 30 - half + d, cx - 27 - half + d, y, HoloToken.LINE, alpha);
+                        c.hLine(cx + 30 + d, cx + 33 + d, y, HoloToken.LINE, alpha);
+                    }
+                }
+                c.number(TextRole.MONO, Math.abs(elev), cx + 30 + half + 3, y - 4, HoloToken.TEXT_SECONDARY, alpha);
             }
         }
-        // flight-path marker
         if (speed > 0.05) {
             double fpa = ElytraGlideSim.flightPathDeg(hSpeed, vy);
             Vec3 v = p.getDeltaMovement();
             double velYaw = Math.toDegrees(Math.atan2(-v.x, v.z));
-            double dyaw = wrap(velYaw - p.getYRot());
-            int mx = (int) Math.round(cx + dyaw * k);
-            int my = (int) Math.round(cy - (fpa + pitch) * k);
+            float mx = (float) (cx + wrap(velYaw - p.getYRot()) * k);
+            float my = (float) (cy - (fpa + pitch) * k);
             if (Math.abs(mx - cx) < w / 3 && Math.abs(my - cy) < h / 3) {
-                g.fill(mx - 3, my - 3, mx + 4, my - 2, green);
-                g.fill(mx - 3, my + 3, mx + 4, my + 4, green);
-                g.fill(mx - 3, my - 3, mx - 2, my + 4, green);
-                g.fill(mx + 3, my - 3, mx + 4, my + 4, green);
-                g.fill(mx - 8, my, mx - 3, my + 1, green);
-                g.fill(mx + 4, my, mx + 9, my + 1, green);
-                g.fill(mx, my - 7, mx + 1, my - 3, green);
+                c.arc(mx, my, 3.5f, 0f, 360f, 1f, HoloToken.ACCENT, alpha);
+                c.hLine(mx - 9, mx - 4, my, HoloToken.ACCENT, alpha);
+                c.hLine(mx + 4, mx + 9, my, HoloToken.ACCENT, alpha);
+                c.vLine(mx, my - 8, my - 4, HoloToken.ACCENT, alpha);
             }
         }
-        int spd = (int) Math.min(MAX_SPEED_LABEL, Math.round(speed * 20));
-        int vs = (int) Math.max(-MAX_SPEED_LABEL, Math.min(MAX_SPEED_LABEL, Math.round(vy * 20)));
-        g.drawString(mc.font, SPEED[spd], cx - 110, cy - 4, green, false);
-        g.drawString(mc.font, SINK[vs + MAX_SPEED_LABEL], cx + 80, cy - 4, green, false);
+        c.text(TextRole.MICRO, SPD, cx - 110, cy - 12, HoloToken.TEXT_MUTED, alpha);
+        c.number(TextRole.MONO, (int) Math.round(speed * 20), cx - 110, cy - 2, HoloToken.TEXT, alpha);
+        c.text(TextRole.MICRO, VS, cx + 80, cy - 12, HoloToken.TEXT_MUTED, alpha);
+        c.number(TextRole.MONO, (int) Math.round(vy * 20), cx + 80, cy - 2,
+                vy < -1.0 ? HoloToken.WARN : HoloToken.TEXT, alpha);
         if (ElytraGlideSim.stalled(speed, pitch, stallSpeed)) {
-            int red = 0xE0FF4040;
-            int y = cy + 24;
-            for (int i = 0; i < 6; i++) { // a "V" chevron pointing down: push the nose down
-                g.fill(cx - 12 + i * 2, y + i, cx - 10 + i * 2, y + i + 1, red);
-                g.fill(cx + 10 - i * 2, y + i, cx + 12 - i * 2, y + i + 1, red);
-            }
-            g.drawString(mc.font, "STALL", cx - mc.font.width("STALL") / 2, y + 8, red, false);
+            float y = cy + 24;
+            // a "V" chevron pointing down: push the nose down
+            c.ribbon(cx - 12, y, cx, y + 7, 2f, HoloToken.DANGER, alpha);
+            c.ribbon(cx, y + 7, cx + 12, y, 2f, HoloToken.DANGER, alpha);
+            c.text(TextRole.MICRO, STALL, cx - c.width(TextRole.MICRO, STALL) / 2, y + 10, HoloToken.DANGER, alpha);
         }
         if (cue != GlideFootprint.WaveCue.NONE) {
-            int amber = 0xE0FFC040;
             boolean dive = cue == GlideFootprint.WaveCue.DIVE;
-            int y = cy - 36;
-            for (int i = 0; i < 5; i++) {
-                int row = dive ? y + i : y + 4 - i;
-                g.fill(cx - i, row, cx + i + 1, row + 1, amber);
-            }
-            String s = dive ? "DIVE -40" : "CLIMB +40";
-            g.drawString(mc.font, s, cx - mc.font.width(s) / 2, y - 10, amber, false);
+            float y = cy - 36;
+            float tip = dive ? y + 6 : y - 6;
+            c.ribbon(cx - 6, y, cx, tip, 1.5f, HoloToken.WARN, alpha);
+            c.ribbon(cx, tip, cx + 6, y, 1.5f, HoloToken.WARN, alpha);
+            String s = dive ? DIVE : CLIMB;
+            c.text(TextRole.MICRO, s, cx - c.width(TextRole.MICRO, s) / 2, y - 16, HoloToken.WARN, alpha);
         }
     }
+
 
     private static double wrap(double deg) {
         deg %= 360.0;
