@@ -107,6 +107,33 @@ public final class AtmosphereMath {
         return NO_TINT;
     }
 
+    /**
+     * Vanilla's sky brightness over the day for a {@code Level.getTimeOfDay} value (0..1, 0 = noon): 1 by day, 0 at
+     * night, a short ramp at dawn and dusk. Same curve as {@code ClientLevel.getSkyColor} uses.
+     */
+    public static float daylight(float timeOfDay) {
+        return clamp01((float) Math.cos(timeOfDay * (float) (Math.PI * 2)) * 2.0f + 0.5f);
+    }
+
+    /** Each channel of {@code rgb} times {@code k} (clamped to 0..255). */
+    public static int scaleRgb(int rgb, float k) {
+        return rgb(Math.round(r(rgb) * k), Math.round(g(rgb) * k), Math.round(b(rgb) * k));
+    }
+
+    /**
+     * Cloud colour that goes with a sky target: the sky colour washed most of the way to white (clouds stay clouds),
+     * dimmed by daylight the way vanilla dims white clouds (0.1 floor at night).
+     */
+    public static int cloudFor(int skyRgb, float daylight) {
+        int washed = lerpRgb(skyRgb, 0xFFFFFF, 0.6f);
+        return scaleRgb(washed, clamp01(daylight) * 0.9f + 0.1f);
+    }
+
+    /** Sky tint weight under weather: rain and thunder pull it back toward vanilla's grey (keeps storms stormy). */
+    public static float weatherDamp(float weight, float rain, float thunder) {
+        return clamp01(weight) * (1f - 0.6f * clamp01(rain)) * (1f - 0.5f * clamp01(thunder));
+    }
+
     /** Exponential approach of {@code cur} toward {@code target} by {@code rate} (0..1) per step. */
     public static float approach(float cur, float target, float rate) {
         return cur + (target - cur) * rate;

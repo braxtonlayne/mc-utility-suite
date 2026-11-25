@@ -21,8 +21,11 @@ import java.util.List;
  *   <li>Sky Ramp: the fog/horizon colour follows a custom dawn/day/dusk/night ramp by time of day.</li>
  *   <li>Biome: the fog colour eases toward a per-biome tint as you walk between biomes.</li>
  * </ul>
- * Uses NeoForge's {@link ViewportEvent.ComputeFogColor} and {@link ViewportEvent.RenderFog}; the only mixin involved is
- * the existing light texture hook. Drawing only: nothing is sent. Off by default.
+ * The sky presets also recolour the sky itself and, more gently, the clouds: a target colour and weight are published
+ * once per tick through {@link WorldHooks#setSkyTint} and blended per frame by {@code ClientLevelSkyColorMixin} (no
+ * event exposes the sky or cloud colour). Fog uses NeoForge's {@link ViewportEvent.ComputeFogColor} and
+ * {@link ViewportEvent.RenderFog}; dark areas use the existing light texture hook. Drawing only: nothing is sent.
+ * Clean-Screen restores vanilla. Off by default.
  */
 public final class AtmosphereModule extends WorldModule {
 
@@ -41,6 +44,8 @@ public final class AtmosphereModule extends WorldModule {
     private final AtmosphereMath.BlendedTint biome = new AtmosphereMath.BlendedTint();
     private Holder<Biome> lastBiome;
     private int biomeTarget = AtmosphereMath.NO_TINT;
+    /** Sky brightness 0..1 of the current time of day (updated each tick). */
+    private float daylight = 1f;
 
     public AtmosphereModule() {
         super(ID, "Atmosphere Studio", false);
@@ -82,12 +87,14 @@ public final class AtmosphereModule extends WorldModule {
     @Override
     protected void onDisable() {
         WorldHooks.setLightLift(0f);
+        WorldHooks.clearSkyTint();
         biome.reset();
         lastBiome = null;
     }
 
     @Override
     public void onWorldUnload() {
+        WorldHooks.clearSkyTint();
         biome.reset();
         lastBiome = null;
     }
@@ -100,20 +107,58 @@ public final class AtmosphereModule extends WorldModule {
     @Override
     public void onTick() {
         publish(); // follows Clean-Screen; a volatile write, no allocation
-        if (preset != Preset.BIOME) {
-            return;
-        }
         Minecraft mc = Minecraft.getInstance();
         if (mc.level == null || mc.player == null) {
+            WorldHooks.clearSkyTint();
             return;
         }
-        Holder<Biome> h = mc.level.getBiome(mc.player.blockPosition());
-        if (h != lastBiome) { // only on a biome change: the key lookup allocates
-            lastBiome = h;
-            biomeTarget = h.unwrapKey().map(k -> AtmosphereMath.biomeTint(k.location().getPath()))
-                    .orElse(AtmosphereMath.NO_TINT);
+        if (preset == Preset.BIOME) {
+            Holder<Biome> h = mc.level.getBiome(mc.player.blockPosition());
+            if (h != lastBiome) { // only on a biome change: the key lookup allocates
+                lastBiome = h;
+                biomeTarget = h.unwrapKey().map(k -> AtmosphereMath.biomeTint(k.location().getPath()))
+                        .orElse(AtmosphereMath.NO_TINT);
+            }
+            biome.step(biomeTarget, 0.05f);
         }
-        biome.step(biomeTarget, 0.05f);
+        publishSky(mc);
+    }
+
+    /**
+     * Sky and cloud targets for the mixin, once per tick (colours change slowly; the mixin blends every frame).
+     * Sky Ramp paints the absolute ramp colour; Biome tints by the biome colour scaled by daylight; Warm Twilight
+     * warms the sky slightly; Clear Water leaves it alone. Rain and thunder damp the weight. Allocation free.
+     */
+    private void publishSky(Minecraft mc) {
+        if (cleanScreen()) {
+            WorldHooks.clearSkyTint();
+            return;
+        }
+        daylight = AtmosphereMath.daylight(mc.level.getTimeOfDay(1f));
+        int target;
+        float weight;
+        switch (preset) {
+            case SKY_RAMP -> {
+                target = ramp == null ? 0 : ramp.sample(mc.level.getDayTime());
+                weight = ramp == null ? 0f : strength;
+            }
+            case BIOME -> {
+                target = AtmosphereMath.scaleRgb(AtmosphereMath.rgb(Math.round(biome.r), Math.round(biome.g),
+                        Math.round(biome.b)), Math.max(0.08f, daylight));
+                weight = 0.6f * strength * biome.weight;
+            }
+            case WARM_TWILIGHT -> {
+                target = AtmosphereMath.scaleRgb(AtmosphereMath.WARM, Math.max(0.1f, daylight));
+                weight = 0.2f * strength;
+            }
+            default -> {
+                target = 0;
+                weight = 0f;
+            }
+        }
+        weight = AtmosphereMath.weatherDamp(weight, mc.level.getRainLevel(1f), mc.level.getThunderLevel(1f));
+        WorldHooks.setSkyTint(target, weight);
+        WorldHooks.setCloudTint(AtmosphereMath.cloudFor(target, daylight), weight * 0.6f);
     }
 
     /** Fog/horizon colour for the sky presets. Per frame, no allocation. */
@@ -133,7 +178,8 @@ public final class AtmosphereModule extends WorldModule {
             }
             case BIOME -> {
                 if (biome.weight > 0.001f) {
-                    tint(e, biome.r, biome.g, biome.b, 0.6f * strength * biome.weight);
+                    float dl = Math.max(0.08f, daylight); // the horizon darkens at night like the tinted sky
+                    tint(e, biome.r * dl, biome.g * dl, biome.b * dl, 0.6f * strength * biome.weight);
                 }
             }
             default -> {

@@ -24,6 +24,7 @@
     "world.BlockFaceHidingMixin",
     "world.ClientLevelBlockUpdateMixin",
     "world.ClientLevelDataTimeMixin",
+    "world.ClientLevelSkyColorMixin",
     "world.ClientSoundPacketMixin",
     "world.EntityTurnFreecamMixin",
     "world.GameRendererFiltersMixin",
