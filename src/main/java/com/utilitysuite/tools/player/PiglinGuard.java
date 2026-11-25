@@ -28,6 +28,7 @@ import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.monster.piglin.AbstractPiglin;
 import net.minecraft.world.item.ArmorItem;
+import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.BaseEntityBlock;
@@ -38,7 +39,7 @@ import net.minecraft.world.phys.HitResult;
 import net.neoforged.neoforge.event.entity.EntityJoinLevelEvent;
 import net.neoforged.neoforge.event.entity.EntityLeaveLevelEvent;
 
-import java.util.ArrayList;
+import java.util.IdentityHashMap;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Optional;
@@ -88,9 +89,11 @@ public final class PiglinGuard implements IModule, IConfigurable, LeaseListener 
     private boolean barterCollect;
     private boolean barterHand = true;
     private final ItemEntity[] drops = new ItemEntity[MAX_DROPS];
-    // reused decision inputs (records are built only at the half-second barter cadence)
-    private final List<PiglinAdvisor.Piglin> piglinView = new ArrayList<>(MAX_PIGLINS);
-    private final List<PiglinAdvisor.Drop> dropView = new ArrayList<>(MAX_DROPS);
+    // reused primitive decision inputs and result (the half-second barter decision allocates nothing)
+    private final PiglinAdvisor.BarterInputs barterIn = new PiglinAdvisor.BarterInputs(MAX_PIGLINS, MAX_DROPS);
+    private final PiglinAdvisor.MutableDecision barterOut = new PiglinAdvisor.MutableDecision();
+    /** Junk verdict per item type: the registry id string is built once per item type, never per decision. */
+    private final IdentityHashMap<Item, Boolean> junkByItem = new IdentityHashMap<>();
     private NavigationRun collectRun;
     private AbstractPiglin giveTarget;
     private int giveTicks;
@@ -242,16 +245,16 @@ public final class PiglinGuard implements IModule, IConfigurable, LeaseListener 
         }
         ItemStack hand = p.getMainHandItem();
         int ingots = hand.is(Items.GOLD_INGOT) ? hand.getCount() : 0;
-        piglinView.clear();
+        PiglinAdvisor.BarterInputs in = barterIn;
+        in.clear();
         for (int i = 0; i < MAX_PIGLINS; i++) {
             AbstractPiglin g = piglins[i];
             if (g == null || !g.isAlive()) {
                 continue;
             }
-            piglinView.add(new PiglinAdvisor.Piglin(g.getId(), Math.sqrt(g.distanceToSqr(p)), !g.isBaby(),
-                    g.isAggressive(), !g.getOffhandItem().isEmpty()));
+            in.addPiglin(g.getId(), Math.sqrt(g.distanceToSqr(p)), !g.isBaby(), g.isAggressive(),
+                    !g.getOffhandItem().isEmpty());
         }
-        dropView.clear();
         if (barterCollect) {
             for (int i = 0; i < MAX_DROPS; i++) {
                 ItemEntity d = drops[i];
@@ -261,16 +264,15 @@ public final class PiglinGuard implements IModule, IConfigurable, LeaseListener 
                 }
                 double dist = Math.sqrt(d.distanceToSqr(p));
                 if (dist <= COLLECT_RANGE) {
-                    dropView.add(new PiglinAdvisor.Drop(d.getId(),
-                            BuiltInRegistries.ITEM.getKey(d.getItem().getItem()).toString(), dist));
+                    in.addDrop(d.getId(), dist, junk(d.getItem().getItem()));
                 }
             }
         }
-        PiglinAdvisor.Decision dec = PiglinAdvisor.barter(ingots, piglinView, dropView, sinceGive, cadenceTicks,
-                barterCollect ? COLLECT_RANGE : 0.0, java.util.Set.of());
-        switch (dec.act()) {
+        PiglinAdvisor.MutableDecision dec = barterOut;
+        PiglinAdvisor.barter(ingots, in, sinceGive, cadenceTicks, barterCollect ? COLLECT_RANGE : 0.0, dec);
+        switch (dec.act) {
             case GIVE -> {
-                if (barterHand && mc.level.getEntity(dec.targetId()) instanceof AbstractPiglin g) {
+                if (barterHand && mc.level.getEntity(dec.targetId) instanceof AbstractPiglin g) {
                     giveTarget = g;
                     giveTicks = 0;
                 } else {
@@ -278,10 +280,21 @@ public final class PiglinGuard implements IModule, IConfigurable, LeaseListener 
                 }
             }
             case TOSS -> toss(p);
-            case COLLECT -> collect(mc, dec.targetId());
+            case COLLECT -> collect(mc, dec.targetId);
             default -> {
             }
         }
+    }
+
+    /** {@link PiglinAdvisor#isJunk} cached per item type (the id string is built only on the first sight of a type). */
+    private boolean junk(Item item) {
+        Boolean cached = junkByItem.get(item);
+        if (cached == null) {
+            cached = PiglinAdvisor.isJunk(BuiltInRegistries.ITEM.getKey(item).toString(), java.util.Set.of())
+                    ? Boolean.TRUE : Boolean.FALSE;
+            junkByItem.put(item, cached);
+        }
+        return cached;
     }
 
     private void toss(LocalPlayer p) {

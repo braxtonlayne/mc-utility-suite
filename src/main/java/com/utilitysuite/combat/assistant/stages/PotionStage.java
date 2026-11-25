@@ -167,6 +167,12 @@ public final class PotionStage implements FightStage {
         planner.onOpponentPop(clock);
     }
 
+    /** The assistant forwards the engaged target's totem pop (mixin.combat's entity event 35, via the target HUD). */
+    @Override
+    public void onTargetPop(long clock) {
+        onOpponentPop(clock);
+    }
+
     @Override
     public void onEngage(FightContext ctx) {
         throwPending = false;

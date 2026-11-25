@@ -10,6 +10,8 @@ import com.utilitysuite.combat.tactics.HitPlanner;
 import com.utilitysuite.combat.tactics.HitTradeSolver;
 import com.utilitysuite.combat.tactics.OpponentModel;
 import com.utilitysuite.combat.tactics.PearlSource;
+import com.utilitysuite.combat.tactics.memory.HabitRecorder;
+import com.utilitysuite.combat.tactics.memory.RecalledHabits;
 import com.utilitysuite.combat.tactics.ReadState;
 import com.utilitysuite.combat.tactics.ShieldDuel;
 import com.utilitysuite.combat.tactics.TacticUtility;
@@ -123,6 +125,12 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
     private final TacticsPlanner tactics = new TacticsPlanner();
     private final RetreatChase chase = new RetreatChase();
     private final OpponentModel opponents = new OpponentModel();
+    /** C6: this fight's pearl / ranged / mace habits of the target (players, "Opponent memory" on). */
+    private final HabitRecorder habits = new HabitRecorder();
+    /** C6: the engaged target's remembered habits (cleared when unknown or the setting is off). */
+    private final RecalledHabits recalled = new RecalledHabits();
+    /** A remembered pearl-escaper is near its usual pearl-out health (read by the pearl countdown line). */
+    private boolean opponentPearlLikely;
     /** Damage this player dealt, per target (same ring structure, used for the own-DPS estimate). */
     private final OpponentModel dealt = new OpponentModel();
     private final TacticUtility utility = new TacticUtility();
@@ -406,7 +414,59 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
     public void onTotemPop(int entityId) {
         if (state == CombatState.ENGAGED && entityId == targetId) {
             lastOpponentPopAt = tacticClock;
+            FightStage[] all = allStages;
+            for (int i = 0; i < all.length; i++) {
+                all[i].onTargetPop(tacticClock); // e.g. the combat potions' post-pop pressure rule
+            }
         }
+    }
+
+    /** A thrown projectile spawns this close (blocks) to the target's eye when the owner is not synced. */
+    static final double PROJECTILE_SPAWN_RADIUS = 2.5;
+    /** Eye height of a standing player. */
+    static final double PLAYER_EYE = 1.62;
+
+    /**
+     * A projectile joined the client level (entity join event, client thread): an ender pearl, arrow, trident or wind
+     * charge ({@code HabitRecorder.PROJ_*}) with its owner's entity id (-1 when the client has none) and its spawn
+     * position and velocity. While engaged with a player and "Opponent memory" on, the target's own projectiles (by
+     * owner, else by a spawn at its eye) feed this fight's habit record. Allocation free.
+     */
+    public void onProjectileSpawn(int kind, int ownerId, double x, double y, double z, double vx, double vy,
+                                  double vz) {
+        if (state != CombatState.ENGAGED || !settings.opponentMemory || !targetIsPlayer || targetId < 0) {
+            return;
+        }
+        CombatSnapshot s = snap;
+        if (ownerId >= 0) {
+            if (ownerId != targetId) {
+                return;
+            }
+        } else {
+            double dx = x - s.tx, dy = y - (s.ty + PLAYER_EYE), dz = z - s.tz;
+            if (dx * dx + dy * dy + dz * dz > PROJECTILE_SPAWN_RADIUS * PROJECTILE_SPAWN_RADIUS) {
+                return;
+            }
+        }
+        habits.onProjectile(kind, vx, vy, vz, s.targetHealth, s.tx, s.tz, s.px, s.pz);
+    }
+
+    /**
+     * A remembered pearl-escaper (C6) is at or near the health it usually pearls out at. Read every client tick by the
+     * pearl countdown line; false unless engaged with "Opponent memory" on.
+     */
+    public boolean opponentPearlLikely() {
+        return state == CombatState.ENGAGED && opponentPearlLikely;
+    }
+
+    /** This fight's habit record (diagnostics, tests). */
+    public HabitRecorder habitRecord() {
+        return habits;
+    }
+
+    /** The engaged target's remembered habits (diagnostics, tests). */
+    public RecalledHabits recalledHabits() {
+        return recalled;
     }
 
     /** Post-pop pressure: the opponent popped recently and health is above the critical threshold. */
@@ -567,8 +627,11 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         lastPositional = TacticUtility.Tactic.FIGHT;
         lastFeintNoted = FeintPlanner.Move.NONE;
         feel.engage(entityId, targetIsPlayer); // a target switch ends the combo plan, feints and any pearl run
+        habits.reset();
+        opponentPearlLikely = false;
+        recalled.clear();
         if (settings.opponentMemory && targetIsPlayer) {
-            double prior = recall.onEngage(entityId, true);
+            double prior = recall.onEngage(entityId, true, recalled);
             if (!Double.isNaN(prior)) {
                 feel.seedSkill(entityId, prior);
             }
@@ -792,6 +855,10 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         secondValid = false;
         stageSpacing = 0.0;
         stagePress = false;
+        if (settings.opponentMemory && targetIsPlayer) {
+            // C6: a remembered mace diver airborne above us with the mace: keep extra distance so the dive lands short
+            stageSpacing = recalled.diveSpacing(s.targetHeld, s.targetOnGround, s.ty - s.py);
+        }
         if (routeRetry > 0) {
             routeRetry--;
         }
@@ -1118,6 +1185,12 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         }
         opponents.observe(targetId, tacticClock, s.tx, s.tz, s.tvx, s.tvz, s.px, s.pz, s.targetOnGround,
                 s.targetBlocking);
+        if (settings.opponentMemory && targetIsPlayer) {
+            habits.tick(tacticClock, s.targetOnGround, s.ty, s.targetHeld, s.targetUsingItem, s.targetSwingStarted);
+            opponentPearlLikely = recalled.pearlLikely(s.targetHealth);
+        } else {
+            opponentPearlLikely = false;
+        }
         opponents.noteHealth(targetId, tacticClock, s.targetHealth);
         if (s.targetSwingStarted) {
             opponents.noteSwing(targetId, tacticClock, s.targetAttackSpeed); // cooldown reading
@@ -2257,9 +2330,12 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         }
         lastDisengage = reason;
         if (settings.opponentMemory && targetIsPlayer && targetId >= 0) {
-            recall.onFightEnd(targetId, true, opponents, feel.skillOf(targetId), feel.skillSamples(targetId),
-                    clock.getAsLong());
+            recall.onFightEnd(targetId, true, opponents, habits, feel.skillOf(targetId),
+                    feel.skillSamples(targetId), clock.getAsLong());
         }
+        habits.reset();
+        recalled.clear();
+        opponentPearlLikely = false;
         collecting = false;
         foodEngagement = false;
         proactivePause = switch (reason) {
@@ -2579,6 +2655,11 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         @Override
         public long clock() {
             return tacticClock;
+        }
+
+        @Override
+        public RecalledHabits recalledHabits() {
+            return settings.opponentMemory && targetIsPlayer ? recalled : RecalledHabits.NONE;
         }
 
         @Override

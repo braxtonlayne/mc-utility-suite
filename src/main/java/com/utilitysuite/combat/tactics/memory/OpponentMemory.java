@@ -45,6 +45,39 @@ public final class OpponentMemory {
                                double maceRate, double reach, double cooldownTicks, double skill, boolean won) {
     }
 
+    /**
+     * Pearl, ranged and mace habits one fight showed ({@link HabitRecorder#summary}). NaN = not measured (rates need
+     * {@link HabitRecorder#MIN_TICKS_FOR_RATES} fight ticks; shares and means need at least one event).
+     *
+     * @param pearlsPerMin       ender pearls thrown per minute of fight
+     * @param pearlLowHpShare    share of pearls thrown at {@link HabitRecorder#LOW_HP} or less
+     * @param pearlEscapeShare   share of pearls thrown away from us
+     * @param pearlEngageShare   share of pearls thrown toward us
+     * @param pearlDistance      the thrower's distance from us at the throw (blocks)
+     * @param rangedPerMin       arrows / tridents released per minute
+     * @param bowShare           shares of those shots by weapon
+     * @param drawTicks          ticks drawn (or charged) before a shot
+     * @param rangedRange        the shooter's distance from us at the release (blocks)
+     * @param windLaunchesPerMin wind charges thrown at its own feet per minute
+     * @param windShotsPerMin    wind charges thrown otherwise (at us) per minute
+     * @param divesPerMin        mace dives per minute
+     * @param diveHeight         typical dive fall height (blocks)
+     */
+    public record HabitSummary(double pearlsPerMin, double pearlLowHpShare, double pearlEscapeShare,
+                               double pearlEngageShare, double pearlDistance, double rangedPerMin, double bowShare,
+                               double crossbowShare, double tridentShare, double drawTicks, double rangedRange,
+                               double windLaunchesPerMin, double windShotsPerMin, double divesPerMin,
+                               double diveHeight) {
+
+        /** Nothing measured (fights recorded without the habit recorder). */
+        public static final HabitSummary NONE = new HabitSummary(Double.NaN, Double.NaN, Double.NaN, Double.NaN,
+                Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN,
+                Double.NaN, Double.NaN, Double.NaN);
+    }
+
+    /** Number of habit values stored after the 12 base entries of a profile's JSON array (format v2). */
+    static final int HABIT_FIELDS = 15;
+
     /** Blended per-opponent profile. Fields mirror {@link FightSummary}; NaN = never measured. */
     public static final class Profile {
         public String name = "";
@@ -59,6 +92,75 @@ public final class OpponentMemory {
         public double reach = Double.NaN;
         public double cooldownTicks = Double.NaN;
         public double skill = Double.NaN;
+        // habits (format v2; NaN in profiles written before them)
+        public double pearlsPerMin = Double.NaN;
+        public double pearlLowHpShare = Double.NaN;
+        public double pearlEscapeShare = Double.NaN;
+        public double pearlEngageShare = Double.NaN;
+        public double pearlDistance = Double.NaN;
+        public double rangedPerMin = Double.NaN;
+        public double bowShare = Double.NaN;
+        public double crossbowShare = Double.NaN;
+        public double tridentShare = Double.NaN;
+        public double drawTicks = Double.NaN;
+        public double rangedRange = Double.NaN;
+        public double windLaunchesPerMin = Double.NaN;
+        public double windShotsPerMin = Double.NaN;
+        public double divesPerMin = Double.NaN;
+        public double diveHeight = Double.NaN;
+
+        double[] habits() {
+            return new double[]{pearlsPerMin, pearlLowHpShare, pearlEscapeShare, pearlEngageShare, pearlDistance,
+                    rangedPerMin, bowShare, crossbowShare, tridentShare, drawTicks, rangedRange, windLaunchesPerMin,
+                    windShotsPerMin, divesPerMin, diveHeight};
+        }
+
+        void setHabits(double[] h) {
+            pearlsPerMin = h[0];
+            pearlLowHpShare = h[1];
+            pearlEscapeShare = h[2];
+            pearlEngageShare = h[3];
+            pearlDistance = h[4];
+            rangedPerMin = h[5];
+            bowShare = h[6];
+            crossbowShare = h[7];
+            tridentShare = h[8];
+            drawTicks = h[9];
+            rangedRange = h[10];
+            windLaunchesPerMin = h[11];
+            windShotsPerMin = h[12];
+            divesPerMin = h[13];
+            diveHeight = h[14];
+        }
+
+        /**
+         * Habit EMA: the first measured value is taken whole (a profile from before the habits had none), later
+         * ones blend at {@link #ALPHA}.
+         */
+        private void blendHabits(HabitSummary h) {
+            pearlsPerMin = ema(pearlsPerMin, h.pearlsPerMin(), ALPHA);
+            pearlLowHpShare = ema(pearlLowHpShare, h.pearlLowHpShare(), ALPHA);
+            pearlEscapeShare = ema(pearlEscapeShare, h.pearlEscapeShare(), ALPHA);
+            pearlEngageShare = ema(pearlEngageShare, h.pearlEngageShare(), ALPHA);
+            pearlDistance = ema(pearlDistance, h.pearlDistance(), ALPHA);
+            rangedPerMin = ema(rangedPerMin, h.rangedPerMin(), ALPHA);
+            bowShare = ema(bowShare, h.bowShare(), ALPHA);
+            crossbowShare = ema(crossbowShare, h.crossbowShare(), ALPHA);
+            tridentShare = ema(tridentShare, h.tridentShare(), ALPHA);
+            drawTicks = ema(drawTicks, h.drawTicks(), ALPHA);
+            rangedRange = ema(rangedRange, h.rangedRange(), ALPHA);
+            windLaunchesPerMin = ema(windLaunchesPerMin, h.windLaunchesPerMin(), ALPHA);
+            windShotsPerMin = ema(windShotsPerMin, h.windShotsPerMin(), ALPHA);
+            divesPerMin = ema(divesPerMin, h.divesPerMin(), ALPHA);
+            diveHeight = ema(diveHeight, h.diveHeight(), ALPHA);
+        }
+
+        void blend(FightSummary f, HabitSummary h) {
+            if (h != null) {
+                blendHabits(h);
+            }
+            blend(f);
+        }
 
         void blend(FightSummary f) {
             double a = fights == 0 ? 1.0 : ALPHA;
@@ -98,9 +200,15 @@ public final class OpponentMemory {
 
     /** Blends a finished fight into the profile. */
     public Profile record(String server, String uuid, String name, FightSummary fight, long now) {
+        return record(server, uuid, name, fight, null, now);
+    }
+
+    /** Blends a finished fight and the habits it showed ({@code habits} may be null) into the profile. */
+    public Profile record(String server, String uuid, String name, FightSummary fight, HabitSummary habits,
+                          long now) {
         String k = key(server, uuid);
         Profile p = profiles.computeIfAbsent(k, x -> new Profile());
-        p.blend(fight);
+        p.blend(fight, habits);
         if (name != null && !name.isEmpty()) {
             p.name = name;
         }
@@ -168,10 +276,31 @@ public final class OpponentMemory {
         if (!Double.isNaN(p.pearlOutHp)) {
             sb.append(String.format(Locale.ROOT, ", pearls out near %.0f HP", p.pearlOutHp));
         }
-        if (!Double.isNaN(p.maceRate) && p.maceRate >= 0.15) {
+        if (at(p.pearlEngageShare, 0.5)) {
+            sb.append(", pearls in to engage");
+        }
+        if (at(p.pearlsPerMin, 1.0)) {
+            sb.append(String.format(Locale.ROOT, ", %.0f pearls/min", p.pearlsPerMin));
+        }
+        if (maceDiver(p)) {
             sb.append(", mace diver");
-        } else if (!Double.isNaN(p.rangedRate) && p.rangedRate >= 0.25) {
-            sb.append(", likes ranged");
+            if (!Double.isNaN(p.diveHeight)) {
+                sb.append(String.format(Locale.ROOT, " (~%.0f-block dives)", p.diveHeight));
+            }
+            if (at(p.windLaunchesPerMin, RecalledHabits.WIND_RATE)) {
+                sb.append(", wind-charge launches");
+            }
+        } else if (rangedUser(p)) {
+            sb.append(", likes ").append(rangedWeapon(p));
+            if (!Double.isNaN(p.rangedRange)) {
+                sb.append(String.format(Locale.ROOT, " at ~%.0f blocks", p.rangedRange));
+            }
+            if (!Double.isNaN(p.drawTicks)) {
+                sb.append(String.format(Locale.ROOT, " (%.0f-tick draws)", p.drawTicks));
+            }
+        }
+        if (at(p.windShotsPerMin, RecalledHabits.WIND_RATE)) {
+            sb.append(", throws wind charges");
         }
         if (!Double.isNaN(p.reach) && p.reach >= 3.2) {
             sb.append(String.format(Locale.ROOT, ", long reach %.1f", p.reach));
@@ -179,11 +308,41 @@ public final class OpponentMemory {
         return sb.toString();
     }
 
-    // ---- compact JSON: {"v":1,"p":{"key":[name,fights,wins,lastSeen,s,sh,po,r,m,re,cd,sk]}} -------------------------
+    static boolean at(double v, double min) {
+        return !Double.isNaN(v) && v >= min;
+    }
+
+    /** A remembered mace diver: dives often, or a good share of its attacks were dives. */
+    public static boolean maceDiver(Profile p) {
+        return at(p.maceRate, 0.15) || at(p.divesPerMin, RecalledHabits.DIVE_RATE);
+    }
+
+    /** A remembered ranged player: a good share of ranged attacks, or regular shots. */
+    public static boolean rangedUser(Profile p) {
+        return at(p.rangedRate, 0.25) || at(p.rangedPerMin, RecalledHabits.RANGED_RATE);
+    }
+
+    /** "the bow" / "the crossbow" / "the trident" by the largest remembered share, else "ranged". */
+    static String rangedWeapon(Profile p) {
+        double b = Double.isNaN(p.bowShare) ? -1 : p.bowShare;
+        double c = Double.isNaN(p.crossbowShare) ? -1 : p.crossbowShare;
+        double t = Double.isNaN(p.tridentShare) ? -1 : p.tridentShare;
+        if (b < 0 && c < 0 && t < 0) {
+            return "ranged";
+        }
+        if (c > b && c >= t) {
+            return "the crossbow";
+        }
+        return t > b ? "the trident" : "the bow";
+    }
+
+    // ---- compact JSON: {"v":2,"p":{"key":[name,fights,wins,lastSeen,s,sh,po,r,m,re,cd,sk(,15 habits)]}} -------------
+    // v1 files (12 entries) load with the habits unmeasured; the habit tail is written only once one is measured, and
+    // a v1 reader still reads the first 12 entries of a v2 array.
 
     public JsonObject toJson() {
         JsonObject root = new JsonObject();
-        root.addProperty("v", 1);
+        root.addProperty("v", 2);
         JsonObject ps = new JsonObject();
         for (Map.Entry<String, Profile> e : profiles.entrySet()) {
             Profile p = e.getValue();
@@ -195,6 +354,16 @@ public final class OpponentMemory {
             for (double d : new double[]{p.strafeBias, p.shieldUse, p.pearlOutHp, p.rangedRate, p.maceRate, p.reach,
                     p.cooldownTicks, p.skill}) {
                 a.add(Double.isNaN(d) ? null : Math.round(d * 1000.0) / 1000.0);
+            }
+            double[] habits = p.habits();
+            boolean any = false;
+            for (double d : habits) {
+                any |= !Double.isNaN(d);
+            }
+            if (any) {
+                for (double d : habits) {
+                    a.add(Double.isNaN(d) ? null : Math.round(d * 1000.0) / 1000.0);
+                }
             }
             ps.add(e.getKey(), a);
         }
@@ -226,6 +395,13 @@ public final class OpponentMemory {
                 p.reach = num(a.get(9));
                 p.cooldownTicks = num(a.get(10));
                 p.skill = num(a.get(11));
+                if (a.size() >= 12 + HABIT_FIELDS) {
+                    double[] h = new double[HABIT_FIELDS];
+                    for (int i = 0; i < HABIT_FIELDS; i++) {
+                        h[i] = num(a.get(12 + i));
+                    }
+                    p.setHabits(h);
+                }
                 m.profiles.put(e.getKey(), p);
             } catch (RuntimeException ignored) {
                 // skip a garbled entry

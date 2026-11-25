@@ -2,6 +2,7 @@ package com.utilitysuite.combat.assistant;
 
 import com.utilitysuite.combat.tactics.HitPlanner;
 import com.utilitysuite.combat.tactics.OpponentModel;
+import com.utilitysuite.combat.tactics.memory.RecalledHabits;
 import com.utilitysuite.core.api.SimKey;
 
 /**
@@ -25,6 +26,14 @@ public interface FightContext {
 
     /** The fight clock (ticks while engaged), the time base of {@link OpponentModel}. */
     long clock();
+
+    /**
+     * The engaged target's remembered habits (C6 opponent memory): {@link RecalledHabits#NONE}-like (every read a
+     * no-op) for an unknown opponent, a mob, or with "Opponent memory" off. Field reads only.
+     */
+    default RecalledHabits recalledHabits() {
+        return RecalledHabits.NONE;
+    }
 
     /** The built-in loop is eating (the sustain layer holds USE). */
     boolean eating();

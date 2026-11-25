@@ -48,6 +48,13 @@ public interface FightStage {
     default void onEngage(FightContext ctx) {
     }
 
+    /**
+     * The engaged target popped a totem (entity event 35, from the existing pop detection), on fight-clock tick
+     * {@code clock} ({@link FightContext#clock}). Client thread, no allocation.
+     */
+    default void onTargetPop(long clock) {
+    }
+
     /** The fight ended, the world unloaded or Stop-All ran: drop all state. Keys are released by the assistant. */
     default void reset() {
     }

@@ -78,6 +78,11 @@ public final class CombatSnapshot {
     /** The target is a mob whose hits launch (iron golem, ravager, hoglin, zoglin, warden). */
     public boolean targetHeavyHitter;
     /**
+     * Kind of the item in the target's hand (the used item while it uses one): {@code HabitRecorder.HELD_*} (other,
+     * bow, crossbow, trident, mace). Opponent-habit record and the remembered-diver spacing.
+     */
+    public int targetHeld;
+    /**
      * Living entities other than the target and the player inside the vanilla sweep box (the target's box grown by
      * 1 / 0.25 / 1, within reach of the player), refreshed every few ticks: hostiles, and everything a sweep must
      * never touch (players, pets, villagers, neutral and passive mobs).

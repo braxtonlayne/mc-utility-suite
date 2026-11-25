@@ -13,7 +13,9 @@ import com.utilitysuite.core.api.IInputSmoother;
  * default). When a ghast fireball or wind charge is heading at us ({@link DeflectPlanner#incoming}) and a strike is
  * reachable under the core's turn-speed cap with time to spare ({@link DeflectPlanner#planStrike}), it looks where the
  * projectile will be (through the smoother, like every look) and swings once it is in reach and under the crosshair
- * cone. When the turn cannot be made legitimately in time it does nothing. Allocation free.
+ * cone. When the turn cannot be made legitimately in time it does nothing. Against an opponent remembered to throw
+ * wind charges at us ("Opponent memory" on) the incoming check looks further ahead
+ * ({@link com.utilitysuite.combat.tactics.memory.RecalledHabits#deflectHorizon}). Allocation free.
  */
 public final class DeflectStage implements FightStage {
 
@@ -59,8 +61,10 @@ public final class DeflectStage implements FightStage {
             return false;
         }
         double cy = (s.py + s.eyeY) * 0.5;
+        // readiness: against a remembered wind-charge thrower (C6 opponent memory) the plan starts earlier
+        double horizon = ctx.recalledHabits().deflectHorizon(HORIZON_TICKS);
         if (!planner.incoming(facts.x(), facts.y(), facts.z(), facts.vx(), facts.vy(), facts.vz(), s.px, cy, s.pz,
-                HIT_RADIUS, HORIZON_TICKS)) {
+                HIT_RADIUS, horizon)) {
             return false;
         }
         // in reach now and inside the crosshair cone: swing (the camera got there on an earlier tick's plan)
