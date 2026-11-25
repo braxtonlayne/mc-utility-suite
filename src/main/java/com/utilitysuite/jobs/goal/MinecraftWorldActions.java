@@ -9,6 +9,10 @@ import com.utilitysuite.core.api.RotationTarget;
 import com.utilitysuite.core.api.Services;
 import com.utilitysuite.core.api.SimKey;
 import com.utilitysuite.jobs.planner.BrewingPlanner;
+import com.utilitysuite.jobs.planner.CrafterTemplate;
+import com.utilitysuite.jobs.planner.EnderChestPlanner;
+import com.utilitysuite.jobs.planner.PackedPos;
+import com.utilitysuite.jobs.planner.WaterFill;
 import com.utilitysuite.jobs.planner.FuelTable;
 import com.utilitysuite.jobs.planner.FurnaceBatchPlanner;
 import com.utilitysuite.jobs.planner.SlotTransfer;
@@ -74,9 +78,9 @@ import java.util.function.Supplier;
  */
 public final class MinecraftWorldActions implements WorldActions {
 
-    private enum Op { NONE, CRAFT, SMELT, FETCH, DEPOSIT, SHULKER, STATION }
+    private enum Op { NONE, CRAFT, SMELT, FETCH, DEPOSIT, SHULKER, STATION, ENDER }
 
-    private enum Phase { FIND, SELECT_ITEM, CLEAR_OBSTRUCTION, CLEAR_WALK, AIM_PLACE, WAIT_PLACED, OPEN, WAIT_OPEN, WORK, WAIT_CLICKS, COLLECT, BREAK, PICKUP, DONE }
+    private enum Phase { FIND, SELECT_ITEM, CLEAR_OBSTRUCTION, CLEAR_WALK, AIM_PLACE, WAIT_PLACED, OPEN, WAIT_OPEN, WORK, WAIT_CLICKS, COLLECT, BREAK, PICKUP, WATER_WALK, WATER_AIM, WATER_WAIT, DONE }
 
     private static final int OPEN_TIMEOUT = 200;
 
@@ -174,9 +178,47 @@ public final class MinecraftWorldActions implements WorldActions {
 
     @Override
     public void beginFetch(long packedPos, Map<String, Integer> items, ControlLease l) {
+        if (EnderChestPlanner.isCarried(packedPos)) {
+            beginCarriedEnderFetch(items, l);
+            return;
+        }
         start(Op.FETCH, null, l);
         beginTransfer(packedPos, items);
     }
+
+    /**
+     * EnderChestPlanner PLACE_CARRIED: places the carried ender chest on a safe floor spot next to the player (the
+     * shulker-restock placement path), takes the items, then mines the chest back with the Silk Touch pickaxe and picks
+     * it up. Fails before placing anything without a Silk Touch pickaxe: an ender chest mined without it is lost.
+     */
+    private void beginCarriedEnderFetch(Map<String, Integer> items, ControlLease l) {
+        start(Op.ENDER, null, l);
+        int silk = inv.silkTouchPickaxeSlot();
+        if (inv.count(EnderChestPlanner.ENDER_CHEST) <= 0) {
+            fail("No ender chest carried");
+            return;
+        }
+        if (silk < 0) {
+            fail("No Silk Touch pickaxe: not placing the ender chest (it could not be picked back up)");
+            return;
+        }
+        if (silk >= 9) {
+            // bring the pickaxe to the hotbar now (inventory screen, before anything opens) so the break never waits
+            Services.clicker().queueClick(lease, silk, SILK_HOTBAR_SLOT, IContainerClicker.Click.SWAP);
+        }
+        station = EnderChestPlanner.ENDER_CHEST;
+        boxBefore = inv.count(station);
+        wanted = Map.copyOf(items);
+        before.clear();
+        for (String id : wanted.keySet()) {
+            before.put(id, inv.count(id));
+        }
+        phase = Phase.SELECT_ITEM;
+        timer = 0;
+    }
+
+    /** Hotbar slot the Silk Touch pickaxe is swapped into when it is in the main inventory (8 holds the station). */
+    private static final int SILK_HOTBAR_SLOT = 7;
 
     @Override
     public void beginDeposit(long packedPos, Map<String, Integer> items, ControlLease l) {
@@ -311,6 +353,9 @@ public final class MinecraftWorldActions implements WorldActions {
             }
             case BREAK -> breakBox(mc, player);
             case PICKUP -> pickUpBox(player);
+            case WATER_WALK -> waterWalk(player);
+            case WATER_AIM -> waterAim(player);
+            case WATER_WAIT -> waterWait(player);
             case DONE -> {
             }
         }
@@ -363,7 +408,7 @@ public final class MinecraftWorldActions implements WorldActions {
         }
         Services.input().selectHotbarSlot(lease, hotbar);
         long spot = findPlacementSpot(Minecraft.getInstance());
-        if (spot == Long.MIN_VALUE && op == Op.SHULKER) {
+        if (spot == Long.MIN_VALUE && (op == Op.SHULKER || op == Op.ENDER)) {
             // Nothing placed yet: abort cleanly rather than digging or wandering with a box in hand.
             fail("No safe spot next to the player to place the shulker box");
             return;
@@ -495,9 +540,13 @@ public final class MinecraftWorldActions implements WorldActions {
                 phase = Phase.WAIT_CLICKS;
                 timer = 0;
             }
-            case FETCH, DEPOSIT, SHULKER -> {
+            case FETCH, DEPOSIT, SHULKER, ENDER -> {
                 if (op == Op.SHULKER && !(menu instanceof ShulkerBoxMenu)) {
                     fail("Opened block is not a shulker box");
+                    return;
+                }
+                if (op == Op.ENDER && !(menu instanceof net.minecraft.world.inventory.ChestMenu)) {
+                    fail("Opened block is not the ender chest");
                     return;
                 }
                 Inventory pinv = player.getInventory();
@@ -537,20 +586,188 @@ public final class MinecraftWorldActions implements WorldActions {
         stationGot.clear();
         brewIndex = 1;
         if (s.kind() == StepKind.FILL_BOTTLES) {
-            // Using bottles on water needs aimed world interaction, which is not automated yet: only accept bottles
-            // the player already filled.
-            int have = inv.counts().getOrDefault(BrewingPlanner.WATER, 0);
-            if (have >= s.count()) {
-                transferred = Map.of(s.itemId(), have);
-                result = Result.DONE;
-                phase = Phase.DONE;
-                op = Op.NONE;
-            } else {
-                fail("Fill " + (s.count() - have) + " water bottles by hand (bottle filling is not automated yet)");
-            }
+            beginFillBottles(s);
             return;
         }
         beginTransfer(s.storagePos(), Map.of());
+    }
+
+    // ---- FILL_BOTTLES: walk to water, glass bottle in hand, smooth aim at the surface, use -------------------------
+
+    private static final String GLASS_BOTTLE = "minecraft:glass_bottle";
+    /** Water search box around the player: horizontal radius, blocks below and above. */
+    private static final int WATER_RADIUS = 16;
+    private static final int WATER_DOWN = 6;
+    private static final int WATER_UP = 3;
+    /** Uses in a row that filled nothing before the water is looked for again (a cauldron ran dry), then failure. */
+    private static final int MAX_DRY_USES = 3;
+    private long waterPos = Long.MIN_VALUE;
+    private int waterStart;
+    private int waterBefore;
+    private int dryUses;
+    private int waterRescans;
+    /** Reused scan probe (one lambda for the action's lifetime, not per scan). */
+    private final WaterFill.Probe waterProbe = this::waterKind;
+
+    private int waterKind(int x, int y, int z) {
+        Level level = Minecraft.getInstance().level;
+        probe.set(x, y, z);
+        BlockState st = level.getBlockState(probe);
+        if (st.is(net.minecraft.world.level.block.Blocks.WATER_CAULDRON)) {
+            return WaterFill.CAULDRON;
+        }
+        var fluid = st.getFluidState();
+        return fluid.is(net.minecraft.tags.FluidTags.WATER) && fluid.isSource() ? WaterFill.SOURCE : WaterFill.NONE;
+    }
+
+    private void beginFillBottles(PlanStep s) {
+        int have = inv.count(BrewingPlanner.WATER);
+        waterStart = have;
+        dryUses = 0;
+        waterRescans = 0;
+        if (WaterFill.usesNeeded(s.count(), have, Integer.MAX_VALUE) == 0) {
+            transferred = Map.of(s.itemId(), have);
+            result = Result.DONE;
+            phase = Phase.DONE;
+            op = Op.NONE;
+            return;
+        }
+        if (inv.count(GLASS_BOTTLE) <= 0) {
+            fail("No glass bottles to fill (" + have + "/" + s.count() + " water bottles carried)");
+            return;
+        }
+        if (!scanWater()) {
+            return;
+        }
+        driver.get().gotoCoord(waterPos, 2);
+        phase = Phase.WATER_WALK;
+        timer = 0;
+    }
+
+    /** One bounded scan around the player; fails the action cleanly when there is no water in range. */
+    private boolean scanWater() {
+        LocalPlayer p = Minecraft.getInstance().player;
+        BlockPos c = p.blockPosition();
+        waterPos = WaterFill.nearest(waterProbe, c.getX(), c.getY(), c.getZ(), WATER_RADIUS, WATER_DOWN, WATER_UP);
+        if (waterPos == PlanStep.NO_POS) {
+            fail("No water source or water cauldron within " + WATER_RADIUS + " blocks to fill bottles");
+            return false;
+        }
+        return true;
+    }
+
+    private void waterWalk(LocalPlayer player) {
+        MiningDriver.Status st = driver.get().status();
+        double dx = BlockPos.getX(waterPos) + 0.5 - player.getX();
+        double dy = BlockPos.getY(waterPos) + 0.9 - player.getEyeY();
+        double dz = BlockPos.getZ(waterPos) + 0.5 - player.getZ();
+        double reach = Math.min(4.5, player.blockInteractionRange()) - 0.3;
+        if (st == MiningDriver.Status.ARRIVED || dx * dx + dy * dy + dz * dz <= reach * reach) {
+            driver.get().cancel();
+            if (!selectHotbarItem(player, GLASS_BOTTLE)) {
+                if (timer > 20) {
+                    fail("Could not move glass bottles to the hotbar");
+                }
+                return;
+            }
+            // the water surface (a source fills to ~0.89 of the block; a cauldron's water sits inside the rim)
+            Services.input().setRotationTarget(lease, aimAt(player, BlockPos.getX(waterPos) + 0.5,
+                    BlockPos.getY(waterPos) + 0.85, BlockPos.getZ(waterPos) + 0.5));
+            phase = Phase.WATER_AIM;
+            timer = 0;
+        } else if (st == MiningDriver.Status.FAILED || st == MiningDriver.Status.UNAVAILABLE || timer > 600) {
+            driver.get().cancel();
+            fail("Could not reach water at " + PackedPos.format(waterPos));
+        }
+    }
+
+    /** Glass bottle in hand (SWAP into hotbar slot 8 from the main inventory once); true when selected. */
+    private boolean selectHotbarItem(LocalPlayer player, String itemId) {
+        Inventory pinv = player.getInventory();
+        net.minecraft.world.item.Item item = inv.itemOf(itemId);
+        int main = -1;
+        for (int i = 0; i < 36; i++) {
+            if (pinv.items.get(i).getItem() == item) {
+                if (i < 9) {
+                    Services.input().selectHotbarSlot(lease, i);
+                    return true;
+                }
+                if (main < 0) {
+                    main = i;
+                }
+            }
+        }
+        if (main >= 0 && Services.clicker().pending() == 0 && timer % 10 == 1) {
+            if (!(player.containerMenu instanceof InventoryMenu)) {
+                player.closeContainer();
+            }
+            Services.clicker().queueClick(lease, main, 8, IContainerClicker.Click.SWAP);
+        }
+        return false;
+    }
+
+    private void waterAim(LocalPlayer player) {
+        if (!Services.input().isRotationSettled(2f) && timer < 30) {
+            return;
+        }
+        if (!GLASS_BOTTLE.equals(inv.idOf(player.getMainHandItem().getItem()))) {
+            if (inv.count(GLASS_BOTTLE) <= 0) {
+                finishBottles(player, "Out of glass bottles");
+            } else if (!selectHotbarItem(player, GLASS_BOTTLE) && timer > 40) {
+                fail("Could not hold a glass bottle");
+            }
+            return;
+        }
+        if (!lease.isActive() || !lease.covers(ControlChannel.WORLD_INTERACT)) {
+            fail("Lost world-interaction control while filling bottles");
+            return;
+        }
+        waterBefore = inv.count(BrewingPlanner.WATER);
+        Services.input().scheduleKeyTap(lease, SimKey.USE, 1, 2);
+        phase = Phase.WATER_WAIT;
+        timer = 0;
+    }
+
+    private void waterWait(LocalPlayer player) {
+        if (timer < 6) {
+            return;
+        }
+        int now = inv.count(BrewingPlanner.WATER);
+        if (now >= step.count()) {
+            finishBottles(player, "Filled " + (now - waterStart) + " water bottles");
+            return;
+        }
+        if (inv.count(GLASS_BOTTLE) <= 0) {
+            finishBottles(player, "Out of glass bottles");
+            return;
+        }
+        if (now > waterBefore) {
+            dryUses = 0;
+        } else if (++dryUses >= MAX_DRY_USES) {
+            // a cauldron ran dry or the aim misses: look for water once more, then give up
+            dryUses = 0;
+            if (waterRescans++ >= 1 || !scanWater()) {
+                if (result == Result.RUNNING) {
+                    fail("Water bottles did not fill at " + PackedPos.format(waterPos) + " (" + now + "/"
+                            + step.count() + ")");
+                }
+                return;
+            }
+            Services.input().clearRotation(lease);
+            driver.get().gotoCoord(waterPos, 2);
+            phase = Phase.WATER_WALK;
+            timer = 0;
+            return;
+        }
+        phase = Phase.WATER_AIM; // rotation target is still held: use again
+        timer = 0;
+    }
+
+    private void finishBottles(LocalPlayer player, String msg) {
+        Services.input().clearRotation(lease);
+        int got = inv.count(BrewingPlanner.WATER);
+        transferred = got > 0 ? Map.of(step.itemId(), got) : Map.of();
+        finish(player, msg);
     }
 
     private void stationWork(LocalPlayer player, AbstractContainerMenu menu) {
@@ -615,6 +832,34 @@ public final class MinecraftWorldActions implements WorldActions {
                 phase = Phase.COLLECT;
                 timer = 0;
             }
+            case CRAFTER_SAVE -> {
+                if (!(menu instanceof net.minecraft.world.inventory.CrafterMenu cm)) {
+                    fail("Opened block is not a crafter");
+                    return;
+                }
+                CrafterTemplate t = CrafterTemplate.capture(step.itemId(), null, crafterMask(cm),
+                        crafterItems(menu));
+                java.util.function.Consumer<CrafterTemplate> sink = crafterSink;
+                if (sink != null) {
+                    sink.accept(t);
+                }
+                finish(player, "Saved crafter template " + t.name());
+            }
+            case CRAFTER_APPLY -> {
+                if (!(menu instanceof net.minecraft.world.inventory.CrafterMenu)) {
+                    fail("Opened block is not a crafter");
+                    return;
+                }
+                try {
+                    crafterTarget = CrafterTemplate.decode(step.blockIds().get(0));
+                } catch (RuntimeException e) {
+                    fail("Bad crafter template " + step.itemId());
+                    return;
+                }
+                crafterPasses = 0;
+                phase = Phase.COLLECT; // stationTick converges the crafter on the template, one fix round per pass
+                timer = 0;
+            }
             default -> fail("Unsupported station step " + step.kind());
         }
     }
@@ -623,6 +868,10 @@ public final class MinecraftWorldActions implements WorldActions {
     private void stationTick(LocalPlayer player) {
         AbstractContainerMenu menu = player.containerMenu;
         if (Services.clicker().pending() > 0) {
+            return;
+        }
+        if (step.kind() == StepKind.CRAFTER_APPLY) {
+            crafterApplyTick(player, menu);
             return;
         }
         if (step.kind() == StepKind.FURNACE_COLLECT) {
@@ -691,6 +940,85 @@ public final class MinecraftWorldActions implements WorldActions {
         }
         transferred = bottles > 0 ? Map.of(step.itemId(), bottles) : Map.of();
         phase = Phase.WAIT_CLICKS;
+        timer = 0;
+    }
+
+    // ---- crafter templates ------------------------------------------------------------------------------------------
+
+    private volatile java.util.function.Consumer<CrafterTemplate> crafterSink;
+    private CrafterTemplate crafterTarget;
+    private int crafterPasses;
+    /** Fix rounds before giving up (clear, then toggle + seed, then a check; one spare). */
+    private static final int MAX_CRAFTER_PASSES = 4;
+
+    /** Where CRAFTER_SAVE puts captured templates (StorageMemory, persisted with the storage JSON). */
+    public void setCrafterTemplateSink(java.util.function.Consumer<CrafterTemplate> sink) {
+        this.crafterSink = sink;
+    }
+
+    private static int crafterMask(net.minecraft.world.inventory.CrafterMenu cm) {
+        int mask = 0;
+        for (int i = 0; i < CrafterTemplate.SLOTS; i++) {
+            if (cm.isSlotDisabled(i)) {
+                mask |= 1 << i;
+            }
+        }
+        return mask;
+    }
+
+    private String[] crafterItems(AbstractContainerMenu menu) {
+        String[] items = new String[CrafterTemplate.SLOTS];
+        for (int i = 0; i < CrafterTemplate.SLOTS; i++) {
+            ItemStack s = menu.getSlot(i).getItem();
+            items[i] = s.isEmpty() ? null : inv.idOf(s.getItem());
+        }
+        return items;
+    }
+
+    /**
+     * One fix round once the previous round's clicks are done: diff the open crafter with the template, then take
+     * wrong items out (QUICK_MOVE) or, when nothing is left to clear, toggle slot locks and seed items. Vanilla only
+     * toggles empty slots, hence clears go first in their own round. Done when the diff is empty.
+     */
+    private void crafterApplyTick(LocalPlayer player, AbstractContainerMenu menu) {
+        if (!(menu instanceof net.minecraft.world.inventory.CrafterMenu cm)) {
+            fail("Crafter closed while applying the template");
+            return;
+        }
+        if (timer < 3) {
+            return; // let the server echo the last round's slot changes
+        }
+        List<CrafterTemplate.Fix> fixes = crafterTarget.diff(crafterMask(cm), crafterItems(menu));
+        if (fixes.isEmpty()) {
+            finish(player, "Crafter set to template " + crafterTarget.name());
+            return;
+        }
+        if (crafterPasses++ >= MAX_CRAFTER_PASSES) {
+            fail("Crafter still differs from " + crafterTarget.name() + " (" + fixes.size() + " fixes left)");
+            return;
+        }
+        boolean cleared = false;
+        for (CrafterTemplate.Fix f : fixes) {
+            if (f.kind() == CrafterTemplate.FixKind.CLEAR) {
+                Services.clicker().queueClick(lease, f.slot(), 0, IContainerClicker.Click.QUICK_MOVE);
+                cleared = true;
+            }
+        }
+        if (!cleared) {
+            Inventory pinv = player.getInventory();
+            for (CrafterTemplate.Fix f : fixes) {
+                if (f.kind() == CrafterTemplate.FixKind.TOGGLE
+                        && !Services.clicker().toggleSlotState(lease, f.slot(), f.enable())) {
+                    fail("Could not toggle crafter slot " + f.slot());
+                    return;
+                }
+                if (f.kind() == CrafterTemplate.FixKind.SEED && moveFromInventory(menu, pinv, f.itemId(), 1,
+                        f.slot()) == 0) {
+                    fail("No " + f.itemId() + " carried to seed crafter slot " + f.slot());
+                    return;
+                }
+            }
+        }
         timer = 0;
     }
 
@@ -912,6 +1240,30 @@ public final class MinecraftWorldActions implements WorldActions {
                 phase = Phase.BREAK;
                 timer = 0;
             }
+            case ENDER -> {
+                Map<String, Integer> moved = new LinkedHashMap<>();
+                for (Map.Entry<String, Integer> e : before.entrySet()) {
+                    int m = inv.count(e.getKey()) - e.getValue();
+                    if (m > 0) {
+                        moved.put(e.getKey(), m);
+                    }
+                }
+                transferred = Map.copyOf(moved);
+                if (!(player.containerMenu instanceof InventoryMenu)) {
+                    player.closeContainer();
+                }
+                int silk = inv.silkTouchPickaxeSlot();
+                if (silk < 0 || silk >= 9) {
+                    fail("Silk Touch pickaxe not on the hotbar: ender chest left in place at "
+                            + PackedPos.format(stationPos) + " (items taken: " + transferred + ")");
+                    return;
+                }
+                Services.input().selectHotbarSlot(lease, silk);
+                Services.input().setRotationTarget(lease, aimAt(player, BlockPos.getX(stationPos) + 0.5,
+                        BlockPos.getY(stationPos) + 0.5, BlockPos.getZ(stationPos) + 0.5));
+                phase = Phase.BREAK;
+                timer = 0;
+            }
             default -> finish(player, "");
         }
     }
@@ -942,8 +1294,9 @@ public final class MinecraftWorldActions implements WorldActions {
         if (timer > 200) {
             input.setKeyHeld(lease, SimKey.ATTACK, false);
             input.clearRotation(lease);
-            fail("Could not break the shulker box at " + BlockPos.getX(stationPos) + " " + BlockPos.getY(stationPos)
-                    + " " + BlockPos.getZ(stationPos) + " (left in place; items taken: " + transferred + ")");
+            fail("Could not break the " + station + " at " + BlockPos.getX(stationPos) + " "
+                    + BlockPos.getY(stationPos) + " " + BlockPos.getZ(stationPos) + " (left in place; items taken: "
+                    + transferred + ")");
             return;
         }
         if (!input.isRotationSettled(2f) && timer < 30) {
@@ -951,13 +1304,23 @@ public final class MinecraftWorldActions implements WorldActions {
         }
         boolean onIt = mc.hitResult instanceof BlockHitResult bh && bh.getType() == HitResult.Type.BLOCK
                 && bh.getBlockPos().asLong() == stationPos;
+        if (op == Op.ENDER && !inv.isSilkTouchPickaxe(player.getMainHandItem())) {
+            onIt = false; // never mine an ender chest without Silk Touch (it would drop obsidian)
+            if (timer > 40) {
+                input.setKeyHeld(lease, SimKey.ATTACK, false);
+                input.clearRotation(lease);
+                fail("Silk Touch pickaxe not in hand: ender chest left in place at " + PackedPos.format(stationPos)
+                        + " (items taken: " + transferred + ")");
+                return;
+            }
+        }
         input.setKeyHeld(lease, SimKey.ATTACK, onIt);
     }
 
     private void pickUpBox(LocalPlayer player) {
         if (inv.count(station) >= boxBefore) {
             driver.get().cancel();
-            finish(player, "Unpacked " + transferred + " from " + station);
+            finish(player, (op == Op.ENDER ? "Fetched " : "Unpacked ") + transferred + " from " + station);
             return;
         }
         MiningDriver.Status st = driver.get().status();
@@ -1022,6 +1385,11 @@ public final class MinecraftWorldActions implements WorldActions {
         if (op != Op.NONE) {
             if (phase == Phase.BREAK && lease != null) {
                 Services.input().setKeyHeld(lease, SimKey.ATTACK, false);
+            }
+            if ((phase == Phase.WATER_WALK || phase == Phase.WATER_AIM || phase == Phase.WATER_WAIT)
+                    && lease != null) {
+                Services.input().clearRotation(lease);
+                driver.get().cancel();
             }
             Minecraft mc = Minecraft.getInstance();
             if (mc.player != null && !(mc.player.containerMenu instanceof InventoryMenu)) {
@@ -1297,7 +1665,7 @@ public final class MinecraftWorldActions implements WorldActions {
                         if (p.getBoundingBox().intersects(sx0, y, sz0, sx0 + 1, y + 1, sz0 + 1)) {
                             continue; // the block would go into the player
                         }
-                        if (op == Op.SHULKER) {
+                        if (op == Op.SHULKER || op == Op.ENDER) {
                             // a box on the floor opens upward: the block above must be free, and not fluid
                             BlockState above = level.getBlockState(probe.set(sx0, y + 1, sz0));
                             probe.set(sx0, y, sz0);
@@ -1306,7 +1674,7 @@ public final class MinecraftWorldActions implements WorldActions {
                             }
                         }
                         if (chooseSupport(level, p, sx0, y, sz0, reach)
-                                && (op != Op.SHULKER || supportFace == Direction.UP)) {
+                                && ((op != Op.SHULKER && op != Op.ENDER) || supportFace == Direction.UP)) {
                             return spot;
                         }
                     }

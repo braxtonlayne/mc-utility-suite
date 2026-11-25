@@ -12,4 +12,18 @@ public interface IStorageIndex {
 
     /** Containers holding the item, nearest to {@code fromPackedPos} first. */
     List<StorageEntry> containersWith(String itemId, String dimension, long fromPackedPos);
+
+    /**
+     * The ender chest the player carries, as a source to place, use and mine back with Silk Touch, or null when that is
+     * not possible (no chest or no Silk Touch pickaxe carried, mirror unknown, or the ender chest source is off).
+     * Its position is a sentinel, never a real block. Callers use it only when no placed ender chest is in range.
+     */
+    default StorageEntry carriedEnderChest(String dimension) {
+        return null;
+    }
+
+    /** Names of the saved crafter templates ("crafter save <name>"), oldest first. */
+    default List<String> crafterTemplateNames() {
+        return List.of();
+    }
 }

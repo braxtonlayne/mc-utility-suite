@@ -69,6 +69,13 @@ public record PlanContext(Map<String, Integer> inventory, int pickaxeTier, List<
                     enderSeen = true;
                 }
             }
+            if (!enderSeen) {
+                // no placed ender chest in range: the carried one (mined back with Silk Touch) is the last resort
+                StorageEntry carried = storageIndex.carriedEnderChest(dimension);
+                if (carried != null && !excludedContainers.contains(carried.packedPos())) {
+                    eligible.add(carried);
+                }
+            }
         }
         return new PlanContext(inv.counts(), inv.bestPickaxeTier(), eligible, dimension, origin, cost, credit,
                 nearbyStations, includeReturn, inv.carriedContainers());

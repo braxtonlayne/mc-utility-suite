@@ -68,6 +68,8 @@ public final class JobsTab {
             sb.append('/').append(t.jobCard().map(SchematicJobCard::phase).orElse("-"));
         }
         sb.append('/').append(schematicFiles.size()).append(listing);
+        com.utilitysuite.core.api.IStorageIndex st = Services.storageOrNull();
+        sb.append('/').append(st == null ? 0 : st.crafterTemplateNames().hashCode());
         return sb.toString();
     }
 
@@ -80,6 +82,7 @@ public final class JobsTab {
             activeJob(p, goals);
             preview(p, goals);
             queue(p, goals);
+            crafterTemplates(p, goals);
         }
         schematics(p);
         GeneratorCards.build(p);
@@ -207,6 +210,30 @@ public final class JobsTab {
             p.rowLabel(GoalHeroCard.chipText(j.status()), w - 140, 76, GoalHeroCard.statusColor(j.status()));
             p.button("Cancel", null, w - 58, 56, PillButton.Style.DANGER_SOFT, b -> {
                 goals.cancel(id);
+                p.rebuild();
+            });
+            p.nextRow();
+        }
+    }
+
+    // ---- crafter templates ------------------------------------------------------------------------------------------
+
+    /** Saved crafter templates ("crafter save <name>"), each with Apply (queues "crafter apply <name>"). */
+    private static void crafterTemplates(Panel p, IGoalEngine goals) {
+        com.utilitysuite.core.api.IStorageIndex st = Services.storageOrNull();
+        List<String> names = st == null ? List.of() : st.crafterTemplateNames();
+        if (names.isEmpty()) {
+            return;
+        }
+        p.card("Crafter templates", names.size() + " saved");
+        int w = p.width();
+        for (String name : names) {
+            p.listRow(null);
+            p.rowLabel(name, 4, w - 4 - 70, Panel.WHITE);
+            p.button("Apply", null, w - 64, 60, PillButton.Style.PRIMARY, b -> {
+                long id = goals.submit(new GoalRequest.Crafter(true, name, CostProfile.FASTEST,
+                        DataSourceMode.OBSERVED_ONLY));
+                p.toast("Queued job #" + id + ": apply crafter template " + name);
                 p.rebuild();
             });
             p.nextRow();

@@ -251,6 +251,13 @@ public final class JobExecutor implements LeaseListener {
             return com.utilitysuite.jobs.planner.StationJobPlanner.brew(b.potion(), form, b.count(), pos, inv, storage,
                     dim, from, 0);
         }
+        if (j.request instanceof GoalRequest.Crafter k) {
+            List<com.utilitysuite.jobs.planner.StationJobPlanner.KnownStation> st = stationSource == null ? List.of()
+                    : stationSource.stations(dim, from, settings.stationRange,
+                    Set.of(com.utilitysuite.jobs.planner.StationJobPlanner.CRAFTER));
+            return com.utilitysuite.jobs.planner.StationJobPlanner.crafter(k.apply(), k.name(),
+                    k.apply() && stationSource != null ? stationSource.crafterTemplate(k.name()) : null, st, dim);
+        }
         return null;
     }
 
@@ -478,7 +485,7 @@ public final class JobExecutor implements LeaseListener {
             case CRAFT, SMELT -> tickCraft(j, step);
             case TRAVEL, RETURN -> tickTravel(j, step);
             case BUILD -> tickBuild(j, step);
-            case FURNACE_LOAD, FURNACE_COLLECT, BREW, FILL_BOTTLES -> tickStation(j, step);
+            case FURNACE_LOAD, FURNACE_COLLECT, BREW, FILL_BOTTLES, CRAFTER_SAVE, CRAFTER_APPLY -> tickStation(j, step);
         }
     }
 
@@ -550,7 +557,8 @@ public final class JobExecutor implements LeaseListener {
             j.pendingPlan = travelPlan(t);
             return;
         }
-        if (j.request instanceof GoalRequest.SmeltArray || j.request instanceof GoalRequest.Brew) {
+        if (j.request instanceof GoalRequest.SmeltArray || j.request instanceof GoalRequest.Brew
+                || j.request instanceof GoalRequest.Crafter) {
             if (!settings.stationJobs) {
                 fail(j, "Furnace-array and brewing goals are off (Goal Engine > Station jobs)");
                 return;
@@ -1536,7 +1544,8 @@ public final class JobExecutor implements LeaseListener {
             return MOVE_CHANNELS;
         }
         return switch (step.kind()) {
-            case CRAFT, SMELT, FETCH, SHULKER_RESTOCK, RETURN, FURNACE_LOAD, FURNACE_COLLECT, BREW, FILL_BOTTLES ->
+            case CRAFT, SMELT, FETCH, SHULKER_RESTOCK, RETURN, FURNACE_LOAD, FURNACE_COLLECT, BREW, FILL_BOTTLES,
+                 CRAFTER_SAVE, CRAFTER_APPLY ->
                     ALL_CHANNELS;
             default -> MOVE_CHANNELS;
         };
@@ -1650,6 +1659,8 @@ public final class JobExecutor implements LeaseListener {
             case FURNACE_LOAD:
             case FURNACE_COLLECT:
             case BREW:
+            case CRAFTER_SAVE:
+            case CRAFTER_APPLY:
                 return step.storagePos();
             case GATHER:
             case MINE:

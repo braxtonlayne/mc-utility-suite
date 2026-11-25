@@ -322,6 +322,7 @@ public final class GoalEngine implements IGoalEngine, IModule, IConfigurable {
             case GoalRequest.SmeltArray s -> new GoalRequest.SmeltArray(s.itemId(), s.count(), s.station(), c,
                     s.dataSource());
             case GoalRequest.Brew b -> new GoalRequest.Brew(b.potion(), b.form(), b.count(), c, b.dataSource());
+            case GoalRequest.Crafter k -> new GoalRequest.Crafter(k.apply(), k.name(), c, k.dataSource());
         };
     }
 }

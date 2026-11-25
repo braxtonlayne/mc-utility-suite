@@ -118,6 +118,26 @@ public final class StorageMemory implements IStorageIndex, StationJobPlanner.Sta
         return ender;
     }
 
+    /** True when the player carries an ender chest and a Silk Touch pickaxe (set by the module, read any thread). */
+    private volatile java.util.function.BooleanSupplier carriedEnderAccess = () -> false;
+
+    public void setCarriedEnderAccess(java.util.function.BooleanSupplier access) {
+        this.carriedEnderAccess = access == null ? () -> false : access;
+    }
+
+    @Override
+    public StorageEntry carriedEnderChest(String dimension) {
+        EnderChestMirror.Snapshot s = ender.snapshot();
+        if (!enderAsSource || !s.known() || !carriedEnderAccess.getAsBoolean()) {
+            return null;
+        }
+        if (clock.getAsLong() - s.timestampMillis() > maxAgeMillis) {
+            return null;
+        }
+        return new StorageEntry(com.utilitysuite.jobs.planner.EnderChestPlanner.CARRIED_POS, dimension, ENDER_CHEST,
+                s.contents(), s.timestampMillis(), false, s.nested());
+    }
+
     /**
      * When on, every remembered ender chest shows the mirrored contents in the snapshot (so the planner can FETCH from
      * the nearest one, including nested shulker boxes); {@link #count} counts the mirror once.
@@ -238,6 +258,8 @@ public final class StorageMemory implements IStorageIndex, StationJobPlanner.Sta
         stations.clear();
         publishStations();
         ender.clear();
+        crafterTemplates.clear();
+        crafterSnapshot = List.of();
         dirty = false;
         snapshot = List.of();
     }
@@ -398,7 +420,67 @@ public final class StorageMemory implements IStorageIndex, StationJobPlanner.Sta
             }
             root.add("stations", st);
         }
+        if (!crafterTemplates.isEmpty()) {
+            JsonArray ct = new JsonArray();
+            for (com.utilitysuite.jobs.planner.CrafterTemplate t : crafterTemplates.values()) {
+                ct.add(t.encode()); // compact: "name|result|mask|id,id,,..."
+            }
+            root.add("crafters", ct);
+        }
         return root.toString();
+    }
+
+    // ---- crafter templates ------------------------------------------------------------------------------------------
+
+    /** Saved crafter templates by lower-case name, in save order (client thread writes, snapshot reads). */
+    private final Map<String, com.utilitysuite.jobs.planner.CrafterTemplate> crafterTemplates = new LinkedHashMap<>();
+    private volatile List<com.utilitysuite.jobs.planner.CrafterTemplate> crafterSnapshot = List.of();
+
+    /** Saves (or replaces) a template by name and marks the storage JSON for writing. Client thread. */
+    public void putCrafterTemplate(com.utilitysuite.jobs.planner.CrafterTemplate t) {
+        crafterTemplates.put(t.name().toLowerCase(java.util.Locale.ROOT), t);
+        crafterSnapshot = List.copyOf(crafterTemplates.values());
+        dirty = true;
+    }
+
+    public void removeCrafterTemplate(String name) {
+        if (crafterTemplates.remove(name.toLowerCase(java.util.Locale.ROOT)) != null) {
+            crafterSnapshot = List.copyOf(crafterTemplates.values());
+            dirty = true;
+        }
+    }
+
+    /** Saved templates, oldest first (any thread). */
+    public List<com.utilitysuite.jobs.planner.CrafterTemplate> crafterTemplates() {
+        return crafterSnapshot;
+    }
+
+    /** Cached names for the UI (its rebuild signature reads them often: no allocation per read). */
+    private volatile List<String> crafterNames = List.of();
+    private List<com.utilitysuite.jobs.planner.CrafterTemplate> namesFor = List.of();
+
+    @Override
+    public List<String> crafterTemplateNames() {
+        List<com.utilitysuite.jobs.planner.CrafterTemplate> all = crafterSnapshot;
+        if (all != namesFor) {
+            List<String> out = new ArrayList<>(all.size());
+            for (com.utilitysuite.jobs.planner.CrafterTemplate t : all) {
+                out.add(t.name());
+            }
+            crafterNames = List.copyOf(out);
+            namesFor = all;
+        }
+        return crafterNames;
+    }
+
+    @Override
+    public com.utilitysuite.jobs.planner.CrafterTemplate crafterTemplate(String name) {
+        for (com.utilitysuite.jobs.planner.CrafterTemplate t : crafterSnapshot) {
+            if (t.name().equalsIgnoreCase(name)) {
+                return t;
+            }
+        }
+        return null;
     }
 
     private static JsonArray nestedJson(List<NestedContainer> nested) {
@@ -435,6 +517,7 @@ public final class StorageMemory implements IStorageIndex, StationJobPlanner.Sta
         byDim.clear();
         stations.clear();
         ender.clear();
+        crafterTemplates.clear();
         try {
             JsonObject root = JsonParser.parseString(json).getAsJsonObject();
             for (JsonElement el : root.getAsJsonArray("entries")) {
@@ -477,10 +560,22 @@ public final class StorageMemory implements IStorageIndex, StationJobPlanner.Sta
                             .put(o.get("p").getAsLong(), o.get("t").getAsString());
                 }
             }
+            if (root.has("crafters")) {
+                for (JsonElement el : root.getAsJsonArray("crafters")) {
+                    try {
+                        com.utilitysuite.jobs.planner.CrafterTemplate t =
+                                com.utilitysuite.jobs.planner.CrafterTemplate.decode(el.getAsString());
+                        crafterTemplates.put(t.name().toLowerCase(java.util.Locale.ROOT), t);
+                    } catch (RuntimeException bad) {
+                        // skip a malformed template, keep the rest
+                    }
+                }
+            }
         } catch (RuntimeException e) {
             byDim.clear();
         }
         publishStations();
+        crafterSnapshot = List.copyOf(crafterTemplates.values());
         dirty = false;
         publish();
     }

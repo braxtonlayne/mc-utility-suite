@@ -205,4 +205,34 @@ public final class MinecraftInventoryView implements IInventoryView {
         }
         return level;
     }
+
+    /** True for a pickaxe with Silk Touch (mines an ender chest back as itself instead of obsidian). */
+    public boolean isSilkTouchPickaxe(ItemStack s) {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.level == null || s.isEmpty() || !(s.getItem() instanceof PickaxeItem)) {
+            return false;
+        }
+        var silk = mc.level.registryAccess().registryOrThrow(net.minecraft.core.registries.Registries.ENCHANTMENT)
+                .getHolderOrThrow(Enchantments.SILK_TOUCH);
+        return EnchantmentHelper.getItemEnchantmentLevel(silk, s) > 0;
+    }
+
+    /** Inventory slot (0..35, hotbar first) of a Silk Touch pickaxe, or -1. Not per tick. */
+    public int silkTouchPickaxeSlot() {
+        Inventory inv = inventory();
+        if (inv == null) {
+            return -1;
+        }
+        for (int i = 0; i < 36; i++) {
+            if (isSilkTouchPickaxe(inv.items.get(i))) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /** An ender chest item and a Silk Touch pickaxe are both carried (the carried chest can be placed and taken back). */
+    public boolean canUseCarriedEnderChest() {
+        return count("minecraft:ender_chest") > 0 && silkTouchPickaxeSlot() >= 0;
+    }
 }

@@ -80,6 +80,18 @@ public sealed interface GoalRequest {
         }
     }
 
+    /**
+     * Save the nearest remembered crafter's slot locks and seeded items as a named template, or apply a saved one to
+     * it ("crafter save buckets", "crafter apply buckets").
+     *
+     * @param apply true to apply {@code name}, false to save it
+     */
+    record Crafter(boolean apply, String name, CostProfile cost, DataSourceMode dataSource) implements GoalRequest {
+        public String label() {
+            return (apply ? "Apply" : "Save") + " crafter template " + name;
+        }
+    }
+
     record Custom(String text, CostProfile cost, DataSourceMode dataSource) implements GoalRequest {
         public String label() {
             return text;
