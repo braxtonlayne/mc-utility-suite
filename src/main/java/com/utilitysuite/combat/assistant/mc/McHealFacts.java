@@ -5,6 +5,7 @@ import com.utilitysuite.jobs.survival.FoodSelector;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.component.DataComponents;
+import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.food.FoodProperties;
 import net.minecraft.world.item.Item;
@@ -26,6 +27,10 @@ public final class McHealFacts implements HealFacts {
     private float foodSaturation;
     private int foodEatTicks = 32;
     private int splashSlot = -1;
+    private int drinkHealSlot = -1;
+    private int drinkRegenSlot = -1;
+    private int splashRegenSlot = -1;
+    private boolean regenerating;
     private int gapples;
 
     @Override
@@ -33,12 +38,17 @@ public final class McHealFacts implements HealFacts {
         LocalPlayer p = Minecraft.getInstance().player;
         foodSlot = -1;
         splashSlot = -1;
+        drinkHealSlot = -1;
+        drinkRegenSlot = -1;
+        splashRegenSlot = -1;
+        regenerating = false;
         gapples = 0;
         if (p == null) {
             hunger = 20;
             saturation = 0f;
             return;
         }
+        regenerating = p.hasEffect(MobEffects.REGENERATION);
         hunger = p.getFoodData().getFoodLevel();
         saturation = p.getFoodData().getSaturationLevel();
         Inventory inv = p.getInventory();
@@ -56,10 +66,24 @@ public final class McHealFacts implements HealFacts {
             if (i >= 9) {
                 continue;
             }
-            if (it == Items.SPLASH_POTION) {
+            if (it == Items.SPLASH_POTION || it == Items.POTION) {
                 PotionContents pc = st.get(DataComponents.POTION_CONTENTS);
-                if (splashSlot < 0 && pc != null && (pc.is(Potions.HEALING) || pc.is(Potions.STRONG_HEALING))) {
-                    splashSlot = i;
+                if (pc == null) {
+                    continue;
+                }
+                boolean heal = pc.is(Potions.HEALING) || pc.is(Potions.STRONG_HEALING);
+                boolean regen = pc.is(Potions.REGENERATION) || pc.is(Potions.STRONG_REGENERATION)
+                        || pc.is(Potions.LONG_REGENERATION);
+                if (it == Items.SPLASH_POTION) {
+                    if (heal && splashSlot < 0) {
+                        splashSlot = i;
+                    } else if (regen && splashRegenSlot < 0) {
+                        splashRegenSlot = i;
+                    }
+                } else if (heal && drinkHealSlot < 0) {
+                    drinkHealSlot = i;
+                } else if (regen && drinkRegenSlot < 0) {
+                    drinkRegenSlot = i;
                 }
                 continue;
             }
@@ -118,6 +142,26 @@ public final class McHealFacts implements HealFacts {
     @Override
     public int splashHealingSlot() {
         return splashSlot;
+    }
+
+    @Override
+    public int drinkHealingSlot() {
+        return drinkHealSlot;
+    }
+
+    @Override
+    public int drinkRegenSlot() {
+        return drinkRegenSlot;
+    }
+
+    @Override
+    public int splashRegenSlot() {
+        return splashRegenSlot;
+    }
+
+    @Override
+    public boolean regenerating() {
+        return regenerating;
     }
 
     @Override
