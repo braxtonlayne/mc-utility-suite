@@ -574,11 +574,11 @@ Tier 1 (project fit, immediately useful)
       stranger within 48 m while mining -> Stop-All + alert; armour < 12% -> retreat; totem pop -> QuickPearl escape.
 
 Tier 2 (bigger, own-world, seed- or combat-dependent)
-- [ ] C1 Ranged ballistics lead and charge timing (bow, crossbow volleys, trident). Combat: deferred.
-- [ ] C2 Combat potions, splash-heal foot throws, post-pop pressure. Combat: deferred.
-- [ ] C3 Mace + wind charge + elytra dive planner (no attribute/breach swap exploits). Combat: deferred.
-- [ ] C4 Wind-charge / fireball deflection and a pearl landing countdown. Combat: deferred.
-- [ ] C5 Parkour + combat movement fusion (gap jumps mid-fight via MovementPhysics). Combat: deferred.
+- [x] C1 Ranged ballistics lead and charge timing (bow, crossbow volleys, trident). Built (setting off by default), untested in fights.
+- [ ] C2 Combat potions, splash-heal foot throws, post-pop pressure. Planner + tests built 2026-11-24; not yet driven in fights.
+- [ ] C3 Mace + wind charge + elytra dive planner (no attribute/breach swap exploits). Planner + tests built 2026-11-24; not yet driven in fights.
+- [x] C4 Wind-charge / fireball deflection and a pearl landing countdown. Built (setting off by default), untested in fights.
+- [ ] C5 Parkour + combat movement fusion (gap jumps mid-fight via MovementPhysics). Planner + tests built 2026-11-24; not yet driven in fights.
 - [x] J2 Villager bulk trading and librarian enchantment roller (opt-in, protected-area guards).
 - [x] J3 Schematic auto-supply runs between layers and temporary scaffolding cleanup.
 - [x] W1 Client-side terrain and biome oracles for OreSim on remote servers (full value needs a known seed).
