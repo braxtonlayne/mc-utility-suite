@@ -92,7 +92,7 @@ public final class GoalParser {
     }
 
     private static final List<String> VERBS = List.of("gather", "mine", "collect", "get", "craft", "make", "smelt",
-            "build", "goto", "travel");
+            "build", "goto", "travel", "furnaces", "brew");
 
     private final Supplier<ItemNameMatcher> matcher;
     private final Function<String, Optional<WaypointTarget>> waypoints;
@@ -184,6 +184,8 @@ public final class GoalParser {
             case "build" -> parseBuild(rest, anchor, gatherOnly, cost, source);
             case "goto" -> parseCoords(rest, cost, source);
             case "go", "travel", "walk" -> parseTravel(rest, cost, source);
+            case "furnaces", "smelt-array", "blast", "smoke" -> parseSmeltArray(verb, rest, cost, source);
+            case "brew" -> parseBrew(rest, cost, source);
             default -> ParseResult.error("Unknown verb '" + verb + "'", closestVerbs(verb));
         };
     }
@@ -224,6 +226,51 @@ public final class GoalParser {
                 ? new GoalRequest.Craft(m.id(), qty, cost, source)
                 : new GoalRequest.Gather(m.id(), qty, cost, source);
         return ParseResult.ok(req);
+    }
+
+    /** "furnaces 192 raw iron" (any furnace type), "blast 64 raw gold", "smoke 32 beef". */
+    private ParseResult parseSmeltArray(String verb, List<String> rest, CostProfile cost, DataSourceMode source) {
+        ParseResult item = parseItemGoal(rest, false, cost, source);
+        if (!(item.request() instanceof GoalRequest.Gather g)) {
+            return item;
+        }
+        String station = switch (verb) {
+            case "blast" -> "minecraft:blast_furnace";
+            case "smoke" -> "minecraft:smoker";
+            default -> null;
+        };
+        return ParseResult.ok(new GoalRequest.SmeltArray(g.itemId(), g.count(), station, cost, source));
+    }
+
+    /** "brew 3 splash strong_healing", "brew 2 long swiftness", "brew lingering weakness". */
+    private ParseResult parseBrew(List<String> rest, CostProfile cost, DataSourceMode source) {
+        int qty = 1;
+        String form = "DRINK";
+        List<String> name = new ArrayList<>();
+        for (String w : rest) {
+            String lw = w.toLowerCase(Locale.ROOT);
+            Integer q = parseQuantity(w);
+            if (q != null) {
+                qty = q;
+            } else if (lw.equals("splash") || lw.equals("lingering")) {
+                form = lw.toUpperCase(Locale.ROOT);
+            } else if (!lw.equals("of") && !lw.equals("potion") && !lw.equals("potions")) {
+                name.add(lw);
+            }
+        }
+        if (qty <= 0) {
+            return ParseResult.error("Quantity must be at least 1", List.of());
+        }
+        String potion = String.join("_", name).replace("ii", "").replace("__", "_");
+        if (potion.endsWith("_")) {
+            potion = "strong_" + potion.substring(0, potion.length() - 1);
+        }
+        if (potion.isEmpty() || com.utilitysuite.jobs.planner.BrewingPlanner.chain(potion,
+                com.utilitysuite.jobs.planner.BrewingPlanner.Form.DRINK) == null) {
+            return ParseResult.error("Unknown or unbrewable potion '" + String.join(" ", name) + "'",
+                    List.of("brew 3 splash strong_healing", "brew 2 long_swiftness"));
+        }
+        return ParseResult.ok(new GoalRequest.Brew(potion, form, qty, cost, source));
     }
 
     private ParseResult parseBuild(List<String> rest, long anchor, boolean gatherOnly, CostProfile cost,

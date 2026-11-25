@@ -38,6 +38,9 @@ public record PlanStep(StepKind kind, String itemId, int count, int crafts, Stri
             case SHULKER_RESTOCK -> label + " (" + count + " " + itemId + " from " + String.join("/", blockIds) + ")";
             case GATHER, MINE -> label + " (" + count + " " + itemId + " from " + String.join("/", blockIds)
                     + (requiredTier > 0 ? ", tier " + requiredTier : "") + ")";
+            case FURNACE_LOAD -> label + " (" + count + " " + itemId
+                    + (blockIds.isEmpty() ? "" : ", " + crafts + " " + blockIds.get(0)) + ")";
+            case BREW -> label + " (" + count + " bottles: " + String.join(" + ", blockIds) + ")";
             default -> label;
         };
     }

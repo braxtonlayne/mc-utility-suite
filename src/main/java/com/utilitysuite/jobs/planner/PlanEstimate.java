@@ -46,6 +46,8 @@ public final class PlanEstimate {
             case RETURN -> RETURN;
             case TRAVEL -> TRAVEL;
             case BUILD -> BUILD;
+            case FURNACE_LOAD, FURNACE_COLLECT, FILL_BOTTLES -> FETCH;
+            case BREW -> (long) Math.max(1, s.blockIds().size() - 1) * 20 + FETCH;
         };
     }
 

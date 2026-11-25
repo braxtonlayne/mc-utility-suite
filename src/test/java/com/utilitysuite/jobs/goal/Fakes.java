@@ -255,6 +255,28 @@ final class Fakes {
             pending = Result.DONE;
         }
 
+        /** When set, every station step fails with this message. */
+        String stationFails;
+
+        @Override
+        public void beginStation(PlanStep step, ControlLease lease) {
+            log.add("station " + step.kind() + " " + step.count() + " " + step.itemId());
+            if (stationFails != null) {
+                message = stationFails;
+                transferred = Map.of();
+                pending = Result.FAILED;
+                return;
+            }
+            switch (step.kind()) {
+                case FURNACE_COLLECT, BREW, FILL_BOTTLES -> {
+                    inv.add(step.itemId(), step.count());
+                    transferred = Map.of(step.itemId(), step.count());
+                }
+                default -> transferred = Map.of();
+            }
+            pending = Result.DONE;
+        }
+
         @Override
         public Result poll() {
             return pending;

@@ -232,6 +232,8 @@ public final class GoalEngine implements IGoalEngine, IModule, IConfigurable {
                 ResumeHoldGate.DEFAULT_MAX_HOLD_TICKS / 20);
         s.batchErrands = profile.getBool(ID, "batch_errands", true);
         s.depositAfterGather = profile.getBool(ID, "deposit_after_gather", false);
+        s.stationJobs = profile.getBool(ID, "station_jobs", false);
+        s.stationRange = profile.getInt(ID, "station_range", 32);
         s.minToolDurability = profile.getInt(ID, "min_tool_durability", ToolDurabilityGuard.DEFAULT_MIN_DURABILITY);
         s.protectEnchantedTools = profile.getBool(ID, "protect_enchanted_tools", true);
         try {
@@ -269,6 +271,12 @@ public final class GoalEngine implements IGoalEngine, IModule, IConfigurable {
                         "Fetch and mine for queued jobs on the same trip"),
                 SettingSpec.bool("deposit_after_gather", "Deposit after gathering", false, "",
                         "Put gathered items into a known container near the start point"),
+                SettingSpec.bool("station_jobs", "Station jobs (furnaces, brewing)", false, "Stations",
+                        "Allow 'furnaces 192 raw_iron' (split a smelt over remembered furnaces) and 'brew 3 splash"
+                                + " strong_healing' (brew at a remembered stand). Stations are remembered when you"
+                                + " open them."),
+                SettingSpec.integer("station_range", "Station range (blocks)", 32, 4, 128, "Stations",
+                        "Remembered furnaces and brewing stands farther away are not used").asAdvanced(),
                 SettingSpec.bool("efficiency_tools", "Right tool first (pro habit)", true, "Tools",
                         "Before digging a lot of dirt, sand or gravel, get a shovel; before felling a lot of logs, an axe"
                                 + " (yours, from storage, or crafted). Not on the Cheapest profile."),
@@ -311,6 +319,9 @@ public final class GoalEngine implements IGoalEngine, IModule, IConfigurable {
             case GoalRequest.GatherMany m -> new GoalRequest.GatherMany(m.items(), m.reason(), c, m.dataSource());
             case GoalRequest.Travel t -> new GoalRequest.Travel(t.x(), t.y(), t.z(), t.dimension(), c, t.dataSource());
             case GoalRequest.Custom x -> new GoalRequest.Custom(x.text(), c, x.dataSource());
+            case GoalRequest.SmeltArray s -> new GoalRequest.SmeltArray(s.itemId(), s.count(), s.station(), c,
+                    s.dataSource());
+            case GoalRequest.Brew b -> new GoalRequest.Brew(b.potion(), b.form(), b.count(), c, b.dataSource());
         };
     }
 }

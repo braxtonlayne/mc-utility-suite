@@ -69,9 +69,24 @@ public final class MinecraftInventoryView implements IInventoryView {
         for (int i = 0, n = stacks.size(); i < n; i++) {
             ItemStack s = stacks.get(i);
             if (!s.isEmpty()) {
-                out.merge(idOf(s.getItem()), s.getCount(), Integer::sum);
+                String id = idOf(s.getItem());
+                out.merge(id, s.getCount(), Integer::sum);
+                String pk = potionKey(s, id);
+                if (pk != null) {
+                    out.merge(pk, s.getCount(), Integer::sum); // brewing stages: "minecraft:potion#minecraft:awkward"
+                }
             }
         }
+    }
+
+    /** {@code <item id>#<potion id>} for a potion-like stack (see BrewingPlanner keys), else null. */
+    public static String potionKey(ItemStack s, String itemId) {
+        net.minecraft.world.item.alchemy.PotionContents pc =
+                s.get(net.minecraft.core.component.DataComponents.POTION_CONTENTS);
+        if (pc == null || pc.potion().isEmpty()) {
+            return null;
+        }
+        return pc.potion().get().unwrapKey().map(k -> itemId + "#" + k.location()).orElse(null);
     }
 
     @Override

@@ -22,5 +22,19 @@ public enum StepKind {
      */
     SHULKER_RESTOCK,
     /** Hand off to the schematic toolkit. */
-    BUILD
+    BUILD,
+    /**
+     * Load one remembered furnace-type station at {@code storagePos}: {@code count} of {@code itemId} into the input
+     * slot and {@code crafts} of {@code blockIds[0]} (when present) into the fuel slot (see FurnaceBatchPlanner).
+     */
+    FURNACE_LOAD,
+    /** Take the smelted {@code itemId} ({@code count}) out of the station at {@code storagePos}, waiting until ready. */
+    FURNACE_COLLECT,
+    /**
+     * One brew at the brewing stand at {@code storagePos}: {@code count} bottles of {@code blockIds[0]} (potion key),
+     * then each ingredient in {@code blockIds[1..]} in order, waiting for every brew; blaze powder is loaded as needed.
+     */
+    BREW,
+    /** Fill {@code count} glass bottles with water at a nearby water source or water cauldron. */
+    FILL_BOTTLES
 }

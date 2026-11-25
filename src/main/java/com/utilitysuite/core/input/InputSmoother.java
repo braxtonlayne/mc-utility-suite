@@ -600,6 +600,14 @@ public final class InputSmoother implements IInputSmoother, IContainerClicker {
     }
 
     @Override
+    public boolean toggleSlotState(ControlLease lease, int slotIndex, boolean enabled) {
+        if (slotIndex < 0 || !valid(lease, ControlChannel.HOTBAR) || !backend.isReady()) {
+            return false;
+        }
+        return backend.setCrafterSlotEnabled(slotIndex, enabled);
+    }
+
+    @Override
     public int pending() {
         return clickSize;
     }
