@@ -23,6 +23,8 @@ import com.utilitysuite.world.overlays.WorldRadarModule;
 import com.utilitysuite.world.seed.SeedDiffModule;
 import com.utilitysuite.world.seed.SeedScannerModule;
 import com.utilitysuite.world.seed.SeedLocatorModule;
+import com.utilitysuite.world.sonar.CavityTomographyModule;
+import com.utilitysuite.world.sonar.SonarPulseModule;
 import com.utilitysuite.world.waypoints.WaypointsModule;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
@@ -91,6 +93,8 @@ public final class WorldBootstrap {
         RenderFiltersModule renderFilters = new RenderFiltersModule();
         StrongholdFinderModule strongholdFinder = new StrongholdFinderModule();
         TrialChamberModule trialChambers = new TrialChamberModule(runtime);
+        SonarPulseModule sonar = new SonarPulseModule(oreSim.predictions());
+        CavityTomographyModule cavities = new CavityTomographyModule();
         modBus.addListener(RegisterGuiLayersEvent.class, e -> e.registerBelow(VanillaGuiLayers.CHAT,
                 ResourceLocation.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID, "minimap"), minimap.hud()));
         Services.registerWaypoints(waypoints.store());
@@ -100,7 +104,7 @@ public final class WorldBootstrap {
         for (WorldModule m : new WorldModule[] {knowledge, overlays, oreSim, seedScanner, seedDiff, radar, camera,
                 waypoints,
                 minimap, lightOverlay, blastOverlay, spawnGeometry, seedLocator, freelook, renderFilters,
-                strongholdFinder, trialChambers}) {
+                strongholdFinder, trialChambers, sonar, cavities}) {
             registry.register(m);
             runtime.add(m);
         }
@@ -121,6 +125,12 @@ public final class WorldBootstrap {
             e.register(freelookKey);
             freelook.setKey(freelookKey);
             waypoints.setKeys(addWaypointKey, takeMeBackKey);
+            KeyMapping sonarKey = key("sonar_pulse", InputConstants.UNKNOWN.getValue());
+            KeyMapping cavityKey = key("cavity_rescan", InputConstants.UNKNOWN.getValue());
+            e.register(sonarKey);
+            e.register(cavityKey);
+            sonar.setKey(sonarKey);
+            cavities.setKey(cavityKey);
         });
 
         // Mixin hooks.
