@@ -18,6 +18,14 @@ public interface IGoalEngine {
 
     Optional<JobSnapshot> activeJob();
 
+    /**
+     * Live ETA of the running job in seconds (moving average of its step completion rate), or -1 while unknown.
+     * Cheap and allocation free: the HUD reads it on its poll and rebuilds text only when the shown value changes.
+     */
+    default int activeJobEtaSeconds() {
+        return -1;
+    }
+
     List<JobSnapshot> queuedJobs();
 
     /** Plan steps of a job for "Show Plan". */

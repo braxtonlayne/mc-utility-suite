@@ -153,6 +153,8 @@ public final class JobExecutor implements LeaseListener {
         int lastProgress;
         long bestDistSq = Long.MAX_VALUE;
         JobSnapshot lastPosted;
+        /** Moving average of step durations for the live ETA. */
+        final StepRateEstimator eta = new StepRateEstimator();
 
         Job(long id, GoalRequest request) {
             this.id = id;
@@ -219,6 +221,18 @@ public final class JobExecutor implements LeaseListener {
 
     public Optional<JobSnapshot> activeJob() {
         return active == null ? Optional.empty() : Optional.of(snapshot(active));
+    }
+
+    /**
+     * Live ETA of the active job in seconds from the moving average of its step durations; -1 while unknown (no job,
+     * not running, or no step measured yet). Allocation free.
+     */
+    public int activeEtaSeconds() {
+        Job j = active;
+        if (j == null || j.status != JobStatus.RUNNING) {
+            return -1;
+        }
+        return j.eta.etaSeconds(j.steps.size() - j.index, deps.millis().getAsLong());
     }
 
     public List<JobSnapshot> queuedJobs() {
@@ -464,6 +478,7 @@ public final class JobExecutor implements LeaseListener {
                     deps.actions().dimension(), StepRole.TARGET, b.label(), null));
         }
         j.index = 0;
+        j.eta.reset(deps.millis().getAsLong());
         j.phase = Phase.START;
         if (j.request instanceof GoalRequest.Custom) {
             fail(j, "Custom goals are not supported by the planner");
@@ -1288,6 +1303,7 @@ public final class JobExecutor implements LeaseListener {
     private void completeStep(Job j) {
         PlanStep done = j.current();
         j.index++;
+        j.eta.stepCompleted(deps.millis().getAsLong());
         j.phase = Phase.START;
         j.candidates = List.of();
         if (done != null && done.kind() == StepKind.MINE && settings.batchErrands) {
@@ -1607,6 +1623,12 @@ public final class JobExecutor implements LeaseListener {
 
     private void setStatus(Job j, JobStatus s, String reason) {
         j.status = s;
+        long now = deps.millis().getAsLong();
+        if (s == JobStatus.RUNNING) {
+            j.eta.resume(now);
+        } else {
+            j.eta.pause(now);
+        }
         j.reason = reason;
         markChanged(j);
     }

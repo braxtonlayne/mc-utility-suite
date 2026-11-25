@@ -151,6 +151,11 @@ public final class GoalEngine implements IGoalEngine, IModule, IConfigurable {
     }
 
     @Override
+    public int activeJobEtaSeconds() {
+        return executor.activeEtaSeconds();
+    }
+
+    @Override
     public List<JobSnapshot> queuedJobs() {
         return executor.queuedJobs();
     }
