@@ -301,6 +301,40 @@ final class FieldHands implements LeaseListener {
         }
     }
 
+    // ---- entities -----------------------------------------------------------------------------------------------
+
+    /**
+     * Uses ({@link SimKey#USE}) or attacks ({@link SimKey#ATTACK}) an entity like a player: smoothed visible look at its
+     * body centre (re-aimed every few ticks while it moves), then one tap through the core once the crosshair is on it
+     * ({@code IInputSmoother.tapOnEntity}). DONE after the tap, FAILED when it died, left reach or the aim timed out.
+     */
+    int tickEntity(LocalPlayer player, net.minecraft.world.entity.Entity e, SimKey key, double reach) {
+        return tickEntity(player, e, key, reach, true);
+    }
+
+    /** As {@link #tickEntity(LocalPlayer, net.minecraft.world.entity.Entity, SimKey, double)}; {@code tap} false only
+     *  keeps the aim (e.g. while the attack recharges) and never times out. */
+    int tickEntity(LocalPlayer player, net.minecraft.world.entity.Entity e, SimKey key, double reach, boolean tap) {
+        long cell = 0x4000_0000_0000_0000L | ((long) e.getId() << 1) | key.ordinal();
+        if (cell != actionCell) {
+            resetAction();
+            actionCell = cell;
+        }
+        if (!e.isAlive() || player.distanceToSqr(e) > reach * reach || (tap && ++ticks > AIM_TIMEOUT_TICKS * 2)) {
+            resetAction();
+            return FAILED;
+        }
+        IInputSmoother input = Services.input();
+        if (!aimSet || (player.tickCount % 5) == 0) {
+            aimAt(player, input, e.getX(), e.getY() + e.getBbHeight() * 0.5, e.getZ(), false);
+        }
+        if (tap && input.tapOnEntity(lease, key, e.getId())) {
+            resetAction();
+            return DONE;
+        }
+        return RUNNING;
+    }
+
     // ---- helpers ------------------------------------------------------------------------------------------------
 
     private void aimAt(LocalPlayer player, IInputSmoother input, double hx, double hy, double hz, boolean silent) {

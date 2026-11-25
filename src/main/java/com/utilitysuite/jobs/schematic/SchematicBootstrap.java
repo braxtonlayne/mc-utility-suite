@@ -27,6 +27,7 @@ public final class SchematicBootstrap {
         Services.modules().register(toolkit);
         symmetry = new SymmetryBuilder();
         Services.modules().register(symmetry);
+        Services.modules().register(new HighwayBuilder());
         com.utilitysuite.jobs.goal.GoalEngine.registerBuildHandler(new SchematicBuildBridge(toolkit));
         NeoForge.EVENT_BUS.addListener(SchematicBootstrap::onRenderLevel);
     }

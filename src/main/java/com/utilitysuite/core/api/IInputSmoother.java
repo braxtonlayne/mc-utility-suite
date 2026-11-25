@@ -69,6 +69,15 @@ public interface IInputSmoother {
     /** True while automation (not the user) holds this key down. */
     boolean isKeyHeldByAutomation(SimKey key);
 
+    /**
+     * Entity interaction through the core: taps {@code key} (ATTACK or USE) once, only when the lease covers
+     * WORLD_INTERACT, the smoothed rotation has settled and the vanilla crosshair is on the entity with this network
+     * id. The caller aims with {@link #setRotationTarget} first. Returns true when the tap was sent.
+     */
+    default boolean tapOnEntity(ControlLease lease, SimKey key, int entityId) {
+        return false;
+    }
+
     // ---- hotbar -------------------------------------------------------------------------------------------------
 
     /** Selects hotbar slot 0..8. Needs HOTBAR. */

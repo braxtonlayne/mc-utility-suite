@@ -125,4 +125,12 @@ public final class FakeInputBackend implements InputBackend {
         placedRecipes.add(recipeId);
         return true;
     }
+
+    /** Entity id under the crosshair (-1: none). */
+    public int crosshairEntity = -1;
+
+    @Override
+    public int crosshairEntityId() {
+        return crosshairEntity;
+    }
 }

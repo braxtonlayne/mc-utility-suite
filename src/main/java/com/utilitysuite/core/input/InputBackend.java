@@ -66,4 +66,9 @@ public interface InputBackend {
     default boolean setCrafterSlotEnabled(int slot, boolean enabled) {
         return false;
     }
+
+    /** Network id of the entity under the vanilla crosshair, or -1 when the crosshair is not on an entity. */
+    default int crosshairEntityId() {
+        return -1;
+    }
 }
