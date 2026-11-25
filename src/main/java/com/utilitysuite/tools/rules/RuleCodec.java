@@ -35,6 +35,9 @@ public final class RuleCodec {
             }
             o.addProperty("flag", r.action().flag());
             o.addProperty("cooldown", r.cooldownTicks());
+            if (r.whileJob()) {
+                o.addProperty("whileJob", true); // absent = false, so older rule lists read unchanged
+            }
             arr.add(o);
         }
         return arr;
@@ -65,7 +68,8 @@ public final class RuleCodec {
                     id = "r" + out.size();
                 }
                 out.add(new Rule(id, !o.has("enabled") || o.get("enabled").getAsBoolean(), c, a,
-                        o.has("cooldown") ? o.get("cooldown").getAsInt() : 200));
+                        o.has("cooldown") ? o.get("cooldown").getAsInt() : 200,
+                        o.has("whileJob") && o.get("whileJob").getAsBoolean()));
             } catch (RuntimeException ignored) {
                 // skip a malformed or outdated rule
             }

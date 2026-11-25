@@ -8,8 +8,10 @@ import java.util.Objects;
  *
  * @param id            stable id (for enable/delete in the UI)
  * @param cooldownTicks minimum ticks between two firings of this rule
+ * @param whileJob      the condition only counts while a goal job is active (planning, running or replanning)
  */
-public record Rule(String id, boolean enabled, Condition condition, Action action, int cooldownTicks) {
+public record Rule(String id, boolean enabled, Condition condition, Action action, int cooldownTicks,
+                   boolean whileJob) {
 
     public Rule {
         Objects.requireNonNull(id, "id");
@@ -18,27 +20,33 @@ public record Rule(String id, boolean enabled, Condition condition, Action actio
         cooldownTicks = Math.max(0, cooldownTicks);
     }
 
+    /** A rule without the job gate (applies at any time). */
+    public Rule(String id, boolean enabled, Condition condition, Action action, int cooldownTicks) {
+        this(id, enabled, condition, action, cooldownTicks, false);
+    }
+
     public Rule withEnabled(boolean value) {
-        return new Rule(id, value, condition, action, cooldownTicks);
+        return new Rule(id, value, condition, action, cooldownTicks, whileJob);
     }
 
     /** Same id and enabled flag, everything else from {@code edited}. */
     public Rule withContentOf(Rule edited) {
-        return new Rule(id, enabled, edited.condition(), edited.action(), edited.cooldownTicks());
+        return new Rule(id, enabled, edited.condition(), edited.action(), edited.cooldownTicks(), edited.whileJob());
     }
 
-    /** True when both rules do the same thing (condition, action, cooldown), ignoring id and enabled. */
+    /** True when both rules do the same thing (condition, action, cooldown, job gate), ignoring id and enabled. */
     public boolean sameContent(Rule other) {
         return condition.type() == other.condition.type() && condition.comparison() == other.condition.comparison()
                 && condition.value() == other.condition.value()
                 && condition.arg().equalsIgnoreCase(other.condition.arg())
                 && action.type() == other.action.type() && action.arg().equalsIgnoreCase(other.action.arg())
-                && action.flag() == other.action.flag() && cooldownTicks == other.cooldownTicks;
+                && action.flag() == other.action.flag() && cooldownTicks == other.cooldownTicks
+                && whileJob == other.whileJob;
     }
 
     /** "If inventory >= 90% full, deposit at Base Chest and resume". */
     public String describe() {
-        return "If " + condition.describe() + ", " + action.describe();
+        return "If " + condition.describe() + (whileJob ? " while a job runs" : "") + ", " + action.describe();
     }
 
     public enum ConditionType {
@@ -59,7 +67,16 @@ public record Rule(String id, boolean enabled, Condition condition, Action actio
          * max durability, anything else (normally {@link #UNIT_POINTS}) for absolute points. Never true when the
          * main-hand item has no durability.
          */
-        TOOL_DURABILITY("main-hand durability");
+        TOOL_DURABILITY("main-hand durability"),
+        /**
+         * Distance in metres to the nearest other player who is not on the ally roster. Never true when no such
+         * player is loaded (the distance is then infinite).
+         */
+        STRANGER_DISTANCE("nearest non-ally (m)"),
+        /** Lowest remaining durability, in percent of max, of any worn armour piece. Never true with none worn. */
+        ARMOR_DURABILITY("lowest armour durability"),
+        /** Seconds since the local player's last totem of undying popped. Never true before the first pop. */
+        TOTEM_POP_AGE("seconds since totem pop");
 
         public static final String UNIT_POINTS = "points";
         public static final String UNIT_PERCENT = "percent";
@@ -128,6 +145,9 @@ public record Rule(String id, boolean enabled, Condition condition, Action actio
                 case INVENTORY_FULL_PCT -> "inventory " + comparison.symbol() + " " + fmt(value) + "% full";
                 case TOOL_DURABILITY -> type.label() + " " + comparison.symbol() + " " + fmt(value)
                         + (durabilityPercent() ? "%" : "");
+                case STRANGER_DISTANCE -> "a non-ally player is " + comparison.symbol() + " " + fmt(value) + " m away";
+                case ARMOR_DURABILITY -> type.label() + " " + comparison.symbol() + " " + fmt(value) + "%";
+                case TOTEM_POP_AGE -> "a totem popped (" + comparison.symbol() + " " + fmt(value) + " s ago)";
                 default -> type.label() + " " + comparison.symbol() + " " + fmt(value);
             };
         }
@@ -141,7 +161,20 @@ public record Rule(String id, boolean enabled, Condition condition, Action actio
         PAUSE_JOB("pause the job"),
         RESUME_JOB("resume the job"),
         /** {@link Action#arg} = module id, {@link Action#flag} = on/off. */
-        TOGGLE_MODULE("switch module");
+        TOGGLE_MODULE("switch module"),
+        /** Cancels the active goal job. */
+        STOP_JOB("stop the job"),
+        /** Stop-All: revokes every lease and stops all automation. */
+        STOP_ALL("Stop-All"),
+        /** Asks Quick Pearl to throw an ender pearl the way the player is facing (its own lease and checks). */
+        QUICK_PEARL("pearl escape"),
+        /** Only posts a warning notice; {@link Action#arg} = the text. */
+        ALERT("alert");
+
+        /** Actions that end automation or flee; their firing is posted as a warning, not as info. */
+        public boolean urgent() {
+            return this == STOP_JOB || this == STOP_ALL || this == QUICK_PEARL || this == ALERT;
+        }
 
         private final String label;
 
@@ -154,7 +187,7 @@ public record Rule(String id, boolean enabled, Condition condition, Action actio
         }
 
         public boolean usesText() {
-            return this == SUBMIT_GOAL || this == DEPOSIT_AT || this == TOGGLE_MODULE;
+            return this == SUBMIT_GOAL || this == DEPOSIT_AT || this == TOGGLE_MODULE || this == ALERT;
         }
     }
 
@@ -169,6 +202,7 @@ public record Rule(String id, boolean enabled, Condition condition, Action actio
                 case SUBMIT_GOAL -> "run \"" + arg + "\"";
                 case DEPOSIT_AT -> "deposit at " + arg + (flag ? " and resume" : "");
                 case TOGGLE_MODULE -> "switch " + arg + (flag ? " on" : " off");
+                case ALERT -> "alert \"" + arg + "\"";
                 default -> type.label();
             };
         }

@@ -14,6 +14,9 @@ import com.utilitysuite.core.api.Services;
 import com.utilitysuite.core.api.SettingSpec;
 import com.utilitysuite.core.api.SuiteEvent;
 import com.utilitysuite.tools.inventory.SmartInventory;
+import com.utilitysuite.tools.player.QuickPearl;
+import net.minecraft.world.entity.EquipmentSlot;
+import net.minecraft.world.entity.player.Player;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -52,9 +55,23 @@ public final class LocalRules implements IModule, IConfigurable, RuleContext {
     private boolean enabled = true;
     private String lastMessage = "";
     private int nextId = 1;
+    private final Supplier<QuickPearl> quickPearl;
+    /** Level game time of the local player's last totem pop, or {@link Long#MIN_VALUE} for none this world. */
+    private long lastTotemPopGameTime = Long.MIN_VALUE;
 
-    public LocalRules(Supplier<SmartInventory> inventory) {
+    public LocalRules(Supplier<SmartInventory> inventory, Supplier<QuickPearl> quickPearl) {
         this.deposit = new DepositRun(inventory, this::message);
+        this.quickPearl = quickPearl;
+    }
+
+    /** Called from the totem-pop packet hook when the local player's totem was used. Client thread. */
+    public void onLocalTotemPop() {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.level == null) {
+            return;
+        }
+        lastTotemPopGameTime = mc.level.getGameTime();
+        engine.evaluateNextTick(); // react on the next tick, not at the end of the evaluation interval
     }
 
     public void subscribe(ISuiteEventBus bus) {
@@ -107,6 +124,7 @@ public final class LocalRules implements IModule, IConfigurable, RuleContext {
     public void onWorldUnload() {
         deposit.abort(null);
         itemCache.clear();
+        lastTotemPopGameTime = Long.MIN_VALUE;
     }
 
     @Override
@@ -234,14 +252,45 @@ public final class LocalRules implements IModule, IConfigurable, RuleContext {
                     message("Rule: unknown module '" + a.arg() + "'");
                 }
             }
+            case STOP_JOB -> {
+                Optional<JobSnapshot> job = goals == null ? Optional.empty() : goals.activeJob();
+                if (job.isEmpty()) {
+                    return;
+                }
+                goals.cancel(job.get().jobId());
+                deposit.abort(null);
+                alert("Rule: " + rule.describe());
+            }
+            case STOP_ALL -> {
+                alert("Rule: " + rule.describe());
+                Services.arbiter().stopAll("Local rule: " + rule.condition().describe());
+            }
+            case QUICK_PEARL -> {
+                QuickPearl qp = quickPearl.get();
+                if (qp == null || !qp.requestThrow()) {
+                    alert("Rule: pearl escape unavailable (" + rule.condition().describe() + ")");
+                } else {
+                    alert("Rule: " + rule.describe());
+                }
+            }
+            case ALERT -> alert(a.arg());
         }
     }
 
     private void message(String text) {
+        post(com.utilitysuite.core.api.visual.NoticeKind.INFO, text);
+    }
+
+    /** Safety actions: a warning notice, so it stands out from routine rule firings. */
+    private void alert(String text) {
+        post(com.utilitysuite.core.api.visual.NoticeKind.WARN, text);
+    }
+
+    private void post(com.utilitysuite.core.api.visual.NoticeKind kind, String text) {
         lastMessage = text;
         Minecraft mc = Minecraft.getInstance();
         if (mc.player != null && !Services.modState().isCleanScreen()) {
-            Services.visuals().notices().post(com.utilitysuite.core.api.visual.NoticeKind.INFO, text, null);
+            Services.visuals().notices().post(kind, text, null);
         }
     }
 
@@ -331,6 +380,62 @@ public final class LocalRules implements IModule, IConfigurable, RuleContext {
         ItemStack st = p.getMainHandItem();
         return st.isDamageableItem() ? st.getMaxDamage() : 0;
     }
+
+    /** Loaded players only (entity tracking range); allies from {@link Services#allies()} are skipped. */
+    @Override
+    public double strangerDistance() {
+        Minecraft mc = Minecraft.getInstance();
+        LocalPlayer self = mc.player;
+        if (self == null || mc.level == null) {
+            return Double.POSITIVE_INFINITY;
+        }
+        double best = Double.POSITIVE_INFINITY;
+        List<? extends Player> players = mc.level.players();
+        for (int i = 0; i < players.size(); i++) {
+            Player other = players.get(i);
+            if (other == self || other.isSpectator() || !other.isAlive()
+                    || Services.allies().isAlly(other.getUUID())) {
+                continue;
+            }
+            double d = self.distanceToSqr(other);
+            if (d < best) {
+                best = d;
+            }
+        }
+        return Double.isInfinite(best) ? best : Math.sqrt(best);
+    }
+
+    @Override
+    public double lowestArmorDurabilityPct() {
+        LocalPlayer p = Minecraft.getInstance().player;
+        if (p == null) {
+            return -1;
+        }
+        double low = -1;
+        for (int i = 0; i < ARMOR_SLOTS.length; i++) {
+            ItemStack st = p.getItemBySlot(ARMOR_SLOTS[i]);
+            if (st.isEmpty() || !st.isDamageableItem() || st.getMaxDamage() <= 0) {
+                continue;
+            }
+            double pct = (st.getMaxDamage() - st.getDamageValue()) * 100.0 / st.getMaxDamage();
+            if (low < 0 || pct < low) {
+                low = pct;
+            }
+        }
+        return low;
+    }
+
+    @Override
+    public double secondsSinceTotemPop() {
+        Minecraft mc = Minecraft.getInstance();
+        if (lastTotemPopGameTime == Long.MIN_VALUE || mc.level == null) {
+            return Double.POSITIVE_INFINITY;
+        }
+        return Math.max(0, mc.level.getGameTime() - lastTotemPopGameTime) / 20.0;
+    }
+
+    private static final EquipmentSlot[] ARMOR_SLOTS = {EquipmentSlot.HEAD, EquipmentSlot.CHEST, EquipmentSlot.LEGS,
+            EquipmentSlot.FEET};
 
     private static Item resolve(String id) {
         ResourceLocation rl = ResourceLocation.tryParse(id.contains(":") ? id : "minecraft:" + id);

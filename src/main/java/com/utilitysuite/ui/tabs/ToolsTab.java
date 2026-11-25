@@ -252,6 +252,15 @@ public final class ToolsTab {
         }
         p.nextRow();
 
+        p.subheading("Safety templates");
+        px = 0;
+        for (RuleEdits.Preset preset : RuleEdits.SAFETY_TEMPLATES) {
+            p.button(preset.label(), preset.rule("-").describe(), px, pw, PillButton.Style.SECONDARY,
+                    b -> addPreset(p, rules, preset));
+            px += pw + 4;
+        }
+        p.nextRow();
+
         p.subheading("New rule");
         ruleFields(p, NEW, w);
         p.button("Add rule", null, w - 90, 90, PillButton.Style.PRIMARY, b -> addRule(p, rules));
@@ -305,6 +314,15 @@ public final class ToolsTab {
             p.textField(pre + "value", valueHint(ct), x3, rest);
         }
         p.nextRow();
+        p.rowLabel("When", 0, lab - 4, Panel.DIM);
+        boolean whileJob = "1".equals(p.state(pre + "whileJob", "0"));
+        p.button(whileJob ? "while a job runs" : "any time",
+                "Only while a goal job is planning or running, or at any time", x1, c1, PillButton.Style.SECONDARY,
+                b -> {
+                    p.setState(pre + "whileJob", whileJob ? "0" : "1");
+                    p.rebuild();
+                }).selected(whileJob);
+        p.nextRow();
         p.rowLabel("Then", 0, lab - 4, Panel.DIM);
         cycle(p, List.of(Rule.ActionType.values()), at, Rule.ActionType::label, x1, c1, v -> {
             p.setState(pre + "action", v.name());
@@ -341,7 +359,7 @@ public final class ToolsTab {
                 p.state(pre + "unit", Rule.ConditionType.UNIT_POINTS),
                 enumState(p, pre + "action", Rule.ActionType.DEPOSIT_AT),
                 p.state(pre + "actionArg", ""), !"0".equals(p.state(pre + "flag", "1")),
-                p.state(pre + "cooldown", ""));
+                p.state(pre + "cooldown", ""), "1".equals(p.state(pre + "whileJob", "0")));
         if (!res.ok()) {
             p.toast(res.error());
             return null;
@@ -362,6 +380,7 @@ public final class ToolsTab {
         p.setState(pre + "actionArg", r.action().arg());
         p.setState(pre + "flag", r.action().flag() ? "1" : "0");
         p.setState(pre + "cooldown", Integer.toString(r.cooldownTicks()));
+        p.setState(pre + "whileJob", r.whileJob() ? "1" : "0");
     }
 
     private static String fmtValue(double v) {
@@ -419,6 +438,9 @@ public final class ToolsTab {
             case HEALTH -> "health 0-20";
             case HUNGER -> "food 0-20";
             case TIME_OF_DAY -> "ticks 0-23999 (13000 = night)";
+            case STRANGER_DISTANCE -> "metres, e.g. 48";
+            case ARMOR_DURABILITY -> "percent left, e.g. 12";
+            case TOTEM_POP_AGE -> "seconds, e.g. 5";
             default -> "value";
         };
     }
@@ -428,6 +450,7 @@ public final class ToolsTab {
             case SUBMIT_GOAL -> "goal text, e.g. gather 32 coal";
             case DEPOSIT_AT -> "waypoint name, e.g. Base Chest";
             case TOGGLE_MODULE -> "module id, e.g. survival_autopilot";
+            case ALERT -> "alert text, e.g. Low food";
             default -> "";
         };
     }

@@ -71,6 +71,8 @@ public final class QuickPearl implements IModule, IConfigurable, LeaseListener {
     private final LevelCollisionVoxels voxels = new LevelCollisionVoxels();
     private ControlLease lease;
     private LeaseRequest request;
+    /** Set by {@link #requestThrow()}; consumed like a key press on the next idle client tick. */
+    private boolean throwRequested;
 
     @Override
     public String id() {
@@ -131,6 +133,21 @@ public final class QuickPearl implements IModule, IConfigurable, LeaseListener {
         return key;
     }
 
+    /**
+     * Public trigger for other modules (Local Rules' pearl escape): behaves exactly like one press of the Quick Pearl
+     * key on the next client tick, so the same lease, cooldown, pearl-in-inventory and blocked-throw checks apply and
+     * the pearl goes the way the player is facing.
+     *
+     * @return false when the module is off or a throw is already under way (nothing is queued then)
+     */
+    public boolean requestThrow() {
+        if (!enabled || seq.phase() != PearlThrow.Phase.IDLE) {
+            return false;
+        }
+        throwRequested = true;
+        return true;
+    }
+
     /** Game bus. */
     public void onClientTick(ClientTickEvent.Post event) {
         KeyMapping k = key;
@@ -142,6 +159,10 @@ public final class QuickPearl implements IModule, IConfigurable, LeaseListener {
         if (seq.phase() == PearlThrow.Phase.IDLE) {
             boolean pressed = false;
             while (k.consumeClick()) {
+                pressed = true;
+            }
+            if (throwRequested) {
+                throwRequested = false;
                 pressed = true;
             }
             if (seq.takeNotice()) {

@@ -36,6 +36,15 @@ public final class RuleEdits {
     public static Result build(String id, boolean enabled, Rule.ConditionType ct, Rule.Comparison cmp,
                                String valueText, String condArgText, String durabilityUnit,
                                Rule.ActionType at, String actionArgText, boolean flag, String cooldownText) {
+        return build(id, enabled, ct, cmp, valueText, condArgText, durabilityUnit, at, actionArgText, flag,
+                cooldownText, false);
+    }
+
+    /** As above, with the "only while a job runs" gate. */
+    public static Result build(String id, boolean enabled, Rule.ConditionType ct, Rule.Comparison cmp,
+                               String valueText, String condArgText, String durabilityUnit,
+                               Rule.ActionType at, String actionArgText, boolean flag, String cooldownText,
+                               boolean whileJob) {
         double value = 0;
         if (ct == Rule.ConditionType.JOB_STATUS) {
             if (cmp != Rule.Comparison.NOT_EQUALS) {
@@ -73,6 +82,7 @@ public final class RuleEdits {
             return Result.fail(switch (at) {
                 case SUBMIT_GOAL -> "Enter the goal text";
                 case DEPOSIT_AT -> "Enter a waypoint name";
+                case ALERT -> "Enter the alert text";
                 default -> "Enter a module id";
             });
         }
@@ -89,7 +99,7 @@ public final class RuleEdits {
             }
         }
         return new Result(new Rule(id, enabled, new Rule.Condition(ct, cmp, value, condArg),
-                new Rule.Action(at, at.usesText() ? actionArg : "", flag), cooldown), null);
+                new Rule.Action(at, at.usesText() ? actionArg : "", flag), cooldown, whileJob), null);
     }
 
     /** Largest sensible threshold for a condition type. */
@@ -100,6 +110,9 @@ public final class RuleEdits {
             case TIME_OF_DAY -> 23_999;
             case ITEM_COUNT -> 41 * 64 * 64; // every slot full of 64-stacks, generously
             case TOOL_DURABILITY -> durabilityPercent ? 100 : 100_000;
+            case STRANGER_DISTANCE -> 512; // past any client's entity tracking range
+            case ARMOR_DURABILITY -> 100;
+            case TOTEM_POP_AGE -> 600;
             case JOB_STATUS -> 0;
         };
     }
@@ -125,9 +138,14 @@ public final class RuleEdits {
     // ---- starter presets --------------------------------------------------------------------------------------------
 
     /** A one-click starter rule. {@link #rule(String)} stamps it with a fresh id. */
-    public record Preset(String label, Rule.Condition condition, Rule.Action action, int cooldownTicks) {
+    public record Preset(String label, Rule.Condition condition, Rule.Action action, int cooldownTicks,
+                         boolean whileJob) {
+        public Preset(String label, Rule.Condition condition, Rule.Action action, int cooldownTicks) {
+            this(label, condition, action, cooldownTicks, false);
+        }
+
         public Rule rule(String id) {
-            return new Rule(id, true, condition, action, cooldownTicks);
+            return new Rule(id, true, condition, action, cooldownTicks, whileJob);
         }
     }
 
@@ -144,6 +162,32 @@ public final class RuleEdits {
             new Preset("Health < 6 hearts → pause",
                     new Rule.Condition(Rule.ConditionType.HEALTH, Rule.Comparison.BELOW, 12, ""),
                     new Rule.Action(Rule.ActionType.PAUSE_JOB, "", false), DEFAULT_COOLDOWN));
+
+    /** Range at which a non-ally player during a job counts as a threat for the safety template. */
+    public static final int STRANGER_RANGE = 48;
+    /** Worn armour below this share of its durability triggers the safety template. */
+    public static final int ARMOR_LOW_PCT = 12;
+    /** Window after a totem pop in which the pearl template fires (must exceed the evaluation interval). */
+    public static final int TOTEM_WINDOW_SECONDS = 5;
+    /** Safety templates cool down for a full minute so one incident does not fire twice. */
+    public static final int SAFETY_COOLDOWN = 1200;
+
+    /**
+     * One-click safety templates: a stranger near a running job stops everything, worn-out armour stops the job, and
+     * a popped totem triggers the Quick Pearl escape. Every firing of these actions posts a warning notice.
+     */
+    public static final List<Preset> SAFETY_TEMPLATES = List.of(
+            new Preset("Stranger near job → Stop-All",
+                    new Rule.Condition(Rule.ConditionType.STRANGER_DISTANCE, Rule.Comparison.AT_MOST,
+                            STRANGER_RANGE, ""),
+                    new Rule.Action(Rule.ActionType.STOP_ALL, "", false), SAFETY_COOLDOWN, true),
+            new Preset("Armour < 12% → stop job",
+                    new Rule.Condition(Rule.ConditionType.ARMOR_DURABILITY, Rule.Comparison.BELOW, ARMOR_LOW_PCT, ""),
+                    new Rule.Action(Rule.ActionType.STOP_JOB, "", false), SAFETY_COOLDOWN, true),
+            new Preset("Totem pop → pearl out",
+                    new Rule.Condition(Rule.ConditionType.TOTEM_POP_AGE, Rule.Comparison.AT_MOST,
+                            TOTEM_WINDOW_SECONDS, ""),
+                    new Rule.Action(Rule.ActionType.QUICK_PEARL, "", false), DEFAULT_COOLDOWN, false));
 
     /** True when {@code rules} already holds a rule doing exactly what the preset does (id/enabled ignored). */
     public static boolean hasEquivalent(List<Rule> rules, Preset preset) {
