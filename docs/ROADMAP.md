@@ -579,8 +579,8 @@ Tier 2 (bigger, own-world, seed- or combat-dependent)
 - [ ] C3 Mace + wind charge + elytra dive planner (no attribute/breach swap exploits). Combat: deferred.
 - [ ] C4 Wind-charge / fireball deflection and a pearl landing countdown. Combat: deferred.
 - [ ] C5 Parkour + combat movement fusion (gap jumps mid-fight via MovementPhysics). Combat: deferred.
-- [ ] J2 Villager bulk trading and librarian enchantment roller (opt-in, protected-area guards).
+- [x] J2 Villager bulk trading and librarian enchantment roller (opt-in, protected-area guards).
 - [x] J3 Schematic auto-supply runs between layers and temporary scaffolding cleanup.
-- [ ] W1 Client-side terrain and biome oracles for OreSim on remote servers (full value needs a known seed).
+- [x] W1 Client-side terrain and biome oracles for OreSim on remote servers (full value needs a known seed).
 - [x] W2 Seed-powered structure and slime-cluster locator (spiral search, minimap markers, Add waypoint / Go).
-- [ ] W6 Enchanting-table xpSeed cracker and cheapest dummy-enchant sequence (single player).
+- [x] W6 Enchanting-table xpSeed cracker and cheapest dummy-enchant sequence (single player).
