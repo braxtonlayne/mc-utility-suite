@@ -584,3 +584,92 @@ Tier 2 (bigger, own-world, seed- or combat-dependent)
 - [x] W1 Client-side terrain and biome oracles for OreSim on remote servers (full value needs a known seed).
 - [x] W2 Seed-powered structure and slime-cluster locator (spiral search, minimap markers, Add waypoint / Go).
 - [x] W6 Enchanting-table xpSeed cracker and cheapest dummy-enchant sequence (single player).
+
+## Wave 3 (user lists 2026-11-25, synced to d27c1c5)
+
+Same rules: zero steady-state allocation in tick/render paths, input only through core.input leases, heavy work
+off-thread on snapshots, nothing drawn when idle, Clean-Screen hides everything, new automation defaults OFF.
+Overlapping ideas from the two lists are merged into one entry (noted in brackets).
+
+Holographic and spatial visuals
+- [ ] V1 World Atlas (`M`): full-screen 2D pan/zoom map plus a tiltable 3D isometric terrain hologram from minimap
+      height/palette data; layers for trails, portal links, Seed Locator pins, Seed Diff anomalies, chunk age;
+      click to drop a waypoint or route Travel Autopilot. [merges W11]
+- [ ] V2 LiDAR / sonar pulse: hotkey-emitted expanding wireframe wavefront that lights caves, air pockets,
+      spawners and OreSim predictions as it passes, fading behind.
+- [ ] V3 Diegetic world-space holo-cards (HoloWorldKit / ScreenProjector): glance at a villager (trades), chest
+      (StorageMemory top items), furnace / brewing stand (progress ring).
+- [ ] V4 Time-slice projectile ribbon: 3D ribbon with tick chevrons, impact rings and a ghost player silhouette at
+      the predicted pearl / wind-charge landing.
+- [ ] V5 Combat choreography overlay: spacing ring at trade/crit distance, knockback vector (ledge warning), fading
+      strafe afterimages of the opponent.
+- [ ] V6 Context-morphing HUD: minimal while exploring/building, tactical rings animate in on combat or falls,
+      fades when standing still.
+
+Physics, maths and engine tricks
+- [ ] M1 Wind-charge + mace kinetic chain calculator: throw spots for wind-charge bounces/wall boosts and
+      wind-charge -> mace combos with predicted apex and smash damage.
+- [ ] M2 Fighter-jet elytra HUD: artificial horizon, pitch ladder, stall chevron, zero-rocket glide footprint ring,
+      wave-glide cues.
+- [ ] M3 Runner's Vision: continuous JumpSearch ahead of the sprint direction, painted flow-line of the fastest
+      no-stop parkour route.
+- [ ] M4 Cavity tomography: enclosed underground air voids rendered as depth-cued wireframe contours.
+- [ ] M5 Redstone signal tracer: animated pulse through dust/repeaters/comparators/pistons/crafters with game-tick
+      delays, signal strength and QC zones.
+- [ ] M6 Ice-boat / water-stream drift predictor: racing line, apex and braking point (extends BoatIceBraking).
+
+World sense and environment
+- [ ] R1 Acoustic echo-ripples: AcousticRadar pings drawn as 3D expanding ripples, colour-coded, with edge cues.
+- [ ] R2 "What changed since my last visit": per-chunk block-hash snapshots; overlay new (cyan), removed (amber),
+      emptied containers (red).
+- [ ] R3 Stealth vision cones: Warden/Enderman/Piglin Brute/player view cones and sculk vibration spheres with wool
+      occlusion. [merges the sculk half of W14]
+- [ ] R4 Mob-cap and despawn-sphere hologram: 24/32/128-block domes on the player or a pinned AFK spot, plus a
+      sub-chunk "where the cap goes" heat indicator.
+- [ ] R5 Trail forensics classifier: elytra highway vs boat run vs Nether tunnel vs search zig-zag, with spline
+      arrows, direction and recency.
+- [ ] R6 Atmosphere studio: warm night-vision, clear water with depth tint, sky/fog colour ramps, biome presets.
+
+Interaction, building and replay
+- [ ] F1 Picture-in-picture drone cam and rear-view mirror (ScoutCamera to a HUD viewport).
+- [ ] F2 Kill-cam / replay theatre: 30 s ring buffer of nearby poses + BlackBox events, freeze and orbit with a
+      scrubber, hitboxes, velocity vectors; ghost playback and split deltas for parkour. [merges C9]
+- [ ] F3 Mirror-plane and 4x/8x radial symmetry builder feeding BuildAssist.
+- [ ] F4 Flick-gesture holo radial wheel (8 slices) for suite actions.
+- [ ] F5 Ctrl+K command palette with fuzzy compound intents and preview cards (GoalConsole).
+- [ ] F6 Procedural holo-audio cues (crit cadence tick, mace lethal tone, radar blip, autopilot handoff clicks).
+
+World, 1.21 systems
+- [ ] W12 Anvil combine-order planner (min-XP merge tree, Too Expensive cap, exclusions), optional stepping.
+- [ ] W13 Ender Dragon / Wither overlays: crystals (caged, sightlines), phases/perch, breath radii, Wither phases.
+- [ ] W14 Nether Fortress spawn-box overlay for wither-skeleton farms (sculk half is in R3).
+
+Jobs and automation
+- [ ] J5 Furnace-array batch manager and 1.21 Crafter template set/verify.
+- [ ] J6 Brewing stand sequencer fed from StorageMemory.
+- [ ] J7 Ancient-debris bed/TNT blasting cycle (pockets, shield, lava plug, vein mining).
+- [ ] J8 Animal pen sweep (breed/shear/milk) and safe XP-farm AFK loop.
+
+Inventory and logistics
+- [ ] I1 Named gear and hotbar loadouts (armour, offhand, hotbar) in one click.
+- [ ] I2 Ender chest mirror and remote quick-pull plan (including nested shulkers).
+- [ ] I3 Storage hall auto-sorter: categories, consolidation, enchanted-book grouping, nearly-full flags.
+- [ ] I4 Piglin bartering loop and Bastion gold-safety guard.
+
+Combat and parkour depth
+- [ ] C6 Cross-session opponent playstyle memory (server + UUID).
+- [ ] C7 Crystal / respawn-anchor defensive exposure: lethal blast at feet/head, safe foot blocks, trap warning.
+- [ ] C8 Dimension-aware fall-clutch fallback chain (water, powder snow, slime/hay, cobweb, boat, vines, wind charge).
+- [ ] C10 Drive the C2/C3/C5 planners in fights (potions, mace dive, fight gap jumps), settings still off by default.
+
+Travel and building
+- [ ] T3 Riptide trident flight and rain/ocean launch into elytra glide.
+- [ ] T4 Parametric ghost-shape generator (sphere, dome, cylinder, arch, sloped bridge, torus) into BuildAssist.
+- [ ] T5 Map-art planner: local image -> 1.21 map palette (flat/staircase), Floyd-Steinberg, schematic + BOM.
+- [ ] T6 Nether-roof tunnel and ice-highway builder between two waypoints.
+
+Diagnostics, safety and UX
+- [ ] U4 Lag-spike / TPS-drop safe-pause guard for high-risk automation.
+- [ ] U5 FPS / render-budget auto-governor.
+- [ ] U6 Profile bundles: export/import, diff preview, 10-step config undo.
+- [ ] U7 In-game self-test harness for recent features with pass/fail report.
