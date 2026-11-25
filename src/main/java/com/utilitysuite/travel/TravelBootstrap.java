@@ -48,6 +48,7 @@ public final class TravelBootstrap {
         bridge = new BridgeAssist();
         Services.modules().register(terrain);
         Services.modules().register(autopilot);
+        Services.registerTravel(autopilot); // route hand-off for other modules (e.g. the highway builder's ice road)
         // One exact-shape world view per client tick, read by Movement Assist, the body sims and pursuit.
         TickWorldShapes worldShapes = new TickWorldShapes();
         movement = new com.utilitysuite.travel.movement.MovementAssist(worldShapes);

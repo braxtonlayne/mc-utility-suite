@@ -109,6 +109,7 @@ public final class JobsBootstrap {
         Services.modules().register(survival);
 
         // field modules (all off by default): Auto-Torch, Lava Plug, Vein Work, Crop Work
+        Services.registerBlockWork(new com.utilitysuite.jobs.fieldwork.FieldBlockWork());
         AutoTorchModule autoTorch = new AutoTorchModule(inventory);
         LavaPlugModule lavaPlug = new LavaPlugModule(inventory);
         VeinWorkModule veinWork = new VeinWorkModule();

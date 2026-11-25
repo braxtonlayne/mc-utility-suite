@@ -1,6 +1,9 @@
 package com.utilitysuite.jobs.schematic;
 
 import com.utilitysuite.core.api.ControlPriority;
+import com.utilitysuite.core.api.IBlockWork;
+import com.utilitysuite.core.api.ITravel;
+import com.utilitysuite.core.api.NavigationStatus;
 import com.utilitysuite.core.api.IConfigurable;
 import com.utilitysuite.core.api.IModule;
 import com.utilitysuite.core.api.INavigator;
@@ -14,9 +17,12 @@ import com.utilitysuite.core.api.Waypoint;
 import com.utilitysuite.jobs.planner.PackedPos;
 import com.utilitysuite.jobs.schematic.generated.HighwayDesign;
 import com.utilitysuite.jobs.schematic.generated.HighwayRun;
+import com.utilitysuite.jobs.schematic.generated.TunnelDigQueue;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
+import net.minecraft.world.entity.vehicle.Boat;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.world.level.block.state.BlockState;
 
 import java.util.List;
@@ -27,8 +33,12 @@ import java.util.Optional;
  * towards the waypoint named in its settings. Segments ({@link HighwayDesign}) are generated ahead of the player and
  * handed to the Schematic Toolkit as the generated design {@code generated:highway} (ghost preview + Build Assist fill
  * floor, rails, seals and spawn-proofing as the player walks). In tunnel mode the centre line of the new segment is
- * given to the navigator (a leased path; Baritone mines its way through), which digs the walking space; the side
- * columns of a 3-wide tunnel are left to the player or a later pass.
+ * given to the navigator (a leased path; Baritone mines its way through), which digs the walking space. With "Dig the
+ * full width" on (and the field-work hands available through {@link IBlockWork}) every dig cell of the published
+ * segments is cleared instead: nearest column first, top-down, within reach, never the block the player stands on,
+ * through the lease-checked player-like hands; when nothing is in reach the navigator walks to the nearest remaining
+ * cell. In ice mode the optional boat hand-off starts a travel route ({@link ITravel}) to the end of the built road
+ * whenever a segment completes while the player rides a boat.
  * <p>
  * Work per tick is a projection and a compare; a segment is generated only when the player nears the end of the
  * published road.
@@ -39,9 +49,10 @@ public final class HighwayBuilder implements IModule, IConfigurable {
     public static final String KEY = "highway";
 
     public record Settings(HighwayDesign.Mode mode, int width, int segmentLength, int lookahead,
-                           HighwayDesign.SpawnProof spawnProof, String target, boolean digTunnel) {
+                           HighwayDesign.SpawnProof spawnProof, String target, boolean digTunnel,
+                           boolean digSides, boolean boatHandoff) {
         static final Settings DEFAULTS = new Settings(HighwayDesign.Mode.TUNNEL, 3, 32, 16,
-                HighwayDesign.SpawnProof.NONE, "", true);
+                HighwayDesign.SpawnProof.NONE, "", true, true, false);
 
         static Settings read(ProfileConfig p) {
             return new Settings(parse(HighwayDesign.Mode.class, p.getString(ID, "mode", DEFAULTS.mode.name()),
@@ -52,7 +63,9 @@ public final class HighwayBuilder implements IModule, IConfigurable {
                     parse(HighwayDesign.SpawnProof.class, p.getString(ID, "spawn_proof", DEFAULTS.spawnProof.name()),
                             DEFAULTS.spawnProof),
                     p.getString(ID, "target", DEFAULTS.target),
-                    p.getBool(ID, "dig_tunnel", DEFAULTS.digTunnel));
+                    p.getBool(ID, "dig_tunnel", DEFAULTS.digTunnel),
+                    p.getBool(ID, "dig_sides", DEFAULTS.digSides),
+                    p.getBool(ID, "boat_handoff", DEFAULTS.boatHandoff));
         }
 
         HighwayDesign.Spec spec() {
@@ -79,6 +92,20 @@ public final class HighwayBuilder implements IModule, IConfigurable {
     private String dimension;
     private NavigationRun digRun;
     private String status = "";
+
+    // full-width digging (allocated once)
+    private static final double REACH = 4.5;
+    private static final int MAX_NAV_FAILURES = 3;
+    /** Steps the road must reach beyond the boat before a hand-off is worth starting. */
+    private static final int BOAT_MIN_AHEAD = 6;
+    private final TunnelDigQueue digQueue = new TunnelDigQueue();
+    private IBlockWork.Hands hands;
+    private long digCell = TunnelDigQueue.NONE;
+    private NavigationRun stepRun;
+    private long stepTarget = TunnelDigQueue.NONE;
+    private int navFailures;
+    private int lastHandoffStep = -1;
+    private LevelSolid solid;
 
     public HighwayBuilder() {
     }
@@ -132,7 +159,16 @@ public final class HighwayBuilder implements IModule, IConfigurable {
         if (next >= 0) {
             publish(mc, next);
         }
-        if (run.finished(progress)) {
+        if (!digQueue.isEmpty()) {
+            tickDig(mc, player);
+            if (run == null) {
+                return; // stopped by manual input
+            }
+        }
+        if (settings.mode() == HighwayDesign.Mode.ICE && settings.boatHandoff()) {
+            tickBoatHandoff(player, progress);
+        }
+        if (run.finished(progress) && digQueue.isEmpty()) {
             status = "Highway finished";
             enabled = false;
             reset();
@@ -179,6 +215,10 @@ public final class HighwayBuilder implements IModule, IConfigurable {
         }
         status = "Highway segment " + (index + 1) + "/" + r.segments;
         if (spec.mode == HighwayDesign.Mode.TUNNEL && settings.digTunnel() && seg.digCells().length > 0) {
+            if (settings.digSides() && handsOrNull() != null) {
+                digQueue.addAll(seg.digCells()); // the dig consumer clears the full width, centre included
+                return;
+            }
             INavigator nav = Services.navigatorOrNull();
             if (nav != null && nav.isAvailable()) {
                 if (digRun != null && digRun.isActive()) {
@@ -187,6 +227,118 @@ public final class HighwayBuilder implements IModule, IConfigurable {
                 digRun = nav.followPathLeased(ID, ControlPriority.GOAL, r.centrePath(seg.fromStep(), seg.toStep()))
                         .orElse(null);
             }
+        }
+    }
+
+    private IBlockWork.Hands handsOrNull() {
+        if (hands == null) {
+            IBlockWork w = Services.blockWorkOrNull();
+            if (w != null) {
+                hands = w.hands(ID, ControlPriority.GOAL);
+            }
+        }
+        return hands;
+    }
+
+    /**
+     * One step of the full-width dig: keep breaking the current cell, else pick the next one in reach, else walk to
+     * the nearest remaining cell. Never digs while its own walk is running (one owner of the body at a time).
+     */
+    private void tickDig(Minecraft mc, LocalPlayer player) {
+        IBlockWork.Hands h = handsOrNull();
+        if (h == null) {
+            return;
+        }
+        if (h.consumePreempted()) { // manual input or Stop-All wins: end the run
+            status = "Highway stopped: manual input";
+            enabled = false;
+            reset();
+            return;
+        }
+        if (stepRun != null) {
+            if (stepRun.isActive()) {
+                return;
+            }
+            NavigationStatus end = stepRun.status();
+            stepRun = null;
+            if (end == NavigationStatus.FAILED || end == NavigationStatus.UNAVAILABLE) {
+                if (++navFailures >= MAX_NAV_FAILURES && stepTarget != TunnelDigQueue.NONE) {
+                    digQueue.remove(stepTarget); // unreachable: left to the player
+                    navFailures = 0;
+                }
+            }
+        }
+        if (digCell != TunnelDigQueue.NONE) {
+            int r = h.tickBreak(PackedPos.x(digCell), PackedPos.y(digCell), PackedPos.z(digCell), false, true);
+            if (r == IBlockWork.Hands.RUNNING) {
+                return;
+            }
+            digQueue.remove(digCell); // dug, or blocked from view: either way not retried from here
+            digCell = TunnelDigQueue.NONE;
+            navFailures = 0;
+            h.clearLook();
+            return;
+        }
+        if (solid == null) {
+            solid = new LevelSolid(mc);
+        }
+        AABB box = player.getBoundingBox();
+        int standY = (int) Math.floor(box.minY - 0.01);
+        long c = digQueue.pick(player.getX(), player.getEyeY(), player.getZ(), REACH,
+                (int) Math.floor(box.minX), (int) Math.floor(box.maxX - 1e-6),
+                (int) Math.floor(box.minZ), (int) Math.floor(box.maxZ - 1e-6), standY, solid);
+        if (c != TunnelDigQueue.NONE) {
+            if (h.ensureLease()) {
+                digCell = c;
+            }
+            return;
+        }
+        h.release();
+        if (digQueue.isEmpty()) {
+            return;
+        }
+        long n = digQueue.nearest(player.getX(), player.getZ());
+        INavigator nav = Services.navigatorOrNull();
+        if (n == TunnelDigQueue.NONE || nav == null || !nav.isAvailable()) {
+            status = "Highway: walk on to keep digging";
+            return;
+        }
+        stepTarget = n;
+        stepRun = nav.goToLeased(ID, ControlPriority.GOAL, PackedPos.x(n), run.sy, PackedPos.z(n), 2).orElse(null);
+    }
+
+    /** Ice road: when the built road reaches further ahead and the player rides a boat, hand over to the boat driver. */
+    private void tickBoatHandoff(LocalPlayer player, int progress) {
+        if (!(player.getVehicle() instanceof Boat)) {
+            return;
+        }
+        int step = run.boatHandoffStep(progress, BOAT_MIN_AHEAD, lastHandoffStep);
+        if (step < 0) {
+            return;
+        }
+        ITravel travel = Services.travelOrNull();
+        if (travel == null) {
+            return;
+        }
+        lastHandoffStep = step; // one attempt per completed segment, also when the autopilot declines
+        if (travel.startRoute(run.stepX(step), run.sy, run.stepZ(step), ITravel.RouteMode.BOAT)) {
+            status = "Highway: boat to step " + step;
+        }
+    }
+
+    /** Solid-block probe for the dig queue. Client thread. */
+    private static final class LevelSolid implements TunnelDigQueue.Solid {
+        private final Minecraft mc;
+        private final BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
+
+        LevelSolid(Minecraft mc) {
+            this.mc = mc;
+        }
+
+        @Override
+        public boolean solidAt(int x, int y, int z) {
+            BlockState s = mc.level.getBlockState(cursor.set(x, y, z));
+            return !s.isAir() && !s.canBeReplaced();
         }
     }
 
@@ -216,6 +368,19 @@ public final class HighwayBuilder implements IModule, IConfigurable {
             digRun.cancel();
         }
         digRun = null;
+        if (stepRun != null && stepRun.isActive()) {
+            stepRun.cancel();
+        }
+        stepRun = null;
+        if (hands != null) {
+            hands.release();
+        }
+        digQueue.clear();
+        digCell = TunnelDigQueue.NONE;
+        stepTarget = TunnelDigQueue.NONE;
+        navFailures = 0;
+        lastHandoffStep = -1;
+        solid = null;
         run = null;
         dimension = null;
     }
@@ -258,7 +423,11 @@ public final class HighwayBuilder implements IModule, IConfigurable {
                 SettingSpec.choice("spawn_proof", "Spawn-proofing", d.spawnProof(), "Highway",
                         "Tunnel floor: none, bottom slabs or floor buttons"),
                 SettingSpec.bool("dig_tunnel", "Dig the tunnel", d.digTunnel(), "Highway",
-                        "Path the centre line through rock (needs Baritone)"));
+                        "Path the centre line through rock (needs Baritone)"),
+                SettingSpec.bool("dig_sides", "Dig the full width", d.digSides(), "Highway",
+                        "Clear every tunnel cell (side columns and top row) like a player, nearest first, top-down"),
+                SettingSpec.bool("boat_handoff", "Boat hand-off", d.boatHandoff(), "Highway",
+                        "Ice road: when a segment is done and you ride a boat, the travel autopilot drives it on"));
     }
 
     @Override

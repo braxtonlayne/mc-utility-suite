@@ -33,7 +33,7 @@ import java.util.Optional;
  * target. Relaxed mode (the explicit less-legit setting) uses a silent rotation and a direct game call instead, after
  * re-checking the WORLD_INTERACT lease. Client thread only; allocation only when an action starts (one hit result).
  */
-final class FieldHands implements LeaseListener {
+final class FieldHands implements LeaseListener, com.utilitysuite.core.api.IBlockWork.Hands {
 
     static final int RUNNING = 0;
     static final int DONE = 1;
@@ -63,7 +63,8 @@ final class FieldHands implements LeaseListener {
     }
 
     /** True when the lease is held (requests it when not). False while manual input or a higher module holds it. */
-    boolean ensureLease() {
+    @Override
+    public boolean ensureLease() {
         if (lease != null && lease.isActive()) {
             return true;
         }
@@ -80,18 +81,21 @@ final class FieldHands implements LeaseListener {
         return true;
     }
 
-    boolean hasLease() {
+    @Override
+    public boolean hasLease() {
         return lease != null && lease.isActive();
     }
 
     /** Set when manual input or another module took the lease; the module stops its run. Cleared on read. */
-    boolean consumePreempted() {
+    @Override
+    public boolean consumePreempted() {
         boolean p = preempted;
         preempted = false;
         return p;
     }
 
-    void release() {
+    @Override
+    public void release() {
         if (lease != null) {
             IInputSmoother input = Services.input();
             input.setKeyHeld(lease, SimKey.ATTACK, false);
@@ -181,6 +185,16 @@ final class FieldHands implements LeaseListener {
      * Relaxed: silent look and a direct destroy call. DONE when the cell is air (or replaceable), FAILED on timeout or
      * when line of sight is required and something else is in the way.
      */
+    @Override
+    public int tickBreak(int x, int y, int z, boolean relaxed, boolean requireLos) {
+        Minecraft mc = Minecraft.getInstance();
+        LocalPlayer player = mc.player;
+        if (player == null || mc.level == null || !hasLease()) {
+            return FAILED;
+        }
+        return tickBreak(mc, player, x, y, z, relaxed, requireLos);
+    }
+
     int tickBreak(Minecraft mc, LocalPlayer player, int x, int y, int z, boolean relaxed, boolean requireLos) {
         long cell = BlockPos.asLong(x, y, z);
         if (cell != actionCell) {
@@ -295,7 +309,8 @@ final class FieldHands implements LeaseListener {
     }
 
     /** Clears the look so the camera goes back to the user between actions. */
-    void clearLook() {
+    @Override
+    public void clearLook() {
         if (lease != null) {
             Services.input().clearRotation(lease);
         }

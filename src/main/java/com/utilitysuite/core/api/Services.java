@@ -32,6 +32,8 @@ public final class Services {
     private static volatile IBlockChangeFeed blockChanges;
     private static volatile IAllyLookup allies;
     private static volatile ISuiteActions actions;
+    private static volatile IBlockWork blockWork;
+    private static volatile ITravel travel;
 
     private Services() {
     }
@@ -130,13 +132,23 @@ public final class Services {
     /** Named suite actions (radial wheel, command palette), or null before the core registered the registry. */
     public static ISuiteActions actionsOrNull() { return actions; }
 
+    public static void registerBlockWork(IBlockWork s) { blockWork = s; }
+
+    /** Player-like block hands (field-work module), or null when it is not wired. */
+    public static IBlockWork blockWorkOrNull() { return blockWork; }
+
+    public static void registerTravel(ITravel s) { travel = s; }
+
+    /** Route starter (travel autopilot), or null when it is not wired. */
+    public static ITravel travelOrNull() { return travel; }
+
     /** Test hook: clears every registration. */
     public static void resetForTests() {
         arbiter = null; input = null; clicker = null; modState = null; modules = null; events = null; goals = null;
         navigator = null; worldKnowledge = null; storage = null; waypoints = null; autopilot = null; humanizer = null;
         bodySims = null; routePlanner = null; routeRunner = null; manualLook = null;
         sharedControl = null; visuals = null; plannedJump = null; blockChanges = null;
-        allies = null; actions = null;
+        allies = null; actions = null; blockWork = null; travel = null;
     }
 
     private static <T> T require(T value, String name) {

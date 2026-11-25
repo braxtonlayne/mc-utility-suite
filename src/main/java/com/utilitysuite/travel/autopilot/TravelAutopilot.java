@@ -43,7 +43,7 @@ import java.util.Optional;
  * The module being enabled only makes it available; a run starts with {@link #start()} (key "Travel autopilot") and
  * ends on arrival, failure, {@link #stop()}, Stop-All or leaving the world.
  */
-public final class TravelAutopilot implements IModule, IConfigurable {
+public final class TravelAutopilot implements IModule, IConfigurable, com.utilitysuite.core.api.ITravel {
 
     public static final String ID = "travel_autopilot";
 
@@ -106,6 +106,8 @@ public final class TravelAutopilot implements IModule, IConfigurable {
     // settings
     private String routeSpec = "";
     private AutopilotMode mode = AutopilotMode.AUTO;
+    /** Set only while {@link #startRoute} starts a run in the caller's mode instead of the configured one. */
+    private AutopilotMode modeOverride;
     private float minHealth = 8f;
     private int minFood = 6;
 
@@ -259,7 +261,7 @@ public final class TravelAutopilot implements IModule, IConfigurable {
             TravelMessages.status("message.utilitysuite.travel.automation_stopped");
             return false;
         }
-        if (mode == AutopilotMode.TRAIL) {
+        if (modeOverride == null && mode == AutopilotMode.TRAIL) {
             return startTrailFollow();
         }
         String dimension = mc.level.dimension().location().toString();
@@ -302,6 +304,33 @@ public final class TravelAutopilot implements IModule, IConfigurable {
         if (run != Run.IDLE) {
             finish("message.utilitysuite.autopilot.stopped");
         }
+    }
+
+    // ---- core.api ITravel (route hand-off from other modules) ----------------------------------------------------
+
+    @Override
+    public boolean startRoute(int x, int y, int z, RouteMode routeMode) {
+        modeOverride = switch (routeMode) {
+            case AUTO -> AutopilotMode.AUTO;
+            case OVERLAND -> AutopilotMode.OVERLAND;
+            case BOAT -> AutopilotMode.BOAT;
+            case ELYTRA -> AutopilotMode.ELYTRA;
+        };
+        try {
+            return start(x + " " + y + " " + z);
+        } finally {
+            modeOverride = null;
+        }
+    }
+
+    @Override
+    public boolean isRouteRunning() {
+        return isRunning();
+    }
+
+    @Override
+    public void stopRoute() {
+        stop();
     }
 
     /**
@@ -370,7 +399,7 @@ public final class TravelAutopilot implements IModule, IConfigurable {
     }
 
     private Run choose(LocalPlayer player, Minecraft mc) {
-        AutopilotMode m = mode;
+        AutopilotMode m = modeOverride != null ? modeOverride : mode;
         if (m == AutopilotMode.AUTO) {
             if (player.getVehicle() instanceof Boat) {
                 m = AutopilotMode.BOAT;
