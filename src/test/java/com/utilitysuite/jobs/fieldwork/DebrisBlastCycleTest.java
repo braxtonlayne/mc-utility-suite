@@ -144,6 +144,101 @@ class DebrisBlastCycleTest {
     }
 
     @Test
+    void serverStallHoldsEveryPhaseAndResumesAfterRecovery() {
+        DebrisBlastCycle.Config cfg = new DebrisBlastCycle.Config();
+        cfg.settleTicks = 3;
+        DebrisBlastCycle c = new DebrisBlastCycle(cfg);
+        Observation o = ready();
+        c.start(o);
+        o.blocksSincePocket = cfg.pocketEvery;
+        o.serverStalled = true;
+        assertEquals(Phase.TUNNEL, c.step(o)); // no pocket (no charge plan) during the stall
+        assertTrue(c.stallHeld());
+        o.serverStalled = false;
+        assertEquals(Phase.POCKET, c.step(o));
+        assertFalse(c.stallHeld());
+        assertEquals(Phase.PLACE_CHARGE, done(c, o));
+        // A "done" reported during the stall is dropped: the charge is not counted as placed.
+        o.serverStalled = true;
+        assertEquals(Phase.PLACE_CHARGE, done(c, o));
+        assertFalse(o.stepDone);
+        o.serverStalled = false;
+        assertEquals(Phase.RETREAT, done(c, o));
+        assertEquals(Phase.PLACE_SHIELD, done(c, o));
+        assertEquals(Phase.TRIGGER, done(c, o));
+        o.serverStalled = true;
+        assertEquals(Phase.TRIGGER, done(c, o)); // the bed is not used during a stall
+        assertFalse(c.chargeLive());
+        o.serverStalled = false;
+        assertEquals(Phase.SETTLE, done(c, o));
+        assertTrue(c.chargeLive());
+        // The settle timer waits while the server is frozen.
+        o.serverStalled = true;
+        for (int i = 0; i < 10; i++) {
+            assertEquals(Phase.SETTLE, c.step(o));
+        }
+        assertEquals(0, c.cycles());
+        o.serverStalled = false;
+        c.step(o);
+        c.step(o);
+        assertEquals(Phase.TUNNEL, c.step(o));
+        assertEquals(1, c.cycles());
+    }
+
+    @Test
+    void safetyAbortsStillApplyDuringAStall() {
+        DebrisBlastCycle c = new DebrisBlastCycle(new DebrisBlastCycle.Config());
+        Observation o = ready();
+        c.start(o);
+        o.serverStalled = true;
+        o.lavaNearFeet = true;
+        assertEquals(Phase.ABORTED, c.step(o));
+        assertEquals(Abort.LAVA_AT_FEET, c.abortReason());
+    }
+
+    @Test
+    void tntChargeIsLiveFromLightingUntilTheBlastSettles() {
+        DebrisBlastCycle.Config cfg = new DebrisBlastCycle.Config();
+        cfg.preferBed = false;
+        DebrisBlastCycle c = new DebrisBlastCycle(cfg);
+        Observation o = ready();
+        o.hasBed = false;
+        o.distanceToCharge = 7.0;
+        c.start(o);
+        o.blocksSincePocket = cfg.pocketEvery;
+        c.step(o);
+        assertEquals(Charge.TNT, c.charge());
+        assertEquals(Phase.PLACE_CHARGE, done(c, o));
+        assertFalse(c.chargeLive());
+        assertEquals(Phase.TRIGGER, done(c, o));
+        assertFalse(c.chargeLive());
+        assertEquals(Phase.RETREAT, done(c, o)); // lit
+        assertTrue(c.chargeLive());
+        o.serverStalled = true;
+        assertEquals(Phase.RETREAT, done(c, o));
+        assertTrue(c.chargeLive());
+    }
+
+    @Test
+    void stallHoldLatchCountsHoldsAndReportsResume() {
+        StallHold h = new StallHold();
+        assertFalse(h.update(true, false)); // a stall over harmless work does not hold
+        assertFalse(h.update(false, true));
+        assertTrue(h.update(true, true));
+        assertTrue(h.update(true, true));
+        assertEquals(1, h.holds());
+        assertFalse(h.justResumed());
+        assertFalse(h.update(false, true));
+        assertTrue(h.justResumed());
+        assertFalse(h.update(false, true));
+        assertFalse(h.justResumed());
+        assertTrue(h.update(true, true));
+        assertEquals(2, h.holds());
+        h.reset();
+        assertFalse(h.held());
+    }
+
+    @Test
     void planCheckRejectsAStandSpotTooCloseForTheDamageCap() {
         DebrisBlastCycle.Config cfg = new DebrisBlastCycle.Config();
         cfg.plannedExposure = 1.0;

@@ -17,6 +17,8 @@ import com.utilitysuite.world.blast.BlastMath;
  * lava is next to the feet. Before the charge is placed the planned stand distance must keep the blast below
  * {@code maxBlastDamage} assuming {@code plannedExposure} (the shield's expected cover); right before the trigger the
  * measured exposure at the actual stand spot is checked again ({@link BlastMath#entityDamage}, armour ignored).
+ * While Lag Guard reports a server stall ({@link Observation#serverStalled}) every phase is held in place
+ * ({@link #stallHeld}): nothing is dug, placed or triggered and the settle timer waits; the safety aborts still apply.
  */
 public final class DebrisBlastCycle {
 
@@ -72,6 +74,8 @@ public final class DebrisBlastCycle {
         public double exposure = 1.0;
         public int exposedLava;
         public int debrisVisible;
+        /** Lag Guard reports a server stall ({@code Services.serverHealth().pauseHighRisk()}): hold the phase. */
+        public boolean serverStalled;
     }
 
     private final Config config;
@@ -80,6 +84,7 @@ public final class DebrisBlastCycle {
     private Charge charge = Charge.NONE;
     private int settle;
     private int cycles;
+    private boolean stallHeld;
 
     public DebrisBlastCycle(Config config) {
         this.config = config;
@@ -90,6 +95,13 @@ public final class DebrisBlastCycle {
     public Charge charge() { return charge; }
     /** Completed blasts. */
     public int cycles() { return cycles; }
+    /** The last {@link #step} held its phase for a server stall: the executor must not act this tick. */
+    public boolean stallHeld() { return stallHeld; }
+    /** The charge is lit or triggered (TNT fuse running, or waiting for the blast to settle). */
+    public boolean chargeLive() {
+        return phase == Phase.SETTLE
+                || (charge == Charge.TNT && (phase == Phase.RETREAT || phase == Phase.PLACE_SHIELD));
+    }
 
     public float chargePower() {
         return charge == Charge.TNT ? BlastMath.POWER_TNT : BlastMath.POWER_BED;
@@ -128,6 +140,7 @@ public final class DebrisBlastCycle {
     public void stop() {
         phase = Phase.IDLE;
         charge = Charge.NONE;
+        stallHeld = false;
     }
 
     public Phase step(Observation o) {
@@ -143,6 +156,14 @@ public final class DebrisBlastCycle {
         if (o.lavaNearFeet) {
             return fail(Abort.LAVA_AT_FEET);
         }
+        if (o.serverStalled) {
+            // Server stall: the phase is held (no dig, no charge, no trigger, the settle timer stands still because
+            // the blast has not happened server-side) and any "done" the executor reported is re-earned afterwards.
+            o.stepDone = false;
+            stallHeld = true;
+            return phase;
+        }
+        stallHeld = false;
         boolean done = o.stepDone;
         o.stepDone = false;
         switch (phase) {

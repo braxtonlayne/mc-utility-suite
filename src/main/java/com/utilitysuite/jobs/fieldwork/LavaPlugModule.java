@@ -23,6 +23,7 @@ import java.util.List;
  * filler block into it ({@link FieldRules#PLUG_ITEMS}: never ores or valuables). Event driven: the block being attacked
  * is remembered from the attack event, and only when it turns to air are the 6 neighbours of that one cell checked; no
  * area polling. Reports {@link HazardKind#LAVA} to the danger model while lava is open. Lease at SURVIVAL priority.
+ * A plug run holds (keys released, no placement) while Lag Guard reports a server stall and resumes after recovery.
  */
 public final class LavaPlugModule extends FieldModule {
 
@@ -47,6 +48,7 @@ public final class LavaPlugModule extends FieldModule {
     private int supX, supY, supZ;
     private Direction supFace;
     private boolean warnedNoBlocks;
+    private final StallHold stall = new StallHold();
 
     public LavaPlugModule(MinecraftInventoryView inventory) {
         super(ID, ControlPriority.SURVIVAL);
@@ -231,7 +233,20 @@ public final class LavaPlugModule extends FieldModule {
             finish(phase >= 2);
             return;
         }
-        if (hands.consumePreempted() || ++runTicks > 80) {
+        if (hands.consumePreempted()) {
+            finish(false);
+            return;
+        }
+        if (stall.update(Services.serverHealth().pauseHighRisk(), true)) {
+            // Lag Guard: no placement against lava during a server stall (it would be lost or rubber-banded; the
+            // lava cannot flow while the server is frozen either). The run keeps its place and its timeout.
+            hands.release();
+            if (phase == 1) {
+                phase = 0; // re-confirm the held item after recovery
+            }
+            return;
+        }
+        if (++runTicks > 80) {
             finish(false);
             return;
         }

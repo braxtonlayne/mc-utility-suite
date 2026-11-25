@@ -18,6 +18,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.tags.FluidTags;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.FallingBlock;
 import net.minecraft.world.level.block.state.BlockState;
@@ -40,6 +41,9 @@ import java.util.Optional;
  * are left, unless the opt-in "Walk to remaining blocks" is on: then the route runner walks toward the nearest queued
  * block under a MOVEMENT + CAMERA lease (the hands' lease is released first), never more than
  * {@value #WALK_CAP} blocks from where the vein run started; blocks a walk that far cannot bring within reach are left.
+ * <p>
+ * In the Nether a run holds while Lag Guard reports a server stall ({@code Services.serverHealth()}, never while Lag
+ * Guard is off): keys released, no break and no walk; the next block is re-picked and re-probed on recovery.
  */
 public final class VeinWorkModule extends FieldModule {
 
@@ -72,6 +76,7 @@ public final class VeinWorkModule extends FieldModule {
         }
     };
     private final LeaseRequest walkRequest;
+    private final StallHold stall = new StallHold();
 
     private boolean requireSneak;
     private boolean doTrees = true;
@@ -223,6 +228,17 @@ public final class VeinWorkModule extends FieldModule {
         if (hands.consumePreempted() || walkPreempted || toolAboutToBreak(player)
                 || player.getInventory().getFreeSlot() < 0) {
             stopWork();
+            return;
+        }
+        if (stall.update(Services.serverHealth().pauseHighRisk(), level.dimension() == Level.NETHER)) {
+            // Lag Guard, Nether mining: no breaks (and no walk) during a server stall. The current block is dropped
+            // back into the queue so it is re-picked and hazard-probed again (lava may sit next to it) on recovery.
+            if (walkLease != null || walkTarget != Long.MIN_VALUE) {
+                endWalk(false);
+            }
+            hands.release();
+            current = Long.MIN_VALUE;
+            waitTicks = 0;
             return;
         }
         if (walkLease != null || walkTarget != Long.MIN_VALUE) {

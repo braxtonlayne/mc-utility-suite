@@ -2,6 +2,7 @@ package com.utilitysuite.jobs.fieldwork;
 
 import com.utilitysuite.core.api.ControlPriority;
 import com.utilitysuite.core.api.ProfileConfig;
+import com.utilitysuite.core.api.Services;
 import com.utilitysuite.core.api.SettingSpec;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -32,13 +33,16 @@ import java.util.List;
  * {@link FieldRules#PLUG_ITEMS}) and revealed ancient debris in reach to {@link VeinWorkModule#arm} (hazard probes,
  * connected debris), releasing its own hands while they work. Every look is smoothed and every action goes through the
  * core lease ({@link FieldHands}); safety aborts come from the cycle (low health, lava at the feet, no shield block,
- * unsafe stand spot) and switch the module off with a status message.
+ * unsafe stand spot) and switch the module off with a status message. While Lag Guard reports a server stall
+ * ({@code Services.serverHealth()}) the cycle holds its phase with the keys released and resumes after recovery.
  */
 public final class DebrisBlastModule extends FieldModule {
 
     public static final String ID = "debris_blast";
     private static final int AREA = 4;
     private static final double REACH = 4.5;
+    static final String STALL_HELD = "Server stall: debris blasting paused";
+    static final String STALL_LIVE = "Server stall: charge is live, stay behind the shield";
 
     private final DebrisBlastCycle.Config config = new DebrisBlastCycle.Config();
     private final DebrisBlastCycle cycle = new DebrisBlastCycle(config);
@@ -94,6 +98,13 @@ public final class DebrisBlastModule extends FieldModule {
             stopWork();
             return;
         }
+        if (cycle.stallHeld()) {
+            // Lag Guard: server stall. Keys released, no TNT/bed placed or triggered, no block broken; the cycle
+            // resumes in the same phase once the guard reports the server stable again.
+            hands.release();
+            status = cycle.chargeLive() ? STALL_LIVE : STALL_HELD; // constant strings
+            return;
+        }
         if (p == DebrisBlastCycle.Phase.PLUG_LAVA || p == DebrisBlastCycle.Phase.MINE_DEBRIS) {
             hands.release(); // the hand-off modules take their own leases
             if (p == DebrisBlastCycle.Phase.PLUG_LAVA) {
@@ -134,6 +145,7 @@ public final class DebrisBlastModule extends FieldModule {
         obs.hasShieldBlock = plugItem(inv) != null;
         obs.lavaNearFeet = lavaFlowNear(level, player.getBlockX(), player.getBlockY(), player.getBlockZ());
         obs.blocksSincePocket = blocksSincePocket;
+        obs.serverStalled = Services.serverHealth().pauseHighRisk(); // always false while Lag Guard is off
         double ex = cx + 0.5, ey = cy + 0.5, ez = cz + 0.5;
         obs.distanceToCharge = Math.sqrt(player.distanceToSqr(ex, ey, ez));
         DebrisBlastCycle.Phase p = cycle.phase();
