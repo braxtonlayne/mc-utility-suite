@@ -3,6 +3,7 @@ package com.utilitysuite.ui;
 import com.utilitysuite.UtilitySuiteMod;
 import com.utilitysuite.core.api.Services;
 import com.utilitysuite.core.input.KeybindManager;
+import com.utilitysuite.ui.holo.HudContextModule;
 import com.utilitysuite.ui.holo.NoticeBoard;
 import com.utilitysuite.ui.holo.NoticeLayer;
 import com.utilitysuite.ui.holo.Visuals;
@@ -15,6 +16,8 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.resources.ResourceLocation;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.neoforge.client.event.RegisterGuiLayersEvent;
+import net.neoforged.neoforge.common.NeoForge;
+import net.neoforged.neoforge.event.entity.player.PlayerInteractEvent;
 
 /**
  * Wires the Shell: Right Shift opens the five-tab {@link SuiteMenuScreen}; the {@link SuiteHud} module (the HUD host:
@@ -42,6 +45,12 @@ public final class UiBootstrap {
         Services.modules().register(new VisualSettings()); // writes HoloTheme on profile load and change
         Services.modules().register(hud);
         hud.subscribe();
+        // V6 context-morphing HUD (off by default): the host fades with it, tactical layers read its factors
+        HudContextModule context = new HudContextModule();
+        Services.modules().register(context);
+        Visuals.useContext(context.machine());
+        hud.host().context = context.machine();
+        NeoForge.EVENT_BUS.addListener(PlayerInteractEvent.RightClickBlock.class, context::onRightClickBlock);
         tabGui = new TabGui(); // off by default; reads arrow keys only while enabled
         Services.modules().register(tabGui);
         KeybindManager.setOpenMenuHandler(UiBootstrap::openMenu);

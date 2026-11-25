@@ -8,7 +8,9 @@ import net.neoforged.bus.api.IEventBus;
 import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
 import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
+import net.neoforged.neoforge.client.event.ScreenEvent;
 import net.neoforged.neoforge.common.NeoForge;
+import net.neoforged.neoforge.event.entity.player.PlayerInteractEvent;
 
 /**
  * Wires the world-mark reticles, the authority indicator, the world drawing kit and the suite font: the
@@ -23,6 +25,7 @@ import net.neoforged.neoforge.common.NeoForge;
 public final class MarksBootstrap {
 
     private static final ScreenProjector PROJECTOR = new ScreenProjector();
+    private static final HoloCardModule CARDS = new HoloCardModule(PROJECTOR);
     private static ReticleLayer reticles;
     private static AuthorityIndicator authority;
     private static boolean registered;
@@ -38,6 +41,11 @@ public final class MarksBootstrap {
         bus.addListener(EventPriority.HIGHEST, RenderLevelStageEvent.class, HoloWorldKit.Pass::onBegin);
         bus.addListener(EventPriority.LOWEST, RenderLevelStageEvent.class, HoloWorldKit.Pass::onEnd);
         bus.addListener(ClientTickEvent.Post.class, MarksBootstrap::onClientTick);
+        // V3 holo-cards (off by default): learns from opened menus, anchors through the projector
+        Services.modules().register(CARDS);
+        bus.addListener(PlayerInteractEvent.EntityInteract.class, CARDS::onEntityInteract);
+        bus.addListener(PlayerInteractEvent.RightClickBlock.class, CARDS::onRightClickBlock);
+        bus.addListener(ScreenEvent.Closing.class, CARDS::onScreenClosing);
         bus.addListener(ClientPlayerNetworkEvent.LoggingOut.class, event -> clearMarks());
     }
 
@@ -55,6 +63,7 @@ public final class MarksBootstrap {
         authority = new AuthorityIndicator(v.authority());
         v.hud().register(reticles);
         v.hud().register(authority);
+        v.hud().register(new HoloCardLayer(CARDS.book(), PROJECTOR));
         registered = true;
     }
 
