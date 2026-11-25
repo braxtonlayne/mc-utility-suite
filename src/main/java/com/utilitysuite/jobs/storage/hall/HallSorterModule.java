@@ -1,60 +1,68 @@
 package com.utilitysuite.jobs.storage.hall;
 
 import com.mojang.blaze3d.platform.InputConstants;
-import com.utilitysuite.core.api.ControlChannel;
-import com.utilitysuite.core.api.ControlLease;
-import com.utilitysuite.core.api.ControlPriority;
+import com.utilitysuite.core.api.CostProfile;
+import com.utilitysuite.core.api.DataSourceMode;
+import com.utilitysuite.core.api.GoalRequest;
 import com.utilitysuite.core.api.IConfigurable;
 import com.utilitysuite.core.api.IGoalEngine;
 import com.utilitysuite.core.api.IModule;
-import com.utilitysuite.core.api.LeaseRequest;
+import com.utilitysuite.core.api.JobSnapshot;
 import com.utilitysuite.core.api.ModuleCategory;
 import com.utilitysuite.core.api.ProfileConfig;
 import com.utilitysuite.core.api.Services;
 import com.utilitysuite.core.api.SettingSpec;
 import com.utilitysuite.core.api.SuiteAction;
+import com.utilitysuite.core.api.visual.HoloToken;
+import com.utilitysuite.core.api.visual.IHoloWorld;
+import com.utilitysuite.core.api.visual.IVisuals;
 import com.utilitysuite.core.api.visual.NoticeKind;
 import com.utilitysuite.jobs.goal.WorldActions;
+import com.utilitysuite.jobs.planner.HallJobSource;
+import com.utilitysuite.jobs.planner.PackedPos;
 import com.utilitysuite.jobs.storage.StorageMemory;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
+import net.minecraft.world.phys.Vec3;
 import net.neoforged.neoforge.client.event.RegisterKeyMappingsEvent;
+import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
 import net.neoforged.neoforge.client.settings.KeyConflictContext;
 
-import java.util.EnumSet;
 import java.util.List;
-import java.util.Optional;
 
 /**
- * Hall Sorter: tags the looked-at chest with a category (unbound key, cycles), and runs "sort hall" (goal console or
- * the {@code sort_hall} suite action): plans {@link HallSortPlanner} over the remembered chests near the player
- * (captured per slot by Storage Memory), then walks the trips with {@link HallSortRunner} under a GOAL lease. Nearly
- * full chests are reported as a notice. Off by default; refuses while a goal job runs (they share the world actions).
+ * Hall Sorter: tags the looked-at chest with a category (unbound key, cycles), and plans "sort hall" for the goal
+ * engine ({@link HallJobSource}): {@link HallSortPlanner} over the remembered chests near the player (captured per
+ * slot by Storage Memory), turned into HALL_TAKE / HALL_PUT / HALL_MERGE steps by {@link HallSortSteps}. The job runs
+ * in the goal engine's queue like any other (plan preview, pause/resume, Stop-All, retries); the {@code sort_hall}
+ * suite action just queues it. Nearly-full chests can be outlined in the world through the Shell's world kit (one
+ * batched pass, any number of chests) and reported as a notice when a sort starts. Off by default.
  */
-public final class HallSorterModule implements IModule, IConfigurable {
+public final class HallSorterModule implements IModule, IConfigurable, HallJobSource {
 
     public static final String ID = "hall_sorter";
     public static final String KEY_TAG = "key.utilitysuite.hall_tag";
+    /** Ticks between nearly-full rescans (a pass over remembered containers; never per frame). */
+    static final int RESCAN_TICKS = 100;
+    /** Most outlines kept; the Shell's world kit draws the nearest it has room for. */
+    static final int MAX_OUTLINES = 4096;
 
     private final StorageMemory memory;
     private final WorldActions actions;
-    private final HallSortRunner runner;
     private final HallSortPlanner planner = new HallSortPlanner();
     private boolean enabled;
     private int radius = 24;
     private int nearlyFullPct = 90;
     private boolean fullNotice;
     private boolean fullOverlay;
-    private ControlLease lease;
     private KeyMapping tagKey;
     private String lastResult = "";
 
     public HallSorterModule(StorageMemory memory, WorldActions actions) {
         this.memory = memory;
         this.actions = actions;
-        this.runner = new HallSortRunner(actions);
         com.utilitysuite.core.api.ISuiteActions a = Services.actionsOrNull();
         if (a != null) {
             a.register(new SuiteAction("sort_hall", "Sort storage hall", "storage chest organize tidy categories",
@@ -71,41 +79,39 @@ public final class HallSorterModule implements IModule, IConfigurable {
     }
 
     public String lastResult() {
-        return runner.isRunning() ? runner.status() : lastResult;
+        return lastResult;
     }
 
-    /** Plans and starts the sort. Returns a one-line result for the console / notice. */
+    /** Queues a "sort hall" job (the suite action; the goal console parses "sort hall" itself). */
     public String sortHall() {
-        Minecraft mc = Minecraft.getInstance();
         if (!enabled) {
             return lastResult = "Hall Sorter is off (Jobs tab)";
         }
-        if (mc.player == null) {
-            return lastResult = "Not in a world";
-        }
-        if (runner.isRunning()) {
-            return lastResult = "Already sorting";
-        }
         IGoalEngine goals = Services.goalsOrNull();
-        if (goals != null && goals.activeJob().isPresent()) {
-            return lastResult = "A goal job is running; sort after it finishes";
+        if (goals == null) {
+            return lastResult = "The goal engine is not loaded";
         }
-        if (Services.arbiter().isAutomationStopped()) {
-            return lastResult = "Automation is stopped";
+        long id = goals.submit(new GoalRequest.SortHall(CostProfile.FASTEST, DataSourceMode.OBSERVED_ONLY));
+        return lastResult = "Queued job #" + id + ": sort storage hall";
+    }
+
+    // ---- HallJobSource ----------------------------------------------------------------------------------------------
+
+    @Override
+    public Result hallPlan(String dimension, long from, boolean forRun) {
+        if (!enabled) {
+            return Result.error("Hall Sorter is off (Jobs tab)");
         }
-        String dim = actions.dimension();
-        List<HallSortPlanner.Chest> chests = memory.hallChests(dim, actions.playerPos(), radius);
+        List<HallSortPlanner.Chest> chests = memory.hallChests(dimension, from, radius);
         if (chests.size() < 2) {
-            return lastResult = "Open each hall chest once so its slots are remembered (" + chests.size() + " known)";
+            return Result.error("Open each hall chest once so its slots are remembered (" + chests.size()
+                    + " known within " + radius + " blocks)");
         }
         HallSortPlanner.Plan plan = planner.plan(chests, nearlyFullPct / 100.0);
-        HallSortTrips.Result trips = HallSortTrips.build(chests, plan);
-        if (fullNotice && !plan.nearlyFull().isEmpty()) {
+        if (forRun && fullNotice && !plan.nearlyFull().isEmpty()) {
             post(plan.nearlyFull().size() + " hall chest(s) nearly full");
         }
-        runner.start(trips.trips());
-        lastResult = runner.status() + (trips.skipped() > 0 ? " (" + trips.skipped() + " in-chest moves skipped)" : "");
-        return lastResult;
+        return new Result(HallSortSteps.build(chests, plan, dimension), null);
     }
 
     /** Cycles the category tag of the chest under the crosshair. */
@@ -141,105 +147,80 @@ public final class HallSorterModule implements IModule, IConfigurable {
                 }
             }
         }
-        updateFullMarks();
-        if (!runner.isRunning()) {
-            releaseLease();
-            return;
-        }
-        if (lease == null || !lease.isActive()) {
-            Optional<ControlLease> l = Services.arbiter().request(new LeaseRequest(ID, ControlPriority.GOAL,
-                    EnumSet.allOf(ControlChannel.class), 0, null));
-            if (l.isEmpty()) {
-                return; // manual input or higher priority holds control; retry next tick
-            }
-            lease = l.get();
-        }
-        runner.tick(lease);
-        if (!runner.isRunning()) {
-            lastResult = runner.status();
-            post(lastResult);
-            releaseLease();
-        }
+        updateFullScan();
     }
 
-    // ---- nearly-full outline (world marks, drawn batched by the Shell) ------------------------------------------------
+    // ---- nearly-full outline: own batched pass through the Shell's world kit ------------------------------------------
 
-    private static final int MAX_MARKS = 4;
-    private static final String[] MARK_OWNERS = {"hall_full_0", "hall_full_1", "hall_full_2", "hall_full_3"};
-    private static final String MARK_LABEL = "Nearly full";
-    private final int[] markSlot = {-1, -1, -1, -1};
-    private final long[] fullPos = new long[MAX_MARKS];
+    private long[] fullPos = new long[64];
     private int fullCount;
-    private int markTicks;
+    private int scanTicks;
 
-    /** Rescans every 100 ticks (budgeted), re-publishes the boxes each tick while the overlay is on. */
-    private void updateFullMarks() {
-        com.utilitysuite.core.api.visual.IWorldMarks marks = Services.visuals().marks();
+    /** Budgeted rescan of remembered containers (every {@link #RESCAN_TICKS}); grows the buffer only when it fills. */
+    private void updateFullScan() {
         if (!enabled || !fullOverlay || Services.modState().isCleanScreen()) {
-            clearMarks(marks);
+            fullCount = 0;
+            scanTicks = 0;
             return;
         }
-        if (markTicks-- <= 0) {
-            markTicks = 100;
-            fullCount = Minecraft.getInstance().player == null ? 0
-                    : memory.nearlyFull(actions.dimension(), actions.playerPos(), radius, nearlyFullPct / 100.0,
-                    fullPos);
-        }
-        for (int i = 0; i < MAX_MARKS; i++) {
-            if (i >= fullCount) {
-                if (markSlot[i] >= 0) {
-                    marks.clear(markSlot[i]);
-                }
-                continue;
-            }
-            if (markSlot[i] < 0) {
-                markSlot[i] = marks.claim(MARK_OWNERS[i]);
-                if (markSlot[i] < 0) {
-                    continue;
-                }
-            }
-            long p = fullPos[i];
-            int x = net.minecraft.core.BlockPos.getX(p);
-            int y = net.minecraft.core.BlockPos.getY(p);
-            int z = net.minecraft.core.BlockPos.getZ(p);
-            marks.setBox(markSlot[i], com.utilitysuite.core.api.visual.MarkKind.OBJECTIVE, x, y, z, x + 1, y + 1,
-                    z + 1, MARK_LABEL, com.utilitysuite.core.api.visual.IWorldMarks.FLAG_TAG);
-        }
-    }
-
-    private void clearMarks(com.utilitysuite.core.api.visual.IWorldMarks marks) {
-        if (fullCount == 0) {
+        if (scanTicks-- > 0) {
             return;
         }
-        for (int i = 0; i < MAX_MARKS; i++) {
-            if (markSlot[i] >= 0) {
-                marks.clear(markSlot[i]);
-            }
+        scanTicks = RESCAN_TICKS;
+        if (Minecraft.getInstance().player == null) {
+            fullCount = 0;
+            return;
         }
-        fullCount = 0;
-        markTicks = 0;
+        String dim = actions.dimension();
+        long at = actions.playerPos();
+        double ratio = nearlyFullPct / 100.0;
+        int n = memory.nearlyFull(dim, at, radius, ratio, fullPos);
+        while (n == fullPos.length && fullPos.length < MAX_OUTLINES) {
+            fullPos = new long[Math.min(MAX_OUTLINES, fullPos.length * 2)];
+            n = memory.nearlyFull(dim, at, radius, ratio, fullPos);
+        }
+        fullCount = n;
     }
 
-    private void releaseLease() {
-        if (lease != null) {
-            if (lease.isActive()) {
-                Services.arbiter().release(lease);
-            }
-            lease = null;
+    /** Outlines the nearly-full chests found by the last scan. Nothing when idle, off or in Clean-Screen. */
+    public void onRenderLevel(RenderLevelStageEvent event) {
+        if (fullCount == 0 || !enabled || !fullOverlay
+                || event.getStage() != RenderLevelStageEvent.Stage.AFTER_PARTICLES
+                || Services.modState().isCleanScreen()) {
+            return;
+        }
+        IVisuals visuals = Services.visualsOrNull();
+        IHoloWorld world = visuals != null ? visuals.world() : null;
+        if (world == null) {
+            return; // no world pass (no Shell)
+        }
+        Vec3 cam = event.getCamera().getPosition();
+        outline(world, fullPos, fullCount, cam.x, cam.y, cam.z);
+    }
+
+    /** Lift of the outline off the block faces, against z-fighting. */
+    static final float OUTSET = 0.02f;
+
+    /** One box per packed position, camera relative, in the warning token. Allocation free. */
+    static void outline(IHoloWorld world, long[] pos, int count, double camX, double camY, double camZ) {
+        for (int i = 0; i < count; i++) {
+            long p = pos[i];
+            float x = (float) (PackedPos.x(p) - camX);
+            float y = (float) (PackedPos.y(p) - camY);
+            float z = (float) (PackedPos.z(p) - camZ);
+            world.boxEdges(x - OUTSET, y - OUTSET, z - OUTSET, x + 1 + OUTSET, y + 1 + OUTSET, z + 1 + OUTSET,
+                    HoloToken.WARN, 0.85f);
         }
     }
 
-    @Override
-    public void onStopAll() {
-        runner.cancel("Hall sort stopped");
-        lease = null;
+    int outlineCount() {
+        return fullCount;
     }
 
     @Override
     public void onWorldUnload() {
-        clearMarks(Services.visuals().marks());
-        runner.cancel("");
-        lease = null;
+        fullCount = 0;
+        scanTicks = 0;
     }
 
     @Override
@@ -261,8 +242,23 @@ public final class HallSorterModule implements IModule, IConfigurable {
     public void setEnabled(boolean enabled) {
         this.enabled = enabled;
         if (!enabled) {
-            runner.cancel("Hall Sorter turned off");
-            releaseLease();
+            fullCount = 0;
+            cancelSortJobs();
+        }
+    }
+
+    /** Turning the sorter off cancels its running or queued sort jobs. */
+    private static void cancelSortJobs() {
+        IGoalEngine goals = Services.goalsOrNull();
+        if (goals == null) {
+            return;
+        }
+        String label = new GoalRequest.SortHall(CostProfile.FASTEST, DataSourceMode.OBSERVED_ONLY).label();
+        goals.activeJob().filter(j -> label.equals(j.goalLabel())).ifPresent(j -> goals.cancel(j.jobId()));
+        for (JobSnapshot j : goals.queuedJobs()) {
+            if (label.equals(j.goalLabel())) {
+                goals.cancel(j.jobId());
+            }
         }
     }
 
@@ -281,9 +277,9 @@ public final class HallSorterModule implements IModule, IConfigurable {
                 SettingSpec.integer("nearly_full_pct", "Nearly full at (%)", 90, 50, 100, "",
                         "A chest counts as nearly full when this share of its slots is used"),
                 SettingSpec.bool("nearly_full_notice", "Nearly-full notice", false, "",
-                        "Post a notice listing how many hall chests are nearly full when a sort is planned"),
+                        "Post a notice saying how many hall chests are nearly full when a sort starts"),
                 SettingSpec.bool("nearly_full_overlay", "Outline nearly-full chests", false, "",
-                        "Outline up to four nearly-full remembered chests near you in the world"));
+                        "Outline every nearly-full remembered chest within the hall radius in the world"));
     }
 
     @Override
@@ -292,7 +288,7 @@ public final class HallSorterModule implements IModule, IConfigurable {
         nearlyFullPct = Math.max(50, Math.min(100, p.getInt(ID, "nearly_full_pct", 90)));
         fullNotice = p.getBool(ID, "nearly_full_notice", false);
         fullOverlay = p.getBool(ID, "nearly_full_overlay", false);
-        markTicks = 0;
+        scanTicks = 0;
     }
 
     @Override

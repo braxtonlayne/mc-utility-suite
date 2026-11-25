@@ -111,6 +111,8 @@ public final class JobsBootstrap {
         com.utilitysuite.jobs.storage.hall.HallSorterModule hallSorter =
                 new com.utilitysuite.jobs.storage.hall.HallSorterModule(storage, actions);
         Services.modules().register(hallSorter);
+        executor.setHallSource(hallSorter); // "sort hall" jobs: the sorter plans, the executor walks the steps
+        NeoForge.EVENT_BUS.addListener(hallSorter::onRenderLevel); // nearly-full outlines (Shell world kit)
         if (modBus != null) {
             modBus.addListener(hallSorter::onRegisterKeys);
         }

@@ -277,6 +277,51 @@ final class Fakes {
             pending = Result.DONE;
         }
 
+        /** What hall takes "carried", keyed by {@code HallSortSteps.key}. */
+        final Map<String, Integer> hallCarried = new LinkedHashMap<>();
+        /** The next {@code hallFailTimes} hall steps fail with {@code hallFails}. */
+        String hallFails;
+        int hallFailTimes;
+        /** When true, hall steps stay RUNNING until cleared (to pause / Stop-All mid-step). */
+        boolean hallHold;
+
+        @Override
+        public void beginHallStep(PlanStep step, ControlLease lease) {
+            log.add("hall " + step.kind() + " " + PackedPos.format(step.storagePos()) + " " + step.count()
+                    + (com.utilitysuite.jobs.storage.hall.HallSortSteps.mergeAfter(step) ? " +merge" : ""));
+            if (hallFails != null && hallFailTimes > 0) {
+                hallFailTimes--;
+                message = hallFails;
+                transferred = Map.of();
+                pending = Result.FAILED;
+                return;
+            }
+            Map<String, Integer> moved = new LinkedHashMap<>();
+            switch (step.kind()) {
+                case HALL_TAKE -> {
+                    for (var tk : com.utilitysuite.jobs.storage.hall.HallSortSteps.takes(step)) {
+                        String k = com.utilitysuite.jobs.storage.hall.HallSortSteps.key(tk.item(), tk.variant());
+                        moved.merge(k, tk.count(), Integer::sum);
+                        hallCarried.merge(k, tk.count(), Integer::sum);
+                    }
+                }
+                case HALL_PUT -> {
+                    for (var p : com.utilitysuite.jobs.storage.hall.HallSortSteps.puts(step)) {
+                        String k = com.utilitysuite.jobs.storage.hall.HallSortSteps.key(p.item(), p.variant());
+                        int n = Math.min(p.count(), hallCarried.getOrDefault(k, 0));
+                        if (n > 0) {
+                            moved.put(k, n);
+                            hallCarried.merge(k, -n, Integer::sum);
+                        }
+                    }
+                }
+                default -> {
+                }
+            }
+            transferred = moved;
+            pending = hallHold ? Result.RUNNING : Result.DONE;
+        }
+
         @Override
         public Result poll() {
             return pending;

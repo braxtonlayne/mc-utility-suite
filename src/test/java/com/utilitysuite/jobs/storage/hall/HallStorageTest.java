@@ -3,12 +3,16 @@ package com.utilitysuite.jobs.storage.hall;
 import com.utilitysuite.jobs.planner.PackedPos;
 import com.utilitysuite.jobs.storage.ChestSlots;
 import com.utilitysuite.jobs.storage.StorageMemory;
+import com.utilitysuite.jobs.planner.Plan;
+import com.utilitysuite.jobs.planner.PlanStep;
+import com.utilitysuite.jobs.planner.StepKind;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -93,7 +97,7 @@ class HallStorageTest {
     }
 
     @Test
-    void tripsGroupBySourceAndSkipInChestMerges() {
+    void stepsTakeBySlotThenPutPerDestinationAndFlagMerges() {
         HallSortPlanner.Chest wood = new HallSortPlanner.Chest(A, StorageCategories.WOOD, 27)
                 .put(0, "minecraft:oak_log", "", 64, 64)
                 .put(1, "minecraft:cobblestone", "", 20, 64)
@@ -104,18 +108,38 @@ class HallStorageTest {
         HallSortPlanner.Chest ores = new HallSortPlanner.Chest(FAR, StorageCategories.ORES, 27);
         List<HallSortPlanner.Chest> chests = List.of(wood, stone, ores);
         HallSortPlanner.Plan plan = new HallSortPlanner().plan(chests, 0.9);
-        HallSortTrips.Result r = HallSortTrips.build(chests, plan);
-        assertEquals(1, r.trips().size());
-        HallSortTrips.Trip t = r.trips().get(0);
-        assertEquals(A, t.source());
-        assertEquals(Map.of("minecraft:cobblestone", 20, "minecraft:raw_iron", 10), t.take());
-        assertEquals(Map.of("minecraft:cobblestone", 20), t.deposits().get(B));
-        assertEquals(Map.of("minecraft:raw_iron", 10), t.deposits().get(FAR));
-        assertTrue(r.skipped() >= 1, "the oak log merge inside the chest is not a trip");
+        Plan p = HallSortSteps.build(chests, plan, OW);
+        List<PlanStep> s = p.steps();
+        assertEquals(List.of(StepKind.HALL_TAKE, StepKind.HALL_PUT, StepKind.HALL_PUT), s.stream().map(PlanStep::kind)
+                .toList());
+        PlanStep take = s.get(0);
+        assertEquals(A, take.storagePos());
+        assertEquals(30, take.count());
+        assertEquals(List.of(new HallSortSteps.Take(1, 20, "minecraft:cobblestone", ""),
+                new HallSortSteps.Take(2, 10, "minecraft:raw_iron", "")), HallSortSteps.takes(take));
+        assertEquals(B, s.get(1).storagePos());
+        assertEquals(List.of(new HallSortSteps.Put(20, "minecraft:cobblestone", "")), HallSortSteps.puts(s.get(1)));
+        assertEquals(FAR, s.get(2).storagePos());
+        // the oak log partials in the wood chest merge on its last (only) visit, the take
+        assertTrue(HallSortSteps.mergeAfter(take), take.toString());
+        assertFalse(HallSortSteps.mergeAfter(s.get(1)));
+        assertEquals(HallSortSteps.MILESTONE, take.milestone());
     }
 
     @Test
-    void mixedBookChestMovesAreSkipped() {
+    void aChestNoTripVisitsGetsItsOwnMergeStep() {
+        HallSortPlanner.Chest stone = new HallSortPlanner.Chest(A, StorageCategories.STONE, 27)
+                .put(0, "minecraft:cobblestone", "", 30, 64).put(5, "minecraft:cobblestone", "", 30, 64);
+        HallSortPlanner.Chest wood = new HallSortPlanner.Chest(B, StorageCategories.WOOD, 27);
+        List<HallSortPlanner.Chest> chests = List.of(stone, wood);
+        Plan p = HallSortSteps.build(chests, new HallSortPlanner().plan(chests, 0.9), OW);
+        assertEquals(1, p.steps().size());
+        assertEquals(StepKind.HALL_MERGE, p.steps().get(0).kind());
+        assertEquals(A, p.steps().get(0).storagePos());
+    }
+
+    @Test
+    void oneBookLeavesAMixedBookChestBySlot() {
         HallSortPlanner.Chest books1 = new HallSortPlanner.Chest(A, StorageCategories.BOOKS, 27)
                 .put(0, "minecraft:enchanted_book", "minecraft:mending=1", 1, 1)
                 .put(1, "minecraft:enchanted_book", "minecraft:sharpness=5", 1, 1);
@@ -123,9 +147,32 @@ class HallStorageTest {
                 .put(0, "minecraft:enchanted_book", "minecraft:mending=1", 1, 1)
                 .put(1, "minecraft:enchanted_book", "minecraft:mending=1", 1, 1);
         List<HallSortPlanner.Chest> chests = List.of(books1, books2);
-        HallSortPlanner.Plan plan = new HallSortPlanner().plan(chests, 0.9);
-        HallSortTrips.Result r = HallSortTrips.build(chests, plan);
-        assertTrue(r.trips().isEmpty());
-        assertTrue(r.skipped() >= 1);
+        Plan p = HallSortSteps.build(chests, new HallSortPlanner().plan(chests, 0.9), OW);
+        assertEquals(2, p.steps().size(), p.steps().toString());
+        assertEquals(List.of(new HallSortSteps.Take(0, 1, "minecraft:enchanted_book", "minecraft:mending=1")),
+                HallSortSteps.takes(p.steps().get(0)));
+        assertEquals(List.of(new HallSortSteps.Put(1, "minecraft:enchanted_book", "minecraft:mending=1")),
+                HallSortSteps.puts(p.steps().get(1)));
+        assertEquals("minecraft:enchanted_book#minecraft:mending=1",
+                HallSortSteps.key("minecraft:enchanted_book", "minecraft:mending=1"));
+    }
+
+    @Test
+    void longSourcesSplitIntoTripsThatFitTheInventory() {
+        HallSortPlanner.Chest wood = new HallSortPlanner.Chest(A, StorageCategories.WOOD, 54);
+        for (int i = 0; i < 40; i++) {
+            wood.put(i, "minecraft:cobblestone", "", 64, 64);
+        }
+        wood.put(40, "minecraft:oak_log", "", 64, 64).put(41, "minecraft:oak_log", "", 64, 64)
+                .put(42, "minecraft:oak_log", "", 64, 64);
+        HallSortPlanner.Chest stone = new HallSortPlanner.Chest(B, StorageCategories.STONE, 54);
+        List<HallSortPlanner.Chest> chests = List.of(wood, stone);
+        Plan p = HallSortSteps.build(chests, new HallSortPlanner().plan(chests, 0.9), OW);
+        List<PlanStep> takes = p.steps().stream().filter(s -> s.kind() == StepKind.HALL_TAKE).toList();
+        assertEquals(2, takes.size());
+        assertEquals(HallSortSteps.MAX_STACKS_PER_TRIP, takes.get(0).blockIds().size());
+        assertEquals(40 - HallSortSteps.MAX_STACKS_PER_TRIP, takes.get(1).blockIds().size());
+        assertEquals(40 * 64, p.steps().stream().filter(s -> s.kind() == StepKind.HALL_PUT)
+                .mapToInt(PlanStep::count).sum());
     }
 }

@@ -162,8 +162,11 @@ public final class StorageMemoryModule implements IModule, IConfigurable {
         scheduleSave();
     }
 
-    /** Stored enchantments of an enchanted book as a sorted key; "" for everything else. Close-time only. */
-    private static String variantKey(ItemStack st) {
+    /**
+     * Stored enchantments of an enchanted book as a sorted key ({@link ChestSlots#enchantKey}); "" for everything
+     * else. Container close and hall-sort steps only, not per tick.
+     */
+    public static String variantKey(ItemStack st) {
         net.minecraft.world.item.enchantment.ItemEnchantments stored =
                 st.get(net.minecraft.core.component.DataComponents.STORED_ENCHANTMENTS);
         if (stored == null || stored.isEmpty()) {

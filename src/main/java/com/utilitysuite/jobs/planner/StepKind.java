@@ -43,5 +43,18 @@ public enum StepKind {
      * Open the crafter at {@code storagePos} and apply the template encoded in {@code blockIds[0]}
      * ({@link CrafterTemplate#encode}): clear wrong items, toggle slot locks, seed items.
      */
-    CRAFTER_APPLY
+    CRAFTER_APPLY,
+    /**
+     * Storage hall sort: open the container at {@code storagePos} and take exact slots. {@code blockIds} holds one
+     * {@code "slot|count|item|variant"} entry per slot (see {@code HallSortSteps}); each slot's item and stored
+     * enchantments are checked before it is clicked. {@code crafts} 1 = merge partial stacks before closing.
+     */
+    HALL_TAKE,
+    /**
+     * Storage hall sort: put what the last HALL_TAKE carried into the container at {@code storagePos}.
+     * {@code blockIds} holds {@code "count|item|variant"} entries. {@code crafts} 1 = merge partial stacks after.
+     */
+    HALL_PUT,
+    /** Storage hall sort: open the container at {@code storagePos} and merge its partial stacks with slot clicks. */
+    HALL_MERGE
 }

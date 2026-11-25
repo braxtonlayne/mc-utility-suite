@@ -94,6 +94,10 @@ public final class GoalEngine implements IGoalEngine, IModule, IConfigurable {
                     Map.of(), List.of());
             return;
         }
+        if (request instanceof GoalRequest.SortHall) {
+            lastPreview = hallPreview(request, executor.hallPlan(false));
+            return;
+        }
         List<DependencyPlanner.Target> targets = executor.targetsFor(request);
         if (request instanceof GoalRequest.Build b && targets.isEmpty()) {
             lastPreview = new PlanPreview(request, b.label(), List.of("Waiting for schematic toolkit"), Map.of(),
@@ -104,6 +108,23 @@ public final class GoalEngine implements IGoalEngine, IModule, IConfigurable {
         List<ErrandBatcher.JobPlan> queued = executor.provisionalPlans();
         DependencyPlanner p = planner.get();
         previewExecutor.execute(() -> lastPreview = buildPreview(request, p.plan(targets, ctx), queued));
+    }
+
+    /** "sort hall" preview: the sorter's steps, or why it cannot run. */
+    static PlanPreview hallPreview(GoalRequest request, com.utilitysuite.jobs.planner.HallJobSource.Result r) {
+        if (r.error() != null) {
+            return new PlanPreview(request, request.label(), List.of(), Map.of(), List.of(r.error()));
+        }
+        List<String> steps = new ArrayList<>();
+        for (PlanStep s : r.plan().steps()) {
+            steps.add(s.milestone() + " — " + s.describe());
+        }
+        List<String> warnings = new ArrayList<>(r.plan().warnings());
+        if (steps.isEmpty()) {
+            warnings.add("Hall already sorted: nothing to move or merge");
+        }
+        return new PlanPreview(request, request.label(), steps, Map.of(), warnings,
+                com.utilitysuite.jobs.planner.PlanEstimate.seconds(r.plan().steps()), List.of());
     }
 
     static PlanPreview buildPreview(GoalRequest request, Plan plan, List<ErrandBatcher.JobPlan> queued) {
@@ -323,6 +344,7 @@ public final class GoalEngine implements IGoalEngine, IModule, IConfigurable {
                     s.dataSource());
             case GoalRequest.Brew b -> new GoalRequest.Brew(b.potion(), b.form(), b.count(), c, b.dataSource());
             case GoalRequest.Crafter k -> new GoalRequest.Crafter(k.apply(), k.name(), c, k.dataSource());
+            case GoalRequest.SortHall h -> new GoalRequest.SortHall(c, h.dataSource());
         };
     }
 }

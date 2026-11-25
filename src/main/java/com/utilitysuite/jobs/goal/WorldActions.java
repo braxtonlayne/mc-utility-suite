@@ -40,12 +40,23 @@ public interface WorldActions {
      */
     void beginStation(PlanStep step, ControlLease lease);
 
+    /**
+     * Runs one storage-hall step ({@code HALL_TAKE}, {@code HALL_PUT}, {@code HALL_MERGE}): walks to and opens the
+     * container at {@code step.storagePos()}. A take clicks exactly the listed slots after checking each one still
+     * holds the item with the same stored enchantments (else another slot that does); a put moves only items the last
+     * take brought (never the player's own stacks); with the merge flag, partial stacks in the open container are then
+     * merged with pick-up / drop / put-back clicks. DONE once the container opened (even when short);
+     * {@link #transferred()} reports the items moved keyed by {@code HallSortSteps.key(item, variant)}. FAILED when
+     * the container cannot be reached or opened.
+     */
+    void beginHallStep(PlanStep step, ControlLease lease);
+
     Result poll();
 
     /** Human-readable result or failure reason of the last operation. */
     String message();
 
-    /** Items actually moved by the last fetch/deposit, keyed by item id. */
+    /** Items actually moved by the last fetch/deposit, keyed by item id (hall steps: see {@link #beginHallStep}). */
     Map<String, Integer> transferred();
 
     /** Stops the running operation (preemption, cancel). */
