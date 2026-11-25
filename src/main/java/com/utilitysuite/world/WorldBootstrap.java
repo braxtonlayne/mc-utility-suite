@@ -16,6 +16,7 @@ import com.utilitysuite.world.trial.TrialChamberModule;
 import com.utilitysuite.world.knowledge.KnowledgeLedger;
 import com.utilitysuite.world.knowledge.WorldKnowledgeModule;
 import com.utilitysuite.world.knowledge.WorldKnowledgeService;
+import com.utilitysuite.world.atlas.WorldAtlasModule;
 import com.utilitysuite.world.minimap.MinimapModule;
 import com.utilitysuite.world.oresim.OreSimModule;
 import com.utilitysuite.world.overlays.WorldOverlaysModule;
@@ -91,6 +92,7 @@ public final class WorldBootstrap {
         RenderFiltersModule renderFilters = new RenderFiltersModule();
         StrongholdFinderModule strongholdFinder = new StrongholdFinderModule();
         TrialChamberModule trialChambers = new TrialChamberModule(runtime);
+        WorldAtlasModule atlas = new WorldAtlasModule();
         modBus.addListener(RegisterGuiLayersEvent.class, e -> e.registerBelow(VanillaGuiLayers.CHAT,
                 ResourceLocation.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID, "minimap"), minimap.hud()));
         Services.registerWaypoints(waypoints.store());
@@ -100,7 +102,7 @@ public final class WorldBootstrap {
         for (WorldModule m : new WorldModule[] {knowledge, overlays, oreSim, seedScanner, seedDiff, radar, camera,
                 waypoints,
                 minimap, lightOverlay, blastOverlay, spawnGeometry, seedLocator, freelook, renderFilters,
-                strongholdFinder, trialChambers}) {
+                strongholdFinder, trialChambers, atlas}) {
             registry.register(m);
             runtime.add(m);
         }
@@ -108,6 +110,7 @@ public final class WorldBootstrap {
         // Keys: quick toggles from the core's key set, plus three of our own.
         KeybindManager.onPressed(KeybindManager.KeyId.TOGGLE_WORLD_OVERLAYS, overlays::toggleFromKey);
         KeybindManager.onPressed(KeybindManager.KeyId.TOGGLE_SCOUT_CAMERA, camera::toggleFreecam);
+        KeybindManager.onPressed(KeybindManager.KeyId.OPEN_WORLD_ATLAS, atlas::openScreen);
         // Created in the registration event (not during parallel mod construction: KeyMapping keeps a global map).
         modBus.addListener((RegisterKeyMappingsEvent e) -> {
             KeyMapping zoomKey = key("zoom", GLFW.GLFW_KEY_Z);
