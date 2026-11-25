@@ -40,7 +40,9 @@ public final class ServerStallDetector {
         if (lastPacketNs != Long.MIN_VALUE && lastGameTime != Long.MIN_VALUE) {
             long dtNs = nowNs - lastPacketNs;
             long dGame = gameTime - lastGameTime;
-            if (dtNs > 0 && dGame > 0) {
+            if (dtNs > 0 && dGame >= 0) {
+                // dGame == 0: packets keep coming but the world does not advance (a frozen or wedged tick loop still
+                // answers on the network thread: /tick freeze, a stuck level tick): that is 0 TPS, not "no sample"
                 double sample = Math.min(20.0, dGame / (dtNs / 1.0e9));
                 tps = tps + TPS_ALPHA * (sample - tps);
             } else if (dGame < 0) {

@@ -21,6 +21,9 @@ public final class CombatGapJump {
 
     public enum Verdict { NO, JUMP }
 
+    /** {@link #reason()} when the parkour validator refused (not at an edge, or jumping is no better). */
+    public static final String REASON_VALIDATOR = "validator";
+
     /** Health that must remain after the landing's fall damage (when SafeWalk is off). */
     public static final float HEALTH_MARGIN = 4f;
 
@@ -72,7 +75,7 @@ public final class CombatGapJump {
             return last;
         }
         if (!search.shouldEdgeJump(now, yawDeg, sprint, health, w)) {
-            reason = "validator";
+            reason = REASON_VALIDATOR;
             return last;
         }
         float dmg = search.landDamage();

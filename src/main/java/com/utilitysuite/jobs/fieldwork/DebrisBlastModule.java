@@ -87,6 +87,7 @@ public final class DebrisBlastModule extends FieldModule {
             return;
         }
         tick++;
+        tickHandOffs();
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer player = mc.player;
         ClientLevel level = mc.level;
@@ -276,7 +277,13 @@ public final class DebrisBlastModule extends FieldModule {
         int fz = player.getBlockZ() + heading.getStepZ();
         int y = player.getBlockY();
         for (int dy = 1; dy >= 0; dy--) {
-            if (!mc.level.getBlockState(cursor.set(fx, y + dy, fz)).canBeReplaced()) {
+            net.minecraft.world.level.block.state.BlockState ahead = mc.level.getBlockState(cursor.set(fx, y + dy, fz));
+            if (!ahead.canBeReplaced()) {
+                status = "Tunnelling";
+                // the pickaxe, not whatever was last held (playtest find: netherrack in hand never broke a block)
+                if (hands.holdBestTool(player, ahead) != FieldHands.DONE) {
+                    return;
+                }
                 int r = hands.tickBreak(mc, player, fx, y + dy, fz, relaxed, !relaxed);
                 if (r == FieldHands.FAILED) {
                     hands.pauseHuman(10);
@@ -301,12 +308,19 @@ public final class DebrisBlastModule extends FieldModule {
             cz = player.getBlockZ() + side.getStepZ();
             pocketStep = 1;
         }
-        for (int k = 0; k <= 1; k++) {
-            int x = cx + side.getStepX() * k;
-            int z = cz + side.getStepZ() * k;
-            if (!mc.level.getBlockState(cursor.set(x, cy, z)).canBeReplaced()) {
-                hands.tickBreak(mc, player, x, cy, z, relaxed, !relaxed);
+        // The first cell is opened two high (head row first): from the tunnel the eye sits in the head row, so a
+        // one-high pocket hides its own floor cells behind the wall above them (no line of sight, nothing dug).
+        for (int k = 0; k <= 2; k++) {
+            int x = cx + side.getStepX() * (k == 2 ? 1 : 0);
+            int y = k == 0 ? cy + 1 : cy;
+            int z = cz + side.getStepZ() * (k == 2 ? 1 : 0);
+            net.minecraft.world.level.block.state.BlockState cell = mc.level.getBlockState(cursor.set(x, y, z));
+            if (!cell.canBeReplaced()) {
                 status = "Digging blast pocket";
+                if (hands.holdBestTool(player, cell) != FieldHands.DONE) {
+                    return;
+                }
+                hands.tickBreak(mc, player, x, y, z, relaxed, !relaxed);
                 return;
             }
         }
@@ -317,12 +331,22 @@ public final class DebrisBlastModule extends FieldModule {
     }
 
     private void placeCharge(Minecraft mc, LocalPlayer player) {
-        Item item = cycle.charge() == DebrisBlastCycle.Charge.TNT ? Items.TNT : bedItem(player.getInventory());
-        if (place(mc, player, item, cx, cy - 1, cz, Direction.UP)) {
+        // Done when the world shows the charge, not when the click went out: a click that placed nothing used to
+        // move on, and the trigger then put a block where the bed should have been (playtest find).
+        if (chargeInPlace(mc)) {
             obs.stepDone = true;
             cycle.step(obs);
+            return;
         }
+        Item item = cycle.charge() == DebrisBlastCycle.Charge.TNT ? Items.TNT : bedItem(player.getInventory());
+        place(mc, player, item, cx, cy - 1, cz, Direction.UP);
         status = "Placing " + cycle.charge();
+    }
+
+    private boolean chargeInPlace(Minecraft mc) {
+        net.minecraft.world.level.block.state.BlockState s = mc.level.getBlockState(cursor.set(cx, cy, cz));
+        return cycle.charge() == DebrisBlastCycle.Charge.TNT ? s.is(net.minecraft.world.level.block.Blocks.TNT)
+                : s.is(net.minecraft.tags.BlockTags.BEDS);
     }
 
     private void placeShield(Minecraft mc, LocalPlayer player) {
@@ -356,6 +380,11 @@ public final class DebrisBlastModule extends FieldModule {
         if (use == null) {
             return;
         }
+        if (!tnt && !chargeInPlace(mc)) {
+            // never "use" an empty cell: in relaxed mode that places the plug block into the pocket
+            status = "Bed missing at the charge spot";
+            return;
+        }
         if (place(mc, player, use, cx, cy, cz, Direction.UP)) {
             obs.stepDone = true;
             cycle.step(obs);
@@ -365,8 +394,14 @@ public final class DebrisBlastModule extends FieldModule {
 
     /** Hands the scanned lava source to Lava Plug (one plug run at a time); the area re-scan keeps the count true. */
     private void plugLava(LocalPlayer player) {
+        // One hand-off at a time: both modules want the same hands, and the phase flips between plug and mine while
+        // the scan still sees the lava a running plug is about to cover (playtest find: both stalled, busy forever).
         if (lavaPlug.isBusy()) {
             status = "Plugging lava";
+            return;
+        }
+        if (veinWork.isBusy()) {
+            status = "Mining ancient debris";
             return;
         }
         if (player.distanceToSqr(lavaX + 0.5, lavaY + 0.5, lavaZ + 0.5) > REACH * REACH) {
@@ -376,6 +411,10 @@ public final class DebrisBlastModule extends FieldModule {
         if (lavaPlug.plugAround(lavaX, lavaY, lavaZ, 0)) {
             obs.exposedLava = Math.max(0, obs.exposedLava - 1);
             status = "Plugging lava";
+        } else {
+            // Lava Plug measures reach from the eye (interaction range - 0.5) and needs a support face: say so
+            // instead of keeping the last action's status
+            status = "Lava out of reach: move closer";
         }
     }
 
@@ -383,6 +422,10 @@ public final class DebrisBlastModule extends FieldModule {
     private void mineDebris(LocalPlayer player) {
         if (veinWork.isBusy()) {
             status = "Mining ancient debris";
+            return;
+        }
+        if (lavaPlug.isBusy()) {
+            status = "Plugging lava";
             return;
         }
         if (player.distanceToSqr(debrisX + 0.5, debrisY + 0.5, debrisZ + 0.5) > REACH * REACH) {
@@ -407,8 +450,28 @@ public final class DebrisBlastModule extends FieldModule {
         return hands.tickPlace(mc, player, x, y, z, face, relaxed) == FieldHands.DONE;
     }
 
+    /**
+     * Lava Plug and Vein Work carry out a hand-off whether or not they are switched on, but the module registry ticks
+     * only enabled modules: while one of them is off and busy with this module's hand-off, it is ticked from here.
+     */
+    private void tickHandOffs() {
+        if (!lavaPlug.isEnabled() && lavaPlug.isBusy()) {
+            lavaPlug.onTick();
+        }
+        if (!veinWork.isEnabled() && veinWork.isBusy()) {
+            veinWork.onTick();
+        }
+    }
+
     @Override
     protected void stopWork() {
+        // a hand-off nobody else ticks would stay "busy" forever and block the next cycle
+        if (!lavaPlug.isEnabled()) {
+            lavaPlug.stopWork();
+        }
+        if (!veinWork.isEnabled()) {
+            veinWork.stopWork();
+        }
         cycle.stop();
         pocketStep = 0;
         blocksSincePocket = 0;

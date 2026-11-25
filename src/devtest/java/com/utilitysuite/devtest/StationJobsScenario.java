@@ -53,7 +53,7 @@ final class StationJobsScenario {
     }
 
     static Scenario build() {
-        Scenario s = new Scenario("14-stations", "Station & storage jobs: loadout, crafter, hall sort, furnaces,"
+        Scenario s = new Scenario("15-stations", "Station & storage jobs: loadout, crafter, hall sort, furnaces,"
                 + " brewing + bottles, carried ender chest");
         if (!subscribed) {
             subscribed = true;

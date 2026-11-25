@@ -24,11 +24,16 @@ public final class ClutchChain {
     /** The fallbacks, in chain order. */
     public enum Fallback {
         WATER_BUCKET(true, 1), POWDER_SNOW(true, 1), SLIME_OR_HAY(true, 1), COBWEB(true, 1), BOAT(true, 2),
-        TWISTING_VINES(true, 1), WIND_CHARGE(false, 0);
+        TWISTING_VINES(true, 2), WIND_CHARGE(false, 0);
 
         /** Placed on the landing block's top face (needs reach and a placeable landing). */
         public final boolean placed;
-        /** Ticks the placement needs before the feet arrive (a boat is an entity the server spawns a tick later). */
+        /**
+         * Ticks the placement needs before the feet arrive: a boat is an entity the server spawns a tick later; vines
+         * must exist before the tick that starts inside their cell (placed during that tick, the player's cached
+         * feet block state is still air and the climb check misses them: playtest 2026-11-25, used at 0.75 blocks up
+         * and landed with 8.5 damage).
+         */
         public final int lead;
 
         Fallback(boolean placed, int lead) {
@@ -83,7 +88,8 @@ public final class ClutchChain {
             return null;
         }
         for (Fallback f : CHAIN) {
-            if ((items & f.bit()) == 0 || (f == Fallback.WATER_BUCKET && nether)) {
+            if ((items & f.bit()) == 0 || (f == Fallback.WATER_BUCKET && nether)
+                    || (f == Fallback.TWISTING_VINES && !entersVines(heights, ticksToImpact))) {
                 continue;
             }
             int u = f.placed ? placeTick(f, heights, ticksToImpact, lookPitch, degPerTick, placeable)
@@ -97,6 +103,19 @@ public final class ClutchChain {
         }
         return null;
     }
+
+    /**
+     * Vines placed on the landing block only reset the fall if some tick starts with the feet inside the vine cell
+     * (climbing is checked at the start of a tick, before the move): the last airborne tick must start less than one
+     * block above the landing. A fast fall whose last tick starts higher skips through the cell and lands with full
+     * damage.
+     */
+    static boolean entersVines(double[] heights, int ticksToImpact) {
+        return ticksToImpact >= 1 && heights[ticksToImpact - 1] > 0.0 && heights[ticksToImpact - 1] < VINE_CELL;
+    }
+
+    /** Height of the climbable cell the feet must start a tick in. */
+    public static final double VINE_CELL = 1.0;
 
     /**
      * Latest tick a placement on the landing top face can be used: the look-down done, the face within reach of the

@@ -41,7 +41,29 @@ public final class PenRules {
         FOODS.put("minecraft:axolotl", new String[]{"minecraft:tropical_fish_bucket"});
     }
 
+    /** Vanilla breeding cooldown of an adult after it bred (ticks); feeding before it ends wastes the food. */
+    public static final long BREED_COOLDOWN_TICKS = 6000;
+
     private PenRules() {
+    }
+
+    /** Vanilla in-love time after feeding (ticks): a fed partner still pairs with the next one fed within it. */
+    public static final long LOVE_TICKS = 600;
+
+    /** True while an animal this sweep fed is still in love (waiting for a partner). */
+    public static boolean inLove(long fedAtTick, long nowTick) {
+        return fedAtTick != Long.MIN_VALUE && nowTick - fedAtTick < LOVE_TICKS;
+    }
+
+    /**
+     * Breed-ready as far as a client can tell. The client never sees an adult's breeding cooldown or its in-love
+     * timer ({@code AgeableMob.getAge()} reads 1 for every adult client-side, never 0), so an adult counts as ready
+     * unless this sweep fed it within the last {@link #BREED_COOLDOWN_TICKS}.
+     *
+     * @param fedAtTick tick this sweep last fed the animal, or {@link Long#MIN_VALUE} when never
+     */
+    public static boolean breedReady(boolean adult, long fedAtTick, long nowTick) {
+        return adult && (fedAtTick == Long.MIN_VALUE || nowTick - fedAtTick >= BREED_COOLDOWN_TICKS);
     }
 
     /** Breeding foods for an entity type id, in preference order (cheapest first); empty when unknown. */
@@ -84,6 +106,15 @@ public final class PenRules {
     /** What to do with animal {@code i}. */
     public static Action actionFor(int i, String[] types, boolean[] adult, boolean[] breedReady, boolean[] sheared,
                                    int n, Means m) {
+        return actionFor(i, types, adult, breedReady, null, sheared, n, m);
+    }
+
+    /**
+     * As above; {@code inLove} (may be null) marks animals fed moments ago and still waiting: they count as the
+     * partner of the next one, so the second of a pair is fed too (playtest find: only the first cow was fed).
+     */
+    public static Action actionFor(int i, String[] types, boolean[] adult, boolean[] breedReady, boolean[] inLove,
+                                   boolean[] sheared, int n, Means m) {
         String type = types[i];
         if (!adult[i]) {
             return Action.NONE;
@@ -100,7 +131,7 @@ public final class PenRules {
             for (int j = 0; j < n; j++) {
                 if (types[j].equals(type)) {
                     count++;
-                    if (j != i && adult[j] && breedReady[j]) {
+                    if (j != i && adult[j] && (breedReady[j] || (inLove != null && inLove[j]))) {
                         partners++;
                     }
                 }
@@ -115,13 +146,20 @@ public final class PenRules {
     /** Nearest actionable animal inside the pen, or -1. */
     public static int pick(String[] types, boolean[] adult, boolean[] breedReady, boolean[] sheared,
                            boolean[] inPen, double[] distSq, int n, Means m) {
+        return pick(types, adult, breedReady, null, sheared, inPen, distSq, n, m);
+    }
+
+    /** As above, with the in-love partners of {@link #actionFor(int, String[], boolean[], boolean[], boolean[],
+     *  boolean[], int, Means)}. */
+    public static int pick(String[] types, boolean[] adult, boolean[] breedReady, boolean[] inLove, boolean[] sheared,
+                           boolean[] inPen, double[] distSq, int n, Means m) {
         int best = -1;
         double bestD = Double.MAX_VALUE;
         for (int i = 0; i < n; i++) {
             if (!inPen[i] || distSq[i] >= bestD) {
                 continue;
             }
-            if (actionFor(i, types, adult, breedReady, sheared, n, m) != Action.NONE) {
+            if (actionFor(i, types, adult, breedReady, inLove, sheared, n, m) != Action.NONE) {
                 best = i;
                 bestD = distSq[i];
             }

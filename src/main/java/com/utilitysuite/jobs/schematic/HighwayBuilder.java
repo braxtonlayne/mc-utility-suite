@@ -178,7 +178,7 @@ public final class HighwayBuilder implements IModule, IConfigurable {
         if (settings.mode() == HighwayDesign.Mode.ICE && settings.boatHandoff()) {
             tickBoatHandoff(player, progress);
         }
-        if (run.finished(progress) && digQueue.isEmpty()) {
+        if (digQueue.isEmpty() && (run.finished(progress) || (digsFullWidth() && run.allPublished()))) {
             status = "Highway finished";
             enabled = false;
             reset();
@@ -238,6 +238,12 @@ public final class HighwayBuilder implements IModule, IConfigurable {
                         .orElse(null);
             }
         }
+    }
+
+    /** Tunnel mode clearing every dig cell with the field-work hands (not the navigator's centre-line path). */
+    private boolean digsFullWidth() {
+        return settings.mode() == HighwayDesign.Mode.TUNNEL && settings.digTunnel() && settings.digSides()
+                && handsOrNull() != null;
     }
 
     private IBlockWork.Hands handsOrNull() {

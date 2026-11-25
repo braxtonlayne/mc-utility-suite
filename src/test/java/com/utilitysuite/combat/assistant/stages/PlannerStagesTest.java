@@ -313,4 +313,45 @@ class PlannerStagesTest {
     void gapJumpUsesSimKeyJump() {
         assertEquals("JUMP", SimKey.JUMP.name());
     }
+
+    /** Playtest 2026-11-25: the fight's spacing held short of the gap, so the stage must run up to the edge itself. */
+    @Test
+    void gapJumpRunsUpToTheEdgeThenJumps() {
+        cs.fightGapJumps = true;
+        GapJumpStage st = new GapJumpStage(floors(true));
+        CombatSnapshot s = atEdge();
+        s.pz = -1.5; // standing two blocks short of the edge
+        s.pvz = 0.0;
+        assertTrue(st.step(s, ctx), st.lastReason());
+        assertTrue(log.contains("move 1 true"));
+        assertFalse(log.contains("tap JUMP"));
+        assertEquals(1, st.runUps());
+        assertEquals(0, st.jumps());
+    }
+
+    @Test
+    void gapJumpNoRunUpWhenTheJumpCannotLand() {
+        cs.fightGapJumps = true;
+        MovementPhysics.Voxels w = (x, y, z) -> x >= -3 && x <= 3 && y == 19 && ((z >= -30 && z <= 0)
+                || (z >= 12 && z <= 30)); // an 11-wide gap
+        GapJumpStage st = new GapJumpStage(new GapJumpFacts() {
+            @Override
+            public MovementPhysics.Voxels voxels() {
+                return w;
+            }
+
+            @Override
+            public boolean safeWalk() {
+                return true;
+            }
+        });
+        CombatSnapshot s = atEdge();
+        s.pz = -1.5;
+        s.pvz = 0.0;
+        s.tz = 14.5;
+        box(s);
+        assertFalse(st.step(s, ctx));
+        assertTrue(log.isEmpty(), log.toString());
+        assertEquals(0, st.runUps());
+    }
 }

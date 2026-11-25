@@ -48,8 +48,8 @@ class ClutchChainTest {
         assertEquals(Fallback.POWDER_SNOW, chain.choose(all, true, h, n, 0f, FAST_TURN, true));
         int noBlocks = Fallback.WIND_CHARGE.bit() | Fallback.BOAT.bit() | Fallback.TWISTING_VINES.bit();
         assertEquals(Fallback.BOAT, chain.choose(noBlocks, false, h, n, 0f, FAST_TURN, true));
-        assertEquals(Fallback.TWISTING_VINES, chain.choose(noBlocks & ~Fallback.BOAT.bit(), false, h, n, 0f,
-                FAST_TURN, true));
+        assertEquals(ClutchChain.entersVines(h, n) ? Fallback.TWISTING_VINES : Fallback.WIND_CHARGE,
+                chain.choose(noBlocks & ~Fallback.BOAT.bit(), false, h, n, 0f, FAST_TURN, true));
         assertEquals(Fallback.WIND_CHARGE, chain.choose(Fallback.WIND_CHARGE.bit(), false, h, n, 0f, FAST_TURN, true));
         assertNull(chain.choose(0, false, h, n, 0f, FAST_TURN, true));
     }
@@ -90,6 +90,35 @@ class ClutchChainTest {
         // too short a fall for the head to come down: nothing
         int m = fall(3, h);
         assertNull(chain.choose(Fallback.WIND_CHARGE.bit(), false, h, m, -60f, 3.0, true));
+    }
+
+    /** Vines only reset a fall when some tick starts with the feet inside their cell. */
+    @Test
+    void vinesOnlyWhenATickStartsInsideTheVineCell() {
+        // a drop whose last airborne tick starts a block or more up: it passes the vine cell within one tick
+        double skip = 12.0;
+        int n = fall(skip, h);
+        while (h[n - 1] < ClutchChain.VINE_CELL && skip < 40.0) {
+            skip += 0.25;
+            n = fall(skip, h);
+        }
+        assertTrue(h[n - 1] >= ClutchChain.VINE_CELL, "found a drop that passes the vine cell within one tick");
+        assertNull(chain.choose(Fallback.TWISTING_VINES.bit(), false, h, n, 0f, FAST_TURN, true));
+        assertEquals(Fallback.WIND_CHARGE, chain.choose(Fallback.TWISTING_VINES.bit() | Fallback.WIND_CHARGE.bit(),
+                false, h, n, 0f, FAST_TURN, true));
+        // some drop heights do end a tick inside the cell: there the vines are chosen
+        int found = 0;
+        for (double height = 4.0; height <= 30.0; height += 0.25) {
+            int m = fall(height, h);
+            if (ClutchChain.entersVines(h, m)
+                    && chain.choose(Fallback.TWISTING_VINES.bit(), false, h, m, 0f, FAST_TURN, true) != null) {
+                assertEquals(Fallback.TWISTING_VINES, chain.chosen());
+                // placed a full tick before the tick that starts in the cell (the feet state is cached per tick)
+                assertTrue(chain.useTick() <= m - 2, "vines used at " + chain.useTick() + " of " + m);
+                found++;
+            }
+        }
+        assertTrue(found > 0, "vines stay usable where the fall enters the cell");
     }
 
     @Test

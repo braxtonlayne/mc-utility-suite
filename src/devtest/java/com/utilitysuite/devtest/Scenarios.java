@@ -31,9 +31,11 @@ final class Scenarios {
         add(q, "TravelScenario", TravelScenario::build);
         add(q, "ParkourScenario", ParkourScenario::build);
         add(q, "CombatScenario", CombatScenario::build);
+        add(q, "CombatDepthScenario", CombatDepthScenario::build);
         add(q, "ToolsScenario", ToolsScenario::build);
         add(q, "ModulesScenario", ModulesScenario::build);
         add(q, "ControlsScenario", ControlsScenario::build);
+        add(q, "FieldJobsScenario", FieldJobsScenario::build);
         add(q, "StationJobsScenario", StationJobsScenario::build);
         add(q, "FeaturesScenario", FeaturesScenario::build);
         add(q, "PerfScenario", PerfScenario::build);
