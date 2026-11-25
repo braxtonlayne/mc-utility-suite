@@ -26,10 +26,13 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.client.server.IntegratedServer;
+import net.minecraft.core.Holder;
+import net.minecraft.core.QuartPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.biome.BiomeManager;
 import net.minecraft.world.level.chunk.ChunkGenerator;
 import net.minecraft.world.level.levelgen.NoiseBasedChunkGenerator;
@@ -79,6 +82,19 @@ public final class OreSimModule extends WorldModule {
     private boolean showGhosts;
     private boolean ghostLabels;
     private int maxGhosts;
+    private boolean clientWorldgen;
+    private boolean observedBiomes;
+
+    /** Remote servers: rebuilt vanilla generator for the current seed/dimension (null until built off-thread). */
+    private volatile ClientWorldgenOracles.Context clientContext;
+    private String clientContextKey = "";
+    private ObservedBiomeCache observed;
+    private ClientLevel observedLevel;
+    private volatile boolean contextArrived;
+    private final it.unimi.dsi.fastutil.objects.Reference2ObjectOpenHashMap<Holder<Biome>, String> biomeIds =
+            new it.unimi.dsi.fastutil.objects.Reference2ObjectOpenHashMap<>();
+    private BiomeOracle remoteBiomes = BiomeOracle.UNKNOWN_BIOMES;
+    private TerrainOracle remoteTerrain = TerrainOracle.UNKNOWN_TERRAIN;
 
     private GeneratorProfile profile = GeneratorProfile.none();
     private boolean workbenchUncertain;
@@ -148,7 +164,13 @@ public final class OreSimModule extends WorldModule {
                 SettingSpec.bool("ghost_labels", "Label nearest predictions", true, "Display",
                         "Labels the nearest few ghosts with \"predicted\" and their confidence."),
                 SettingSpec.integer("max_ghosts", "Max ghosts drawn", 3000, 100, 20000, "Display",
-                        "Upper bound on outlines per frame.").asAdvanced());
+                        "Upper bound on outlines per frame.").asAdvanced(),
+                SettingSpec.bool("client_worldgen", "Rebuild terrain from the seed", true, "OreSim",
+                        "On servers: rebuilds vanilla biomes, surface heights and large veins from the known seed "
+                                + "(off-thread, about 1 s once). Off: only loaded chunks are used.").asAdvanced(),
+                SettingSpec.bool("observed_biomes", "Remember seen biomes", true, "OreSim",
+                        "On servers: keeps the biomes of loaded chunks and prefers them over rebuilt ones "
+                                + "(custom biome datapacks).").asAdvanced());
     }
 
     @Override
@@ -172,6 +194,8 @@ public final class OreSimModule extends WorldModule {
         showGhosts = bool(p, "show_ghosts");
         ghostLabels = bool(p, "ghost_labels");
         maxGhosts = integer(p, "max_ghosts");
+        clientWorldgen = bool(p, "client_worldgen");
+        observedBiomes = bool(p, "observed_biomes");
         if (!p.profileId().equals(profileId)) {
             profileId = p.profileId();
             chatSeed = p.getString(ID, "chat_seed", "");
@@ -215,6 +239,10 @@ public final class OreSimModule extends WorldModule {
     protected void onDisable() {
         service.configure(null);
         ServerWorldgenOracles.clearCaches();
+        ClientWorldgenOracles.clearCaches();
+        clientContextKey = "";
+        observed = null;
+        observedLevel = null;
         knowledge.setPredictionSource(PredictionSource.NONE);
         configKey = "";
         ghostCount = 0;
@@ -229,6 +257,10 @@ public final class OreSimModule extends WorldModule {
     public void onWorldUnload() {
         service.configure(null);
         ServerWorldgenOracles.clearCaches();
+        ClientWorldgenOracles.clearCaches();
+        clientContextKey = "";
+        observed = null;
+        observedLevel = null;
         configKey = "";
         ghostCount = 0;
         profile = GeneratorProfile.none();
@@ -312,6 +344,10 @@ public final class OreSimModule extends WorldModule {
         }
         ticks++;
         String dim = WorldIds.dimension(level);
+        if (contextArrived) {
+            contextArrived = false; // client-side generator finished building: switch to it
+            configKey = "";
+        }
         if (configKey.isEmpty() || level != configuredLevel) {
             configuredLevel = level; // dimension change / respawn: re-resolve (not polled)
             reconfigure(mc, level, dim);
@@ -347,12 +383,17 @@ public final class OreSimModule extends WorldModule {
 
     private void reconfigure(Minecraft mc, ClientLevel level, String dim) {
         profile = resolveProfile(mc, level);
-        // Large (noise-stage) veins need the generator's noises, so only the integrated server's oracle provides them.
-        OreSpec[] specs = mc.getSingleplayerServer() != null
+        boolean remote = mc.getSingleplayerServer() == null;
+        ClientWorldgenOracles.Context ctx = remote ? ensureClientContext(dim) : null;
+        if (remote) {
+            configureRemoteOracles(level, dim, ctx);
+        }
+        // Large (noise-stage) veins need the generator's noises: the integrated server's, or the client-side rebuild.
+        OreSpec[] specs = !remote || ctx != null
                 ? VanillaOreTables.selectWithLargeVeins(dim, resources)
                 : VanillaOreTables.select(dim, resources);
         String key = profile.seedKnown() + "|" + profile.seed() + "|" + dim + "|" + resources + "|"
-                + profile.uncertain();
+                + profile.uncertain() + "|" + (ctx != null) + "|" + observedBiomes;
         if (key.equals(configKey)) {
             return;
         }
@@ -367,6 +408,92 @@ public final class OreSimModule extends WorldModule {
         }
         spiralCursor = 0;
         ghostsDirty = true;
+    }
+
+    /**
+     * Remote server with a known seed: returns the rebuilt vanilla generator for this seed and dimension, starting the
+     * one-time build on the world executor when it does not exist yet (the next tick after it lands reconfigures).
+     */
+    private ClientWorldgenOracles.Context ensureClientContext(String dim) {
+        if (!clientWorldgen || !profile.seedKnown()) {
+            return null;
+        }
+        long seed = profile.seed();
+        ClientWorldgenOracles.Context ctx = ClientWorldgenOracles.cached(seed, dim);
+        if (ctx != null) {
+            return ctx;
+        }
+        String key = seed + "|" + dim;
+        if (!key.equals(clientContextKey)) {
+            clientContextKey = key;
+            int minY = VanillaOreTables.minY(dim);
+            int height = VanillaOreTables.height(dim);
+            WorldExecutor.get().execute(() -> {
+                if (ClientWorldgenOracles.forSeed(seed, dim, minY, height) != null) {
+                    contextArrived = true;
+                }
+            });
+        }
+        return null;
+    }
+
+    private void configureRemoteOracles(ClientLevel level, String dim, ClientWorldgenOracles.Context ctx) {
+        if (!observedBiomes || !profile.seedKnown()) {
+            observed = null;
+        } else if (observed == null || observedLevel != level
+                || observed.zoomSeed() != BiomeManager.obfuscateSeed(profile.seed())) {
+            observed = new ObservedBiomeCache(BiomeManager.obfuscateSeed(profile.seed()),
+                    QuartPos.fromBlock(level.getMinBuildHeight()), QuartPos.fromBlock(level.getHeight()), 2048);
+            observedLevel = level;
+        }
+        BiomeOracle seen = observed;
+        if (ctx != null) {
+            remoteBiomes = seen != null ? BiomeOracle.layered(seen, ctx.biomeOracle) : ctx.biomeOracle;
+            remoteTerrain = ctx.terrainOracle;
+        } else {
+            remoteBiomes = seen != null ? BiomeOracle.layered(seen, BiomeOracle.UNKNOWN_BIOMES)
+                    : BiomeOracle.UNKNOWN_BIOMES;
+            remoteTerrain = TerrainOracle.UNKNOWN_TERRAIN;
+        }
+    }
+
+    /**
+     * Copies the received noise biomes of the loaded chunks around (cx, cz) into the observed cache (once per chunk;
+     * runs at most {@code REQUESTS_PER_TICK} times a tick, about 384 reads per chunk).
+     */
+    private void observeChunk(ClientLevel level, int cx, int cz) {
+        ObservedBiomeCache cache = observed;
+        if (cache == null) {
+            return;
+        }
+        int minQy = QuartPos.fromBlock(level.getMinBuildHeight());
+        int quartsY = QuartPos.fromBlock(level.getHeight());
+        for (int ox = -1; ox <= 1; ox++) {
+            for (int oz = -1; oz <= 1; oz++) {
+                int x = cx + ox;
+                int z = cz + oz;
+                if (cache.contains(x, z) || !level.hasChunk(x, z)) {
+                    continue;
+                }
+                String[] quarts = new String[16 * quartsY];
+                for (int dx = 0; dx < 4; dx++) {
+                    for (int dz = 0; dz < 4; dz++) {
+                        for (int dy = 0; dy < quartsY; dy++) {
+                            Holder<Biome> b = level.getNoiseBiome(x * 4 + dx, minQy + dy, z * 4 + dz);
+                            String id = biomeIds.get(b);
+                            if (id == null) {
+                                id = b.unwrapKey().map(k -> k.location().toString()).orElse(null);
+                                if (id != null) {
+                                    biomeIds.put(b, id);
+                                }
+                            }
+                            quarts[ObservedBiomeCache.index(dx, dz, dy, quartsY)] = id;
+                        }
+                    }
+                }
+                cache.put(x, z, quarts);
+            }
+        }
     }
 
     private void requestChunks(Minecraft mc, ClientLevel level, int pcx, int pcz) {
@@ -388,8 +515,9 @@ public final class OreSimModule extends WorldModule {
                 terrain = ServerWorldgenOracles.terrain(serverLevel);
                 biomes = ServerWorldgenOracles.biomes(serverLevel, BiomeManager.obfuscateSeed(profile.seed()));
             } else {
-                terrain = TerrainOracle.UNKNOWN_TERRAIN;
-                biomes = BiomeOracle.UNKNOWN_BIOMES;
+                observeChunk(level, cx, cz);
+                terrain = remoteTerrain;
+                biomes = remoteBiomes;
             }
             boolean suspect = ledger.isChunkSuspect(dim, cx, cz);
             if (service.request(cx, cz, terrain, biomes, suspect)) {
