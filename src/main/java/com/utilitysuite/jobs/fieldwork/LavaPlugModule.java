@@ -197,6 +197,13 @@ public final class LavaPlugModule extends FieldModule {
      * through the lava and lands on that face).
      */
     private boolean chooseSupport(ClientLevel level, LocalPlayer player, int lx, int ly, int lz) {
+        // Faces the eye can see first; only when none is visible, the best-facing one as before. A sunk lava pit hides
+        // the floor under the lava behind the pit rim although that face points straight at the player (playtest
+        // find: the plug aimed at it forever and the crosshair stayed on the rim).
+        return chooseSupport(level, player, lx, ly, lz, true) || chooseSupport(level, player, lx, ly, lz, false);
+    }
+
+    private boolean chooseSupport(ClientLevel level, LocalPlayer player, int lx, int ly, int lz, boolean needSight) {
         double best = 0.05;
         boolean found = false;
         for (Direction d : DIRS) {
@@ -214,7 +221,7 @@ public final class LavaPlugModule extends FieldModule {
                 continue;
             }
             double dot = (vx * face.getStepX() + vy * face.getStepY() + vz * face.getStepZ()) / len;
-            if (dot > best) {
+            if (dot > best && (!needSight || faceVisible(level, player, nx, ny, nz, face, fx, fy, fz))) {
                 best = dot;
                 supX = nx;
                 supY = ny;
@@ -224,6 +231,20 @@ public final class LavaPlugModule extends FieldModule {
             }
         }
         return found;
+    }
+
+    /** Ray from the eye to the face centre (fluids ignored) lands on that face. One clip per candidate, on arm only. */
+    private static boolean faceVisible(ClientLevel level, LocalPlayer player, int nx, int ny, int nz, Direction face,
+                                       double fx, double fy, double fz) {
+        net.minecraft.world.phys.Vec3 eye = player.getEyePosition();
+        // a hair inside the support so the ray ends on it rather than at the shared plane
+        net.minecraft.world.phys.Vec3 to = new net.minecraft.world.phys.Vec3(fx - face.getStepX() * 0.01,
+                fy - face.getStepY() * 0.01, fz - face.getStepZ() * 0.01);
+        net.minecraft.world.phys.BlockHitResult r = level.clip(new net.minecraft.world.level.ClipContext(eye, to,
+                net.minecraft.world.level.ClipContext.Block.OUTLINE, net.minecraft.world.level.ClipContext.Fluid.NONE,
+                player));
+        return r.getType() == net.minecraft.world.phys.HitResult.Type.BLOCK && r.getDirection() == face
+                && r.getBlockPos().getX() == nx && r.getBlockPos().getY() == ny && r.getBlockPos().getZ() == nz;
     }
 
     private void tickPlug(Minecraft mc, LocalPlayer player, ClientLevel level) {

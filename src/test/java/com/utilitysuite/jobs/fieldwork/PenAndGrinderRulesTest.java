@@ -8,6 +8,33 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PenAndGrinderRulesTest {
 
+    /** Client-side adults read age 1, never 0: readiness comes from the sweep's own feeding memory (playtest find). */
+    @Test
+    void adultsAreBreedReadyUnlessFedWithinTheCooldown() {
+        assertTrue(PenRules.breedReady(true, Long.MIN_VALUE, 10));
+        assertFalse(PenRules.breedReady(false, Long.MIN_VALUE, 10));
+        assertFalse(PenRules.breedReady(true, 100, 100 + PenRules.BREED_COOLDOWN_TICKS - 1));
+        assertTrue(PenRules.breedReady(true, 100, 100 + PenRules.BREED_COOLDOWN_TICKS));
+    }
+
+    /** After the first cow of a pair is fed it is no longer ready, but it is in love: the second is still fed. */
+    @Test
+    void aFedPartnerInLovePairsWithTheNextOne() {
+        String[] types = {"minecraft:cow", "minecraft:cow"};
+        boolean[] adult = {true, true};
+        boolean[] ready = {false, true};
+        boolean[] love = {PenRules.inLove(100, 150), false};
+        boolean[] sheared = {true, true};
+        PenRules.Means m = new PenRules.Means();
+        m.food = t -> true;
+        assertEquals(PenRules.Action.NONE, PenRules.actionFor(1, types, adult, ready, sheared, 2, m));
+        assertEquals(PenRules.Action.BREED, PenRules.actionFor(1, types, adult, ready, love, sheared, 2, m));
+        assertEquals(PenRules.Action.NONE, PenRules.actionFor(0, types, adult, ready, love, sheared, 2, m),
+                "the fed one is not fed again");
+        assertFalse(PenRules.inLove(100, 100 + PenRules.LOVE_TICKS));
+        assertFalse(PenRules.inLove(Long.MIN_VALUE, 5));
+    }
+
     @Test
     void breedingFoodTable() {
         assertTrue(PenRules.breeds("minecraft:cow", "minecraft:wheat"));

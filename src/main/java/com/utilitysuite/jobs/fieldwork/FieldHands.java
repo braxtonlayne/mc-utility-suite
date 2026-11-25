@@ -178,6 +178,28 @@ final class FieldHands implements LeaseListener, com.utilitysuite.core.api.IBloc
         return FAILED;
     }
 
+    /**
+     * Selects the hotbar item that breaks {@code state} fastest when it beats the held one. DONE when the held item is
+     * already the best, RUNNING while the selection goes through. Hotbar only; no allocation.
+     */
+    int holdBestTool(LocalPlayer player, net.minecraft.world.level.block.state.BlockState state) {
+        Inventory inv = player.getInventory();
+        float best = inv.getSelected().getDestroySpeed(state);
+        int slot = -1;
+        for (int i = 0; i < 9; i++) {
+            float s = inv.items.get(i).getDestroySpeed(state);
+            if (s > best) {
+                best = s;
+                slot = i;
+            }
+        }
+        if (slot < 0) {
+            return DONE;
+        }
+        Services.input().selectHotbarSlot(lease, slot);
+        return RUNNING;
+    }
+
     // ---- break --------------------------------------------------------------------------------------------------
 
     /**
@@ -259,13 +281,25 @@ final class FieldHands implements LeaseListener, com.utilitysuite.core.api.IBloc
      */
     int tickPlace(Minecraft mc, LocalPlayer player, int sx, int sy, int sz, Direction face, boolean relaxed) {
         long cell = BlockPos.asLong(sx, sy, sz) ^ ((long) face.ordinal() << 60);
+        IInputSmoother input = Services.input();
         if (cell != actionCell) {
             resetAction();
             actionCell = cell;
+            // A break that ended because its cell turned to air (the caller stops calling tickBreak) leaves ATTACK
+            // held, and while the game is destroying a block it ignores USE: release it before placing (playtest
+            // find: the bed was never placed, attack still held on the floor block).
+            input.setKeyHeld(lease, SimKey.ATTACK, false);
         }
-        IInputSmoother input = Services.input();
         double hx = sx + 0.5 + face.getStepX() * 0.5;
         double hy = sy + 0.5 + face.getStepY() * 0.5;
+        if (face == Direction.UP) {
+            // the real top of a short block (a bed is 9/16 high): aiming at the full cell's top looks over it
+            net.minecraft.world.phys.shapes.VoxelShape shape = mc.level.getBlockState(cursor.set(sx, sy, sz))
+                    .getShape(mc.level, cursor);
+            if (!shape.isEmpty() && shape.max(Direction.Axis.Y) < 1.0) {
+                hy = sy + shape.max(Direction.Axis.Y);
+            }
+        }
         double hz = sz + 0.5 + face.getStepZ() * 0.5;
         if (!aimSet) {
             aimAt(player, input, hx, hy, hz, relaxed);

@@ -282,6 +282,11 @@ public final class VeinWorkModule extends FieldModule {
             current = Long.MIN_VALUE;
             return;
         }
+        // A hand-off run (e.g. debris after a blast) starts with whatever the last module held: take the best tool
+        // first (playtest find: ancient debris "mined" with netherrack in hand until the run gave up).
+        if (hands.holdBestTool(player, level.getBlockState(cursor)) != FieldHands.DONE) {
+            return;
+        }
         int r = hands.tickBreak(mc, player, x, y, z, relaxed, !relaxed);
         if (r != FieldHands.RUNNING) {
             collector.remove(current); // mined, or skipped (not visible from here)
