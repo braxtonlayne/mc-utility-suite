@@ -49,6 +49,10 @@ public final class CombatBootstrap {
     private static TriggerAssist trigger;
     private static TargetHud targetHud;
     private static PearlWatch pearls;
+    private static final com.utilitysuite.combat.tactics.PearlCountdown pearlCountdown =
+            new com.utilitysuite.combat.tactics.PearlCountdown();
+    private static ArenaVoxels pearlVoxels;
+    private static volatile String pearlLine;
     private static ReadState readState;
     private static ReadRingModule readRing;
 
@@ -63,6 +67,7 @@ public final class CombatBootstrap {
                 Services.clicker(), System::currentTimeMillis);
         // pro-feel units: the arena read and pearl landings over the live level, pearls from entity events, the read
         pearls = new PearlWatch();
+        pearlVoxels = new ArenaVoxels();
         readState = new ReadState();
         assistant.useArenaVoxels(new ArenaVoxels());
         assistant.usePearlSource(pearls);
@@ -123,6 +128,11 @@ public final class CombatBootstrap {
             if (mc.player != null && mc.level != null) {
                 assistant.autopilotTick();
                 assistant.handOverTick(); // the core's hand-over key: engage while held, let go on release
+                // own pearl in flight: constant status-line string or null (one field compare when the setting is off)
+                pearlLine = pearlCountdown.tick(assistant.config().pearlCountdown, pearls, mc.player.getId(),
+                        pearlVoxels);
+            } else {
+                pearlLine = null;
             }
             reflexes.clientTick();
         });
@@ -130,6 +140,14 @@ public final class CombatBootstrap {
         bus.addListener(targetHud::onLeave);
         modBus.addListener(RegisterGuiLayersEvent.class, event -> event.registerAbove(VanillaGuiLayers.CROSSHAIR,
                 ResourceLocation.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID, "target_hud"), targetHud::render));
+    }
+
+    /**
+     * The pearl landing countdown status line (a constant string per tenth of a second), or null when the setting is
+     * off or no own pearl is in flight. Client thread.
+     */
+    public static String pearlCountdownLine() {
+        return pearlLine;
     }
 
     public static CombatReflexes reflexes() {

@@ -48,17 +48,29 @@ class DeflectPlannerTest {
     }
 
     @Test
-    void pearlCountdownFormatsTicks() {
+    void pearlCountdownOnlyForOwnPearlInFlight() {
         CombatVoxels floor = (x, y, z) -> y <= 0 ? CombatVoxels.SOLID : CombatVoxels.AIR;
-        PearlLandingSim sim = new PearlLandingSim();
-        StringBuilder sb = new StringBuilder();
-        int ticks = DeflectPlanner.pearlCountdown(sim, 0, 5, 0, 1.0, 0.5, 0, floor, sb);
-        assertTrue(ticks > 0);
-        assertTrue(sb.toString().startsWith("Pearl "), sb.toString());
-        assertTrue(sb.toString().endsWith("s"));
-        CombatVoxels unknown = (x, y, z) -> CombatVoxels.UNKNOWN;
-        assertEquals(-1, DeflectPlanner.pearlCountdown(sim, 0, 5, 0, 1.0, 0.5, 0, unknown, sb));
-        assertEquals(0, sb.length());
+        PearlSource own = (id, out) -> {
+            if (id != 7) {
+                return false;
+            }
+            out[0] = 0;
+            out[1] = 5;
+            out[2] = 0;
+            out[3] = 1.0;
+            out[4] = 0.5;
+            out[5] = 0;
+            return true;
+        };
+        PearlCountdown c = new PearlCountdown();
+        String line = c.tick(true, own, 7, floor);
+        assertTrue(c.ticks() > 0);
+        assertTrue(line.startsWith("PEARL - LANDS IN "), line);
+        assertTrue(line == PearlCountdown.lineFor(c.ticks()), "constant string, compared by reference");
+        assertEquals(null, c.tick(false, own, 7, floor)); // setting off
+        assertEquals(null, c.tick(true, own, 8, floor)); // not ours / none in flight
+        assertEquals(null, c.tick(true, own, 7, (x, y, z) -> CombatVoxels.UNKNOWN)); // landing unknown
+        assertEquals("PEARL - LANDS IN 1.5s", PearlCountdown.lineFor(30));
     }
 
     @Test

@@ -105,22 +105,4 @@ public final class DeflectPlanner {
     public float strikePitch() {
         return strikePitch;
     }
-
-    /**
-     * Pearl landing countdown text, e.g. {@code "Pearl 1.4s"}, into a reusable builder; nothing when the sim found no
-     * landing. Uses {@link PearlLandingSim} (the same thrown-projectile physics).
-     *
-     * @return ticks to landing, or -1 when unknown
-     */
-    public static int pearlCountdown(PearlLandingSim sim, double x, double y, double z, double vx, double vy,
-                                     double vz, CombatVoxels w, StringBuilder out) {
-        out.setLength(0);
-        if (!sim.simulate(x, y, z, vx, vy, vz, w, PearlLandingSim.MAX_TICKS)) {
-            return -1;
-        }
-        int ticks = sim.flightTicks();
-        int tenths = (ticks + 1) / 2; // 20 ticks/s -> tenths of a second, rounded
-        out.append("Pearl ").append(tenths / 10).append('.').append(tenths % 10).append('s');
-        return ticks;
-    }
 }

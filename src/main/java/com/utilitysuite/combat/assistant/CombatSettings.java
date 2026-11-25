@@ -70,6 +70,7 @@ public final class CombatSettings {
     public static final String PEARL_INTERCEPT = "pearl_intercept";
     public static final String RANGED_AIM = "ranged_aim";
     public static final String DEFLECT = "deflect_projectiles";
+    public static final String PEARL_COUNTDOWN = "pearl_countdown";
     public static final String HIT_CHOICE = "hit_choice";
     public static final String DUEL_MODE = "duel_mode";
     public static final String EXACT_WORLD = "exact_world";
@@ -141,6 +142,8 @@ public final class CombatSettings {
      * time ({@code DeflectStage}). Off by default.
      */
     public boolean deflectProjectiles = false;
+    /** HUD status line counts down to our own ender pearl's landing while it flies ({@code PearlCountdown}). */
+    public boolean pearlCountdown = false;
     /** Kind of hit to throw: AUTO picks per hit (sprint knockback, crit, sweep); the others force one. */
     public HitPlanner.Policy hitChoice = HitPlanner.Policy.AUTO;
     /** Never disengage: fleeing becomes a reset, range and sight never end the fight while the target is loaded. */
@@ -221,6 +224,7 @@ public final class CombatSettings {
         pearlIntercept = p.getBool(id, PEARL_INTERCEPT, true);
         rangedAim = p.getBool(id, RANGED_AIM, false);
         deflectProjectiles = p.getBool(id, DEFLECT, false);
+        pearlCountdown = p.getBool(id, PEARL_COUNTDOWN, false);
         hitChoice = parseEnum(p.getString(id, HIT_CHOICE, ""), HitPlanner.Policy.AUTO);
         duelMode = p.getBool(id, DUEL_MODE, false);
         exactWorld = p.getBool(id, EXACT_WORLD, false);
@@ -338,6 +342,9 @@ public final class CombatSettings {
                 SettingSpec.bool(DEFLECT, "Hit back fireballs and wind charges", false, "Tactics",
                         "In a fight, turn to a ghast fireball or wind charge heading at you and hit it back, only"
                                 + " when the normal smoothed turn gets there in time; otherwise it is left alone."),
+                SettingSpec.bool(PEARL_COUNTDOWN, "Pearl landing countdown", false, "Tactics",
+                        "While your own thrown ender pearl is in the air, the status line counts down to its"
+                                + " landing. Shown only while it flies; hidden by Clean-Screen."),
                 SettingSpec.bool(AUTO_WEAPON, "Draw the best weapon", true, "Tactics",
                         "When a fight starts, switch to the hotbar weapon with the most damage per second."),
                 SettingSpec.bool(TACTIC_UTILITY, "Read the fight", true, "Tactics",
