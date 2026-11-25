@@ -87,6 +87,7 @@ public final class SuiteHud implements IModule, IConfigurable, LayeredDraw.Layer
     private IAutopilot.Reflex lastReflex;
     private boolean lastHandOver;
     private String lastParkour;
+    private String lastPearl;
 
     // info strip sampling
     private final InfoStripText.TpsEstimator tpsEstimator = new InfoStripText.TpsEstimator(3_000_000_000L);
@@ -173,6 +174,13 @@ public final class SuiteHud implements IModule, IConfigurable, LayeredDraw.Layer
             lastParkour = parkour;
             pollNow = true;
         }
+        // own ender pearl in flight (Combat Assistant "Pearl landing countdown"): a constant string per tenth of a
+        // second, null otherwise; compared by reference
+        String pearl = com.utilitysuite.combat.CombatBootstrap.pearlCountdownLine();
+        if (pearl != lastPearl) {
+            lastPearl = pearl;
+            pollNow = true;
+        }
         if (!pollNow && ++ticks % POLL_TICKS != 0) {
             return;
         }
@@ -191,6 +199,10 @@ public final class SuiteHud implements IModule, IConfigurable, LayeredDraw.Layer
         }
         if (parkour != null) {
             line.updateAutopilot(parkour); // constant strings (MovementAssist.STATUS_*)
+            return;
+        }
+        if (pearl != null) {
+            line.updateAutopilot(pearl); // constant strings (PearlCountdown), only while our pearl flies
             return;
         }
         IGoalEngine goals = Services.goalsOrNull();
