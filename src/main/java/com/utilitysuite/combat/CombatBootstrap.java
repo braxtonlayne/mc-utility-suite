@@ -58,6 +58,7 @@ public final class CombatBootstrap {
     public static void init(IEventBus modBus) {
         Path alliesDir = FMLPaths.CONFIGDIR.get().resolve(UtilitySuiteMod.MOD_ID).resolve("combat").resolve("allies");
         allies = new AllyRosterModule(new AllyRosterStore(alliesDir));
+        Services.registerAllies(allies.roster()::contains);
         MinecraftCombatWorld world = new MinecraftCombatWorld();
         assistant = new CombatAssistant(world, allies.roster(), Services.arbiter(), Services.input(),
                 Services.clicker(), System::currentTimeMillis);

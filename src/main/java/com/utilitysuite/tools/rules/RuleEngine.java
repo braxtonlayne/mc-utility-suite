@@ -17,6 +17,7 @@ public final class RuleEngine {
     private long[] lastFired = new long[0];
     private int interval = 20;
     private long tick;
+    private boolean evaluateNext;
 
     /** Replaces the rule set. Edge state is kept for rules whose id survives. */
     public void setRules(List<Rule> list) {
@@ -37,6 +38,11 @@ public final class RuleEngine {
         lastFired = nextFired;
     }
 
+    /** Makes the next {@link #tick} an evaluation tick regardless of the interval (for one-off events). */
+    public void evaluateNextTick() {
+        evaluateNext = true;
+    }
+
     public void setInterval(int ticks) {
         this.interval = Math.max(1, ticks);
     }
@@ -52,9 +58,10 @@ public final class RuleEngine {
      */
     public int tick(RuleContext ctx, Consumer<Rule> fire) {
         tick++;
-        if (tick % interval != 0) {
+        if (tick % interval != 0 && !evaluateNext) {
             return 0;
         }
+        evaluateNext = false;
         int fired = 0;
         Rule[] rs = rules;
         for (int i = 0; i < rs.length; i++) {
@@ -63,7 +70,7 @@ public final class RuleEngine {
                 wasTrue[i] = false;
                 continue;
             }
-            boolean now = evaluate(r.condition(), ctx);
+            boolean now = (!r.whileJob() || jobActive(ctx.jobStatus())) && evaluate(r.condition(), ctx);
             if (now && !wasTrue[i] && tick - lastFired[i] >= r.cooldownTicks()) {
                 lastFired[i] = tick;
                 fired++;
@@ -72,6 +79,12 @@ public final class RuleEngine {
             wasTrue[i] = now;
         }
         return fired;
+    }
+
+    /** True for a job that is working (planning, running or replanning); false for NONE, queued, paused or done. */
+    public static boolean jobActive(String status) {
+        return "RUNNING".equalsIgnoreCase(status) || "PLANNING".equalsIgnoreCase(status)
+                || "REPLANNING".equalsIgnoreCase(status);
     }
 
     public static boolean evaluate(Rule.Condition c, RuleContext ctx) {
@@ -89,6 +102,15 @@ public final class RuleEngine {
                 }
                 double actual = c.durabilityPercent() ? left * 100.0 / max : left;
                 yield c.comparison().test(actual, c.value());
+            }
+            case STRANGER_DISTANCE -> c.comparison().test(ctx.strangerDistance(), c.value());
+            case ARMOR_DURABILITY -> {
+                double pct = ctx.lowestArmorDurabilityPct();
+                yield pct >= 0 && c.comparison().test(pct, c.value());
+            }
+            case TOTEM_POP_AGE -> {
+                double age = ctx.secondsSinceTotemPop();
+                yield !Double.isInfinite(age) && c.comparison().test(age, c.value());
             }
             case JOB_STATUS -> {
                 boolean same = ctx.jobStatus().equalsIgnoreCase(c.arg().toUpperCase(Locale.ROOT));

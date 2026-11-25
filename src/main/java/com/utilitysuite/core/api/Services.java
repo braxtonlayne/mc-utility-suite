@@ -30,6 +30,7 @@ public final class Services {
     private static volatile IVisuals visuals;
     private static volatile IPlannedJump plannedJump;
     private static volatile IBlockChangeFeed blockChanges;
+    private static volatile IAllyLookup allies;
 
     private Services() {
     }
@@ -55,6 +56,8 @@ public final class Services {
     /** The opt-in autopilot, or null before the core is up (reflexes then act only through their own module). */
     public static IAutopilot autopilotOrNull() { return autopilot; }
     public static ISuiteEventBus eventsOrNull() { return events; }
+    /** The ally roster. Never null: {@link IAllyLookup#NONE} until the combat module registers it. */
+    public static IAllyLookup allies() { IAllyLookup a = allies; return a != null ? a : IAllyLookup.NONE; }
     /** Human-like timing and aim variation. Never null: {@link IHumanizer#NEUTRAL} until the core registers one. */
     public static IHumanizer humanizer() { IHumanizer h = humanizer; return h != null ? h : IHumanizer.NEUTRAL; }
     /** The autopilot's danger model. Never null: {@link IDangerModel#NONE} while there is no autopilot. */
@@ -120,6 +123,7 @@ public final class Services {
     public static void registerVisuals(IVisuals s) { visuals = s; }
     public static void registerPlannedJump(IPlannedJump s) { plannedJump = s; }
     public static void registerBlockChanges(IBlockChangeFeed s) { blockChanges = s; }
+    public static void registerAllies(IAllyLookup s) { allies = s; }
 
     /** Test hook: clears every registration. */
     public static void resetForTests() {
@@ -127,6 +131,7 @@ public final class Services {
         navigator = null; worldKnowledge = null; storage = null; waypoints = null; autopilot = null; humanizer = null;
         bodySims = null; routePlanner = null; routeRunner = null; manualLook = null;
         sharedControl = null; visuals = null; plannedJump = null; blockChanges = null;
+        allies = null;
     }
 
     private static <T> T require(T value, String name) {

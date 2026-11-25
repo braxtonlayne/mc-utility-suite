@@ -43,7 +43,7 @@ public final class ToolsBootstrap {
         inventory = new SmartInventory();
         packetLab = new PacketLab();
         latency = new LatencySimulator();
-        rules = new LocalRules(ToolsBootstrap::inventory);
+        rules = new LocalRules(ToolsBootstrap::inventory, ToolsBootstrap::quickPearl);
 
         Services.modules().register(inventory);
         Services.modules().register(packetLab);

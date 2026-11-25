@@ -29,4 +29,19 @@ public interface RuleContext {
     default int mainHandMaxDurability() {
         return 0;
     }
+
+    /** Metres to the nearest other loaded player not on the ally roster, or +infinity when there is none. */
+    default double strangerDistance() {
+        return Double.POSITIVE_INFINITY;
+    }
+
+    /** Lowest remaining durability (percent of max) of the worn armour pieces that have durability, or -1. */
+    default double lowestArmorDurabilityPct() {
+        return -1;
+    }
+
+    /** Seconds since the local player's last totem pop, or +infinity when none popped this session. */
+    default double secondsSinceTotemPop() {
+        return Double.POSITIVE_INFINITY;
+    }
 }
