@@ -98,6 +98,10 @@ public final class CombatBootstrap {
         Services.modules().register(allies);
         Services.modules().register(reflexes);
         Services.modules().register(trigger);
+        com.utilitysuite.combat.boss.BossHelperModule bossHelper = new com.utilitysuite.combat.boss.BossHelperModule();
+        Services.modules().register(bossHelper);
+        NeoForge.EVENT_BUS.addListener(bossHelper::onJoin);
+        NeoForge.EVENT_BUS.addListener(bossHelper::onLeave);
         Services.modules().register(targetHud);
         Services.modules().register(readRing);
         assistant.bindModuleRegistry(Services.modules());

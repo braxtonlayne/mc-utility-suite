@@ -12,6 +12,7 @@ import com.utilitysuite.core.config.ProfileIds;
 import com.utilitysuite.core.input.InputSettings;
 import com.utilitysuite.core.input.KeybindManager;
 import com.utilitysuite.tools.ToolsBootstrap;
+import com.utilitysuite.tools.enchant.AnvilPlanModule;
 import com.utilitysuite.tools.enchant.EnchantPlanner;
 import com.utilitysuite.tools.enchant.EnchantSeedHelper;
 import com.utilitysuite.tools.inventory.PinnedSlots;
@@ -196,6 +197,11 @@ public final class ToolsTab {
                 rulesPanel(p, rules);
             }
         });
+        ModulePanels.register(AnvilPlanModule.ID, (p, m) -> {
+            if (m instanceof AnvilPlanModule ap) {
+                anvilPanel(p, ap);
+            }
+        });
         ModulePanels.register(EnchantSeedHelper.ID, (p, m) -> {
             if (m instanceof EnchantSeedHelper eh) {
                 enchantPanel(p, eh);
@@ -204,6 +210,28 @@ public final class ToolsTab {
     }
 
     private static final String K_ENCHANT_TABLE = "tools.enchant_table";
+
+    private static void anvilPanel(Panel p, AnvilPlanModule ap) {
+        p.paragraph("Cheapest order to combine the item in the anvil (or in your hand) with the enchanted books in"
+                + " your inventory, by vanilla anvil costs. Steps of 40+ levels are refused (Too Expensive).",
+                Panel.DIM);
+        QuickActions.actionRow(p, "Plan", "Re-read the anvil and inventory", "Refresh", PillButton.Style.SECONDARY,
+                () -> {
+                    ap.refresh();
+                    p.rebuild();
+                });
+        QuickActions.actionRow(p, "Anvil", "Put the next step's two inputs into the open anvil", "Place next",
+                PillButton.Style.SECONDARY, () -> {
+                    ap.placeNext();
+                    p.rebuild();
+                });
+        if (!ap.status().isEmpty()) {
+            p.text(ap.status(), Panel.GRAY);
+        }
+        for (String line : ap.lines()) {
+            p.text(line, Panel.GRAY);
+        }
+    }
 
     private static void enchantPanel(Panel p, EnchantSeedHelper eh) {
         int w = p.width();
