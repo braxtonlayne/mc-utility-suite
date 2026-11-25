@@ -21,6 +21,7 @@ import com.utilitysuite.world.oresim.OreSimModule;
 import com.utilitysuite.world.overlays.WorldOverlaysModule;
 import com.utilitysuite.world.overlays.WorldRadarModule;
 import com.utilitysuite.world.seed.SeedScannerModule;
+import com.utilitysuite.world.seed.SeedLocatorModule;
 import com.utilitysuite.world.waypoints.WaypointsModule;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
@@ -83,6 +84,7 @@ public final class WorldBootstrap {
         LightOverlayModule lightOverlay = new LightOverlayModule();
         BlastOverlayModule blastOverlay = new BlastOverlayModule();
         SpawnGeometryModule spawnGeometry = new SpawnGeometryModule(oreSim::profile);
+        SeedLocatorModule seedLocator = new SeedLocatorModule(oreSim::profile);
         FreelookModule freelook = new FreelookModule();
         RenderFiltersModule renderFilters = new RenderFiltersModule();
         StrongholdFinderModule strongholdFinder = new StrongholdFinderModule();
@@ -94,8 +96,8 @@ public final class WorldBootstrap {
 
         IModuleRegistry registry = Services.modules();
         for (WorldModule m : new WorldModule[] {knowledge, overlays, oreSim, seedScanner, radar, camera, waypoints,
-                minimap, lightOverlay, blastOverlay, spawnGeometry, freelook, renderFilters, strongholdFinder,
-                trialChambers}) {
+                minimap, lightOverlay, blastOverlay, spawnGeometry, seedLocator, freelook, renderFilters,
+                strongholdFinder, trialChambers}) {
             registry.register(m);
             runtime.add(m);
         }
