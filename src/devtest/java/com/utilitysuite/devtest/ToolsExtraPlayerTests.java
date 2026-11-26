@@ -16,7 +16,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.projectile.throwableitemprojectile.ThrownEnderpearl;
 import net.minecraft.world.item.Items;
-import org.lwjgl.glfw.GLFW;
+import com.mojang.blaze3d.platform.InputConstants;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -52,7 +52,7 @@ final class ToolsExtraPlayerTests {
     }
 
     private static boolean pearlCooldown() {
-        return H.p().getCooldowns().isOnCooldown(Items.ENDER_PEARL);
+        return H.p().getCooldowns().isOnCooldown(new net.minecraft.world.item.ItemStack(Items.ENDER_PEARL));
     }
 
     private static boolean quickPearlIdle() {
@@ -62,7 +62,7 @@ final class ToolsExtraPlayerTests {
 
     /** Non-empty slots as "index:item xcount", plus the selected slot. Diagnostics only. */
     private static String invState(net.minecraft.world.entity.player.Inventory inv) {
-        StringBuilder sb = new StringBuilder("sel ").append(inv.selected);
+        StringBuilder sb = new StringBuilder("sel ").append(inv.getSelectedSlot());
         for (int i = 0; i < 36; i++) {
             var st = inv.getItem(i);
             if (!st.isEmpty()) {
@@ -101,7 +101,7 @@ final class ToolsExtraPlayerTests {
         s.cmd("item replace entity @s hotbar.0 with minecraft:stick 1");
         s.cmd("item replace entity @s hotbar.4 with minecraft:ender_pearl 3");
         s.cmd(() -> tpLook(0f, -35f));
-        s.run("QP select slot 1", () -> H.p().getInventory().selected = 0);
+        s.run("QP select slot 1", () -> H.p().getInventory().setSelectedSlot(0));
         s.waitTicks(5);
         s.run("QP request throw (hotbar pearl)", () -> {
             before[0] = H.count("minecraft:ender_pearl");
@@ -110,22 +110,22 @@ final class ToolsExtraPlayerTests {
         });
         s.waitUpTo("QP hotbar throw finishes", 60, () -> {
             sawPearl[0] |= pearlNear() != null;
-            sawSelect[0] |= H.p().getInventory().selected == 4;
+            sawSelect[0] |= H.p().getInventory().getSelectedSlot() == 4;
             sawLease[0] |= holds(ControlChannel.HOTBAR, QuickPearl.ID);
             return sawPearl[0] && quickPearlIdle() && H.count("minecraft:ender_pearl") == before[0] - 1
-                    && H.p().getInventory().selected == 0;
+                    && H.p().getInventory().getSelectedSlot() == 0;
         });
         s.run("QP hotbar throw check", () -> {
             var inv = H.p().getInventory();
             int after = H.count("minecraft:ender_pearl");
             s.check("Quick Pearl throws a hotbar pearl under its lease and reselects the previous slot",
                     requested[0] && sawPearl[0] && sawSelect[0] && sawLease[0] && after == before[0] - 1
-                            && inv.selected == 0 && inv.getItem(0).is(Items.STICK) && pearlCooldown()
+                            && inv.getSelectedSlot() == 0 && inv.getItem(0).is(Items.STICK) && pearlCooldown()
                             && !holds(ControlChannel.HOTBAR, QuickPearl.ID)
                             && !holds(ControlChannel.WORLD_INTERACT, QuickPearl.ID),
                     "requested " + requested[0] + ", pearl entity seen " + sawPearl[0] + ", slot 5 selected during run "
                             + sawSelect[0] + ", lease seen " + sawLease[0] + ", pearls " + before[0] + " -> " + after
-                            + ", selected now " + (inv.selected + 1) + " holding " + inv.getItem(0) + ", cooldown "
+                            + ", selected now " + (inv.getSelectedSlot() + 1) + " holding " + inv.getItem(0) + ", cooldown "
                             + pearlCooldown() + "; " + H.arbiterState());
         });
         s.cmd("kill @e[type=minecraft:ender_pearl]");
@@ -136,7 +136,7 @@ final class ToolsExtraPlayerTests {
         s.cmd("clear @s");
         s.cmd("item replace entity @s hotbar.0 with minecraft:stick 1");
         s.cmd("item replace entity @s inventory.11 with minecraft:ender_pearl 2"); // inventory index 20
-        s.run("QP select slot 1 again", () -> H.p().getInventory().selected = 0);
+        s.run("QP select slot 1 again", () -> H.p().getInventory().setSelectedSlot(0));
         s.waitTicks(5);
         StringBuilder trace = new StringBuilder();
         String[] lastState = {""};
@@ -166,12 +166,12 @@ final class ToolsExtraPlayerTests {
         s.run("QP swap throw check", () -> {
             var inv = H.p().getInventory();
             s.check("Quick Pearl swaps an inventory pearl in, throws it and swaps the slot's own stack back",
-                    requested[0] && sawPearl[0] && sawSelect[0] && sawLease[0] && inv.selected == 0
+                    requested[0] && sawPearl[0] && sawSelect[0] && sawLease[0] && inv.getSelectedSlot() == 0
                             && inv.getItem(0).is(Items.STICK) && inv.getItem(20).is(Items.ENDER_PEARL)
                             && inv.getItem(20).getCount() == 1 && !holds(ControlChannel.HOTBAR, QuickPearl.ID),
                     "requested " + requested[0] + ", pearl entity seen " + sawPearl[0] + ", pearl seen in slot 1 "
                             + sawSelect[0] + ", lease seen " + sawLease[0] + ", slot 1 " + inv.getItem(0)
-                            + ", inventory 20 " + inv.getItem(20) + ", selected " + (inv.selected + 1) + "; "
+                            + ", inventory 20 " + inv.getItem(20) + ", selected " + (inv.getSelectedSlot() + 1) + "; "
                             + H.arbiterState() + "; trace " + trace);
         });
         s.cmd("kill @e[type=minecraft:ender_pearl]");
@@ -184,7 +184,7 @@ final class ToolsExtraPlayerTests {
         s.cmd("clear @s");
         s.cmd("item replace entity @s hotbar.0 with minecraft:stick 1");
         s.cmd("item replace entity @s inventory.11 with minecraft:ender_pearl 2");
-        s.run("QP select slot 1 (manual)", () -> H.p().getInventory().selected = 0);
+        s.run("QP select slot 1 (manual)", () -> H.p().getInventory().setSelectedSlot(0));
         s.waitTicks(5);
         s.run("QP request throw (user interrupts)", () -> {
             before[0] = H.count("minecraft:ender_pearl");
@@ -193,8 +193,8 @@ final class ToolsExtraPlayerTests {
         });
         s.waitUpTo("QP pearl swapped in, user presses 3", 40, () -> {
             if (!pressed[0] && H.p().getInventory().getItem(0).is(Items.ENDER_PEARL)) {
-                H.physicalKey(GLFW.GLFW_KEY_3, true);
-                H.physicalKey(GLFW.GLFW_KEY_3, false);
+                H.physicalKey(InputConstants.KEY_3, true);
+                H.physicalKey(InputConstants.KEY_3, false);
                 pressed[0] = true;
             }
             sawPearl[0] |= pearlNear() != null;
@@ -212,16 +212,16 @@ final class ToolsExtraPlayerTests {
             s.check("the user's number key ends a quick-pearl run: no throw, the user's slot kept, the swapped stack"
                             + " put back",
                     requested[0] && pressed[0] && !sawPearl[0] && H.count("minecraft:ender_pearl") == before[0]
-                            && inv.selected == 2 && inv.getItem(0).is(Items.STICK)
+                            && inv.getSelectedSlot() == 2 && inv.getItem(0).is(Items.STICK)
                             && inv.getItem(20).is(Items.ENDER_PEARL) && !pearlCooldown()
                             && !holds(ControlChannel.HOTBAR, QuickPearl.ID),
                     "requested " + requested[0] + ", key 3 pressed with the pearl in slot 1 " + pressed[0]
                             + ", pearl thrown " + sawPearl[0] + ", pearls " + before[0] + " -> "
-                            + H.count("minecraft:ender_pearl") + ", selected " + (inv.selected + 1) + ", slot 1 "
+                            + H.count("minecraft:ender_pearl") + ", selected " + (inv.getSelectedSlot() + 1) + ", slot 1 "
                             + inv.getItem(0) + ", inventory 20 " + inv.getItem(20) + ", notices "
                             + ToolsExtraScenario.notices() + "; " + H.arbiterState());
         });
-        s.run("QP back to slot 1", () -> H.p().getInventory().selected = 0);
+        s.run("QP back to slot 1", () -> H.p().getInventory().setSelectedSlot(0));
         s.cmd("kill @e[type=minecraft:ender_pearl]");
         s.cmd(() -> tpLook(0f, 0f));
         s.waitUpTo("QP cooldown over (3)", 60, () -> !pearlCooldown());
@@ -232,7 +232,7 @@ final class ToolsExtraPlayerTests {
         s.cmd("item replace entity @s hotbar.4 with minecraft:ender_pearl 2");
         s.cmd(() -> Arena.fill(-1, 1, 1, 1, 3, 1, "minecraft:stone"));
         s.cmd(() -> tpLook(0f, 0f));
-        s.run("QP select slot 1 (wall)", () -> H.p().getInventory().selected = 0);
+        s.run("QP select slot 1 (wall)", () -> H.p().getInventory().setSelectedSlot(0));
         s.waitTicks(5);
         s.run("QP request throw (blocked)", () -> {
             before[0] = H.count("minecraft:ender_pearl");
@@ -241,7 +241,7 @@ final class ToolsExtraPlayerTests {
         });
         s.waitUpTo("QP blocked notice", 30, () -> {
             sawPearl[0] |= pearlNear() != null;
-            sawSelect[0] |= H.p().getInventory().selected != 0;
+            sawSelect[0] |= H.p().getInventory().getSelectedSlot() != 0;
             sawLease[0] |= holds(ControlChannel.HOTBAR, QuickPearl.ID);
             return ToolsExtraScenario.noticeSeen("Pearl blocked");
         });
@@ -261,7 +261,7 @@ final class ToolsExtraPlayerTests {
             Harness.command("kill @e[type=minecraft:ender_pearl]");
             Harness.command("clear @s");
             if (H.p() != null) {
-                H.p().getInventory().selected = 0;
+                H.p().getInventory().setSelectedSlot(0);
             }
         });
         s.cmd(() -> tpLook(0f, 0f));
@@ -362,7 +362,7 @@ final class ToolsExtraPlayerTests {
         s.cmd("item replace entity @s hotbar.4 with minecraft:ender_pearl 2");
         s.cmd(() -> tpLook(0f, -35f));
         s.run("LR select slot 1", () -> {
-            H.p().getInventory().selected = 0;
+            H.p().getInventory().setSelectedSlot(0);
             pearls[0] = 2;
             sawPearl[0] = false;
         });
@@ -376,9 +376,9 @@ final class ToolsExtraPlayerTests {
             LocalRules lr = H.module(LocalRules.ID);
             s.check("a pearl-escape rule makes Quick Pearl throw (and the hotbar is restored)",
                     sawPearl[0] && H.count("minecraft:ender_pearl") == pearls[0] - 1
-                            && H.p().getInventory().selected == 0 && lr.lastMessage().contains("pearl escape"),
+                            && H.p().getInventory().getSelectedSlot() == 0 && lr.lastMessage().contains("pearl escape"),
                     "pearl seen " + sawPearl[0] + ", pearls " + pearls[0] + " -> " + H.count("minecraft:ender_pearl")
-                            + ", selected " + (H.p().getInventory().selected + 1) + ", last message '"
+                            + ", selected " + (H.p().getInventory().getSelectedSlot() + 1) + ", last message '"
                             + lr.lastMessage() + "'");
         });
         s.always("LR cleanup", () -> {
@@ -421,22 +421,22 @@ final class ToolsExtraPlayerTests {
             H.enable(AutoReconnect.ID, true);
             Object last = ToolsExtraScenario.field(ar, "lastServer");
             s.check("Auto-Reconnect remembers no server in single player", last == null, "lastServer=" + last);
-            H.mc().setScreen(new DisconnectedScreen(null, Component.literal("Connection Lost"),
+            H.mc().gui.setScreen(new DisconnectedScreen(null, Component.literal("Connection Lost"),
                     Component.literal("Timed out")));
         });
         s.waitTicks(3);
         s.run("AR single player: no countdown", () -> {
             AutoReconnect ar = H.module(AutoReconnect.ID);
             s.check("a disconnect screen in single player starts no countdown and adds no button",
-                    countdown(ar) < 0 && !hasCancelButton(H.mc().screen),
-                    "countdown " + countdown(ar) + ", cancel button " + hasCancelButton(H.mc().screen));
-            H.mc().setScreen(null);
+                    countdown(ar) < 0 && !hasCancelButton(H.mc().gui.screen()),
+                    "countdown " + countdown(ar) + ", cancel button " + hasCancelButton(H.mc().gui.screen()));
+            H.mc().gui.setScreen(null);
             // From here a remote server is simulated: what onLoggingIn records when joining a multiplayer server.
             ToolsExtraScenario.setField(ar, "lastServer",
                     new ServerData("playtest", "127.0.0.1:1", ServerData.Type.OTHER));
             ToolsExtraScenario.setField(ar, "manualDisconnect", false);
             ToolsExtraScenario.setField(ar, "attempts", 0);
-            H.mc().setScreen(new DisconnectedScreen(null, Component.literal("Connection Lost"),
+            H.mc().gui.setScreen(new DisconnectedScreen(null, Component.literal("Connection Lost"),
                     Component.literal("Timed out")));
         });
         s.waitTicks(2);
@@ -445,7 +445,7 @@ final class ToolsExtraPlayerTests {
         s.run("AR countdown + cancel", () -> {
             AutoReconnect ar = H.module(AutoReconnect.ID);
             int now = countdown(ar);
-            var sc = H.mc().screen;
+            var sc = H.mc().gui.screen();
             boolean button = hasCancelButton(sc);
             s.check("an unexpected drop shows a countdown (first delay) and a cancel button",
                     start[0] > 20 * 28 && start[0] <= 20 * 30 && now < start[0] && now > 0 && button
@@ -454,28 +454,28 @@ final class ToolsExtraPlayerTests {
                             + button + ", screen " + (sc == null ? "-" : sc.getClass().getSimpleName()));
             Button b = sc == null ? null : H.buttonByText(sc, "Cancel auto-reconnect");
             if (b != null) {
-                b.onPress();
+                H.press(b);
             }
             s.check("the cancel button stops the countdown", countdown(ar) < 0 && b != null && !b.active,
                     "countdown " + countdown(ar) + ", button active " + (b != null && b.active));
-            H.mc().setScreen(null);
-            H.mc().setScreen(new DisconnectedScreen(null, Component.translatable("disconnect.lost"),
+            H.mc().gui.setScreen(null);
+            H.mc().gui.setScreen(new DisconnectedScreen(null, Component.translatable("disconnect.lost"),
                     Component.translatable("multiplayer.disconnect.kicked")));
         });
         s.waitTicks(2);
         s.run("AR kick refused", () -> {
             AutoReconnect ar = H.module(AutoReconnect.ID);
-            s.check("a kick message starts no reconnect", countdown(ar) < 0 && !hasCancelButton(H.mc().screen),
-                    "countdown " + countdown(ar) + ", cancel button " + hasCancelButton(H.mc().screen));
-            H.mc().setScreen(null);
-            H.mc().setScreen(new DisconnectedScreen(null, Component.literal("Connection Lost"),
+            s.check("a kick message starts no reconnect", countdown(ar) < 0 && !hasCancelButton(H.mc().gui.screen()),
+                    "countdown " + countdown(ar) + ", cancel button " + hasCancelButton(H.mc().gui.screen()));
+            H.mc().gui.setScreen(null);
+            H.mc().gui.setScreen(new DisconnectedScreen(null, Component.literal("Connection Lost"),
                     Component.literal("Timed out")));
         });
         s.waitTicks(2);
         s.run("AR leave screen", () -> {
             AutoReconnect ar = H.module(AutoReconnect.ID);
             start[0] = countdown(ar);
-            H.mc().setScreen(null); // the user leaves the disconnect screen
+            H.mc().gui.setScreen(null); // the user leaves the disconnect screen
         });
         s.waitTicks(2);
         s.run("AR leave check", () -> {
@@ -483,7 +483,7 @@ final class ToolsExtraPlayerTests {
             s.check("leaving the disconnect screen cancels a running countdown", start[0] > 0 && countdown(ar) < 0,
                     "countdown before leaving " + start[0] + ", after " + countdown(ar));
             ToolsExtraScenario.setField(ar, "manualDisconnect", true);
-            H.mc().setScreen(new DisconnectedScreen(null, Component.literal("Connection Lost"),
+            H.mc().gui.setScreen(new DisconnectedScreen(null, Component.literal("Connection Lost"),
                     Component.literal("Timed out")));
         });
         s.waitTicks(2);
@@ -502,8 +502,8 @@ final class ToolsExtraPlayerTests {
             ToolsExtraScenario.setField(ar, "lastServer", null);
             ToolsExtraScenario.setField(ar, "manualDisconnect", false);
             ToolsExtraScenario.setField(ar, "attempts", 0);
-            if (H.mc().screen instanceof DisconnectedScreen) {
-                H.mc().setScreen(null);
+            if (H.mc().gui.screen() instanceof DisconnectedScreen) {
+                H.mc().gui.setScreen(null);
             }
             H.enable(AutoReconnect.ID, false);
             ToolsExtraScenario.unset(AutoReconnect.ID, AutoReconnect.K_DELAY);

@@ -122,16 +122,16 @@ public final class Harness {
         try {
             switch (phase) {
                 case BOOT -> {
-                    if (mc.screen instanceof TitleScreen && mc.getOverlay() == null && phaseTicks > 20) {
+                    if (mc.gui.screen() instanceof TitleScreen && mc.gui.overlay() == null && phaseTicks > 20) {
                         mc.options.pauseOnLostFocus = false;
                         Scenarios.bootPreWorld(bootChecks);
                         deleteWorld(mc);
-                        CreateWorldScreen.openFresh(mc, mc.screen);
+                        { var back = mc.gui.screen(); CreateWorldScreen.openFresh(mc, () -> mc.gui.setScreen(back)); }
                         go(Phase.CREATE_REQUESTED);
                     }
                 }
                 case CREATE_REQUESTED -> {
-                    if (mc.screen instanceof CreateWorldScreen) {
+                    if (mc.gui.screen() instanceof CreateWorldScreen) {
                         go(Phase.CONFIGURE);
                     } else if (phaseTicks > 1200) {
                         throw new IllegalStateException("Create World screen never opened");
@@ -141,7 +141,7 @@ public final class Harness {
                     if (phaseTicks < 5) {
                         return;
                     }
-                    CreateWorldScreen s = (CreateWorldScreen) mc.screen;
+                    CreateWorldScreen s = (CreateWorldScreen) mc.gui.screen();
                     WorldCreationUiState ui = s.getUiState();
                     ui.setName(WORLD);
                     ui.setGameMode(WorldCreationUiState.SelectedGameMode.SURVIVAL);
@@ -156,7 +156,7 @@ public final class Harness {
                     go(Phase.LOADING);
                 }
                 case LOADING -> {
-                    if (mc.player != null && mc.level != null && mc.screen == null && mc.getOverlay() == null) {
+                    if (mc.player != null && mc.level != null && mc.gui.screen() == null && mc.gui.overlay() == null) {
                         go(Phase.SETTLE);
                     } else if (phaseTicks > 20 * 60 * 5) {
                         throw new IllegalStateException("World did not load within 5 minutes");
@@ -172,10 +172,10 @@ public final class Harness {
                 case LEAVING -> {
                     if (phaseTicks == 1) {
                         if (mc.level != null) {
-                            mc.level.disconnect();
+                            mc.level.disconnect(net.minecraft.client.multiplayer.ClientLevel.DEFAULT_QUIT_MESSAGE);
                         }
-                        mc.disconnect(new GenericMessageScreen(Component.literal("Playtest finished")));
-                        mc.setScreen(new TitleScreen());
+                        mc.disconnect(new GenericMessageScreen(Component.literal("Playtest finished")), false);
+                        mc.gui.setScreen(new TitleScreen());
                     } else if (mc.level == null && phaseTicks > 40) {
                         go(Phase.AFTER_LEAVE);
                     } else if (phaseTicks > 20 * 60) {
@@ -253,8 +253,8 @@ public final class Harness {
             }
             if (mc.player.deathTime >= 20) {
                 mc.player.respawn();
-                if (mc.screen instanceof net.minecraft.client.gui.screens.DeathScreen) {
-                    mc.setScreen(null);
+                if (mc.gui.screen() instanceof net.minecraft.client.gui.screens.DeathScreen) {
+                    mc.gui.setScreen(null);
                 }
             }
         }
@@ -325,7 +325,7 @@ public final class Harness {
         for (GuiEventListener l : screen.children()) {
             if (l instanceof Button b && b.getMessage().getContents() instanceof TranslatableContents tc
                     && tc.getKey().equals(translationKey)) {
-                b.onPress();
+                H.press(b);
                 return;
             }
         }

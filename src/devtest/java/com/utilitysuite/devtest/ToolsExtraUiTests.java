@@ -12,9 +12,10 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.screens.ChatScreen;
-import net.minecraft.client.renderer.rendertype.RenderType;
+import com.mojang.renderpearl.api.pipeline.RenderPipeline;
+import net.minecraft.client.renderer.state.gui.GuiRenderState;
 import net.minecraft.util.FormattedCharSequence;
-import org.lwjgl.glfw.GLFW;
+import com.mojang.blaze3d.platform.InputConstants;
 
 import java.util.HashSet;
 import java.util.Set;
@@ -22,7 +23,7 @@ import java.util.Set;
 /** Appearance (seen in the drawn HUD) and the Action Wheel for {@link ToolsExtraScenario}. */
 final class ToolsExtraUiTests {
 
-    private static final int WHEEL_TEST_KEY = GLFW.GLFW_KEY_KP_9;
+    private static final int WHEEL_TEST_KEY = InputConstants.KEY_NUMPAD9;
 
     private ToolsExtraUiTests() {
     }
@@ -35,32 +36,31 @@ final class ToolsExtraUiTests {
     // ---- Appearance -------------------------------------------------------------------------------------------------
 
     /** Records what the HUD fills: colour, alpha and the pose scale at the time of the fill. Draws no text. */
-    private static final class RecordingGraphics extends GuiGraphics {
+    private static final class RecordingGraphics extends GuiGraphicsExtractor {
         int fills;
         int maxAlpha;
         float maxScale;
         final Set<Integer> rgb = new HashSet<>();
 
         RecordingGraphics() {
-            super(Minecraft.getInstance(), Minecraft.getInstance().renderBuffers().bufferSource());
+            // 26.3: a throwaway render state, so nothing reaches the frame
+            super(Minecraft.getInstance(), new GuiRenderState(), 0, 0);
         }
 
-        @Override
-        public void fill(RenderType renderType, int minX, int minY, int maxX, int maxY, int z, int color) {
+        private void record(int color) {
             fills++;
             maxAlpha = Math.max(maxAlpha, color >>> 24);
-            maxScale = Math.max(maxScale, pose().last().pose().m00());
+            maxScale = Math.max(maxScale, pose().m00());
             rgb.add(color & 0xFFFFFF);
         }
 
         @Override
-        public int drawString(Font font, String text, float x, float y, int color, boolean dropShadow) {
-            return 0;
+        public void fill(RenderPipeline pipeline, int x0, int y0, int x1, int y1, int color) {
+            record(color);
         }
 
         @Override
-        public int drawString(Font font, FormattedCharSequence text, float x, float y, int color, boolean dropShadow) {
-            return 0;
+        public void text(Font font, FormattedCharSequence text, int x, int y, int color, boolean dropShadow) {
         }
 
         @Override
@@ -203,7 +203,7 @@ final class ToolsExtraUiTests {
         s.waitTicks(1);
         s.run("RW open chat", () -> {
             sel[0] = selected();
-            H.mc().setScreen(new ChatScreen(""));
+            H.mc().gui.setScreen(new ChatScreen("", false));
         });
         s.waitTicks(3);
         s.run("RW cancel check", () -> {
@@ -211,7 +211,7 @@ final class ToolsExtraUiTests {
                     sel[0] == 4 && !wheel().isOpen() && !Services.modState().isCleanScreen(),
                     "selected before " + (sel[0] + 1) + ", open " + wheel().isOpen() + ", clean screen "
                             + Services.modState().isCleanScreen());
-            H.mc().setScreen(null);
+            H.mc().gui.setScreen(null);
             H.physicalKey(WHEEL_TEST_KEY, false);
         });
         s.waitTicks(3);
@@ -269,8 +269,8 @@ final class ToolsExtraUiTests {
             }
             ToolsExtraScenario.bind(KeybindManager.mapping(KeybindManager.KeyId.RADIAL_WHEEL), -1);
             Services.modState().setCleanScreen(false);
-            if (H.mc().screen instanceof ChatScreen) {
-                H.mc().setScreen(null);
+            if (H.mc().gui.screen() instanceof ChatScreen) {
+                H.mc().gui.setScreen(null);
             }
         });
     }

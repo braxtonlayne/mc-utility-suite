@@ -31,7 +31,6 @@ import net.minecraft.world.level.levelgen.structure.StructureSet;
 import net.minecraft.world.level.levelgen.structure.StructureStart;
 import net.minecraft.world.level.levelgen.structure.placement.RandomSpreadStructurePlacement;
 import net.minecraft.world.level.levelgen.structure.placement.RandomSpreadType;
-import net.minecraft.world.level.levelgen.structure.placement.StructurePlacement;
 
 import java.lang.reflect.Method;
 import java.util.ArrayList;
@@ -56,7 +55,7 @@ final class WorldExtraSeedTests {
     }
 
     private static long worldSeed() {
-        return H.mc().getSingleplayerServer().getWorldData().worldGenOptions().seed();
+        return H.mc().getSingleplayerServer().getWorldGenSettings().options().seed();
     }
 
     // ---- Seed Locator -----------------------------------------------------------------------------------------------
@@ -90,8 +89,10 @@ final class WorldExtraSeedTests {
 
             // The placement table (spacing / separation / salt / spread) matches the server's structure sets.
             Registry<StructureSet> sets = H.mc().getSingleplayerServer().registryAccess()
-                    .registryOrThrow(Registries.STRUCTURE_SET);
-            Method salt = StructurePlacement.class.getDeclaredMethod("salt");
+                    .lookupOrThrow(Registries.STRUCTURE_SET);
+            // 26.3: salt() moved from StructurePlacement (now an interface) to AbstractSpreadingStructurePlacement
+            Method salt = net.minecraft.world.level.levelgen.structure.placement.AbstractSpreadingStructurePlacement.class
+                    .getDeclaredMethod("salt");
             salt.setAccessible(true);
             List<String> tableBad = new ArrayList<>();
             List<String> all = new ArrayList<>(StructureLocator.OVERWORLD_TYPES);
@@ -99,7 +100,7 @@ final class WorldExtraSeedTests {
             all.addAll(StructureLocator.END_TYPES);
             for (String type : all) {
                 StructureSpread.Placement mine = StructureSpread.PLACEMENTS.get(type);
-                StructureSet set = sets.get(ResourceLocation.withDefaultNamespace(setId(type)));
+                StructureSet set = sets.getValue(Identifier.withDefaultNamespace(setId(type)));
                 if (mine == null || set == null
                         || !(set.placement() instanceof RandomSpreadStructurePlacement rsp)) {
                     tableBad.add(type + "(missing: mine=" + mine + ", set=" + (set != null) + ")");
@@ -120,10 +121,10 @@ final class WorldExtraSeedTests {
             List<String> candBad = new ArrayList<>();
             StringBuilder sample = new StringBuilder();
             for (StructureLocator.Candidate c : sn.structures()) {
-                StructureSet set = sets.get(ResourceLocation.withDefaultNamespace(setId(c.type())));
+                StructureSet set = sets.getValue(Identifier.withDefaultNamespace(setId(c.type())));
                 ChunkPos v = set != null && set.placement() instanceof RandomSpreadStructurePlacement rsp
                         ? rsp.getPotentialStructureChunk(seed, c.chunkX(), c.chunkZ()) : null;
-                if (v == null || v.x != c.chunkX() || v.z != c.chunkZ()) {
+                if (v == null || v.x() != c.chunkX() || v.z() != c.chunkZ()) {
                     candBad.add(c.type() + "@" + c.chunkX() + "," + c.chunkZ() + " vanilla " + v);
                 }
                 if (sample.length() < 300) {
@@ -227,7 +228,7 @@ final class WorldExtraSeedTests {
             }
             Harness.command("clear @s");
             Harness.command("give @s minecraft:ender_eye 2");
-            H.p().getInventory().selected = 0;
+            H.p().getInventory().setSelectedSlot(0);
             H.enable(StrongholdFinderModule.ID, true);
         });
         s.waitTicks(10);
@@ -448,8 +449,8 @@ final class WorldExtraSeedTests {
     private static int[] locateFortress(BlockPos from) {
         var server = H.mc().getSingleplayerServer();
         ServerLevel nether = server.getLevel(Level.NETHER);
-        Registry<Structure> reg = server.registryAccess().registryOrThrow(Registries.STRUCTURE);
-        Holder<Structure> h = reg.getHolderOrThrow(BuiltinStructures.FORTRESS);
+        Registry<Structure> reg = server.registryAccess().lookupOrThrow(Registries.STRUCTURE);
+        Holder<Structure> h = reg.getOrThrow(BuiltinStructures.FORTRESS);
         var pair = nether.getChunkSource().getGenerator().findNearestMapStructure(nether, HolderSet.direct(h), from,
                 100, false);
         if (pair == null) {

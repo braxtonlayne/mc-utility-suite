@@ -72,8 +72,8 @@ final class FieldJobsScenario {
         debris(s);
         piglin(s);
         s.always("disarm", () -> {
-            if (H.mc().screen != null) {
-                H.mc().setScreen(null);
+            if (H.mc().gui.screen() != null) {
+                H.mc().gui.setScreen(null);
             }
             for (String id : MODULES) {
                 H.enable(id, false);
@@ -205,7 +205,7 @@ final class FieldJobsScenario {
         s.run("highway (tunnel) on", () -> {
             IWaypointService wp = Services.waypoints();
             wp.byName(WAYPOINT).ifPresent(w -> wp.remove(w.id()));
-            wp.add(WAYPOINT, "Playtest", ax(10), ay(1), az(8), H.mc().level.dimension().location().toString());
+            wp.add(WAYPOINT, "Playtest", ax(10), ay(1), az(8), H.mc().level.dimension().identifier().toString());
             H.setting(HighwayBuilder.ID, "target", WAYPOINT);
             H.setting(HighwayBuilder.ID, "mode", "TUNNEL");
             H.setting(HighwayBuilder.ID, "width", 3);
@@ -288,7 +288,7 @@ final class FieldJobsScenario {
         s.run("highway (ice) on", () -> {
             IWaypointService wp = Services.waypoints();
             wp.byName(WAYPOINT).ifPresent(w -> wp.remove(w.id()));
-            wp.add(WAYPOINT, "Playtest", ax(11), ay(1), az(0), H.mc().level.dimension().location().toString());
+            wp.add(WAYPOINT, "Playtest", ax(11), ay(1), az(0), H.mc().level.dimension().identifier().toString());
             H.setting(HighwayBuilder.ID, "mode", "ICE");
             H.setting(HighwayBuilder.ID, "width", 2);
             H.setting(HighwayBuilder.ID, "boat_handoff", true);
@@ -417,12 +417,12 @@ final class FieldJobsScenario {
             clock[0]++;
             float now = H.p().getAttackStrengthScale(0f);
             if (clock[0] <= 60) {
-                trace.append(Math.round(now * 100)).append(H.p().getInventory().selected == 0 ? "" : "s"
-                        + H.p().getInventory().selected).append(H.mc().options.keyAttack.isDown() ? "A" : "").append(' ');
+                trace.append(Math.round(now * 100)).append(H.p().getInventory().getSelectedSlot() == 0 ? "" : "s"
+                        + H.p().getInventory().getSelectedSlot()).append(H.mc().options.keyAttack.isDown() ? "A" : "").append(' ');
             } else if (clock[0] == 61) {
                 s.note("grinder strength trace (%, sN = other slot, A = attack key down): " + trace);
             }
-            int slotNow = H.p().getInventory().selected;
+            int slotNow = H.p().getInventory().getSelectedSlot();
             boolean swapped = prevSlot[0] >= 0 && slotNow != prevSlot[0]; // a hotbar swap also resets the meter
             prevSlot[0] = slotNow;
             if (now < prev[0] - 0.4f && !swapped) {
@@ -482,8 +482,8 @@ final class FieldJobsScenario {
         s.cmd("kill @e[type=minecraft:husk]");
     }
 
-    private static net.minecraft.world.entity.monster.Husk husk() {
-        var list = H.mc().level.getEntitiesOfClass(net.minecraft.world.entity.monster.Husk.class,
+    private static net.minecraft.world.entity.monster.zombie.Husk husk() {
+        var list = H.mc().level.getEntitiesOfClass(net.minecraft.world.entity.monster.zombie.Husk.class,
                 H.p().getBoundingBox().inflate(8));
         return list.isEmpty() ? null : list.get(0);
     }
@@ -813,7 +813,7 @@ final class FieldJobsScenario {
                         if (busy && phaseTicks % 100 == 0) {
                             s.note("debris hand-offs still busy after " + phaseTicks + " ticks: "
                                     + H.fields(H.module(LavaPlugModule.ID), "status")
-                                    + " / vein " + H.fields(H.module(VeinWorkModule.ID), "current", "pickBusy", "running", "scanning", "relaxed") + " held " + H.p().getMainHandItem() + " slot " + H.p().getInventory().selected + " destroy " + H.fields(H.mc().gameMode, "destroyProgress", "isDestroying", "destroyBlockPos") + "; vein hands: " + handsDiag(H.module(VeinWorkModule.ID)));
+                                    + " / vein " + H.fields(H.module(VeinWorkModule.ID), "current", "pickBusy", "running", "scanning", "relaxed") + " held " + H.p().getMainHandItem() + " slot " + H.p().getInventory().getSelectedSlot() + " destroy " + H.fields(H.mc().gameMode, "destroyProgress", "isDestroying", "destroyBlockPos") + "; vein hands: " + handsDiag(H.module(VeinWorkModule.ID)));
                         }
                         return !busy || phaseTicks > 20 * 30;
                     }

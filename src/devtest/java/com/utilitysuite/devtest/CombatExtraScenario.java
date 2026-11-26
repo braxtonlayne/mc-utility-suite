@@ -147,7 +147,7 @@ final class CombatExtraScenario {
     /** The user's own melee hit (test scaffolding plays the user). */
     private static void hit(Entity e) {
         H.mc().gameMode.attack(H.p(), e);
-        H.p().swing(InteractionHand.MAIN_HAND);
+        H.p().swing(InteractionHand.MAIN_HAND, H.p().getMainHandItem().getAttackAnimation(), false);
     }
 
     private static ControlLease takeLease(String id, ControlChannel first, ControlChannel... rest) {
@@ -176,7 +176,7 @@ final class CombatExtraScenario {
     private static void spawnPal(double dz) {
         removePal();
         RemotePlayer rp = new RemotePlayer(H.mc().level, new GameProfile(PAL, "PlaytestPal"));
-        rp.moveTo(Arena.cx + 0.5, Arena.FLOOR + 1, Arena.cz + dz, 180f, 0f);
+        rp.snapTo(Arena.cx + 0.5, Arena.FLOOR + 1, Arena.cz + dz, 180f, 0f);
         rp.setOldPosAndRot();
         H.mc().level.addEntity(rp);
         pal = rp;
@@ -475,7 +475,7 @@ final class CombatExtraScenario {
         List<?>[] texts = new List<?>[1];
         s.cmd("item replace entity @s weapon.mainhand with minecraft:wind_charge 8");
         s.run("mace in another hotbar slot", () -> Harness.command("item replace entity @s hotbar."
-                + ((H.p().getInventory().selected + 1) % 9) + " with minecraft:mace"));
+                + ((H.p().getInventory().getSelectedSlot() + 1) % 9) + " with minecraft:mace"));
         s.cmd(() -> tpLook(0.5, 1, 0.5, 0f, 90f));
         s.run("kinetic on", () -> H.enable(KineticChainModule.ID, true));
         s.waitTicks(12);
@@ -804,7 +804,7 @@ final class CombatExtraScenario {
         s.cmd(() -> Arena.tp(-4.5, 0.5, 180f));
         s.waitTicks(10);
         s.run("crop work on", () -> {
-            hoeSlot[0] = H.p().getInventory().selected;
+            hoeSlot[0] = H.p().getInventory().getSelectedSlot();
             wheatBefore[0] = H.count("minecraft:wheat");
             s.check("crop farm planted, hoe in hand, seeds only in the main inventory",
                     age(-7) == 7 && age(-5) == 2 && H.p().getMainHandItem().is(Items.IRON_HOE)
@@ -842,7 +842,7 @@ final class CombatExtraScenario {
             s.check("crop work: young wheat and an unreplantable crop left standing",
                     age(-5) >= 2 && age(-5) < 7 && "minecraft:carrots".equals(H.blockId(Arena.cx - 4,
                             Arena.FLOOR + 1, Arena.cz - 1)) && age(-4) == 7, "row " + row());
-            boolean holdsHoe = H.p().getInventory().selected == hoeSlot[0]
+            boolean holdsHoe = H.p().getInventory().getSelectedSlot() == hoeSlot[0]
                     && H.p().getMainHandItem().is(Items.IRON_HOE);
             boolean released = true;
             for (ControlChannel c : ControlChannel.all()) {
@@ -850,7 +850,7 @@ final class CombatExtraScenario {
             }
             s.check("crop work: worked through its leases, hoe back in hand, leases released",
                     leased[0] && holdsHoe && released, "leased=" + leased[0] + " selected=" + H.p().getInventory()
-                            .selected + " (hoe slot " + hoeSlot[0] + ") hand=" + H.p().getMainHandItem()
+                            .getSelectedSlot() + " (hoe slot " + hoeSlot[0] + ") hand=" + H.p().getMainHandItem()
                             + " released=" + released + " seeds left " + H.count("minecraft:wheat_seeds") + "; "
                             + H.arbiterState());
             H.enable(CropWorkModule.ID, false);

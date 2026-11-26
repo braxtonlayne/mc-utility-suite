@@ -194,7 +194,7 @@ final class CombatDepthScenario {
             }
             H.p().lookAt(net.minecraft.commands.arguments.EntityAnchorArgument.Anchor.EYES, z.getEyePosition());
             H.mc().gameMode.attack(H.p(), z);
-            H.p().swing(InteractionHand.MAIN_HAND);
+            H.p().swing(InteractionHand.MAIN_HAND, H.p().getMainHandItem().getAttackAnimation(), false);
         });
         s.waitUpTo(tag + ": engaged", 40, () -> ca.state() == CombatState.ENGAGED);
     }
@@ -236,7 +236,7 @@ final class CombatDepthScenario {
             sawDrinking[0] |= p.isUsingItem() && p.getUseItem().is(H.item("minecraft:potion"));
             hp[2] = Math.max(hp[2], p.getHealth());
             return ps.drinks() > before[0] && H.count("minecraft:potion") == 0 && !p.isUsingItem()
-                    && p.getInventory().selected == 0;
+                    && p.getInventory().getSelectedSlot() == 0;
         });
         s.waitTicks(4);
         s.run("drink result", () -> {
@@ -248,7 +248,7 @@ final class CombatDepthScenario {
                     Harness.fmt("drinks %d -> %d, potion left %d, saw drinking %s, health %.1f -> %.1f -> max %.1f,"
                                     + " held %s (slot %d), state %s", before[0], ps.drinks(),
                             H.count("minecraft:potion"), sawDrinking[0], hp[0], hp[1], hp[2], p.getMainHandItem(),
-                            p.getInventory().selected, ca.state()));
+                            p.getInventory().getSelectedSlot(), ca.state()));
         });
         // splash variant: only a splash potion in the hotbar
         float[] look = {Float.NaN, 0f, -90f}; // last pitch, largest per-tick change, highest pitch
@@ -266,7 +266,7 @@ final class CombatDepthScenario {
             look[1] = Math.max(look[1], Math.abs(pitch - look[0]));
             look[2] = Math.max(look[2], pitch);
             look[0] = pitch;
-            return ps.throwsMade() > before[1] && H.p().getInventory().selected == 0;
+            return ps.throwsMade() > before[1] && H.p().getInventory().getSelectedSlot() == 0;
         });
         s.waitTicks(20);
         s.run("splash result", () -> {
@@ -364,7 +364,7 @@ final class CombatDepthScenario {
             if (!swung[0] && md.swings() > before[1]) {
                 swung[0] = true;
                 slotBeforeSwing[0] = prevSlot[0];
-                fallAtSwing[0] = p.fallDistance;
+                fallAtSwing[0] = (float) p.fallDistance;
                 zhp[1] = zhp[0];
             }
             if (swung[0]) {
@@ -372,7 +372,7 @@ final class CombatDepthScenario {
                 after[0]++;
             }
             zhp[0] = zh;
-            prevSlot[0] = p.getInventory().selected;
+            prevSlot[0] = p.getInventory().getSelectedSlot();
             if (md.launches() > before[0] && trace[1] < 45) {
                 trace[1]++;
                 double gap = z == null ? -1 : Math.sqrt(Math.pow(Math.max(0, Math.abs(z.getX() - p.getX()) - 0.3), 2)
@@ -380,7 +380,7 @@ final class CombatDepthScenario {
                 double eyeToBox = z == null ? -1 : Math.sqrt(gap * gap + Math.pow(Math.max(0, Math.max(
                         z.getY() - p.getEyeY(), p.getEyeY() - (z.getY() + z.getBbHeight()))), 2));
                 log.append(Harness.fmt("%s:%.1f/%.1f/%.1f/s%d ", md.phase().name(), p.getY() - Arena.FLOOR
-                        - 1, p.fallDistance, eyeToBox, p.getInventory().selected));
+                        - 1, p.fallDistance, eyeToBox, p.getInventory().getSelectedSlot()));
             }
             return swung[0] && after[0] > 10;
         });

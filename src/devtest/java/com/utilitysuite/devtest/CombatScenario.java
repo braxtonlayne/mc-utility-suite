@@ -67,7 +67,7 @@ final class CombatScenario {
             H.p().lookAt(net.minecraft.commands.arguments.EntityAnchorArgument.Anchor.EYES,
                     target[0].getEyePosition());
             H.mc().gameMode.attack(H.p(), target[0]);
-            H.p().swing(InteractionHand.MAIN_HAND);
+            H.p().swing(InteractionHand.MAIN_HAND, H.p().getMainHandItem().getAttackAnimation(), false);
             s.note("hit zombie #" + target[0].getId() + " at distance " + Harness.fmt("%.2f",
                     target[0].distanceTo(H.p())));
         });

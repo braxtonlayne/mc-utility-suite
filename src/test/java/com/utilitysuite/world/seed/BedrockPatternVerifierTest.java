@@ -20,9 +20,9 @@ class BedrockPatternVerifierTest {
     void matchesVanillaXoroshiroPositionalRandomAcrossAllLayers() {
         long worldSeed = -5123456789012345678L;
         PositionalRandomFactory base = new XoroshiroRandomSource(worldSeed).forkPositional();
-        PositionalRandomFactory floor = base.fromHashOf(ResourceLocation.withDefaultNamespace("bedrock_floor")).forkPositional();
-        PositionalRandomFactory roof = base.fromHashOf(ResourceLocation.withDefaultNamespace("bedrock_roof")).forkPositional();
-        PositionalRandomFactory deepslate = base.fromHashOf(ResourceLocation.withDefaultNamespace("deepslate")).forkPositional();
+        PositionalRandomFactory floor = base.fromHashOf(Identifier.withDefaultNamespace("bedrock_floor")).forkPositional();
+        PositionalRandomFactory roof = base.fromHashOf(Identifier.withDefaultNamespace("bedrock_roof")).forkPositional();
+        PositionalRandomFactory deepslate = base.fromHashOf(Identifier.withDefaultNamespace("deepslate")).forkPositional();
 
         for (int i = 0; i < 12; i++) {
             int x = -120 + i * 37;

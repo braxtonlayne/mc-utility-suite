@@ -5,7 +5,7 @@ import com.utilitysuite.ui.SuiteMenuScreen;
 import com.utilitysuite.ui.UiBootstrap;
 import com.utilitysuite.ui.kit.ToggleSwitch;
 import com.utilitysuite.ui.kit.UiNode;
-import org.lwjgl.glfw.GLFW;
+import com.mojang.blaze3d.platform.InputConstants;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -22,15 +22,15 @@ final class MenuScenario {
         s.run("press Right Shift", () -> {
             var m = com.utilitysuite.core.input.KeybindManager.mapping(
                     com.utilitysuite.core.input.KeybindManager.KeyId.OPEN_MENU);
-            H.physicalKey(GLFW.GLFW_KEY_RIGHT_SHIFT, true);
+            H.physicalKey(InputConstants.KEY_RSHIFT, true);
             keyDiag[0] = "mapping=" + (m == null ? "null" : m.getKey().getName() + " down=" + m.isDown()
                     + " modifier=" + m.getKeyModifier() + " ctxActive=" + m.getKeyConflictContext().isActive());
         });
-        s.run("release Right Shift", () -> H.physicalKey(GLFW.GLFW_KEY_RIGHT_SHIFT, false));
-        s.waitUpTo("menu opens", 10, () -> H.mc().screen instanceof SuiteMenuScreen);
+        s.run("release Right Shift", () -> H.physicalKey(InputConstants.KEY_RSHIFT, false));
+        s.waitUpTo("menu opens", 10, () -> H.mc().gui.screen() instanceof SuiteMenuScreen);
         s.run("menu open check", () -> {
-            boolean open = H.mc().screen instanceof SuiteMenuScreen;
-            s.check("Right Shift opens the menu", open, "screen=" + name(H.mc().screen) + "; " + keyDiag[0]);
+            boolean open = H.mc().gui.screen() instanceof SuiteMenuScreen;
+            s.check("Right Shift opens the menu", open, "screen=" + name(H.mc().gui.screen()) + "; " + keyDiag[0]);
             if (!open) {
                 UiBootstrap.openMenu();
             }
@@ -49,11 +49,7 @@ final class MenuScenario {
                 s.check("tab " + label + " builds and renders", m.tab() == tab && ws.size() > 6,
                         "tab=" + m.tab() + ", " + ws.size() + " nodes (" + toggles + " toggles)");
                 java.nio.file.Path png = Harness.dir().resolve("menu-" + label.toLowerCase() + ".png");
-                java.nio.file.Files.createDirectories(png.getParent());
-                try (com.mojang.blaze3d.platform.NativeImage img = net.minecraft.client.Screenshot.takeScreenshot(
-                        H.mc().getMainRenderTarget())) {
-                    img.writeToFile(png);
-                }
+                Shots.capture(png);
                 s.note("screenshot " + png.toAbsolutePath());
             });
             if (tab == SuiteMenuScreen.Tab.WORLD || tab == SuiteMenuScreen.Tab.TRAVEL
@@ -69,7 +65,7 @@ final class MenuScenario {
         // NoticeBoard.LIFE_LONG_MS plus the fade), so idle is measured once they have run out
         s.waitTicks(110);
         s.run("menu closed + HUD idle", () -> {
-            s.check("closing returns to the game", H.mc().screen == null, "screen=" + name(H.mc().screen));
+            s.check("closing returns to the game", H.mc().gui.screen() == null, "screen=" + name(H.mc().gui.screen()));
             String text = UiBootstrap.hud().text();
             CountingGraphics g = CountingGraphics.render(UiBootstrap.hud());
             s.check("HUD draws nothing when idle", text.isEmpty() && g.calls() == 0,
@@ -83,8 +79,8 @@ final class MenuScenario {
         });
         s.always("clean screen off", () -> Services.modState().setCleanScreen(false));
         s.always("close any screen", () -> {
-            if (H.mc().screen != null) {
-                H.mc().setScreen(null);
+            if (H.mc().gui.screen() != null) {
+                H.mc().gui.setScreen(null);
             }
         });
         return s;
@@ -98,7 +94,7 @@ final class MenuScenario {
             int[] r = menu().autopilotBarRect();
             s.check("autopilot bar is pinned under the title bar, full width", r[2] > 200 && r[3] > 0,
                     "rect=" + java.util.Arrays.toString(r));
-            menu().mouseClicked(r[0] + r[2] / 3.0, r[1] + r[3] / 2.0, 0);
+            menu().mouseClicked(H.leftClick(r[0] + r[2] / 3.0, r[1] + r[3] / 2.0), false);
         });
         s.waitTicks(12);
         s.run("autopilot on", () -> {
@@ -108,7 +104,7 @@ final class MenuScenario {
                     "on=" + ap.isOn() + " profile=" + saved + " summary='" + ap.summary() + "'");
             shot(s, "menu-autopilot-on.png");
             int[] r = menu().autopilotBarRect();
-            menu().mouseClicked(r[0] + r[2] - 20.0, r[1] + r[3] / 2.0, 0);
+            menu().mouseClicked(H.leftClick(r[0] + r[2] - 20.0, r[1] + r[3] / 2.0), false);
         });
         s.waitTicks(8);
         s.run("autopilot page", () -> {
@@ -118,8 +114,8 @@ final class MenuScenario {
                     + m.contentNodes().size() + " nodes");
             shot(s, "menu-autopilot-page.png");
             int[] r = m.autopilotBarRect();
-            m.mouseClicked(r[0] + r[2] - 20.0, r[1] + r[3] / 2.0, 0);
-            m.mouseClicked(r[0] + r[2] / 3.0, r[1] + r[3] / 2.0, 0);
+            m.mouseClicked(H.leftClick(r[0] + r[2] - 20.0, r[1] + r[3] / 2.0), false);
+            m.mouseClicked(H.leftClick(r[0] + r[2] / 3.0, r[1] + r[3] / 2.0), false);
         });
         s.waitTicks(4);
         s.run("autopilot back off", () -> {
@@ -137,11 +133,7 @@ final class MenuScenario {
 
     private static void shot(Scenario s, String name) throws java.io.IOException {
         java.nio.file.Path png = Harness.dir().resolve(name);
-        java.nio.file.Files.createDirectories(png.getParent());
-        try (com.mojang.blaze3d.platform.NativeImage img = net.minecraft.client.Screenshot.takeScreenshot(
-                H.mc().getMainRenderTarget())) {
-            img.writeToFile(png);
-        }
+        Shots.capture(png);
         s.note("screenshot " + png.toAbsolutePath());
     }
 
@@ -239,10 +231,10 @@ final class MenuScenario {
     }
 
     private static SuiteMenuScreen menu() {
-        if (H.mc().screen instanceof SuiteMenuScreen m) {
+        if (H.mc().gui.screen() instanceof SuiteMenuScreen m) {
             return m;
         }
-        throw new IllegalStateException("menu not open (screen=" + name(H.mc().screen) + "); last close:"
+        throw new IllegalStateException("menu not open (screen=" + name(H.mc().gui.screen()) + "); last close:"
                 + Harness.menuClosedBy);
     }
 

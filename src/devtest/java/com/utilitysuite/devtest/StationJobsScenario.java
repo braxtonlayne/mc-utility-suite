@@ -80,9 +80,9 @@ final class StationJobsScenario {
         enderChest(s);
         s.always("disarm", () -> {
             cancelAll();
-            if (H.mc().screen != null) {
+            if (H.mc().gui.screen() != null) {
                 H.p().closeContainer();
-                H.mc().setScreen(null);
+                H.mc().gui.setScreen(null);
             }
             H.enable(HallSorterModule.ID, false);
             H.enable(SmartInventory.ID, false);
@@ -121,7 +121,7 @@ final class StationJobsScenario {
     }
 
     static String dim() {
-        return H.mc().level.dimension().location().toString();
+        return H.mc().level.dimension().identifier().toString();
     }
 
     static void cancelAll() {
@@ -212,7 +212,7 @@ final class StationJobsScenario {
                 H.mc().gameMode.useItemOn(H.p(), InteractionHand.MAIN_HAND, hit);
                 return false;
             }
-            if (H.mc().screen instanceof AbstractContainerScreen<?>) {
+            if (H.mc().gui.screen() instanceof AbstractContainerScreen<?>) {
                 if (openedAt[0] < 0) {
                     openedAt[0] = t;
                 }
@@ -223,7 +223,7 @@ final class StationJobsScenario {
                 return false;
             }
             if (t > 60) {
-                s.note(name + ": no container screen opened within 3 s (screen " + H.mc().screen + ")");
+                s.note(name + ": no container screen opened within 3 s (screen " + H.mc().gui.screen() + ")");
                 return true;
             }
             return false;

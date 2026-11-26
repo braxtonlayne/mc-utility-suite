@@ -119,7 +119,7 @@ final class WorldScenario {
         s.waitTicks(30);
         s.run("freecam moved", () -> {
             H.mc().options.keyUp.setDown(false);
-            Vec3 c = H.mc().gameRenderer.getMainCamera().getPosition();
+            Vec3 c = H.mc().gameRenderer.mainCamera().position();
             double moved = Math.sqrt(c.distanceToSqr(saved[0][0], saved[0][1] + H.p().getEyeHeight(), saved[0][2]));
             double player = H.dist(saved[0], H.pos());
             s.check("camera flies, player stays", moved > 2 && player < 0.3,
@@ -130,7 +130,7 @@ final class WorldScenario {
         Shots.add(s, "world-freecam");
         s.run("freecam off", () -> {
             ScoutCameraModule cam = H.module(ScoutCameraModule.ID);
-            Vec3 c = H.mc().gameRenderer.getMainCamera().getPosition();
+            Vec3 c = H.mc().gameRenderer.mainCamera().position();
             Vec3 eye = H.p().getEyePosition();
             s.check("freecam off: camera back on the player", !cam.isFreecamActive()
                             && H.mc().getCameraEntity() == H.p() && c.distanceTo(eye) < 0.5,

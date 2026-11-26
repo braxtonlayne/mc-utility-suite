@@ -8,7 +8,7 @@ import com.utilitysuite.core.api.visual.IHoloWorld;
 import com.utilitysuite.core.api.visual.IVisuals;
 import com.utilitysuite.ui.holo.Visuals;
 import net.neoforged.bus.api.EventPriority;
-import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
+import net.neoforged.neoforge.client.event.SubmitCustomGeometryEvent;
 import net.neoforged.neoforge.client.event.sound.PlaySoundEvent;
 import net.neoforged.neoforge.common.NeoForge;
 
@@ -22,8 +22,8 @@ import java.util.TreeMap;
 
 /**
  * Test scaffolding that records what the overlays hand to the Shell's world kit: while armed, the kit is wrapped for
- * the level-render pass (installed after the Shell's own HIGHEST-priority pass start, before the modules' NORMAL
- * listeners) and every call is counted by {@code method:TOKEN} before it is forwarded, so a scenario can assert e.g.
+ * the level-render pass (26.3: SubmitCustomGeometryEvent, the Shell kit's Pass.EVENT), installed after the Shell's
+ * listeners, and every call is counted by {@code method:TOKEN} before it is forwarded, so a scenario can assert e.g.
  * "the reach ring was drawn in the ALLY tone". Also counts the sounds the sound engine was asked to play (by sound id)
  * and records the text a HUD element draws.
  */
@@ -46,11 +46,11 @@ final class WorldProbe {
             return;
         }
         installed = true;
-        NeoForge.EVENT_BUS.addListener(EventPriority.HIGH, RenderLevelStageEvent.class, WorldProbe::begin);
-        NeoForge.EVENT_BUS.addListener(EventPriority.LOW, RenderLevelStageEvent.class, WorldProbe::end);
+        NeoForge.EVENT_BUS.addListener(EventPriority.HIGH, SubmitCustomGeometryEvent.class, WorldProbe::begin);
+        NeoForge.EVENT_BUS.addListener(EventPriority.LOW, SubmitCustomGeometryEvent.class, WorldProbe::end);
         NeoForge.EVENT_BUS.addListener(PlaySoundEvent.class, e -> {
             if (e.getOriginalSound() != null) {
-                SOUNDS.merge(e.getOriginalSound().getLocation().getPath(), 1, Integer::sum);
+                SOUNDS.merge(e.getOriginalSound().getIdentifier().getPath(), 1, Integer::sum);
             }
         });
     }
@@ -87,8 +87,8 @@ final class WorldProbe {
         return SOUNDS.getOrDefault(path, 0);
     }
 
-    private static void begin(RenderLevelStageEvent e) {
-        if (!armed || e.getStage() != RenderLevelStageEvent.Stage.AFTER_PARTICLES) {
+    private static void begin(SubmitCustomGeometryEvent e) {
+        if (!armed) {
             return;
         }
         IVisuals v = Services.visualsOrNull();
@@ -105,8 +105,8 @@ final class WorldProbe {
         swapped = true;
     }
 
-    private static void end(RenderLevelStageEvent e) {
-        if (swapped && e.getStage() == RenderLevelStageEvent.Stage.AFTER_PARTICLES) {
+    private static void end(SubmitCustomGeometryEvent e) {
+        if (swapped) {
             swapped = false;
             Visuals.useWorld(real);
         }

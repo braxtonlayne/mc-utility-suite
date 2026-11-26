@@ -63,7 +63,7 @@ final class SchematicScenario {
         root.put("palette", palette);
         root.put("blocks", list);
         root.put("entities", new ListTag());
-        root.putInt("DataVersion", SharedConstants.getCurrentVersion().getDataVersion().getVersion());
+        root.putInt("DataVersion", SharedConstants.getCurrentVersion().dataVersion().version());
         Files.createDirectories(file.getParent());
         NbtIo.writeCompressed(root, file);
     }

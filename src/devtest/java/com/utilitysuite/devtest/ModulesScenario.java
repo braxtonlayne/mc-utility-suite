@@ -91,15 +91,15 @@ final class ModulesScenario {
         });
         s.cmd("kill @s");
         s.waitUpTo("death screen", 60, () -> {
-            sawDeath[0] |= H.mc().screen instanceof DeathScreen;
+            sawDeath[0] |= H.mc().gui.screen() instanceof DeathScreen;
             return sawDeath[0];
         });
         s.waitUpTo("respawned", 20 * 6, () -> H.p() != null && H.p().isAlive()
-                && !(H.mc().screen instanceof DeathScreen));
+                && !(H.mc().gui.screen() instanceof DeathScreen));
         s.run("respawn result", () -> s.deathExpected = false);
         s.run("respawn check", () -> s.check("Auto-Respawn presses respawn after the death screen",
-                sawDeath[0] && H.p().isAlive() && !(H.mc().screen instanceof DeathScreen),
-                "saw death screen " + sawDeath[0] + " (harness respawn off), alive " + H.p().isAlive() + ", screen " + H.mc().screen));
+                sawDeath[0] && H.p().isAlive() && !(H.mc().gui.screen() instanceof DeathScreen),
+                "saw death screen " + sawDeath[0] + " (harness respawn off), alive " + H.p().isAlive() + ", screen " + H.mc().gui.screen()));
         s.cmd(() -> Arena.tp(0.5, 0.5, 0f));
     }
 

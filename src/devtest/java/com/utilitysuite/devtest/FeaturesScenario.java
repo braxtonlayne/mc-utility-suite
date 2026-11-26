@@ -57,8 +57,8 @@ final class FeaturesScenario {
         shapes(s);
         mapArt(s);
         s.always("disarm", () -> {
-            if (H.mc().screen != null) {
-                H.mc().setScreen(null);
+            if (H.mc().gui.screen() != null) {
+                H.mc().gui.setScreen(null);
             }
             for (String id : MODULES) {
                 H.enable(id, false);
@@ -130,12 +130,12 @@ final class FeaturesScenario {
             WorldAtlasModule m = H.module(WorldAtlasModule.ID);
             m.openScreen();
         });
-        s.waitUpTo("atlas screen", 20, () -> H.mc().screen instanceof WorldAtlasScreen);
+        s.waitUpTo("atlas screen", 20, () -> H.mc().gui.screen() instanceof WorldAtlasScreen);
         s.waitTicks(10);
         s.run("atlas close", () -> {
-            boolean opened = H.mc().screen instanceof WorldAtlasScreen;
-            H.mc().setScreen(null);
-            s.check("feature: world atlas opens and closes", opened && H.mc().screen == null
+            boolean opened = H.mc().gui.screen() instanceof WorldAtlasScreen;
+            H.mc().gui.setScreen(null);
+            s.check("feature: world atlas opens and closes", opened && H.mc().gui.screen() == null
                     && on(WorldAtlasModule.ID), "opened " + opened + ", module on " + on(WorldAtlasModule.ID));
         });
     }
@@ -230,11 +230,20 @@ final class FeaturesScenario {
         });
     }
 
+    /**
+     * The sky colour of the last extracted frame (26.3: vanilla stores it in the sky render state, where the
+     * Atmosphere tint is applied; 1.21.1 read {@code ClientLevel.getSkyColor}). Zero when no frame has a sky yet.
+     */
+    private static net.minecraft.world.phys.Vec3 skyColor() {
+        org.joml.Vector3fc c = H.mc().gameRenderer.gameRenderState().levelRenderState.skyRenderState.skyColor;
+        return c == null ? net.minecraft.world.phys.Vec3.ZERO : new net.minecraft.world.phys.Vec3(c.x(), c.y(), c.z());
+    }
+
     private static void sky(Scenario s) {
         double[] vanilla = new double[3];
         s.cmd("time set 6000");
         s.run("sky vanilla", () -> {
-            var c = H.mc().level.getSkyColor(H.p().getEyePosition(), 1f);
+            var c = skyColor();
             vanilla[0] = c.x; vanilla[1] = c.y; vanilla[2] = c.z;
         });
         s.run("atmosphere sky ramp on", () -> {
@@ -244,7 +253,7 @@ final class FeaturesScenario {
         s.waitTicks(10);
         Shots.add(s, "atmosphere-sky-ramp");
         s.run("sky result", () -> {
-            var c = H.mc().level.getSkyColor(H.p().getEyePosition(), 1f);
+            var c = skyColor();
             double d = Math.abs(c.x - vanilla[0]) + Math.abs(c.y - vanilla[1]) + Math.abs(c.z - vanilla[2]);
             s.check("feature: atmosphere recolours the sky", on("atmosphere") && d > 0.02,
                     String.format("vanilla (%.3f %.3f %.3f) -> (%.3f %.3f %.3f), delta %.3f",
@@ -277,19 +286,19 @@ final class FeaturesScenario {
         s.run("replay freeze + open", () -> {
             ReplayTheatreModule m = H.module(ReplayTheatreModule.ID);
             m.ring().setFrozen(true); // what the freeze key does
-            H.mc().setScreen(new ReplayScreen(m));
+            H.mc().gui.setScreen(new ReplayScreen(m));
         });
         s.waitTicks(10);
         s.run("replay close", () -> {
             ReplayTheatreModule m = H.module(ReplayTheatreModule.ID);
-            boolean opened = H.mc().screen instanceof ReplayScreen;
+            boolean opened = H.mc().gui.screen() instanceof ReplayScreen;
             boolean frozen = m.ring().frozen();
             int frames = m.ring().frames();
-            if (H.mc().screen != null) {
-                H.mc().screen.onClose();
+            if (H.mc().gui.screen() != null) {
+                H.mc().gui.screen().onClose();
             }
-            if (H.mc().screen != null) {
-                H.mc().setScreen(null);
+            if (H.mc().gui.screen() != null) {
+                H.mc().gui.setScreen(null);
             }
             s.check("feature: replay freezes, opens and closes", opened && frozen && frames > 1
                             && !m.ring().frozen() && on(ReplayTheatreModule.ID),
@@ -298,17 +307,17 @@ final class FeaturesScenario {
     }
 
     private static void palette(Scenario s) {
-        s.run("palette open", () -> H.mc().setScreen(new CommandPaletteScreen()));
+        s.run("palette open", () -> H.mc().gui.setScreen(new CommandPaletteScreen()));
         s.waitTicks(10);
         s.run("palette close", () -> {
-            boolean opened = H.mc().screen instanceof CommandPaletteScreen;
-            if (H.mc().screen != null) {
-                H.mc().screen.onClose();
+            boolean opened = H.mc().gui.screen() instanceof CommandPaletteScreen;
+            if (H.mc().gui.screen() != null) {
+                H.mc().gui.screen().onClose();
             }
-            s.check("feature: command palette opens and closes", opened && H.mc().screen == null,
-                    "opened " + opened + ", screen after close " + H.mc().screen);
-            if (H.mc().screen != null) {
-                H.mc().setScreen(null);
+            s.check("feature: command palette opens and closes", opened && H.mc().gui.screen() == null,
+                    "opened " + opened + ", screen after close " + H.mc().gui.screen());
+            if (H.mc().gui.screen() != null) {
+                H.mc().gui.setScreen(null);
             }
         });
     }
@@ -350,7 +359,7 @@ final class FeaturesScenario {
                     for (int x = 0; x < 8; x++) {
                         // NativeImage is ABGR: a red/blue checker with a green stripe
                         int abgr = y == 4 ? 0xFF00C000 : ((x + y) & 1) == 0 ? 0xFF0000E0 : 0xFFE00000;
-                        img.setPixelRGBA(x, y, abgr);
+                        img.setPixelABGR(x, y, abgr);
                     }
                 }
                 img.writeToFile(png);

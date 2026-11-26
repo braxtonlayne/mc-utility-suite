@@ -45,8 +45,8 @@ final class ToolsExtraScenario {
                 Services.arbiter().resumeAutomation();
             }
             Services.modState().setCleanScreen(false);
-            if (H.mc().screen != null) {
-                H.mc().setScreen(null);
+            if (H.mc().gui.screen() != null) {
+                H.mc().gui.setScreen(null);
             }
             Harness.command("kill @e[type=!minecraft:player]");
             Harness.command("clear @s");
@@ -69,9 +69,9 @@ final class ToolsExtraScenario {
         m.onProfileLoaded(profile);
     }
 
-    /** Binds a key mapping for the test only (options.txt is not saved); {@code glfwKey < 0} unbinds it. */
-    static void bind(KeyMapping m, int glfwKey) {
-        m.setKey(glfwKey < 0 ? InputConstants.UNKNOWN : InputConstants.Type.KEYSYM.getOrCreate(glfwKey));
+    /** Binds a key mapping for the test only (options.txt is not saved); {@code scancode} is SDL3, < 0 unbinds. */
+    static void bind(KeyMapping m, int scancode) {
+        m.setKey(scancode < 0 ? InputConstants.UNKNOWN : InputConstants.Type.KEYBOARD.getOrCreate(scancode));
         KeyMapping.resetMapping();
     }
 
@@ -141,7 +141,7 @@ final class ToolsExtraScenario {
             double unitsPerPx = sens * sens * sens * 8.0;
             MouseHandler m = mc.mouseHandler;
             fDX.setDouble(m, unitsX / unitsPerPx);
-            fDY.setDouble(m, unitsY / unitsPerPx * (mc.options.invertYMouse().get() ? -1 : 1));
+            fDY.setDouble(m, unitsY / unitsPerPx * (mc.options.invertMouseY().get() ? -1 : 1));
             mTurn.invoke(m, 0.05);
             fDX.setDouble(m, 0.0);
             fDY.setDouble(m, 0.0);

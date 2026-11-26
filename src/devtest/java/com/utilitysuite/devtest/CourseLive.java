@@ -87,17 +87,17 @@ final class CourseLive {
         try {
             switch (phase) {
                 case BOOT -> {
-                    if (mc.screen instanceof TitleScreen && mc.getOverlay() == null && phaseTicks > 20) {
+                    if (mc.gui.screen() instanceof TitleScreen && mc.gui.overlay() == null && phaseTicks > 20) {
                         course = CourseFile.load();
                         JumpTrace.init(course);
                         timer = new CourseTimer(course);
                         deleteWorld(mc);
-                        CreateWorldScreen.openFresh(mc, mc.screen);
+                        { var back = mc.gui.screen(); CreateWorldScreen.openFresh(mc, () -> mc.gui.setScreen(back)); }
                         go(Phase.CREATE);
                     }
                 }
                 case CREATE -> {
-                    if (mc.screen instanceof CreateWorldScreen s && phaseTicks > 5) {
+                    if (mc.gui.screen() instanceof CreateWorldScreen s && phaseTicks > 5) {
                         WorldCreationUiState ui = s.getUiState();
                         ui.setName(WORLD);
                         ui.setGameMode(WorldCreationUiState.SelectedGameMode.SURVIVAL);
@@ -110,9 +110,9 @@ final class CourseLive {
                     }
                 }
                 case LOADING -> {
-                    if (mc.player != null && mc.level != null && mc.screen == null && mc.getOverlay() == null
+                    if (mc.player != null && mc.level != null && mc.gui.screen() == null && mc.gui.overlay() == null
                             && phaseTicks > 40) {
-                        var spawn = mc.level.getSharedSpawnPos();
+                        var spawn = mc.level.getRespawnData().pos();
                         ox = spawn.getX();
                         oy = ORIGIN_Y;
                         oz = spawn.getZ() + 32;
@@ -454,7 +454,7 @@ final class CourseLive {
         if (phase != Phase.READY || timer == null || mc().player == null) {
             return;
         }
-        GuiGraphics g = e.getGuiGraphics();
+        GuiGraphicsExtractor g = e.getGuiGraphics();
         String mode = timer.state == CourseTimer.State.IDLE ? currentMode() : runMode;
         String line = switch (timer.state) {
             case IDLE -> "COURSE  ready  [" + mode + "]  run off the pad to start";
@@ -464,7 +464,7 @@ final class CourseLive {
                     timer.falls, mode);
         };
         g.fill(4, 4, 10 + mc().font.width(line), 17, 0x90000000);
-        g.drawString(mc().font, line, 7, 6, 0xFFFFFFFF, false);
+        g.text(mc().font, line, 7, 6, 0xFFFFFFFF, false);
     }
 
     // ---- helpers --------------------------------------------------------------------------------------------------
@@ -478,7 +478,7 @@ final class CourseLive {
 
     private void say(String s) {
         if (mc().player != null) {
-            mc().player.displayClientMessage(Component.literal(s), false);
+            mc().player.sendSystemMessage(Component.literal(s));
         }
         PlaytestMod.LOG.info("[course] {}", s);
     }

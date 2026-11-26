@@ -9,6 +9,7 @@ import com.utilitysuite.core.api.visual.HoloToken;
 import com.utilitysuite.ui.holo.HoloFrames;
 import com.utilitysuite.ui.holo.HoloTheme;
 import com.utilitysuite.ui.kit.UiRenderUtils;
+import net.minecraft.util.ARGB;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
@@ -178,7 +179,7 @@ public final class MinimapHud implements GuiLayer {
         float v0 = Math.floorMod(baseZ, MinimapModule.TEX) + (pzTex - baseZ);
         float texPerPx = MinimapModule.VIEW_TEXELS / half;
         float inv = 1f / MinimapModule.TEX;
-        int texColor = ((int) (255 * op) << 24) | 0x00FFFFFF;
+        int texColor = ARGB.white((int) (255 * op)); // white tint: the texture keeps its own colours
         GuiMesh tex = meshes.beginTextured(g, textureSetup);
         if (round) {
             // the fan (centre, rim i, rim i-1, ...) as quads: each quad (centre, rim i, rim i-1, rim i-2) covers two

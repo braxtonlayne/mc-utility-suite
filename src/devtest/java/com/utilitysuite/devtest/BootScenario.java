@@ -18,7 +18,7 @@ final class BootScenario {
             s.check("automation not stopped at start", !Services.arbiter().isAutomationStopped(), "stopped="
                     + Services.arbiter().isAutomationStopped());
             spawn = H.pos();
-            s.note("spawn " + H.posStr() + " in " + H.mc().level.dimension().location());
+            s.note("spawn " + H.posStr() + " in " + H.mc().level.dimension().identifier());
         });
         s.cmd("gamerule doDaylightCycle false");
         s.cmd("gamerule doWeatherCycle false");

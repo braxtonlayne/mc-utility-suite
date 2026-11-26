@@ -19,12 +19,11 @@ import net.minecraft.network.protocol.game.ServerboundSelectTradePacket;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.npc.villager.Villager;
-import net.minecraft.world.inventory.ClickType;
 import net.minecraft.world.inventory.EnchantmentMenu;
 import net.minecraft.world.inventory.MerchantMenu;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
-import org.lwjgl.glfw.GLFW;
+import com.mojang.blaze3d.platform.InputConstants;
 
 /** Enchant Planner and Villager Helpers for {@link ToolsExtraScenario}: a real enchanting table and trade screens. */
 final class ToolsExtraStationTests {
@@ -51,11 +50,11 @@ final class ToolsExtraStationTests {
     }
 
     private static void closeContainer() {
-        if (H.p() != null && H.mc().screen != null) {
+        if (H.p() != null && H.mc().gui.screen() != null) {
             H.p().closeContainer();
         }
-        if (H.mc().screen != null) {
-            H.mc().setScreen(null);
+        if (H.mc().gui.screen() != null) {
+            H.mc().gui.setScreen(null);
         }
     }
 
@@ -73,7 +72,7 @@ final class ToolsExtraStationTests {
         s.cmd("item replace entity @s hotbar.0 with minecraft:iron_pickaxe");
         s.cmd("item replace entity @s hotbar.1 with minecraft:book");
         s.run("EP enable + refresh", () -> {
-            H.p().getInventory().selected = 0;
+            H.p().getInventory().setSelectedSlot(0);
             H.enable(EnchantSeedHelper.ID, true);
             EnchantSeedHelper es = H.module(EnchantSeedHelper.ID);
             es.refresh();
@@ -106,7 +105,7 @@ final class ToolsExtraStationTests {
         s.run("EP put the pickaxe in", () -> {
             var menu = H.p().containerMenu;
             // hotbar slot 1 is menu slot 29 (0 item, 1 lapis, 2..28 main inventory, 29..37 hotbar)
-            H.mc().gameMode.handleInventoryMouseClick(menu.containerId, 29, 0, ClickType.QUICK_MOVE, H.p());
+            H.mc().gameMode.handleContainerInput(menu.containerId, 29, 0, net.minecraft.world.inventory.ContainerInput.QUICK_MOVE, H.p());
         });
         s.waitUpTo("EP table shows costs", 40, () -> H.p().containerMenu instanceof EnchantmentMenu m
                 && m.costs[0] > 0);
@@ -116,7 +115,7 @@ final class ToolsExtraStationTests {
                 s.check("enchanting table open", false, "menu " + H.p().containerMenu);
                 return;
             }
-            var idMap = H.mc().level.registryAccess().registryOrThrow(Registries.ENCHANTMENT).asHolderIdMap();
+            var idMap = H.mc().level.registryAccess().lookupOrThrow(Registries.ENCHANTMENT).asHolderIdMap();
             StringBuilder ev = new StringBuilder();
             boolean ok = (menu.getEnchantmentSeed() & 0xFFFF) == (snap[0].seed() & 0xFFFF);
             ev.append("menu seed low16 ").append(menu.getEnchantmentSeed() & 0xFFFF).append(" vs ")
@@ -133,7 +132,7 @@ final class ToolsExtraStationTests {
                 String clueId = "-";
                 if (clue >= 0) {
                     var h = idMap.byId(clue);
-                    clueId = h == null ? "?" : h.unwrapKey().map(k -> k.location().toString()).orElse("?");
+                    clueId = h == null ? "?" : h.unwrapKey().map(k -> k.identifier().toString()).orElse("?");
                 }
                 boolean costOk = o != null && o.cost() == cost;
                 boolean clueOk = cost <= 0 || clue < 0 || (o != null && o.contains(clueId, menu.levelClue[slot]));
@@ -164,8 +163,8 @@ final class ToolsExtraStationTests {
                             + (cands == null ? "none" : cands.length) + ", true seed kept " + contains);
             // swap the pickaxe for a book (books drop one rolled enchantment: a separate path in the roll)
             var menu = H.p().containerMenu;
-            H.mc().gameMode.handleInventoryMouseClick(menu.containerId, 0, 0, ClickType.QUICK_MOVE, H.p());
-            H.mc().gameMode.handleInventoryMouseClick(menu.containerId, 30, 0, ClickType.QUICK_MOVE, H.p());
+            H.mc().gameMode.handleContainerInput(menu.containerId, 0, 0, net.minecraft.world.inventory.ContainerInput.QUICK_MOVE, H.p());
+            H.mc().gameMode.handleContainerInput(menu.containerId, 30, 0, net.minecraft.world.inventory.ContainerInput.QUICK_MOVE, H.p());
         });
         s.waitUpTo("EP table shows book costs", 40, () -> H.p().containerMenu instanceof EnchantmentMenu m
                 && m.getSlot(0).getItem().is(Items.BOOK) && m.costs[0] > 0);
@@ -196,7 +195,7 @@ final class ToolsExtraStationTests {
         s.cmd("item replace entity @s hotbar.2 with minecraft:lapis_lazuli 8");
         s.run("EP lapis in", () -> {
             var menu = H.p().containerMenu;
-            H.mc().gameMode.handleInventoryMouseClick(menu.containerId, 31, 0, ClickType.QUICK_MOVE, H.p());
+            H.mc().gameMode.handleContainerInput(menu.containerId, 31, 0, net.minecraft.world.inventory.ContainerInput.QUICK_MOVE, H.p());
         });
         s.waitTicks(5);
         s.run("EP enchant the book (slot 1)", () -> {
@@ -211,7 +210,7 @@ final class ToolsExtraStationTests {
         s.cmd("item replace entity @s hotbar.0 with minecraft:iron_pickaxe");
         s.waitTicks(3);
         s.run("EP refresh with the new seed", () -> {
-            H.p().getInventory().selected = 0;
+            H.p().getInventory().setSelectedSlot(0);
             EnchantSeedHelper es = H.module(EnchantSeedHelper.ID);
             es.refresh();
             snap[0] = es.snapshot();
@@ -229,7 +228,7 @@ final class ToolsExtraStationTests {
         s.run("EP put the pickaxe in again", () -> {
             var menu = H.p().containerMenu;
             if (menu instanceof EnchantmentMenu) {
-                H.mc().gameMode.handleInventoryMouseClick(menu.containerId, 29, 0, ClickType.QUICK_MOVE, H.p());
+                H.mc().gameMode.handleContainerInput(menu.containerId, 29, 0, net.minecraft.world.inventory.ContainerInput.QUICK_MOVE, H.p());
             }
         });
         s.waitUpTo("EP table shows costs again", 40, () -> H.p().containerMenu instanceof EnchantmentMenu m
@@ -282,29 +281,29 @@ final class ToolsExtraStationTests {
                 + "maxUses:5,xp:0,rewardExp:0b,priceMultiplier:0f}]}}");
         s.cmd("item replace entity @s inventory.0 with minecraft:dirt 8");
         s.run("VH enable", () -> {
-            H.p().getInventory().selected = 0;
+            H.p().getInventory().setSelectedSlot(0);
             H.enable(VillagerHelpers.ID, true);
         });
         s.waitUpTo("VH villager loaded", 40, () -> nearestVillager() != null);
         s.run("VH open trades", () -> {
             Villager v = nearestVillager();
             if (v != null) {
-                H.mc().gameMode.interact(H.p(), v, InteractionHand.MAIN_HAND);
+                H.mc().gameMode.interact(H.p(), v, new net.minecraft.world.phys.EntityHitResult(v), InteractionHand.MAIN_HAND);
             }
         });
-        s.waitFor("VH trade screen opens", 60, () -> H.mc().screen instanceof MerchantScreen ms
+        s.waitFor("VH trade screen opens", 60, () -> H.mc().gui.screen() instanceof MerchantScreen ms
                 && !ms.getMenu().getOffers().isEmpty());
         s.run("VH pick the trade", () -> {
             // what the trade-list button does
-            MerchantMenu menu = ((MerchantScreen) H.mc().screen).getMenu();
+            MerchantMenu menu = ((MerchantScreen) H.mc().gui.screen()).getMenu();
             menu.setSelectionHint(0);
             menu.tryMoveItems(0);
             H.mc().getConnection().send(new ServerboundSelectTradePacket(0));
         });
         s.waitTicks(5);
         s.run("VH press the bulk-trade key", () -> {
-            H.physicalKey(GLFW.GLFW_KEY_G, true);
-            H.physicalKey(GLFW.GLFW_KEY_G, false);
+            H.physicalKey(InputConstants.KEY_G, true);
+            H.physicalKey(InputConstants.KEY_G, false);
         });
         s.waitUpTo("VH bulk run ends", 200, () -> {
             VillagerHelpers vh = H.module(VillagerHelpers.ID);
@@ -317,8 +316,8 @@ final class ToolsExtraStationTests {
         s.run("VH bulk result, close the screen", () -> {
             VillagerHelpers vh = H.module(VillagerHelpers.ID);
             steps[0] = vh.bulk().trades();
-            open[0] = H.mc().screen instanceof MerchantScreen;
-            uses[0] = open[0] ? ((MerchantScreen) H.mc().screen).getMenu().getOffers().get(0).getUses() : -1;
+            open[0] = H.mc().gui.screen() instanceof MerchantScreen;
+            uses[0] = open[0] ? ((MerchantScreen) H.mc().gui.screen()).getMenu().getOffers().get(0).getUses() : -1;
             arb[0] = H.arbiterState();
             closeContainer(); // unused payment goes back to the inventory
         });
@@ -343,7 +342,7 @@ final class ToolsExtraStationTests {
 
     // ---- Villager Helpers: librarian roller -------------------------------------------------------------------------
 
-    private static final int ROLLER_TEST_KEY = GLFW.GLFW_KEY_KP_8;
+    private static final int ROLLER_TEST_KEY = InputConstants.KEY_NUMPAD8;
 
     private static void librarianRoller(Scenario s) {
         boolean[] sawLease = new boolean[1];
@@ -414,7 +413,7 @@ final class ToolsExtraStationTests {
         s.waitTicks(3);
         s.run("LIB roller check", () -> {
             VillagerHelpers vh = H.module(VillagerHelpers.ID);
-            boolean open = H.mc().screen instanceof MerchantScreen;
+            boolean open = H.mc().gui.screen() instanceof MerchantScreen;
             String lectern = H.blockId(Arena.cx + lx, Arena.FLOOR + 1, Arena.cz + lz);
             s.check("the librarian roller turns to the villager (smoothly), opens its trades and stops on the wanted"
                             + " book without breaking the lectern",
