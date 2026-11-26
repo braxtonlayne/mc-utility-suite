@@ -384,6 +384,20 @@ public final class Harness {
             reportWritten = true;
         }
         PlaytestMod.LOG.info("[playtest] finished ({}); stopping the client", why);
+        // 26.3 lets the main thread end instead of calling System.exit, and Baritone 1.20.0's worker pool is not
+        // daemon, so the JVM stayed up after the window closed and runPlaytest never returned. The report is
+        // written: give the normal shutdown a grace period, then exit.
+        Thread exit = new Thread(() -> {
+            try {
+                Thread.sleep(20_000L);
+            } catch (InterruptedException e) {
+                return;
+            }
+            PlaytestMod.LOG.info("[playtest] JVM still up 20 s after stop (non-daemon threads); exiting");
+            Runtime.getRuntime().halt(0);
+        }, "playtest-exit-watchdog");
+        exit.setDaemon(true);
+        exit.start();
         mc().stop();
     }
 

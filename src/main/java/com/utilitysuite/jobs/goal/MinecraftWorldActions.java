@@ -1923,6 +1923,26 @@ public final class MinecraftWorldActions implements WorldActions {
     }
 
     @Override
+    public boolean heldToolHelpsWith(java.util.List<String> blockIds) {
+        LocalPlayer player = Minecraft.getInstance().player;
+        if (player == null || blockIds.isEmpty()) {
+            return true; // unknown targets: keep guarding
+        }
+        net.minecraft.world.item.ItemStack held = player.getMainHandItem();
+        for (int i = 0; i < blockIds.size(); i++) {
+            net.minecraft.resources.Identifier id = net.minecraft.resources.Identifier.tryParse(blockIds.get(i));
+            if (id == null) {
+                continue;
+            }
+            net.minecraft.world.level.block.Block b = net.minecraft.core.registries.BuiltInRegistries.BLOCK.getValue(id);
+            if (held.getDestroySpeed(b.defaultBlockState()) > 1.0f) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    @Override
     public int fortuneLevel() {
         return inv.fortuneOfBestPickaxe();
     }

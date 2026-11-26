@@ -824,7 +824,7 @@ public final class JobExecutor implements LeaseListener {
             return;
         }
         if (settings.minToolDurability > 0 && now() % ToolDurabilityGuard.CHECK_INTERVAL == 0
-                && !guardTool(j, step)) {
+                && deps.actions().heldToolHelpsWith(step.blockIds()) && !guardTool(j, step)) {
             return;
         }
         MiningDriver.Status st = d.status();
@@ -1152,8 +1152,9 @@ public final class JobExecutor implements LeaseListener {
     }
 
     /**
-     * Swaps a nearly broken pickaxe/shovel for a backup before it breaks. Without a backup the job pauses with a
-     * notice (once per job for plain tools, always for enchanted ones). False when the job was paused.
+     * Swaps a nearly broken pickaxe/shovel for a backup before it breaks. Without a backup a plain tool is used up
+     * (noted once on the job card; {@link #repairTool} crafts a new one when it breaks, as a player would), while an
+     * enchanted one pauses the job so it never breaks. False when the job was paused.
      */
     private boolean guardTool(Job j, PlanStep step) {
         ToolDurabilityGuard.Decision dec = deps.actions().guardTool(settings.minToolDurability,
@@ -1163,9 +1164,8 @@ public final class JobExecutor implements LeaseListener {
             case NO_BACKUP -> {
                 if (!j.toolWarned) {
                     j.toolWarned = true;
-                    pauseDiagnostic(j, "Tool is almost broken and there is no backup in the inventory; swap or craft "
-                            + "one, then resume");
-                    return false;
+                    setReason(j, "Tool almost broken and no backup carried: using it up, a new one is crafted when "
+                            + "it breaks");
                 }
             }
             case NO_BACKUP_ENCHANTED -> {
