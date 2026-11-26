@@ -27,7 +27,8 @@ import java.util.Optional;
  * screen, the camera holds still ({@link LookCapture}, through the core's turn hook) and the mouse motion moves a
  * virtual stick ({@link RadialSelector}); releasing the key runs the selected slice's action from the action registry.
  * A quick flick and release selects in about 150 ms. Opening a screen, Stop-All or leaving the world closes the wheel
- * without running anything. Slices are action ids (settings {@code slice_1..slice_8}, clockwise from the top).
+ * without running anything; after Stop-All, leaving the world or switching the module off it stays closed until the
+ * key is released ({@link WheelHold}), so a still-held key cannot take the camera again. Slices are action ids (settings {@code slice_1..slice_8}, clockwise from the top).
  * <p>
  * Tick and render are allocation free: slice labels are resolved once when the wheel opens.
  */
@@ -44,6 +45,7 @@ public final class RadialWheel implements IModule, IConfigurable, LayeredDraw.La
     private static final int BOX_MAX_W = 96;
 
     private final RadialSelector selector = new RadialSelector(SLICES, 40);
+    private final WheelHold hold = new WheelHold();
     private final String[] sliceIds = DEFAULT_SLICES.clone();
     private final String[] labels = new String[SLICES];
     private boolean enabled = true;
@@ -71,14 +73,14 @@ public final class RadialWheel implements IModule, IConfigurable, LayeredDraw.La
     public void setEnabled(boolean enabled) {
         this.enabled = enabled;
         if (!enabled) {
-            close(false);
+            cancel();
         }
     }
 
     @Override
     public void onTick() {
         Minecraft mc = Minecraft.getInstance();
-        boolean held = KeybindManager.isHeld(KeybindManager.KeyId.RADIAL_WHEEL) && mc.screen == null
+        boolean held = hold.held(KeybindManager.isHeld(KeybindManager.KeyId.RADIAL_WHEEL)) && mc.screen == null
                 && mc.player != null;
         if (held) {
             if (!open) {
@@ -94,11 +96,19 @@ public final class RadialWheel implements IModule, IConfigurable, LayeredDraw.La
 
     @Override
     public void onStopAll() {
-        close(false);
+        cancel();
     }
 
     @Override
     public void onWorldUnload() {
+        cancel();
+    }
+
+    /** Closes without running anything; a still-held key does not reopen the wheel until it is released. */
+    private void cancel() {
+        if (open) {
+            hold.suppressUntilRelease();
+        }
         close(false);
     }
 
