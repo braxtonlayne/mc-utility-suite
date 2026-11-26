@@ -228,6 +228,9 @@ public final class PacketLab implements IModule, IConfigurable {
             ServerPhysicsMonitor.setCurrent(null);
             lastTickNs = 0L;
             uninstall(c);
+            if (!acousticDemand) {
+                SHARED_RADAR.clear(); // nobody feeds it now: no stale pings when acoustic display comes on later
+            }
         }
     }
 

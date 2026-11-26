@@ -55,14 +55,19 @@ class MaceDivePlannerTest {
     }
 
     @Test
-    void plainJumpCannotSmashAndFullTierNeedsMoreThanALaunch() {
+    void plainJumpCannotSmashAndOneCalibratedLaunchReachesFullTier() {
         MaceDivePlanner.Plan p = new MaceDivePlanner.Plan();
         MaceDivePlanner.planWindLaunch(p, 0, 1.8, 0.4, 3.0, MaceDivePlanner.fallFor(MaceDivePlanner.Tier.SMASH),
                 0.0, 0);
         assertFalse(p.feasible, "a bare jump falls 1.25 blocks: no smash");
+        // A real launch rose 9.08 blocks (CombatDepth playtest), so one charge gives the 8-block FULL fall...
         MaceDivePlanner.planWindLaunch(p, 0, 1.8, 0.4, 3.0, MaceDivePlanner.fallFor(MaceDivePlanner.Tier.FULL),
                 MaceDivePlanner.WIND_LAUNCH_VY, 0);
-        assertFalse(p.feasible, "one wind charge does not give an 8-block fall");
+        assertTrue(p.feasible, "one calibrated wind charge gives an 8-block fall");
+        // ...which the old 0.70 estimate (a 6.7-block rise) did not.
+        MaceDivePlanner.planWindLaunch(p, 0, 1.8, 0.4, 3.0, MaceDivePlanner.fallFor(MaceDivePlanner.Tier.FULL),
+                0.70, 0);
+        assertFalse(p.feasible, "a 6.7-block rise cannot give an 8-block fall");
     }
 
     @Test

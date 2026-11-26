@@ -25,10 +25,11 @@ public final class MaceDivePlanner {
     public static final float JUMP_VY = 0.42f;
     public static final double EYE = 1.62;
     /**
-     * Upward speed a wind charge burst at the feet adds to a jumping player. An estimate (about a 7-block rise together
-     * with the jump), to be calibrated in game; callers may pass their own.
+     * Upward speed a wind charge burst at the feet adds to a jumping player (burst on the tick after the jump).
+     * Calibrated 2026-11-25 from the CombatDepth playtest: a real launch rose 9.08 blocks, which this model gives at
+     * 0.90 (0.70, the earlier estimate, gave 6.7). Callers may pass their own.
      */
-    public static final double WIND_LAUNCH_VY = 0.7;
+    public static final double WIND_LAUNCH_VY = 0.90;
     /** Requested pitch for the launch throw, and the pitch the camera must reach before throwing. */
     public static final float LAUNCH_PITCH = 88f, LAUNCH_MIN_PITCH = 80f;
     /** Longest fall the planner simulates. */
