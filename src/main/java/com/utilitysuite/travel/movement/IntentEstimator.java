@@ -359,6 +359,32 @@ public final class IntentEstimator {
         hintSet = false;
     }
 
+    private boolean pinSet;
+    private int pinX, pinY, pinZ;
+
+    /**
+     * Pins the target to one block (the [ key): while set, {@link #estimate} picks only that block, at full
+     * confidence, on the ticks it is a reachable candidate, and nothing otherwise.
+     */
+    public void setPinnedTarget(int x, int y, int z) {
+        pinSet = true;
+        pinX = x;
+        pinY = y;
+        pinZ = z;
+    }
+
+    public void clearPinnedTarget() {
+        pinSet = false;
+    }
+
+    public boolean pinned() {
+        return pinSet;
+    }
+
+    public boolean pinnedAt(int x, int y, int z) {
+        return pinSet && pinX == x && pinY == y && pinZ == z;
+    }
+
     /** Commit threshold: {@link #GUIDE_THRESHOLD} (default) or {@link #CARRY_THRESHOLD}; clamped to 0.05..1. */
     public void setCommitThreshold(double threshold) {
         commitThreshold = Math.max(0.05, Math.min(1.0, threshold));
@@ -538,6 +564,22 @@ public final class IntentEstimator {
         }
         rollPool(now, w);
         applyScores();
+        if (pinSet) {
+            // a pinned target ([ key): only that block, while it is in reach; the user named it, so full confidence
+            int pi = -1;
+            for (int i = 0; i < candCount; i++) {
+                if (candX[i] == pinX && candY[i] == pinY && candZ[i] == pinZ) {
+                    pi = i;
+                    break;
+                }
+            }
+            if (pi < 0 || candScore[pi] < 0.0) { // (-1: rolled and not reachable)
+                prevValid = false;
+                return false;
+            }
+            chTicks = 0;
+            return choose(pi, 1.0, 1.0);
+        }
         int best = bestIndex(-1);
         if (best < 0) {
             prevValid = false;
@@ -624,11 +666,17 @@ public final class IntentEstimator {
                 conf = Math.max(conf, SOLE_CONFIDENCE * BLOCKED_FACTOR);
             }
         }
+        return choose(chosen, conf, plain);
+    }
+
+    /** Makes candidate {@code chosen} the target with these confidences (capped on an unmodelled surface). */
+    private boolean choose(int chosen, double conf, double plain) {
         if (candSurface[chosen] == MovementPhysics.SURFACE_UNMODELLED) {
             conf = Math.min(conf, UNMODELLED_CONFIDENCE);
             plain = Math.min(plain, UNMODELLED_CONFIDENCE);
         }
-
+        int bx = candX[chosen];
+        int bz = candZ[chosen];
         tx = bx;
         ty = candY[chosen];
         tz = bz;
@@ -796,7 +844,8 @@ public final class IntentEstimator {
             if (hd0 < MIN_RANGE - 0.5 || hd0 > MAX_RANGE + 0.5) {
                 continue;
             }
-            if (ex0 * mx + ez0 * mz < CONE_COS * hd0) {
+            // (a pinned target is looked for wherever it lies in range, not only ahead)
+            if (ex0 * mx + ez0 * mz < CONE_COS * hd0 && !(pinSet && bx == pinX && bz == pinZ)) {
                 continue;
             }
             int cachedCol = canReuse ? chain.scannedColumn(bx, bz) : -1;
@@ -854,7 +903,8 @@ public final class IntentEstimator {
         double ex = cxm - px;
         double ez = czm - pz;
         double hd = Math.sqrt(ex * ex + ez * ez);
-        if (hd < MIN_RANGE || hd > MAX_RANGE || ex * mx + ez * mz < CONE_COS * hd) {
+        if (hd < MIN_RANGE || hd > MAX_RANGE
+                || (ex * mx + ez * mz < CONE_COS * hd && !(pinSet && bx == pinX && bz == pinZ))) {
             return;
         }
         double reach = tableReach(top - refTop);

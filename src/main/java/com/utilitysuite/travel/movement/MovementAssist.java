@@ -103,6 +103,8 @@ public final class MovementAssist implements IModule, IConfigurable, com.utility
     static final String K_REACH = "reach_overlay";
     static final String K_AUTOMATION = "assist_automation";
     static final String K_BLOCKS = "parkour_blocks";
+    static final String K_BLOCKS_ALLOWED_ONLY = "parkour_blocks_allowed_only";
+    static final String K_BLOCKS_ALLOWED = "parkour_blocks_allowed";
     static final String K_LOOK = "look_style";
     static final String K_ESCAPE = "escape_path";
     static final String K_ESCAPE_PLAYERS = "escape_players";
@@ -211,6 +213,8 @@ public final class MovementAssist implements IModule, IConfigurable, com.utility
     private final EscapePlanner escape = new EscapePlanner();
     private final ParkourBlocks blocks = new ParkourBlocks();
     private boolean blocksOn;
+    private boolean blocksAllowedOnly;
+    private final AllowedSupports allowedSupports = new AllowedSupports();
     private final FallClutch clutch = new FallClutch();
     private boolean clutchOn;
     private final MovementPhysics hop = new MovementPhysics();
@@ -359,6 +363,15 @@ public final class MovementAssist implements IModule, IConfigurable, com.utility
             return;
         }
         skippedBefore = false;
+        if (intent.pinned() && p.onGround()) {
+            int fx = net.minecraft.util.Mth.floor(p.getX());
+            int fz = net.minecraft.util.Mth.floor(p.getZ());
+            int fy = net.minecraft.util.Mth.floor(p.getY() - 0.01);
+            if (intent.pinnedAt(fx, fy, fz) || intent.pinnedAt(fx, fy - 1, fz)) { // (a fence top stands 1.5 high)
+                intent.clearPinnedTarget();
+                tell("Reached the pinned jump target", false);
+            }
+        }
         if (p.onGround()) {
             jumpAir = false;
         } else if (wasOnGround && p.getDeltaMovement().y > 0.2) {
@@ -1263,6 +1276,9 @@ public final class MovementAssist implements IModule, IConfigurable, com.utility
         reachOverlay = p.getBool(ID, K_REACH, true);
         assistAutomation = p.getBool(ID, K_AUTOMATION, false);
         blocksOn = p.getBool(ID, K_BLOCKS, true);
+        blocksAllowedOnly = p.getBool(ID, K_BLOCKS_ALLOWED_ONLY, false);
+        allowedSupports.parse(p.getString(ID, K_BLOCKS_ALLOWED, ""));
+        blocks.planner.supportFilter = blocksAllowedOnly ? allowedSupports : null;
         boolean freeLook = "FREE".equals(p.getString(ID, K_LOOK, LookStyle.NATURAL.name()));
         blocks.setNaturalLook(!freeLook);
         brain.freeLook = freeLook; // lifts the co-steer's along-the-movement clamp (less legit, the user's choice)
@@ -1392,6 +1408,14 @@ public final class MovementAssist implements IModule, IConfigurable, com.utility
                 SettingSpec.bool(K_BLOCKS, "Parkour blocks", true, "",
                         "Mid-jump, if one block keeps you going (a wall you cannot clear, a gap one block too long),"
                                 + " turn your head, place a block from the hotbar and turn back. Uses your blocks."),
+                SettingSpec.bool(K_BLOCKS_ALLOWED_ONLY, "Place only on allowed blocks", false, "",
+                        "For maps that only let you build on some blocks: Parkour blocks places only against the"
+                                + " block types in the list below. Look at a block and press ] (Parkour blocks: allow"
+                                + " placing on this block type) to add its type, again to remove it. Saved per world or"
+                                + " server."),
+                SettingSpec.text(K_BLOCKS_ALLOWED, "Allowed blocks", "", "",
+                        "Block ids Parkour blocks may place against while the setting above is on, separated by"
+                                + " commas (e.g. minecraft:lime_wool). The ] key adds and removes the block you look at."),
                 SettingSpec.choice(K_LOOK, "Look style", LookStyle.NATURAL, "",
                         "NATURAL: automated looks stay along the way you are moving (aim ahead, turn back after)."
                                 + " FREE: look wherever is quickest for the job (less legit)."),
@@ -1563,6 +1587,66 @@ public final class MovementAssist implements IModule, IConfigurable, com.utility
     @Override
     public int ticksToPlannedTakeoff() {
         return plannedTakeoffIn;
+    }
+
+    /**
+     * The [ key: pins the block the crosshair is on as the jump target (the estimator then aims every jump at it while
+     * it is in reach); on the pinned block again, or on nothing, clears the pin. Client thread.
+     */
+    public void pinLookedAtTarget() {
+        Minecraft mc = Minecraft.getInstance();
+        BlockPos hit = lookedAtBlock(mc);
+        if (hit == null || intent.pinnedAt(hit.getX(), hit.getY(), hit.getZ())) {
+            if (intent.pinned()) {
+                intent.clearPinnedTarget();
+                tell("Jump target cleared", false);
+            } else {
+                tell("Look at a block to pin it as the jump target", true);
+            }
+            return;
+        }
+        intent.setPinnedTarget(hit.getX(), hit.getY(), hit.getZ());
+        tell("Jump target pinned at " + hit.getX() + " " + hit.getY() + " " + hit.getZ()
+                + (enabled && brain.intentAssist ? ": hold a movement key toward it"
+                : " (turn on Movement Assist and its intent assist to use it)"), false);
+    }
+
+    /**
+     * The ] key: with "Place only on allowed blocks" on, adds the type of the block the crosshair is on to the blocks
+     * Parkour blocks may place against, or removes it when listed; saved in the world's or server's profile.
+     */
+    public void markLookedAtBlock() {
+        if (!blocksAllowedOnly) {
+            tell("Turn on 'Place only on allowed blocks' (Movement Assist) to mark blocks with this key", true);
+            return;
+        }
+        Minecraft mc = Minecraft.getInstance();
+        BlockPos hit = lookedAtBlock(mc);
+        if (hit == null || mc.level == null) {
+            tell("Look at a block to allow placing on its type", true);
+            return;
+        }
+        net.minecraft.world.level.block.Block b = mc.level.getBlockState(hit).getBlock();
+        boolean now = allowedSupports.toggle(b);
+        Services.modState().profile().set(ID, K_BLOCKS_ALLOWED, allowedSupports.text());
+        Services.modState().markDirty();
+        tell((now ? "Parkour blocks may place on " : "Parkour blocks no longer place on ")
+                + b.getName().getString() + " (" + allowedSupports.size() + " allowed)", false);
+    }
+
+    private static BlockPos lookedAtBlock(Minecraft mc) {
+        return mc.hitResult instanceof net.minecraft.world.phys.BlockHitResult bh
+                && bh.getType() == net.minecraft.world.phys.HitResult.Type.BLOCK ? bh.getBlockPos() : null;
+    }
+
+    private static void tell(String text, boolean error) {
+        LocalPlayer p = Minecraft.getInstance().player;
+        if (p != null) {
+            p.sendSystemMessage(net.minecraft.network.chat.Component.literal("[Suite] ")
+                    .withStyle(net.minecraft.ChatFormatting.DARK_AQUA)
+                    .append(net.minecraft.network.chat.Component.literal(text).withStyle(
+                            error ? net.minecraft.ChatFormatting.RED : net.minecraft.ChatFormatting.GRAY)));
+        }
     }
 
     // the state of the last tick before the assist stood down (a screen, Stop-All, a lease): references and numbers only

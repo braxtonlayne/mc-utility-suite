@@ -73,6 +73,26 @@ class IntentEstimatorTest {
     }
 
     @Test
+    void aPinnedTargetWinsOverTheLookedAtOne() {
+        // the [ key: the user looks at the pillar on the left but pinned the one on the right
+        Grid g = start().set(-2, FLOOR, 3).set(2, FLOOR, 3);
+        IntentEstimator e = new IntentEstimator();
+        e.setPinnedTarget(2, FLOOR, 3);
+        float yaw = yawTo(0.5, 0.5, -2, 3);
+        assertTrue(e.estimate(player(0.5, 0.5, 0, 0.2), yaw, pitchTo(0.5, 0.5, -2, FLOOR, 3), 1, 0, true, g));
+        assertEquals(2, e.targetX());
+        assertEquals(3, e.targetZ());
+        assertEquals(1.0, e.confidence(), 1e-9, "named by the user");
+        // a pin out of reach is no target at all (not the looked-at pillar)
+        e.setPinnedTarget(2, FLOOR, 40);
+        assertFalse(e.estimate(player(0.5, 0.5, 0, 0.2), yaw, pitchTo(0.5, 0.5, -2, FLOOR, 3), 1, 0, true, g));
+        e.clearPinnedTarget();
+        assertTrue(e.estimate(player(0.5, 0.5, 0, 0.2), yaw, pitchTo(0.5, 0.5, -2, FLOOR, 3), 1, 0, true, g)
+                || e.targetX() == -2);
+        assertEquals(-2, e.targetX(), "unpinned: the looked-at pillar again");
+    }
+
+    @Test
     void headingLineBeatsOffsetNeighbourWhenLookIsSlightlyOff() {
         // velocity and forward key straight along +Z; look 6 degrees toward the neighbour pillar
         Grid g = start().set(0, FLOOR, 4).set(-2, FLOOR, 4);

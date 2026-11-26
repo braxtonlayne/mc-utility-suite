@@ -31,6 +31,7 @@ final class ModulesScenario {
         s.cmd("effect clear @s"); // earlier scenarios leave Resistance on, which would block the damage step
         s.cmd(() -> Arena.tp(0.5, 0.5, 0f));
         dotCommands(s);
+        parkourKeys(s);
         offhand(s);
         respawn(s);
         smoke(s);
@@ -92,6 +93,53 @@ final class ModulesScenario {
                             + (text.length() < 400 ? ": " + text : ""));
         });
         s.cmd("setblock ~2 ~ ~ minecraft:air");
+    }
+
+    /** The parkour [ and ] keys (real key presses): pin the looked-at block; mark its type for Parkour blocks. */
+    private static void parkourKeys(Scenario s) {
+        String ma = com.utilitysuite.travel.movement.MovementAssist.ID;
+        String allowedOnly = "parkour_blocks_allowed_only";
+        String allowed = "parkour_blocks_allowed";
+        s.cmd(() -> "tp @s " + (Arena.cx + 0.5) + " " + (Arena.FLOOR + 1) + " " + (Arena.cz + 0.5) + " 0 90");
+        s.waitTicks(5);
+        String[] chat = new String[3];
+        s.run("] with the setting off", () -> {
+            H.setting(ma, allowed, "");
+            H.setting(ma, allowedOnly, false);
+            ChatCapture.drain();
+            H.physicalKey(com.mojang.blaze3d.platform.InputConstants.KEY_RBRACKET, true);
+            H.physicalKey(com.mojang.blaze3d.platform.InputConstants.KEY_RBRACKET, false);
+        });
+        s.waitTicks(3);
+        s.run("] with the setting on", () -> {
+            chat[0] = String.valueOf(ChatCapture.drain());
+            H.setting(ma, allowedOnly, true);
+            H.physicalKey(com.mojang.blaze3d.platform.InputConstants.KEY_RBRACKET, true);
+            H.physicalKey(com.mojang.blaze3d.platform.InputConstants.KEY_RBRACKET, false);
+        });
+        s.waitTicks(3);
+        s.run("[ pins the looked-at block", () -> {
+            chat[1] = String.valueOf(ChatCapture.drain());
+            H.physicalKey(com.mojang.blaze3d.platform.InputConstants.KEY_LBRACKET, true);
+            H.physicalKey(com.mojang.blaze3d.platform.InputConstants.KEY_LBRACKET, false);
+        });
+        s.waitTicks(3);
+        s.run("parkour keys result", () -> {
+            chat[2] = String.valueOf(ChatCapture.drain());
+            String list = Services.modState().profile().getString(ma, allowed, "");
+            net.minecraft.core.BlockPos below = H.p().blockPosition().below();
+            String floor = net.minecraft.core.registries.BuiltInRegistries.BLOCK
+                    .getKey(H.mc().level.getBlockState(below).getBlock()).toString();
+            s.check("] marks the looked-at block type only with 'Place only on allowed blocks' on; [ pins a target",
+                    chat[0].contains("Turn on") && list.equals(floor) && chat[1].contains("may place on")
+                            && chat[2].contains("Jump target pinned"),
+                    "off: " + chat[0] + "; on: " + chat[1] + "; list '" + list + "' floor " + floor + "; pin: " + chat[2]);
+            H.setting(ma, allowedOnly, false);
+            H.setting(ma, allowed, "");
+            H.physicalKey(com.mojang.blaze3d.platform.InputConstants.KEY_LBRACKET, true); // (on the same block: clears)
+            H.physicalKey(com.mojang.blaze3d.platform.InputConstants.KEY_LBRACKET, false);
+        });
+        s.waitTicks(3);
     }
 
     private static void offhand(Scenario s) {

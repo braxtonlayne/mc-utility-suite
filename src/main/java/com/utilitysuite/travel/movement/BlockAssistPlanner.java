@@ -62,6 +62,14 @@ public final class BlockAssistPlanner {
      */
     public double dropAllowance = FREE_DROP;
 
+    /** Which blocks a placement may click against (a map that only allows building on some blocks). */
+    public interface SupportFilter {
+        boolean allowed(int x, int y, int z);
+    }
+
+    /** Null: any solid, non-replaceable block is a support. */
+    public SupportFilter supportFilter;
+
     // first landing of the last rollout (baseline read-out)
     private double rollFirstY;
     private double rollFirstProgress;
@@ -225,6 +233,9 @@ public final class BlockAssistPlanner {
                 int nz = cz - FZ[d];
                 if (!w.solid(nx, ny, nz) || w.replaceable(nx, ny, nz)) {
                     continue; // a replaceable block (grass, snow layer) takes the new block inside it: no support face
+                }
+                if (supportFilter != null && !supportFilter.allowed(nx, ny, nz)) {
+                    continue; // the map does not allow building on this block
                 }
                 // face plane between N and C; the eye must be on C's side to see it
                 double hx = FX[d] != 0 ? cx + (FX[d] > 0 ? 0.0 : 1.0) : cx + 0.5;
