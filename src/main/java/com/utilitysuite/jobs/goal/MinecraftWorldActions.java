@@ -134,6 +134,12 @@ public final class MinecraftWorldActions implements WorldActions {
     private double aimX, aimY, aimZ;
     private int craftsLeft;
     private int startCount;
+    /**
+     * CRAFT: items the step's crafts make in all. The planner's step count is only what it asked for beyond the
+     * virtual spares of the same node (planks for the table, then the pickaxe, then the sticks that reuse the
+     * pickaxe's spare plank: count 8, 3 crafts = 12), so stopping at the count left the last plank craft undone.
+     */
+    private int craftTarget;
     private Map<String, Integer> wanted = Map.of();
     private final Map<String, Integer> before = new LinkedHashMap<>();
     private Map<String, Integer> transferred = Map.of();
@@ -160,6 +166,7 @@ public final class MinecraftWorldActions implements WorldActions {
         manualShape = shapeOf(recipe);
         craftsLeft = Math.max(1, s.crafts());
         startCount = inv.count(s.itemId());
+        craftTarget = Math.max(s.count(), craftsLeft * recipe.resultCount(Minecraft.getInstance().level));
         boolean table = recipe.needsTable();
         station = table ? Items.CRAFTING_TABLE : null;
         phase = table ? Phase.FIND : Phase.WORK;
@@ -484,7 +491,7 @@ public final class MinecraftWorldActions implements WorldActions {
         AbstractContainerMenu menu = player.containerMenu;
         switch (op) {
             case CRAFT -> {
-                if (craftsLeft <= 0 || inv.count(step.itemId()) - startCount >= step.count()) {
+                if (craftsLeft <= 0 || inv.count(step.itemId()) - startCount >= craftTarget) {
                     finish(player, "Crafted " + step.itemId());
                     return;
                 }

@@ -76,6 +76,15 @@ public final class McRecipeCatalog {
             return true;
         }
 
+        /** Items one craft makes (the display's result count; 1 when it cannot be resolved). */
+        public int resultCount(ClientLevel level) {
+            if (level == null) {
+                return 1;
+            }
+            ItemStack st = display.result().resolveForFirstStack(SlotDisplayContext.fromLevel(level));
+            return st.isEmpty() ? 1 : st.getCount();
+        }
+
         /** True when the stack is a valid input of this (cooking) recipe. */
         public boolean acceptsInput(ItemStack stack, ClientLevel level) {
             if (recipe instanceof SingleItemRecipe single) {

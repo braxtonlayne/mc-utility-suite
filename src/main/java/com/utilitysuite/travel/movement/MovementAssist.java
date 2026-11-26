@@ -560,6 +560,16 @@ public final class MovementAssist implements IModule, IConfigurable, com.utility
             }
             blocks.compensate();
         }
+        // 26.3: one written axis means both are written, the kept one with the user's own key. The core reads the
+        // kept axis from the event's move vector, which 26.3 normalizes (W+A is 0.707 / 0.707; 1.21.1 kept the raw
+        // +-1 and normalized only in travel). Writing forward 0 over W+A then left a 0.707 strafe (vanilla's square
+        // mapping keeps a lone axis short), so a corner-cut flight steered at 71% of what the replica and the planner
+        // assume and overshot the fence post. Writing the user's sign explicitly gives the 1.21.1 impulse back.
+        if (fwdW == SharedGrant.KEEP && strW != SharedGrant.KEEP) {
+            fwdW = userF;
+        } else if (strW == SharedGrant.KEEP && fwdW != SharedGrant.KEEP) {
+            strW = userS;
+        }
         SharedGrant g = applyWrites(jumpW, fwdW, strW, sprintW, withholdW, sneakW, steerW, steerOk, steerRate,
                 steerMax);
         boolean wrote = g != null;

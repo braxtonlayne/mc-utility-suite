@@ -361,7 +361,7 @@ final class ToolsExtraStationTests {
                 + "VillagerData:{profession:\"minecraft:librarian\",level:1,type:\"minecraft:plains\"},"
                 + "Offers:{Recipes:[{buy:{id:\"minecraft:emerald\",count:12},buyB:{id:\"minecraft:book\",count:1},"
                 + "sell:{id:\"minecraft:enchanted_book\",count:1,components:{\"minecraft:stored_enchantments\":"
-                + "{levels:{\"minecraft:mending\":1}}}},maxUses:12,xp:1,rewardExp:1b,priceMultiplier:0.2f}]}}");
+                + "{\"minecraft:mending\":1}}},maxUses:12,xp:1,rewardExp:1b,priceMultiplier:0.2f}]}}");
         // look at the lectern's middle from the eyes: dx -1, dz +2, dy 1.5 - 2.62
         s.cmd(() -> {
             double dx = lx;

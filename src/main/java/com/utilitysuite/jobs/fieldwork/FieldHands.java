@@ -214,6 +214,12 @@ final class FieldHands implements LeaseListener, com.utilitysuite.core.api.IBloc
         if (player == null || mc.level == null || !hasLease()) {
             return FAILED;
         }
+        if (BlockPos.asLong(x, y, z) != actionCell) {
+            // Like a player: take the fastest hotbar tool for the block once per action (the highway builder's tunnel
+            // dig relied on whatever slot happened to be selected; by hand a stone cell takes ~107 ticks with Haste II).
+            // The field modules call holdBestTool themselves; this is the IBlockWork entry. Hotbar scan, no allocation.
+            holdBestTool(player, mc.level.getBlockState(cursor.set(x, y, z)));
+        }
         return tickBreak(mc, player, x, y, z, relaxed, requireLos);
     }
 

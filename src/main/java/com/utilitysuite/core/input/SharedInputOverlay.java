@@ -144,6 +144,18 @@ public final class SharedInputOverlay implements ISharedControl {
         return a;
     }
 
+    /**
+     * True when the move vector (left, forward) is exactly what 26.3's keyboard input builds from the raw key axes
+     * (rawLeft, rawForward in -1..1): {@code new Vec2(rawLeft, rawForward).normalized()}. False for any other source
+     * (a controller, another mod's write), whose values are then kept as they are.
+     */
+    public static boolean isNormalizedKeyVector(float left, float forward, float rawLeft, float rawForward) {
+        float len = (float) Math.sqrt(rawLeft * rawLeft + rawForward * rawForward);
+        float nl = len < 1.0E-4f ? 0f : rawLeft / len;
+        float nf = len < 1.0E-4f ? 0f : rawForward / len;
+        return Math.abs(left - nl) < 1.0E-4f && Math.abs(forward - nf) < 1.0E-4f;
+    }
+
     /** The assist grant instance (live or not), for diagnostics and tests. */
     public SharedGrant assistGrant() {
         return assist;
@@ -231,6 +243,16 @@ public final class SharedInputOverlay implements ISharedControl {
             MoveFields f = o.fields;
             f.forwardImpulse = MoveInputs.forward(in);
             f.leftImpulse = MoveInputs.left(in);
+            // 26.3 hands over the key vector already normalized (W+A = 0.707 each). Grants that override one axis and
+            // keep the other expect 1.21.1's raw +-1 per key (normalized later, after the override), so when the move
+            // vector is plain keyboard input, work on the raw key values instead.
+            float rawF = (keys.forward() ? 1f : 0f) - (keys.backward() ? 1f : 0f);
+            float rawL = (keys.left() ? 1f : 0f) - (keys.right() ? 1f : 0f);
+            boolean rawKeys = isNormalizedKeyVector(f.leftImpulse, f.forwardImpulse, rawL, rawF);
+            if (rawKeys) {
+                f.forwardImpulse = rawF;
+                f.leftImpulse = rawL;
+            }
             f.up = keys.forward();
             f.down = keys.backward();
             f.left = keys.left();
@@ -244,7 +266,9 @@ public final class SharedInputOverlay implements ISharedControl {
                 // mixin keeps aiStep from starting one again later in this tick
                 p.setSprinting(false);
             }
-            MoveInputs.setMove(in, f.forwardImpulse, f.leftImpulse);
+            if (!rawKeys || f.forwardImpulse != rawF || f.leftImpulse != rawL) {
+                MoveInputs.setMove(in, f.forwardImpulse, f.leftImpulse); // untouched raw keys keep vanilla's vector
+            }
             MoveInputs.setKeys(in, f.up, f.down, f.left, f.right, f.jumping, f.shiftKeyDown);
             if (sprint && sprintStartAllowed(p.isSprinting(), MoveInputs.forward(in), p.isUnderWater(),
                     p.isInShallowWater(), p.getAbilities().flying,

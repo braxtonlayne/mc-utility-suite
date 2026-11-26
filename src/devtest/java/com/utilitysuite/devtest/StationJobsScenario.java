@@ -451,9 +451,9 @@ final class StationJobsScenario {
 
     private static final int[] HALL_X = {-7, -5, -3, -1};
     private static final int HALL_Z = -11;
-    private static final String SHARP = "{levels:{\"minecraft:sharpness\":3}}";
-    private static final String EFF = "{levels:{\"minecraft:efficiency\":2}}";
-    private static final String UNB = "{levels:{\"minecraft:unbreaking\":3}}";
+    private static final String SHARP = "{\"minecraft:sharpness\":3}";
+    private static final String EFF = "{\"minecraft:efficiency\":2}";
+    private static final String UNB = "{\"minecraft:unbreaking\":3}";
 
     private static String book(String ench) {
         return "minecraft:enchanted_book[minecraft:stored_enchantments=" + ench + "]";

@@ -216,8 +216,18 @@ final class FieldJobsScenario {
             H.enable(HighwayBuilder.ID, true);
         });
         String[] lastStatus = {""};
+        int[] diagClock = {0};
         s.waitUpTo("highway (tunnel) digs to the end", 20 * 180, () -> {
             HighwayBuilder m = H.module(HighwayBuilder.ID);
+            if (diagClock[0]++ % 100 == 0) {
+                Object q = deepField(m, "digQueue");
+                s.note("highway t=" + (diagClock[0] - 1) + ": air " + tunnelAir() + "/" + TUNNEL_CELLS + ", queue "
+                        + (q == null ? "?" : H.fields(q, "size")) + ", " + H.fields(m, "digCell", "stepTarget",
+                        "navFailures") + ", stepRun " + deepField(m, "stepRun") + ", held " + H.p().getMainHandItem()
+                        + " slot " + H.p().getInventory().getSelectedSlot() + ", destroy "
+                        + H.fields(H.mc().gameMode, "destroyProgress", "isDestroying", "destroyBlockPos") + "; "
+                        + handsDiag(m));
+            }
             if (!m.status().equals(lastStatus[0])) {
                 lastStatus[0] = m.status();
                 s.note("highway status: " + lastStatus[0] + " at " + H.posStr() + ", tunnel air " + tunnelAir()
@@ -297,9 +307,22 @@ final class FieldJobsScenario {
             startX[0] = H.p().getX();
             H.enable(HighwayBuilder.ID, true);
         });
+        int[] boatClock = {0};
         s.waitUpTo("boat route starts", 20 * 10, () -> {
             TravelAutopilot ap = H.module(TravelAutopilot.ID);
             HighwayBuilder m = H.module(HighwayBuilder.ID);
+            if (boatClock[0]++ % 20 == 0) {
+                Entity v = H.p().getVehicle();
+                var keys = H.p().input.keyPresses;
+                var o = H.mc().options;
+                s.note("boat t=" + (boatClock[0] - 1) + ": run " + ap.runName() + ", keys up/left/right "
+                        + o.keyUp.isDown() + "/" + o.keyLeft.isDown() + "/" + o.keyRight.isDown() + ", keyPresses "
+                        + keys + ", vehicle " + (v == null ? "none" : v.getType() + " yaw "
+                        + Harness.fmt("%.1f", v.getYRot()) + " v " + v.getDeltaMovement() + " x "
+                        + Harness.fmt("%.2f", v.getX())) + ", player yaw/pitch " + Harness.fmt("%.1f", H.p().getYRot())
+                        + "/" + Harness.fmt("%.1f", H.p().getXRot()) + ", mouse grabbed "
+                        + H.mc().mouseHandler.isMouseGrabbed() + ", " + H.arbiterState());
+            }
             if (!m.status().equals(seen[0])) {
                 seen[0] = m.status();
                 s.note("highway (ice) status: " + seen[0]);
