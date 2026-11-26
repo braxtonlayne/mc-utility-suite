@@ -36,6 +36,8 @@ public final class HoloAudioCues implements IModule, IConfigurable {
     private final CueScheduler scheduler = new CueScheduler();
     private final MaceRiseCue mace = new MaceRiseCue();
     private final ProximityTracker nearby = new ProximityTracker(64);
+    private final int[] played = new int[CueScheduler.Cue.values().length];
+    private final float[] lastPitch = new float[CueScheduler.Cue.values().length];
 
     private boolean enabled;
     private double masterVolume = 0.6;
@@ -168,8 +170,21 @@ public final class HoloAudioCues implements IModule, IConfigurable {
             return;
         }
         // One small sound instance per played cue (rate-limited to a few a second), not per tick.
-        Minecraft.getInstance().getSoundManager().play(SimpleSoundInstance.forUI(sound.value(),
-                Math.max(0.5f, Math.min(2f, pitch)), scheduler.volume(cue)));
+        float p = Math.max(0.5f, Math.min(2f, pitch));
+        Minecraft.getInstance().getSoundManager().play(SimpleSoundInstance.forUI(sound.value(), p,
+                scheduler.volume(cue)));
+        played[cue.ordinal()]++;
+        lastPitch[cue.ordinal()] = p;
+    }
+
+    /** Cues of this kind played since start-up (diagnostics, playtests). */
+    public int played(CueScheduler.Cue cue) {
+        return played[cue.ordinal()];
+    }
+
+    /** Pitch of the last cue of this kind played (0 before the first). */
+    public float lastPitch(CueScheduler.Cue cue) {
+        return lastPitch[cue.ordinal()];
     }
 
     private static boolean cleanScreen() {

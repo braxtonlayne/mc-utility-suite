@@ -5,17 +5,20 @@ package com.utilitysuite.combat.tactics;
  * a floor or wall near the player, the knockback the burst gives, the predicted apex of the launch and, with a mace, the
  * smash damage from that apex onto a target height.
  * <p>
- * Knockback shape follows vanilla 1.21.1 {@code Explosion.explode} for a wind charge (radius {@code 2 * 1.2 = 2.4},
- * knockback multiplier 1.22): strength {@code (1 - dist/2.4)} with {@code dist} from the burst to the player's feet,
- * direction from the burst to the eyes. The magnitude is scaled so a burst at the feet on the jump tick
- * ({@link #REF_DIST} blocks below the feet) gives {@link MaceDivePlanner#WIND_LAUNCH_VY}, the planner-wide estimate.
- * CALIBRATION: that estimate still needs measuring in game; change it there and both planners follow.
+ * Knockback follows vanilla 1.21.1 {@code Explosion.explode} for a wind charge (radius {@code 2 * 1.2 = 2.4},
+ * knockback multiplier {@link #KNOCKBACK} 1.22): strength {@code 1.22 * (1 - dist/2.4)} with {@code dist} from the
+ * burst to the player's feet, direction from the burst to the eyes. The charge bursts {@link #BURST_OFFSET} out of the
+ * face it hits ({@code AbstractWindCharge.onHitBlock}). Calibrated in game (playtest 19-combatextra, 2026-11-25): a
+ * standing player throwing at the floor under the feet rose 6.08 blocks, this model gives 6.07. (The earlier scaling
+ * to {@code MaceDivePlanner.WIND_LAUNCH_VY} predicted 3.6.)
  */
 public final class KineticChainPlanner {
 
     public static final double RADIUS = 2.4;
-    /** Burst-to-feet distance of the reference feet throw on the jump tick. */
-    public static final double REF_DIST = 0.42;
+    /** Vanilla wind charge knockback multiplier ({@code AbstractWindCharge.EXPLOSION_DAMAGE_CALCULATOR}). */
+    public static final double KNOCKBACK = 1.22;
+    /** The burst is this far out of the hit face along its normal. */
+    public static final double BURST_OFFSET = 0.25;
     /** Mace attack damage (player base 1 + mace 5) before the smash bonus. */
     public static final float MACE_BASE_DAMAGE = 6f;
     public static final int HORIZON = 200;
@@ -28,8 +31,7 @@ public final class KineticChainPlanner {
         if (dist >= RADIUS) {
             return 0;
         }
-        double shape = 1.0 - dist / RADIUS;
-        return MaceDivePlanner.WIND_LAUNCH_VY * shape / (1.0 - REF_DIST / RADIUS);
+        return KNOCKBACK * (1.0 - dist / RADIUS);
     }
 
     /** Result; reuse one instance. */
@@ -100,8 +102,8 @@ public final class KineticChainPlanner {
         return bonus > 0 ? MACE_BASE_DAMAGE + bonus : 0f;
     }
 
-    /** Burst point of a throw at a block face: the face centre offset 0.05 out of the block. */
+    /** Burst point of a throw at a block face: the face centre, {@link #BURST_OFFSET} out of the block. */
     public static double faceCoord(int block, int normal) {
-        return block + 0.5 + normal * 0.55;
+        return block + 0.5 + normal * (0.5 + BURST_OFFSET);
     }
 }

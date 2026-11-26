@@ -280,6 +280,16 @@ final class FieldHands implements LeaseListener, com.utilitysuite.core.api.IBloc
      * re-checking the WORLD_INTERACT lease. DONE after one placement attempt, FAILED on aim timeout.
      */
     int tickPlace(Minecraft mc, LocalPlayer player, int sx, int sy, int sz, Direction face, boolean relaxed) {
+        return tickPlace(mc, player, sx, sy, sz, face, relaxed, 0.5, 0.5);
+    }
+
+    /**
+     * As {@link #tickPlace(Minecraft, LocalPlayer, int, int, int, Direction, boolean)}, aiming at the point
+     * ({@code fx}, {@code fz}) (offsets 0..1 inside the cell) of an UP face instead of its centre, e.g. a corner of the
+     * soil that is visible past a taller neighbour ({@link CropPlanner#replantAim}). Other faces ignore the offsets.
+     */
+    int tickPlace(Minecraft mc, LocalPlayer player, int sx, int sy, int sz, Direction face, boolean relaxed, double fx,
+                  double fz) {
         long cell = BlockPos.asLong(sx, sy, sz) ^ ((long) face.ordinal() << 60);
         IInputSmoother input = Services.input();
         if (cell != actionCell) {
@@ -301,6 +311,10 @@ final class FieldHands implements LeaseListener, com.utilitysuite.core.api.IBloc
             }
         }
         double hz = sz + 0.5 + face.getStepZ() * 0.5;
+        if (face == Direction.UP) {
+            hx = sx + fx;
+            hz = sz + fz;
+        }
         if (!aimSet) {
             aimAt(player, input, hx, hy, hz, relaxed);
         }
@@ -402,6 +416,30 @@ final class FieldHands implements LeaseListener, com.utilitysuite.core.api.IBloc
                 player));
         return r.getType() == HitResult.Type.MISS
                 || (r.getBlockPos().getX() == x && r.getBlockPos().getY() == y && r.getBlockPos().getZ() == z);
+    }
+
+    /**
+     * Line of sight from the eye to a point: true when the ray's first hit is cell {@code okA} or {@code okB} (packed
+     * {@code BlockPos.asLong}) or nothing. The ray runs a little past the point so a point on a face counts as hitting
+     * that face's block. Allocates one clip; called per action, not per tick.
+     */
+    static boolean visiblePoint(Minecraft mc, LocalPlayer player, double px, double py, double pz, long okA,
+                                long okB) {
+        Vec3 eye = player.getEyePosition();
+        double dx = px - eye.x, dy = py - eye.y, dz = pz - eye.z;
+        double len = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        if (len < 1.0e-6) {
+            return true;
+        }
+        double k = (len + 0.05) / len;
+        Vec3 to = new Vec3(eye.x + dx * k, eye.y + dy * k, eye.z + dz * k);
+        BlockHitResult r = mc.level.clip(new ClipContext(eye, to, ClipContext.Block.OUTLINE, ClipContext.Fluid.NONE,
+                player));
+        if (r.getType() == HitResult.Type.MISS) {
+            return true;
+        }
+        long hit = r.getBlockPos().asLong();
+        return hit == okA || hit == okB;
     }
 
     String ownerId() {

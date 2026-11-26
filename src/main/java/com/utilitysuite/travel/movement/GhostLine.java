@@ -110,7 +110,24 @@ public final class GhostLine {
         double oy = py;
         double oz = pz;
         boolean placed = false;
-        for (int i = Math.max(0, index); i < count && trailCount < MAX_TRAIL - 1; i++) {
+        // The runner's index can lag the body by a cell or more (it cuts corners, sprint-jumps flats): skip the cells
+        // the body is already past, or the ghost walks back to them first and ends up beside or behind the player
+        // (playtest find). "Past" = beyond the midpoint of the step to the next cell.
+        int start = Math.max(0, index);
+        while (start + 1 < count) {
+            long a = cells[start];
+            long b = cells[start + 1];
+            double ax = Packed.x(a) + 0.5;
+            double az = Packed.z(a) + 0.5;
+            double sx = Packed.x(b) + 0.5 - ax;
+            double sz = Packed.z(b) + 0.5 - az;
+            double len2 = sx * sx + sz * sz;
+            if (len2 < 1.0e-6 || (px - ax) * sx + (pz - az) * sz <= 0.5 * len2) {
+                break;
+            }
+            start++;
+        }
+        for (int i = start; i < count && trailCount < MAX_TRAIL - 1; i++) {
             long c = cells[i];
             double nx = Packed.x(c) + 0.5;
             double ny = Packed.y(c);
@@ -193,6 +210,15 @@ public final class GhostLine {
 
     public void setQuality(int q) {
         quality = q < GOOD ? GOOD : Math.min(q, MISS);
+    }
+
+    /**
+     * Whether the jump arc is shown (with Movement Assist on and the player moving): always while airborne, so a jump
+     * that reaches nothing survivable gets its {@link #MISS} mark (Movement Assist reports no landing exactly then); on
+     * the ground only a "jump now" that lands, so walking near an edge does not flash a warning.
+     */
+    public static boolean showsJump(boolean assistOn, boolean moving, boolean hasLanding, boolean onGround) {
+        return assistOn && moving && (hasLanding || !onGround);
     }
 
     /**

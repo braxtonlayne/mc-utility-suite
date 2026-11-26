@@ -199,6 +199,45 @@ public final class ChoreographyModule implements IModule, IConfigurable {
         reset();
     }
 
+    // ---- read side (playtests, diagnostics; client thread) -----------------------------------------------------------
+
+    /** The entity the overlay shows, or -1. */
+    public int shownTarget() {
+        return targetId;
+    }
+
+    /** The reach ring's state: true = inside melee distance (ALLY tone), false = outside (WARN). */
+    public boolean inReach() {
+        return inReach;
+    }
+
+    /** True when the knockback arrow has a landing this tick. */
+    public boolean hasLanding() {
+        return hasLanding;
+    }
+
+    /** True when the predicted knockback landing is over a drop of more than three blocks. */
+    public boolean ledge() {
+        return ledge;
+    }
+
+    public double landX() {
+        return kb.landX();
+    }
+
+    public double landY() {
+        return kb.landY();
+    }
+
+    public double landZ() {
+        return kb.landZ();
+    }
+
+    /** Remembered afterimage poses. */
+    public int afterimageCount() {
+        return trail.size();
+    }
+
     @Override
     public void onWorldUnload() {
         reset();

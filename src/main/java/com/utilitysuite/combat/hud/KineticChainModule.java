@@ -40,8 +40,8 @@ import java.util.List;
  * M1 kinetic chain calculator (visual only, off by default). While a wind charge is held: outlines the floor and wall
  * faces whose burst would launch the player ({@link KineticSpotScanner}, brighter = higher apex), and under the
  * crosshair shows the predicted apex of a self-launch from the targeted face. With a mace in the hotbar it adds the
- * predicted smash damage from that apex onto the targeted entity (or back onto the spot). Knockback is the planner-wide
- * {@code MaceDivePlanner.WIND_LAUNCH_VY} estimate (still to calibrate in game).
+ * predicted smash damage from that apex onto the targeted entity (or back onto the spot). Knockback is vanilla's wind
+ * charge explosion ({@link KineticChainPlanner}, calibrated against a real launch in the 19-combatextra playtest).
  * <p>
  * Budget: one 7x7x7 scan every {@link #SCAN_EVERY} ticks; spots draw with one batched line buffer; readout strings are
  * cached per tenth so the render path does not allocate. Nothing draws unless a wind charge is held; Clean-Screen and
@@ -90,6 +90,7 @@ public final class KineticChainModule implements IModule, IConfigurable, HudElem
         active = enabled && p != null && mc.level != null && holdingCharge(p);
         if (!active) {
             apexTenths = -1;
+            timer = 0; // scan at once when a charge is held again (not the spots of where it was last held)
             return;
         }
         Vec3 v = p.getDeltaMovement();
@@ -268,6 +269,28 @@ public final class KineticChainModule implements IModule, IConfigurable, HudElem
             active = false;
             apexTenths = -1;
         }
+    }
+
+    // ---- read side (playtests, diagnostics; client thread) -----------------------------------------------------------
+
+    /** Predicted apex of a launch from the targeted face, in tenths of a block, or -1. */
+    public int apexTenths() {
+        return apexTenths;
+    }
+
+    /** Predicted mace damage from that apex in tenths (0 or -1 without a mace or a smash). */
+    public int damageTenths() {
+        return damageTenths;
+    }
+
+    /** Launch faces found by the last scan (0 while inactive). */
+    public int spotCount() {
+        return active ? scanner.count : 0;
+    }
+
+    /** Highest predicted apex among the scanned faces, or -1. */
+    public double bestApex() {
+        return active && scanner.best >= 0 ? scanner.apex[scanner.best] : -1;
     }
 
     @Override

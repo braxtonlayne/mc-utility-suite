@@ -77,7 +77,9 @@ public final class GhostLineModule implements IModule, IConfigurable {
         }
         MovementAssistBrain brain = movement.brain();
         boolean moving = !p.onGround() || speed * speed > 0.0025;
-        if (movement.isEnabled() && moving && brain.hasLanding()) {
+        // Airborne the arc shows even when nothing survivable is reached (lethal: the DANGER mark), like Movement
+        // Assist's own overlay. Gating on hasLanding alone made the lethal case unreachable (playtest find).
+        if (GhostLine.showsJump(movement.isEnabled(), moving, brain.hasLanding(), p.onGround())) {
             ghost.updateJump(p.getX(), p.getY(), p.getZ(), brain.landX(), brain.landY(), brain.landZ());
             ghost.setQuality(GhostLine.quality(brain.lethal(), brain.landDamage(), brain.missDistance()));
         } else {
@@ -148,6 +150,11 @@ public final class GhostLineModule implements IModule, IConfigurable {
     @Override
     public void onWorldUnload() {
         ghost.clear();
+    }
+
+    /** The ghost computed this tick (read-only use: playtests, diagnostics). Client thread. */
+    public GhostLine ghost() {
+        return ghost;
     }
 
     @Override
