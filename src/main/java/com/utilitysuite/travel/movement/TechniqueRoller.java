@@ -61,6 +61,9 @@ final class TechniqueRoller {
     /** The candidates' goals are already capped by the level's total; the model's own allowance is left open. */
     private static final double FOLLOW_TOTAL = 1.0e6;
 
+    /** Slack past one tick of travel within which a roll below the top may still step up onto it (blocks). */
+    private static final double STEP_REACH = 0.05;
+
     /** Replica ticks of the last roll. */
     int ticks;
     /** Score of the last valid roll (higher is better). */
@@ -243,8 +246,12 @@ final class TechniqueRoller {
                     land = i;
                     break;
                 }
-                if (body.vy < 0.0 && body.y < top - 1.0e-3) {
-                    return false; // below the top on the way down: it cannot land on it any more
+                // below the top on the way down it can still land on it by a step-up on the landing tick (a stair's
+                // low step, then its top: the slab-stair capture of 2026-11-26), but only within this tick's travel of
+                // the top; more than a step below, or further out, it cannot
+                if (body.vy < 0.0 && body.y < top - 1.0e-3 && (body.y < top - MovementPhysics.STEP_HEIGHT - 1.0e-3
+                        || target.margin(body.x, body.z) < -(Math.abs(body.vx) + Math.abs(body.vz) + STEP_REACH))) {
+                    return false;
                 }
             }
             maxFall = Math.max(maxFall, fallBefore);

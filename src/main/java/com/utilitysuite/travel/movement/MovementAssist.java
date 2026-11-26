@@ -342,6 +342,10 @@ public final class MovementAssist implements IModule, IConfigurable, com.utility
             skipped = "control taken";
         }
         if (skipped != null) {
+            if (!skippedBefore) {
+                keepPreSkip(skipped); // .jumpcap opens chat: keep what the assist was doing a tick ago
+            }
+            skippedBefore = true;
             // Stop-All, a screen, a higher lease, not on foot: the commitment and the hold end at once
             brain.abortCommitment();
             climb.reset();
@@ -354,6 +358,7 @@ public final class MovementAssist implements IModule, IConfigurable, com.utility
             escapeCount = 0;
             return;
         }
+        skippedBefore = false;
         if (p.onGround()) {
             jumpAir = false;
         } else if (wasOnGround && p.getDeltaMovement().y > 0.2) {
@@ -1560,7 +1565,36 @@ public final class MovementAssist implements IModule, IConfigurable, com.utility
         return plannedTakeoffIn;
     }
 
-    /** For {@code .jumpcap}: mode, last status, phase and the target the brain is on (allocates; on request only). */
+    // the state of the last tick before the assist stood down (a screen, Stop-All, a lease): references and numbers only
+    private boolean skippedBefore;
+    private String preSkipCause;
+    private String preSkipStatus;
+    private String preSkipPhase;
+    private String preSkipParkour;
+    private int preSkipTakeoffIn = -1;
+    private boolean preSkipTarget;
+    private int preSkipX, preSkipY, preSkipZ;
+    private boolean preSkipFrozen;
+    private boolean preSkipTechniqueFirst;
+
+    private void keepPreSkip(String cause) {
+        preSkipCause = cause;
+        preSkipStatus = status;
+        preSkipPhase = phase();
+        preSkipParkour = parkourStatus;
+        preSkipTakeoffIn = plannedTakeoffIn;
+        preSkipTarget = brain.targetRegionValid();
+        preSkipX = brain.targetX();
+        preSkipY = brain.targetY();
+        preSkipZ = brain.targetZ();
+        preSkipFrozen = brain.targetFrozen();
+        preSkipTechniqueFirst = brain.techniqueFirst();
+    }
+
+    /**
+     * For {@code .jumpcap}: mode, last status, phase and the target the brain is on (allocates; on request only). Typing
+     * the command opens chat, which stands the assist down, so the state of the tick before that is reported too.
+     */
     @Override
     public String diagnostics() {
         StringBuilder b = new StringBuilder();
@@ -1574,6 +1608,18 @@ public final class MovementAssist implements IModule, IConfigurable, com.utility
             b.append(" target=none");
         }
         b.append(" techniqueFirst=").append(brain.techniqueFirst());
+        if (skippedBefore && preSkipCause != null) {
+            b.append(" | before '").append(preSkipCause).append("': status=").append(preSkipStatus)
+                    .append(" phase=").append(preSkipPhase).append(" parkour=").append(preSkipParkour)
+                    .append(" plannedTakeoffIn=").append(preSkipTakeoffIn);
+            if (preSkipTarget) {
+                b.append(" target=").append(preSkipX).append(',').append(preSkipY).append(',').append(preSkipZ)
+                        .append(preSkipFrozen ? " (frozen)" : "");
+            } else {
+                b.append(" target=none");
+            }
+            b.append(" techniqueFirst=").append(preSkipTechniqueFirst);
+        }
         return b.toString();
     }
 
