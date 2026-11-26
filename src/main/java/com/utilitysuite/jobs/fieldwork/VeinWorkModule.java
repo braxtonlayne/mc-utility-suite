@@ -133,7 +133,7 @@ public final class VeinWorkModule extends FieldModule {
         }
         BlockState s = event.getLevel().getBlockState(event.getPos());
         boolean log = s.is(BlockTags.LOGS);
-        boolean ore = s.is(Tags.Blocks.ORES);
+        boolean ore = s.is(Tags.BlockItems.ORES.block());
         if ((log && doTrees) || (ore && doOres)) {
             armed = event.getPos().asLong();
             armedSince = tick;
@@ -245,7 +245,7 @@ public final class VeinWorkModule extends FieldModule {
             tickWalk(mc, player);
             return;
         }
-        if (mc.screen != null) {
+        if (mc.gui.screen() != null) {
             return;
         }
         if (!hands.ensureLease()) {
@@ -421,9 +421,9 @@ public final class VeinWorkModule extends FieldModule {
         }
         double ox = player.getX() - originX, oz = player.getZ() - originZ;
         boolean overCap = ox * ox + oz * oz > (WALK_CAP + 0.5) * (WALK_CAP + 0.5);
-        if (runner == null || overCap || mc.screen != null || ++walkTicks > WALK_TIMEOUT_TICKS
+        if (runner == null || overCap || mc.gui.screen() != null || ++walkTicks > WALK_TIMEOUT_TICKS
                 || !runner.isRunning(walkLease)) {
-            endWalk(mc.screen == null); // arrived out of reach, failed, capped or timed out: leave this block
+            endWalk(mc.gui.screen() == null); // arrived out of reach, failed, capped or timed out: leave this block
         }
     }
 

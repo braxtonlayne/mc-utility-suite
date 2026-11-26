@@ -1,10 +1,11 @@
 package com.utilitysuite.ui.kit;
 
+import com.mojang.blaze3d.platform.InputConstants;
 import com.utilitysuite.core.api.visual.HoloToken;
 import com.utilitysuite.ui.holo.HoloFrames;
 import com.utilitysuite.ui.holo.HoloTheme;
 import net.minecraft.client.gui.Font;
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 
 /**
  * 2 px hairline rail with an accent fill, a 2x10 thumb bar, a tick at the default and a right-aligned value readout. Click or drag anywhere on the
@@ -76,7 +77,7 @@ public final class ModernSlider extends UiNode {
     }
 
     @Override
-    public void render(GuiGraphics g, Font font, int sx, int sy, int mouseX, int mouseY) {
+    public void render(GuiGraphicsExtractor g, Font font, int sx, int sy, int mouseX, int mouseY) {
         if (dirty) {
             dirty = false;
             updateText(font); // only after a change
@@ -124,8 +125,8 @@ public final class ModernSlider extends UiNode {
 
     @Override
     public boolean onClick(double mouseX, double mouseY, int button, int sx, int sy) {
-        if (button != 0 || mouseX >= sx + w - readoutW + 2) {
-            return button == 0;
+        if (button != InputConstants.MOUSE_BUTTON_LEFT || mouseX >= sx + w - readoutW + 2) {
+            return button == InputConstants.MOUSE_BUTTON_LEFT;
         }
         dragging = true;
         apply(mouseX, sx);
@@ -147,8 +148,8 @@ public final class ModernSlider extends UiNode {
     @Override
     public boolean onKey(int keyCode, int scanCode, int modifiers) {
         int dir = switch (keyCode) {
-            case 262, 265 -> 1;   // right, up
-            case 263, 264 -> -1;  // left, down
+            case InputConstants.KEY_RIGHT, InputConstants.KEY_UP -> 1;   // right, up
+            case InputConstants.KEY_LEFT, InputConstants.KEY_DOWN -> -1;  // left, down
             default -> 0;
         };
         if (dir == 0) {

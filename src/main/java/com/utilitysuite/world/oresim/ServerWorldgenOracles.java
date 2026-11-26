@@ -4,8 +4,7 @@ import net.minecraft.core.Holder;
 import net.minecraft.core.QuartPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.biome.Biome;
-import net.minecraft.world.level.biome.BiomeSource;
-import net.minecraft.world.level.biome.Climate;
+import net.minecraft.world.level.biome.BiomeResolver;
 
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -91,9 +90,11 @@ public final class ServerWorldgenOracles {
     }
 
     public static BiomeOracle biomes(ServerLevel level, long zoomSeed) {
-        BiomeSource source = level.getChunkSource().getGenerator().getBiomeSource();
-        Climate.Sampler sampler = level.getChunkSource().randomState().sampler();
-        int minQy = QuartPos.fromBlock(level.getMinBuildHeight());
+        // 26.3: climate sampling goes through a BiomeResolver (the server's own uncachedBiomeResolver is built the
+        // same way); uncached point sampling is stateless, so it is safe on the simulation thread.
+        BiomeResolver source = level.getChunkSource().getGenerator().getBiomeSource()
+                .createUncachedResolver(level.getChunkSource().randomState());
+        int minQy = QuartPos.fromBlock(level.getMinY());
         int maxQy = minQy + QuartPos.fromBlock(level.getHeight()) - 1;
         return (spec, x, y, z) -> {
             if (spec.biomesAllowed() == null && spec.biomesDenied().isEmpty()) {
@@ -104,9 +105,9 @@ public final class ServerWorldgenOracles {
             int qy = Math.max(minQy, Math.min(maxQy, (int) ((q << 22) >> 43)));
             int qz = (int) ((q << 43) >> 43);
             try {
-                Holder<Biome> biome = source.getNoiseBiome(qx, qy, qz, sampler);
+                Holder<Biome> biome = source.getNoiseBiome(qx, qy, qz);
                 String id = BIOME_IDS.computeIfAbsent(biome,
-                        h -> h.unwrapKey().map(k -> k.location().toString()).orElse(""));
+                        h -> h.unwrapKey().map(k -> k.identifier().toString()).orElse(""));
                 return spec.biomeAllows(id) ? BiomeOracle.YES : BiomeOracle.NO;
             } catch (RuntimeException e) {
                 return BiomeOracle.UNKNOWN;

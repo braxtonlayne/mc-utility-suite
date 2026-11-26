@@ -17,7 +17,7 @@ import com.utilitysuite.world.render.RenderContext;
 import com.utilitysuite.world.render.WorldRenderKit;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.screens.ReceivingLevelScreen;
+import net.minecraft.client.gui.screens.LevelLoadingScreen;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
@@ -241,7 +241,7 @@ public final class WaypointsModule extends WorldModule {
             return;
         }
         // The arrival position is not final until the new level's chunk at the player has arrived.
-        if (mc.screen instanceof ReceivingLevelScreen || !level.getChunkSource().hasChunk(x >> 4, z >> 4)) {
+        if (mc.gui.screen() instanceof LevelLoadingScreen || !level.getChunkSource().hasChunk(x >> 4, z >> 4)) {
             return;
         }
         if (inPortal || --arrivalTicksLeft == 0) {

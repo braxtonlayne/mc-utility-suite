@@ -31,7 +31,7 @@ import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.ShieldItem;
-import net.minecraft.world.item.UseAnim;
+import net.minecraft.world.item.ItemUseAnimation;
 import net.minecraft.world.phys.EntityHitResult;
 
 import java.util.EnumSet;
@@ -590,13 +590,13 @@ public final class CombatReflexes implements IModule, IConfigurable, LeaseListen
     static boolean shieldUsable(LocalPlayer p) {
         ItemStack main = p.getItemInHand(InteractionHand.MAIN_HAND);
         if (main.getItem() instanceof ShieldItem) {
-            return !p.getCooldowns().isOnCooldown(main.getItem());
+            return !p.getCooldowns().isOnCooldown(main);
         }
         ItemStack off = p.getItemInHand(InteractionHand.OFF_HAND);
-        if (!(off.getItem() instanceof ShieldItem) || p.getCooldowns().isOnCooldown(off.getItem())) {
+        if (!(off.getItem() instanceof ShieldItem) || p.getCooldowns().isOnCooldown(off)) {
             return false;
         }
-        return !(main.getItem() instanceof BlockItem) && main.getUseAnimation() == UseAnim.NONE;
+        return !(main.getItem() instanceof BlockItem) && main.getUseAnimation() == ItemUseAnimation.NONE;
     }
 
     static float wrap(float deg) {

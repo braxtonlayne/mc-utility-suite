@@ -17,6 +17,8 @@ import net.minecraft.nbt.Tag;
  */
 public final class LitematicaFormat implements SchematicFormatAdapter {
 
+    private static final long[] EMPTY = new long[0];
+
     @Override
     public String id() {
         return "litematic";
@@ -29,21 +31,22 @@ public final class LitematicaFormat implements SchematicFormatAdapter {
 
     @Override
     public boolean accepts(CompoundTag root) {
-        return root.contains("Regions", Tag.TAG_COMPOUND);
+        return SchematicFormatAdapter.has(root, "Regions", Tag.TAG_COMPOUND);
     }
 
     @Override
     public SchematicVolume read(CompoundTag root, String name) throws SchematicParseException {
-        CompoundTag regions = root.getCompound("Regions");
+        CompoundTag regions = root.getCompoundOrEmpty("Regions");
+        int dataVersion = SchematicFormatAdapter.dataVersion(root, "MinecraftDataVersion");
         if (regions.isEmpty()) {
             throw new SchematicParseException("Litematic has no regions");
         }
         int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE, minZ = Integer.MAX_VALUE;
         int maxX = Integer.MIN_VALUE, maxY = Integer.MIN_VALUE, maxZ = Integer.MIN_VALUE;
-        for (String key : regions.getAllKeys()) {
-            CompoundTag r = regions.getCompound(key);
-            int[] pos = SchematicFormatAdapter.xyz(r.getCompound("Position"));
-            int[] size = SchematicFormatAdapter.xyz(r.getCompound("Size"));
+        for (String key : regions.keySet()) {
+            CompoundTag r = regions.getCompoundOrEmpty(key);
+            int[] pos = SchematicFormatAdapter.xyz(r.getCompoundOrEmpty("Position"));
+            int[] size = SchematicFormatAdapter.xyz(r.getCompoundOrEmpty("Size"));
             for (int a = 0; a < 3; a++) {
                 if (size[a] == 0) {
                     throw new SchematicParseException("Region '" + key + "' has a zero size");
@@ -60,26 +63,26 @@ public final class LitematicaFormat implements SchematicFormatAdapter {
         SchematicVolume.Builder b = SchematicVolume.builder(name, id(), maxX - minX + 1, maxY - minY + 1,
                 maxZ - minZ + 1).offset(minX, minY, minZ);
 
-        for (String key : regions.getAllKeys()) {
-            CompoundTag r = regions.getCompound(key);
-            int[] pos = SchematicFormatAdapter.xyz(r.getCompound("Position"));
-            int[] size = SchematicFormatAdapter.xyz(r.getCompound("Size"));
+        for (String key : regions.keySet()) {
+            CompoundTag r = regions.getCompoundOrEmpty(key);
+            int[] pos = SchematicFormatAdapter.xyz(r.getCompoundOrEmpty("Position"));
+            int[] size = SchematicFormatAdapter.xyz(r.getCompoundOrEmpty("Size"));
             int sx = Math.abs(size[0]), sy = Math.abs(size[1]), sz = Math.abs(size[2]);
             int ox = regionMin(pos[0], size[0]) - minX;
             int oy = regionMin(pos[1], size[1]) - minY;
             int oz = regionMin(pos[2], size[2]) - minZ;
 
-            ListTag paletteTag = r.getList("BlockStatePalette", Tag.TAG_COMPOUND);
+            ListTag paletteTag = SchematicFormatAdapter.listOf(r, "BlockStatePalette", Tag.TAG_COMPOUND);
             if (paletteTag.isEmpty()) {
                 throw new SchematicParseException("Region '" + key + "' has no palette");
             }
             int[] remap = new int[paletteTag.size()];
             for (int i = 0; i < remap.length; i++) {
-                remap[i] = b.paletteId(SchematicFormatAdapter.stateFromCompound(paletteTag.getCompound(i)));
+                remap[i] = b.paletteId(SchematicFormatAdapter.stateFromCompound(paletteTag.getCompoundOrEmpty(i), dataVersion));
             }
             int bits = BitPacking.bitsFor(remap.length);
             long cells = (long) sx * sy * sz;
-            long[] data = r.getLongArray("BlockStates");
+            long[] data = r.getLongArray("BlockStates").orElse(EMPTY);
             if (data.length < BitPacking.longsFor(cells, bits)) {
                 throw new SchematicParseException("Region '" + key + "' block data too short: " + data.length
                         + " longs for " + cells + " cells at " + bits + " bits");

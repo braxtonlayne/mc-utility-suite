@@ -312,7 +312,7 @@ public final class WorldRadarModule extends WorldModule {
     private String itemName(Item item) {
         String s = itemNames.get(item);
         if (s == null) {
-            s = item.getDescription().getString();
+            s = net.minecraft.network.chat.Component.translatable(item.getDescriptionId()).getString(); // cached per item
             itemNames.put(item, s);
         }
         return s;
@@ -455,8 +455,8 @@ public final class WorldRadarModule extends WorldModule {
 
     /** Line from just in front of the crosshair (camera look vector, camera-relative) to a target. */
     private static void tracer(RenderContext ctx, Minecraft mc, float tx, float ty, float tz, int argb) {
-        org.joml.Vector3f look = mc.gameRenderer.getMainCamera().getLookVector();
-        WorldRenderKit.line(ctx.lines, ctx.pose, look.x, look.y, look.z, tx, ty, tz, argb);
+        org.joml.Vector3fc look = mc.gameRenderer.mainCamera().forwardVector();
+        WorldRenderKit.line(ctx.lines, ctx.pose, look.x(), look.y(), look.z(), tx, ty, tz, argb);
     }
 
     private int storageColor(int value) {
@@ -597,7 +597,7 @@ public final class WorldRadarModule extends WorldModule {
                     continue;
                 }
                 Matrix4f m = ctx.kit.beginLabel(ctx.pose, (float) dx, (float) dy, (float) dz);
-                String name = p.getGameProfile().getName();
+                String name = p.getGameProfile().name();
                 int health = Mth.ceil(p.getHealth() + p.getAbsorptionAmount());
                 int armour = p.getArmorValue();
                 int dist = (int) Math.sqrt(d2);
@@ -651,7 +651,7 @@ public final class WorldRadarModule extends WorldModule {
         }
         if (trails && trailClasses) {
             trailForensics.renderLabels(ctx, ctx.ry(self.getBlockY() - 1 + 0.52), System.currentTimeMillis(),
-                    Minecraft.getInstance().gameRenderer.getMainCamera().getLookVector());
+                    Minecraft.getInstance().gameRenderer.mainCamera().forwardVector());
         }
         if (acousticPings) {
             AcousticRadar radar = PacketLab.acousticRadar();

@@ -21,8 +21,8 @@ import com.utilitysuite.ui.holo.Visuals;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
-import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.client.gui.LayeredDraw;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.neoforged.neoforge.client.gui.GuiLayer;
 import net.minecraft.client.multiplayer.ClientPacketListener;
 import net.minecraft.client.multiplayer.PlayerInfo;
 import net.minecraft.client.player.LocalPlayer;
@@ -51,7 +51,7 @@ import java.util.Optional;
  * when the snapshot changed, and the render callback only draws cached strings. The info strip samples once per
  * client tick (early-out when off).
  */
-public final class SuiteHud implements IModule, IConfigurable, LayeredDraw.Layer {
+public final class SuiteHud implements IModule, IConfigurable, GuiLayer {
 
     public static final String ID = "suite_hud";
     public static final String K_STOPPED_BADGE = "stopped_badge";
@@ -76,7 +76,6 @@ public final class SuiteHud implements IModule, IConfigurable, LayeredDraw.Layer
     private final AutopilotHud autopilotHud = new AutopilotHud(System::currentTimeMillis, visuals::notices);
     private HoloKit kit;
     private boolean frameClean;
-    private final Runnable frameTask = this::drawFrame;
 
     private boolean enabled = true;
     private boolean stoppedBadge = true;
@@ -277,7 +276,7 @@ public final class SuiteHud implements IModule, IConfigurable, LayeredDraw.Layer
         if (infoStrip.showBiome) {
             Holder<Biome> holder = mc.level.getBiome(probe.set(x, y, z));
             if (!text.isBiome(holder)) {
-                text.setBiome(holder, holder.unwrapKey().map(k -> k.location().toString()).orElse("unknown"));
+                text.setBiome(holder, holder.unwrapKey().map(k -> k.identifier().toString()).orElse("unknown"));
             }
         }
         sampleTps(mc, text);
@@ -289,7 +288,7 @@ public final class SuiteHud implements IModule, IConfigurable, LayeredDraw.Layer
         if (infoStrip.showDurability) {
             sampleBar(0, p.getMainHandItem());
             for (int i = 0; i < 4; i++) {
-                sampleBar(i + 1, p.getInventory().armor.get(3 - i)); // head first
+                sampleBar(i + 1, p.getItemBySlot(ARMOR_HEAD_FIRST[i])); // head first
             }
             infoStrip.countBars();
         }
@@ -310,6 +309,10 @@ public final class SuiteHud implements IModule, IConfigurable, LayeredDraw.Layer
         text.setTpsTenths(tpsEstimator.tenths());
     }
 
+    private static final net.minecraft.world.entity.EquipmentSlot[] ARMOR_HEAD_FIRST = {
+            net.minecraft.world.entity.EquipmentSlot.HEAD, net.minecraft.world.entity.EquipmentSlot.CHEST,
+            net.minecraft.world.entity.EquipmentSlot.LEGS, net.minecraft.world.entity.EquipmentSlot.FEET};
+
     private void sampleBar(int slot, ItemStack s) {
         if (s.isEmpty() || !s.isDamageableItem()) {
             infoStrip.setBar(slot, 0, 0);
@@ -321,13 +324,13 @@ public final class SuiteHud implements IModule, IConfigurable, LayeredDraw.Layer
     // ---- layer ------------------------------------------------------------------------------------------------------
 
     @Override
-    public void render(GuiGraphics g, DeltaTracker delta) {
+    public void render(GuiGraphicsExtractor g, DeltaTracker delta) {
         Minecraft mc = Minecraft.getInstance();
-        if (mc.options.hideGui || mc.player == null) {
+        if (mc.gui.hud.isHidden() || mc.player == null) {
             return;
         }
         boolean debug = mc.getDebugOverlay().showDebugScreen();
-        infoStrip.blocked = debug || mc.screen != null;
+        infoStrip.blocked = debug || mc.gui.screen() != null;
         moduleList.blocked = debug;
         renderOverlay(g, mc.font, g.guiWidth(), Services.modState().isCleanScreen(),
                 Services.arbiter().isAutomationStopped());
@@ -337,7 +340,7 @@ public final class SuiteHud implements IModule, IConfigurable, LayeredDraw.Layer
      * Draws the HUD for the given state (also used by the UI preview with a fake job). Returns before touching the
      * buffers when nothing wants to draw.
      */
-    void renderOverlay(GuiGraphics g, Font font, int sw, boolean cleanScreen, boolean automationStopped) {
+    void renderOverlay(GuiGraphicsExtractor g, Font font, int sw, boolean cleanScreen, boolean automationStopped) {
         stopped.active = stoppedBadge && automationStopped && !cleanScreen;
         clean.active = cleanBadge && cleanScreen;
         if (!host.wantsAny(cleanScreen)) {
@@ -350,7 +353,7 @@ public final class SuiteHud implements IModule, IConfigurable, LayeredDraw.Layer
         frameClean = cleanScreen;
         kit.begin(g);
         try {
-            g.drawManaged(frameTask); // one batch for the whole HUD frame
+            drawFrame(); // 26.3: everything is extracted into the frame's render state, batched by the game
         } finally {
             kit.end();
         }

@@ -1,12 +1,12 @@
 package com.utilitysuite.ui.kit;
 
-import com.mojang.blaze3d.vertex.PoseStack;
 import com.utilitysuite.core.api.visual.FrameLevel;
 import com.utilitysuite.core.api.visual.HoloToken;
 import com.utilitysuite.ui.holo.HoloFrames;
 import net.minecraft.client.gui.Font;
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.world.item.ItemStack;
+import org.joml.Matrix3x2fStack;
 
 /**
  * Small drawing kit for the menu and HUD: rounded rectangles built from layered {@code fill} quads (one quad per
@@ -49,7 +49,7 @@ public final class UiRenderUtils {
     }
 
     /** Filled rectangle. The radius is accepted and ignored: every surface is square or chamfered now. */
-    public static void roundedRect(GuiGraphics g, int x, int y, int w, int h, int radius, int color) {
+    public static void roundedRect(GuiGraphicsExtractor g, int x, int y, int w, int h, int radius, int color) {
         if (w <= 0 || h <= 0 || (color >>> 24) == 0) {
             return;
         }
@@ -57,12 +57,12 @@ public final class UiRenderUtils {
     }
 
     /** Filled rectangle; the corner mask and radius are accepted and ignored (square surfaces). */
-    public static void roundedRect(GuiGraphics g, int x, int y, int w, int h, int radius, int color, int corners) {
+    public static void roundedRect(GuiGraphicsExtractor g, int x, int y, int w, int h, int radius, int color, int corners) {
         roundedRect(g, x, y, w, h, radius, color);
     }
 
     /** 1 px hairline outline (radius ignored). */
-    public static void roundedOutline(GuiGraphics g, int x, int y, int w, int h, int radius, int color) {
+    public static void roundedOutline(GuiGraphicsExtractor g, int x, int y, int w, int h, int radius, int color) {
         if (w <= 1 || h <= 1 || (color >>> 24) == 0) {
             return;
         }
@@ -70,42 +70,42 @@ public final class UiRenderUtils {
     }
 
     /** Filled surface with a hairline border on top. */
-    public static void panel(GuiGraphics g, int x, int y, int w, int h, int radius, int fill, int border) {
+    public static void panel(GuiGraphicsExtractor g, int x, int y, int w, int h, int radius, int fill, int border) {
         roundedRect(g, x, y, w, h, radius, fill);
         roundedOutline(g, x, y, w, h, radius, border);
     }
 
     /** No drop shadows in the new language: draws nothing. Kept so existing callers compile. */
-    public static void shadow(GuiGraphics g, int x, int y, int w, int h, int radius, int layers) {
+    public static void shadow(GuiGraphicsExtractor g, int x, int y, int w, int h, int radius, int layers) {
     }
 
     /** A bracket frame on glass (see {@link HoloFrames#frame}). */
-    public static void bracketFrame(GuiGraphics g, int x, int y, int w, int h, FrameLevel level, boolean chamfer,
+    public static void bracketFrame(GuiGraphicsExtractor g, int x, int y, int w, int h, FrameLevel level, boolean chamfer,
                                     float alpha) {
         HoloFrames.frame(g, x, y, w, h, level, chamfer, alpha);
     }
 
     /** A bracket frame with a chosen fill and bracket token. */
-    public static void bracketFrame(GuiGraphics g, int x, int y, int w, int h, FrameLevel level, boolean chamfer,
+    public static void bracketFrame(GuiGraphicsExtractor g, int x, int y, int w, int h, FrameLevel level, boolean chamfer,
                                     HoloToken fill, HoloToken bracket, float alpha) {
         HoloFrames.frame(g, x, y, w, h, level, chamfer, fill, bracket, alpha);
     }
 
-    public static void hLine(GuiGraphics g, int x0, int x1, int y, int color) {
+    public static void hLine(GuiGraphicsExtractor g, int x0, int x1, int y, int color) {
         g.fill(x0, y, x1, y + 1, color);
     }
 
-    public static void vLine(GuiGraphics g, int x, int y0, int y1, int color) {
+    public static void vLine(GuiGraphicsExtractor g, int x, int y0, int y1, int color) {
         g.fill(x, y0, x + 1, y1, color);
     }
 
     /** A filled circle of diameter {@code d}. */
-    public static void dot(GuiGraphics g, int x, int y, int d, int color) {
+    public static void dot(GuiGraphicsExtractor g, int x, int y, int d, int color) {
         roundedRect(g, x, y, d, d, 0, color);
     }
 
     /** Pixel chevron, 5 px tall: direction 0 = right, 1 = down, 2 = left, 3 = up. */
-    public static void chevron(GuiGraphics g, int x, int y, int direction, int color) {
+    public static void chevron(GuiGraphicsExtractor g, int x, int y, int direction, int color) {
         switch (direction) {
             case 0 -> {
                 g.fill(x, y, x + 1, y + 5, color);
@@ -131,25 +131,20 @@ public final class UiRenderUtils {
     }
 
     /** Scissor to a rectangle in GUI coordinates (pair with {@link #endClip}). */
-    public static void clip(GuiGraphics g, int x, int y, int w, int h) {
+    public static void clip(GuiGraphicsExtractor g, int x, int y, int w, int h) {
         scissor(g, x, y, x + w, y + h);
     }
 
     /**
-     * Scissor to a rectangle given in the caller's layout px. Vanilla scissors ignore the pose stack, so inside the
-     * menu's effective-scale pass ({@link MenuScale#active()} != 1) the edges are converted to GUI px, rounded outward.
+     * Scissor to a rectangle given in the caller's layout px. In 26.3 the scissor is transformed by the current pose
+     * ({@code GuiGraphicsExtractor.enableScissor}), so inside the menu's effective-scale pass the layout rectangle is
+     * passed as is (the 1.21.1 build converted it with {@link MenuScale#scissorMin}/{@link MenuScale#scissorMax}).
      */
-    public static void scissor(GuiGraphics g, int x0, int y0, int x1, int y1) {
-        double f = MenuScale.active();
-        if (f == 1.0) {
-            g.enableScissor(x0, y0, x1, y1);
-        } else {
-            g.enableScissor(MenuScale.scissorMin(x0, f), MenuScale.scissorMin(y0, f), MenuScale.scissorMax(x1, f),
-                    MenuScale.scissorMax(y1, f));
-        }
+    public static void scissor(GuiGraphicsExtractor g, int x0, int y0, int x1, int y1) {
+        g.enableScissor(x0, y0, x1, y1);
     }
 
-    public static void endClip(GuiGraphics g) {
+    public static void endClip(GuiGraphicsExtractor g) {
         g.disableScissor();
     }
 
@@ -162,12 +157,12 @@ public final class UiRenderUtils {
     }
 
     /** Text without shadow (the dashboard never uses the vanilla drop shadow), in the suite UI face when active. */
-    public static void text(GuiGraphics g, Font font, String s, int x, int y, int color) {
+    public static void text(GuiGraphicsExtractor g, Font font, String s, int x, int y, int color) {
         net.minecraft.network.chat.Style st = uiStyle();
         if (st == null) {
-            g.drawString(font, s, x, y, color, false);
+            g.text(font, s, x, y, color, false);
         } else {
-            g.drawString(font, RUN.set(s, st), x, y, color, false);
+            g.text(font, RUN.set(s, st), x, y, color, false);
         }
     }
 
@@ -178,21 +173,21 @@ public final class UiRenderUtils {
     }
 
     /** An item icon scaled to {@code size} px (16 = vanilla). */
-    public static void item(GuiGraphics g, ItemStack stack, int x, int y, int size) {
+    public static void item(GuiGraphicsExtractor g, ItemStack stack, int x, int y, int size) {
         if (stack == null || stack.isEmpty()) {
             return;
         }
         if (size == 16) {
-            g.renderItem(stack, x, y);
+            g.item(stack, x, y);
             return;
         }
-        PoseStack pose = g.pose();
-        pose.pushPose();
-        pose.translate(x, y, 0);
+        Matrix3x2fStack pose = g.pose();
+        pose.pushMatrix();
+        pose.translate(x, y);
         float s = size / 16f;
-        pose.scale(s, s, 1f);
-        g.renderItem(stack, 0, 0);
-        pose.popPose();
+        pose.scale(s, s);
+        g.item(stack, 0, 0);
+        pose.popMatrix();
     }
 
     /** Text clipped to {@code maxWidth} with an ellipsis. Allocates: call on change, not per frame. */

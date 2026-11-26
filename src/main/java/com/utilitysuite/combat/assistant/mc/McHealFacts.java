@@ -10,6 +10,7 @@ import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.food.FoodProperties;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.component.Consumable;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.alchemy.PotionContents;
 import net.minecraft.world.item.alchemy.Potions;
@@ -54,7 +55,7 @@ public final class McHealFacts implements HealFacts {
         Inventory inv = p.getInventory();
         double best = Double.NEGATIVE_INFINITY;
         for (int i = 0; i < 36; i++) {
-            ItemStack st = inv.items.get(i);
+            ItemStack st = inv.getNonEquipmentItems().get(i);
             if (st.isEmpty()) {
                 continue;
             }
@@ -97,7 +98,8 @@ public final class McHealFacts implements HealFacts {
                 foodSlot = i;
                 foodNutrition = fp.nutrition();
                 foodSaturation = fp.saturation();
-                foodEatTicks = fp.eatDurationTicks();
+                Consumable use = st.get(DataComponents.CONSUMABLE);
+                foodEatTicks = use != null ? use.consumeTicks() : 32; // eat time moved to the consumable component
             }
         }
     }

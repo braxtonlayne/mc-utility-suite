@@ -11,9 +11,9 @@ import com.utilitysuite.ui.holo.VisualSettings;
 import com.utilitysuite.ui.tabs.ToolsTab;
 import com.utilitysuite.ui.tabs.TravelTab;
 import com.utilitysuite.ui.tabs.WorldTab;
-import net.minecraft.Util;
+import net.minecraft.util.Util;
 import net.minecraft.client.Minecraft;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.neoforge.client.event.RegisterGuiLayersEvent;
 import net.neoforged.neoforge.common.NeoForge;
@@ -76,9 +76,9 @@ public final class UiBootstrap {
 
     private static void onRegisterLayers(RegisterGuiLayersEvent event) {
         // the one HUD host layer: status line, badges, info strip, module list and every registered HudElement
-        event.registerAboveAll(ResourceLocation.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID, "status_line"), hud);
-        event.registerAboveAll(ResourceLocation.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID, "tab_gui"), tabGui);
-        event.registerAboveAll(ResourceLocation.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID, "radial_wheel"),
+        event.registerAboveAll(Identifier.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID, "status_line"), hud);
+        event.registerAboveAll(Identifier.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID, "tab_gui"), tabGui);
+        event.registerAboveAll(Identifier.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID, "radial_wheel"),
                 radialWheel);
     }
 
@@ -87,8 +87,8 @@ public final class UiBootstrap {
     /** Ctrl+K: the command palette (only in game; the key's conflict context keeps it out of screens). */
     public static void openPalette() {
         Minecraft mc = Minecraft.getInstance();
-        if (mc.screen == null && mc.player != null) {
-            mc.setScreen(new com.utilitysuite.ui.palette.CommandPaletteScreen());
+        if (mc.gui.screen() == null && mc.player != null) {
+            mc.gui.setScreen(new com.utilitysuite.ui.palette.CommandPaletteScreen());
         }
     }
 
@@ -96,7 +96,7 @@ public final class UiBootstrap {
     static void actionBar(String status) {
         Minecraft mc = Minecraft.getInstance();
         if (status != null && mc.player != null && !Services.modState().isCleanScreen()) {
-            mc.player.displayClientMessage(net.minecraft.network.chat.Component.literal(status), true);
+            mc.player.sendOverlayMessage(net.minecraft.network.chat.Component.literal(status));
         }
     }
 
@@ -121,7 +121,7 @@ public final class UiBootstrap {
     /** Opens the menu (key handler; also usable from other code on the client thread). */
     public static void openMenu() {
         Minecraft mc = Minecraft.getInstance();
-        if (mc.screen != null) {
+        if (mc.gui.screen() != null) {
             return; // idempotent: never replaces (or toggles) an open screen
         }
         long sinceClose = Util.getMillis() - SuiteMenuScreen.lastClosedAt();
@@ -131,7 +131,7 @@ public final class UiBootstrap {
             SuiteMenuScreen.drainOpenKeyClicks();
             return;
         }
-        mc.setScreen(new SuiteMenuScreen(null)); // the constructor logs who opened it
+        mc.gui.setScreen(new SuiteMenuScreen(null)); // the constructor logs who opened it
         SuiteMenuScreen.drainOpenKeyClicks();
     }
 

@@ -173,7 +173,7 @@ public final class SmartInventory implements IModule, IConfigurable, LeaseListen
         if (ticks % scanInterval != 0) {
             return;
         }
-        boolean noScreen = client.screen == null && player.containerMenu == player.inventoryMenu;
+        boolean noScreen = client.gui.screen() == null && player.containerMenu == player.inventoryMenu;
         boolean armorDue = autoArmor && ticks % ARMOR_INTERVAL == 0 && noScreen;
         if (!refillOn && !armorDue) {
             return;
@@ -182,7 +182,7 @@ public final class SmartInventory implements IModule, IConfigurable, LeaseListen
         if (refillOn) {
             mc.readClasses(player, classes);
         }
-        if (client.screen != null) {
+        if (client.gui.screen() != null) {
             refill.observe(model, classes);
             return;
         }
@@ -231,7 +231,7 @@ public final class SmartInventory implements IModule, IConfigurable, LeaseListen
     }
 
     private void tickMenuMovement(Minecraft client) {
-        if (guiMove && qualifiesForMenuMovement(client.screen)) {
+        if (guiMove && qualifiesForMenuMovement(client.gui.screen())) {
             ScreenMovementPassthrough.apply(Services.input(), Services.arbiter(), guiMoveSneak);
         } else if (ScreenMovementPassthrough.isActive()) {
             ScreenMovementPassthrough.stop();
@@ -503,7 +503,7 @@ public final class SmartInventory implements IModule, IConfigurable, LeaseListen
             return lastResult;
         }
         int containerSlots = own ? 0 : menu.slots.size() - 36;
-        if (own && client.screen != null && !(client.screen instanceof AbstractContainerScreen<?>)) {
+        if (own && client.gui.screen() != null && !(client.gui.screen() instanceof AbstractContainerScreen<?>)) {
             return "Close this screen first";
         }
         GearItem[] pos = McLoadouts.positions(player.getInventory(), menu, containerSlots);

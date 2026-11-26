@@ -8,9 +8,10 @@ import net.minecraft.sounds.SoundEvents;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.UseAnim;
+import net.minecraft.world.item.ItemUseAnimation;
+import net.minecraft.world.item.component.Weapon;
 import net.minecraft.world.phys.Vec3;
-import net.neoforged.neoforge.common.ItemAbilities;
+import net.minecraft.core.component.DataComponents;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.PlayLevelSoundEvent;
 
@@ -18,9 +19,9 @@ import net.neoforged.neoforge.event.PlayLevelSoundEvent;
  * {@link ShieldFacts} over the client level and the local player. One entity lookup per {@link #refresh}; the
  * getters return the primitives read then. Client thread only, allocation free per tick.
  * <p>
- * Target shield disable: vanilla 1.21.1 {@code Player.disableShield} broadcasts entity event 30, and the client's
- * {@code LivingEntity.handleEntityEvent(30)} plays {@code SoundEvents.SHIELD_BREAK} at the entity
- * ({@code Entity.playSound} -> {@code ClientLevel.playSeededSound}, which fires {@link PlayLevelSoundEvent.AtPosition}).
+ * Target shield disable: vanilla 26.3 {@code BlocksAttacks.disable} plays the shield's disable sound
+ * ({@code SoundEvents.SHIELD_BREAK}) at the blocker through {@code Level.playSound}; the client receives it as a sound
+ * packet and {@code ClientLevel.playSeededSound} fires {@link PlayLevelSoundEvent.AtPosition}.
  * The constructor listens to that event (NeoForge event, no mixin) and records the game time of a shield-break sound
  * at the current target's position. A silent entity plays no sound: the disable then stays unobserved (-1).
  */
@@ -63,13 +64,13 @@ public final class McShieldFacts implements ShieldFacts {
         }
         gameTime = level.getGameTime();
         ItemStack off = p.getOffhandItem();
-        boolean shield = !off.isEmpty() && off.canPerformAction(ItemAbilities.SHIELD_BLOCK);
+        boolean shield = !off.isEmpty() && off.has(DataComponents.BLOCKS_ATTACKS);
         ItemStack main = p.getMainHandItem();
         // Minecraft.startUseItem tries the main hand first: food, a bow, a trident or a shield there would take USE
-        boolean mainFree = main.isEmpty() || (main.getUseAnimation() == UseAnim.NONE
-                && !main.canPerformAction(ItemAbilities.SHIELD_BLOCK));
-        ownReady = shield && mainFree && !p.getCooldowns().isOnCooldown(off.getItem());
-        if (p.isUsingItem() && p.getUseItem().canPerformAction(ItemAbilities.SHIELD_BLOCK)) {
+        boolean mainFree = main.isEmpty() || (main.getUseAnimation() == ItemUseAnimation.NONE
+                && !main.has(DataComponents.BLOCKS_ATTACKS));
+        ownReady = shield && mainFree && !p.getCooldowns().isOnCooldown(off);
+        if (p.isUsingItem() && p.getUseItem().has(DataComponents.BLOCKS_ATTACKS)) {
             ownUse = p.getTicksUsingItem();
         }
         Entity e = targetId < 0 ? null : level.getEntity(targetId);
@@ -78,16 +79,18 @@ public final class McShieldFacts implements ShieldFacts {
         }
         known = true;
         headYaw = t.getYHeadRot();
-        if (t.isUsingItem() && t.getUseItem().canPerformAction(ItemAbilities.SHIELD_BLOCK)) {
+        if (t.isUsingItem() && t.getUseItem().has(DataComponents.BLOCKS_ATTACKS)) {
             // the use state of a remote player is synced (living entity flags) and counted down client-side
             targetUse = Math.max(1, t.getTicksUsingItem());
         }
-        // vanilla LivingEntity.canDisableShield: the attacker's main hand decides (NeoForge: canDisableShield)
-        targetAxe = t.getMainHandItem().canDisableShield(shield ? off : ItemStack.EMPTY, p, t);
+        // 26.3: Player.blockUsingItem disables a blocker for the attacker's weapon component
+        // (Weapon.disableBlockingForSeconds, 5 s on axes); the attacker's main hand decides
+        Weapon weapon = t.getMainHandItem().get(DataComponents.WEAPON);
+        targetAxe = weapon != null && weapon.disableBlockingForSeconds() > 0f;
     }
 
     private void onSound(PlayLevelSoundEvent.AtPosition event) {
-        if (event.getSound() == null || event.getSound().value() != SoundEvents.SHIELD_BREAK) {
+        if (event.getSound() == null || event.getSound().value() != SoundEvents.SHIELD_BREAK.value()) {
             return;
         }
         Minecraft mc = Minecraft.getInstance();

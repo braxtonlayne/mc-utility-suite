@@ -12,8 +12,6 @@ import net.minecraft.core.Direction;
 import net.minecraft.util.Mth;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.PickaxeItem;
-import net.minecraft.world.item.SwordItem;
 import net.minecraft.world.level.LightLayer;
 import net.neoforged.neoforge.event.entity.player.PlayerInteractEvent;
 
@@ -112,7 +110,7 @@ public final class AutoTorchModule extends FieldModule {
         // offhand. Otherwise the torch is selected in the hotbar as usual.
         offhand = offTorch != null && mainHandPassesUse(player.getMainHandItem());
         torch = offhand ? offTorch : inventory.itemOf(torchId);
-        previousSlot = offhand ? -1 : player.getInventory().selected; // read only, restored through the core
+        previousSlot = offhand ? -1 : player.getInventory().getSelectedSlot(); // read only, restored through the core
         placing = true;
         phase = offhand ? 1 : 0;
         runTicks = 0;
@@ -135,7 +133,8 @@ public final class AutoTorchModule extends FieldModule {
 
     /** True when a USE on a plain block with this main-hand item does nothing, so vanilla moves on to the offhand. */
     private static boolean mainHandPassesUse(ItemStack main) {
-        return main.isEmpty() || main.getItem() instanceof PickaxeItem || main.getItem() instanceof SwordItem;
+        return main.isEmpty() || com.utilitysuite.jobs.goal.McTools.isPickaxe(main)
+                || com.utilitysuite.jobs.goal.McTools.isSword(main);
     }
 
     /** RIGHT_WALL tries the wall to the right first; then the floor cell behind the player, else their feet cell. */

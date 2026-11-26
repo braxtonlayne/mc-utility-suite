@@ -17,9 +17,8 @@ import com.utilitysuite.ui.kit.UiRenderUtils;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
-import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.client.gui.LayeredDraw;
-import org.lwjgl.glfw.GLFW;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.neoforged.neoforge.client.gui.GuiLayer;
 
 import java.util.List;
 
@@ -31,7 +30,7 @@ import java.util.List;
  * open, not under Clean-Screen, F1 or F3. Module lists are cached per category (refreshed on navigation and once a
  * second), so rendering and key handling allocate nothing. Public only for the mixin's static hook.
  */
-public final class TabGui implements IModule, IConfigurable, LayeredDraw.Layer {
+public final class TabGui implements IModule, IConfigurable, GuiLayer {
 
     /** The registered instance (client thread only); null until {@link UiBootstrap} creates it. */
     private static TabGui instance;
@@ -139,10 +138,10 @@ public final class TabGui implements IModule, IConfigurable, LayeredDraw.Layer {
             return false;
         }
         Minecraft mc = Minecraft.getInstance();
-        if (windowPointer != mc.getWindow().getWindow()) {
+        if (windowPointer != mc.getWindow().handle()) {
             return false; // vanilla ignores other windows too
         }
-        boolean visible = action != GLFW.GLFW_RELEASE && gui.visible(mc);
+        boolean visible = action != TabGuiNav.ACTION_RELEASE && gui.visible(mc);
         int decision = gui.nav.decide(key, action, visible, gui.enterToggles);
         if (decision == TabGuiNav.NAVIGATE) {
             gui.navigate(key);
@@ -152,7 +151,7 @@ public final class TabGui implements IModule, IConfigurable, LayeredDraw.Layer {
 
     /** True while the list is on screen: the same conditions {@link #render} draws under. */
     private boolean visible(Minecraft mc) {
-        if (!enabled || mc.player == null || mc.screen != null || mc.options.hideGui
+        if (!enabled || mc.player == null || mc.gui.screen() != null || mc.gui.hud.isHidden()
                 || mc.getDebugOverlay().showDebugScreen()) {
             return false;
         }
@@ -232,12 +231,12 @@ public final class TabGui implements IModule, IConfigurable, LayeredDraw.Layer {
     // ---- rendering --------------------------------------------------------------------------------------------------
 
     @Override
-    public void render(GuiGraphics g, DeltaTracker delta) {
+    public void render(GuiGraphicsExtractor g, DeltaTracker delta) {
         if (!enabled) {
             return;
         }
         Minecraft mc = Minecraft.getInstance();
-        if (mc.player == null || mc.screen != null || mc.options.hideGui || mc.getDebugOverlay().showDebugScreen()) {
+        if (mc.player == null || mc.gui.screen() != null || mc.gui.hud.isHidden() || mc.getDebugOverlay().showDebugScreen()) {
             return;
         }
         try {
@@ -300,7 +299,7 @@ public final class TabGui implements IModule, IConfigurable, LayeredDraw.Layer {
     }
 
     /** The selected row: faint fill, corner brackets and a 2 px side bar. */
-    private static void bracketedRow(GuiGraphics g, int x, int y, int w, int bracket, int fill, int bar) {
+    private static void bracketedRow(GuiGraphicsExtractor g, int x, int y, int w, int bracket, int fill, int bar) {
         g.fill(x, y, x + w, y + ROW_H, fill);
         HoloFrames.brackets(g, x, y, w, ROW_H, 3, bracket);
         g.fill(x, y + 1, x + HoloTheme.BAR, y + ROW_H - 1, bar);

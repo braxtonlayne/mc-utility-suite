@@ -18,7 +18,7 @@ import java.util.Optional;
 import java.util.TreeSet;
 
 /**
- * Reproduces the vanilla 1.21.1 enchanting-table roll (EnchantmentMenu#slotsChanged / #getEnchantmentList) for a known
+ * Reproduces the vanilla 26.3 enchanting-table roll (EnchantmentMenu#slotsChanged / #getEnchantmentList) for a known
  * player enchantment seed, using the vanilla {@link EnchantmentHelper} maths directly. Bookshelves count as one power
  * each (modded shelves with other bonuses and NeoForge's level-set event are not modelled). Client thread, on demand.
  */
@@ -33,8 +33,8 @@ public final class EnchantTableCalc {
         if (stack.isEmpty() || !stack.isEnchantable()) {
             return out;
         }
-        Optional<HolderSet.Named<Enchantment>> pool = access.registryOrThrow(Registries.ENCHANTMENT)
-                .getTag(EnchantmentTags.IN_ENCHANTING_TABLE);
+        Optional<HolderSet.Named<Enchantment>> pool = access.lookupOrThrow(Registries.ENCHANTMENT)
+                .get(EnchantmentTags.IN_ENCHANTING_TABLE);
         RandomSource random = RandomSource.create();
         int[] costs = new int[3];
         for (int shelves = 0; shelves <= maxShelves; shelves++) {
@@ -55,7 +55,7 @@ public final class EnchantTableCalc {
                         rolled.remove(random.nextInt(rolled.size()));
                     }
                     for (EnchantmentInstance e : rolled) {
-                        list.add(new EnchantPlanner.Ench(idOf(e.enchantment), e.level));
+                        list.add(new EnchantPlanner.Ench(idOf(e.enchantment()), e.level()));
                     }
                 }
                 out.add(new EnchantPlanner.Offer(shelves, slot, costs[slot], list));
@@ -71,8 +71,8 @@ public final class EnchantTableCalc {
      */
     public static boolean matchesClues(RegistryAccess access, ItemStack stack, int seed, int power, int[] costs,
                                        int[] enchClue, int[] levelClue) {
-        var registry = access.registryOrThrow(Registries.ENCHANTMENT);
-        Optional<HolderSet.Named<Enchantment>> pool = registry.getTag(EnchantmentTags.IN_ENCHANTING_TABLE);
+        var registry = access.lookupOrThrow(Registries.ENCHANTMENT);
+        Optional<HolderSet.Named<Enchantment>> pool = registry.get(EnchantmentTags.IN_ENCHANTING_TABLE);
         var idMap = registry.asHolderIdMap();
         RandomSource random = RandomSource.create();
         for (int slot = 0; slot < 3; slot++) {
@@ -92,7 +92,7 @@ public final class EnchantTableCalc {
                 return false;
             }
             EnchantmentInstance shown = rolled.get(random.nextInt(rolled.size()));
-            if (idMap.getId(shown.enchantment) != enchClue[slot] || shown.level != levelClue[slot]) {
+            if (idMap.getId(shown.enchantment()) != enchClue[slot] || shown.level() != levelClue[slot]) {
                 return false;
             }
         }
@@ -105,8 +105,8 @@ public final class EnchantTableCalc {
         if (stack.isEmpty() || !stack.isEnchantable()) {
             return List.of();
         }
-        Optional<HolderSet.Named<Enchantment>> pool = access.registryOrThrow(Registries.ENCHANTMENT)
-                .getTag(EnchantmentTags.IN_ENCHANTING_TABLE);
+        Optional<HolderSet.Named<Enchantment>> pool = access.lookupOrThrow(Registries.ENCHANTMENT)
+                .get(EnchantmentTags.IN_ENCHANTING_TABLE);
         if (pool.isEmpty()) {
             return List.of();
         }
@@ -114,13 +114,13 @@ public final class EnchantTableCalc {
         for (int level = 1; level <= 60; level++) {
             for (EnchantmentInstance e : EnchantmentHelper.getAvailableEnchantmentResults(level, stack,
                     pool.get().stream())) {
-                ids.add(idOf(e.enchantment));
+                ids.add(idOf(e.enchantment()));
             }
         }
         return List.copyOf(ids);
     }
 
     private static String idOf(Holder<Enchantment> h) {
-        return h.unwrapKey().map(k -> k.location().toString()).orElse("unknown:unknown");
+        return h.unwrapKey().map(k -> k.identifier().toString()).orElse("unknown:unknown");
     }
 }

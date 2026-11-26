@@ -6,37 +6,15 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.gen.Accessor;
 
 /**
- * Picture-in-picture full render: the culling bookkeeping {@code LevelRenderer.setupRender} compares against the last
- * camera. The second pass primes it so its own camera neither invalidates the main section-occlusion graph (an
- * async full rebuild every swap) nor reuses the main view's frustum-culled section list, then restores it so the main
- * pass re-culls for its own frustum. Why a mixin: the fields are private and no event exposes them.
+ * Picture-in-picture second pass: the level renderer's occlusion graph. 26.3 (checked against the sources): the
+ * camera bookkeeping that 1.21.1 kept here moved out; {@code prevCamX/Y/Z} (now the real camera position, not the
+ * 8-block cell) live in {@code SectionOcclusionGraph} ({@link SectionOcclusionGraphAccessor}) and
+ * {@code prevCamRotX/Y} in {@code LevelExtractor} ({@link LevelExtractorCullStateAccessor}).
+ * {@code private final SectionOcclusionGraph sectionOcclusionGraph} also has a public getter now
+ * ({@code LevelRenderer.sectionOcclusionGraph()}); the accessor is kept for existing callers.
  */
 @Mixin(LevelRenderer.class)
 public interface LevelRendererCullStateAccessor {
-
-    @Accessor("prevCamX")
-    double utilitysuite$prevCamX();
-
-    @Accessor("prevCamX")
-    void utilitysuite$setPrevCamX(double v);
-
-    @Accessor("prevCamY")
-    double utilitysuite$prevCamY();
-
-    @Accessor("prevCamY")
-    void utilitysuite$setPrevCamY(double v);
-
-    @Accessor("prevCamZ")
-    double utilitysuite$prevCamZ();
-
-    @Accessor("prevCamZ")
-    void utilitysuite$setPrevCamZ(double v);
-
-    @Accessor("prevCamRotX")
-    void utilitysuite$setPrevCamRotX(double v);
-
-    @Accessor("prevCamRotY")
-    void utilitysuite$setPrevCamRotY(double v);
 
     @Accessor("sectionOcclusionGraph")
     SectionOcclusionGraph utilitysuite$occlusionGraph();

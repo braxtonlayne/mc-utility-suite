@@ -8,7 +8,7 @@ import com.utilitysuite.core.api.visual.HoloToken;
 import com.utilitysuite.ui.holo.HoloFrames;
 import com.utilitysuite.ui.holo.HoloTheme;
 import net.minecraft.client.gui.Font;
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 
@@ -184,7 +184,7 @@ public final class GoalHeroCard extends UiNode {
     }
 
     @Override
-    public void render(GuiGraphics g, Font font, int sx, int sy, int mouseX, int mouseY) {
+    public void render(GuiGraphicsExtractor g, Font font, int sx, int sy, int mouseX, int mouseY) {
         boolean hover = inside(mouseX, mouseY, sx, sy, w, h);
         float hv = hoverAmount(hover);
         HoloFrames.frame(g, sx, sy, w, h, idle ? FrameLevel.FRAMED : FrameLevel.HERO, !idle, 1f);
@@ -228,7 +228,7 @@ public final class GoalHeroCard extends UiNode {
         line(g, font, sx, ly + 24, "Next", next, UiTheme.TEXT_DIM);
     }
 
-    private void line(GuiGraphics g, Font font, int sx, int y, String caption, String text, int color) {
+    private void line(GuiGraphicsExtractor g, Font font, int sx, int y, String caption, String text, int color) {
         UiRenderUtils.text(g, font, caption, sx + PAD, y, UiTheme.TEXT_MUTED);
         UiRenderUtils.text(g, font, text, sx + PAD + CAPTION_W, y, color);
     }

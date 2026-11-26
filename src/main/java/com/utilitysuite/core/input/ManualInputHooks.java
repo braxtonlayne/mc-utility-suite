@@ -7,7 +7,7 @@ import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.Options;
 import net.neoforged.neoforge.client.event.InputEvent;
-import org.lwjgl.glfw.GLFW;
+import com.mojang.blaze3d.platform.InputConstants;
 
 /**
  * Detects the user's real (hardware) input and reports it to {@link IActionArbiter#onManualInput}.
@@ -180,7 +180,7 @@ public final class ManualInputHooks {
             h.remTurnPitch = 0.0;
             return pitchArg;
         }
-        boolean blocked = mc.screen != null || p.isSpectator() || p.isPassenger();
+        boolean blocked = mc.gui.screen() != null || p.isSpectator() || p.isPassenger();
         if (blocked) {
             h.remTurnPitch = 0.0;
         }
@@ -213,7 +213,7 @@ public final class ManualInputHooks {
         if (p == null) {
             return yawArg;
         }
-        boolean blocked = mc.screen != null || p.isSpectator() || p.isPassenger();
+        boolean blocked = mc.gui.screen() != null || p.isSpectator() || p.isPassenger();
         float yaw = p.getYRot();
         if (blocked) {
             remTurnYaw = 0.0;
@@ -235,39 +235,38 @@ public final class ManualInputHooks {
     }
 
     private static boolean inGame(Minecraft mc) {
-        return mc.player != null && mc.screen == null;
+        return mc.player != null && mc.gui.screen() == null;
     }
 
     public void onKey(InputEvent.Key event) {
         int action = event.getAction();
-        if (action == GLFW.GLFW_REPEAT) {
+        if (action == InputConstants.REPEAT) {
             return;
         }
         Minecraft mc = Minecraft.getInstance();
         ManualFactsTracker f = facts;
-        if (action == GLFW.GLFW_RELEASE) {
+        if (action == InputConstants.RELEASE) {
             // releases always count, screen or not, so no key stays "held" in the facts
             if (f != null && mc.options != null) {
-                releaseKeys(f, mc.options, event.getKey(), event.getScanCode());
+                releaseKeys(f, mc.options, event.getKey());
             }
             return;
         }
-        if (action != GLFW.GLFW_PRESS || !inGame(mc)) {
+        if (action != InputConstants.PRESS || !inGame(mc)) {
             return;
         }
-        int key = event.getKey();
-        int scan = event.getScanCode();
+        int key = event.getKey(); // SDL scancode (26.3)
         Options o = mc.options;
         if (f != null) {
-            pressKeys(f, o, key, scan);
+            pressKeys(f, o, key);
         }
-        if (o.keyUp.matches(key, scan) || o.keyDown.matches(key, scan) || o.keyLeft.matches(key, scan)
-                || o.keyRight.matches(key, scan) || o.keyJump.matches(key, scan) || o.keyShift.matches(key, scan)
-                || o.keySprint.matches(key, scan)) {
+        if (KeyInputs.matchesKey(o.keyUp, key) || KeyInputs.matchesKey(o.keyDown, key) || KeyInputs.matchesKey(o.keyLeft, key)
+                || KeyInputs.matchesKey(o.keyRight, key) || KeyInputs.matchesKey(o.keyJump, key) || KeyInputs.matchesKey(o.keyShift, key)
+                || KeyInputs.matchesKey(o.keySprint, key)) {
             arbiter.onManualInput(ManualInput.MOVEMENT_KEY);
-        } else if (o.keyAttack.matches(key, scan) || o.keyUse.matches(key, scan)) {
+        } else if (KeyInputs.matchesKey(o.keyAttack, key) || KeyInputs.matchesKey(o.keyUse, key)) {
             arbiter.onManualInput(ManualInput.ATTACK_OR_USE);
-        } else if (matchesAny(o.keyHotbarSlots, key, scan)) {
+        } else if (matchesAny(o.keyHotbarSlots, key)) {
             arbiter.onManualInput(ManualInput.HOTBAR_SELECT);
         }
     }
@@ -276,13 +275,13 @@ public final class ManualInputHooks {
         int action = event.getAction();
         Minecraft mc = Minecraft.getInstance();
         ManualFactsTracker f = facts;
-        if (action == GLFW.GLFW_RELEASE) {
+        if (action == InputConstants.RELEASE) {
             if (f != null && mc.options != null) {
                 releaseButtons(f, mc.options, event.getButton());
             }
             return;
         }
-        if (action != GLFW.GLFW_PRESS || !inGame(mc)) {
+        if (action != InputConstants.PRESS || !inGame(mc)) {
             return;
         }
         int b = event.getButton();
@@ -290,15 +289,15 @@ public final class ManualInputHooks {
         if (f != null) {
             pressButtons(f, o, b);
         }
-        if (o.keyAttack.matchesMouse(b) || o.keyUse.matchesMouse(b)) {
+        if (KeyInputs.matchesButton(o.keyAttack, b) || KeyInputs.matchesButton(o.keyUse, b)) {
             arbiter.onManualInput(ManualInput.ATTACK_OR_USE);
-        } else if (o.keyUp.matchesMouse(b) || o.keyDown.matchesMouse(b) || o.keyLeft.matchesMouse(b)
-                || o.keyRight.matchesMouse(b) || o.keyJump.matchesMouse(b) || o.keyShift.matchesMouse(b)
-                || o.keySprint.matchesMouse(b)) {
+        } else if (KeyInputs.matchesButton(o.keyUp, b) || KeyInputs.matchesButton(o.keyDown, b) || KeyInputs.matchesButton(o.keyLeft, b)
+                || KeyInputs.matchesButton(o.keyRight, b) || KeyInputs.matchesButton(o.keyJump, b) || KeyInputs.matchesButton(o.keyShift, b)
+                || KeyInputs.matchesButton(o.keySprint, b)) {
             arbiter.onManualInput(ManualInput.MOVEMENT_KEY);
         } else {
             for (KeyMapping m : o.keyHotbarSlots) {
-                if (m.matchesMouse(b)) {
+                if (KeyInputs.matchesButton(m, b)) {
                     arbiter.onManualInput(ManualInput.HOTBAR_SELECT);
                     return;
                 }
@@ -315,57 +314,57 @@ public final class ManualInputHooks {
 
     // ---- manual facts: hardware key -> SimKey (a key may be bound to several mappings: each one counts) --------------
 
-    private static void pressKeys(ManualFactsTracker f, Options o, int key, int scan) {
-        if (o.keyUp.matches(key, scan)) f.onPress(SimKey.FORWARD);
-        if (o.keyDown.matches(key, scan)) f.onPress(SimKey.BACK);
-        if (o.keyLeft.matches(key, scan)) f.onPress(SimKey.LEFT);
-        if (o.keyRight.matches(key, scan)) f.onPress(SimKey.RIGHT);
-        if (o.keyJump.matches(key, scan)) f.onPress(SimKey.JUMP);
-        if (o.keyShift.matches(key, scan)) f.onPress(SimKey.SNEAK);
-        if (o.keySprint.matches(key, scan)) f.onPress(SimKey.SPRINT);
-        if (o.keyAttack.matches(key, scan)) f.onPress(SimKey.ATTACK);
-        if (o.keyUse.matches(key, scan)) f.onPress(SimKey.USE);
+    private static void pressKeys(ManualFactsTracker f, Options o, int key) {
+        if (KeyInputs.matchesKey(o.keyUp, key)) f.onPress(SimKey.FORWARD);
+        if (KeyInputs.matchesKey(o.keyDown, key)) f.onPress(SimKey.BACK);
+        if (KeyInputs.matchesKey(o.keyLeft, key)) f.onPress(SimKey.LEFT);
+        if (KeyInputs.matchesKey(o.keyRight, key)) f.onPress(SimKey.RIGHT);
+        if (KeyInputs.matchesKey(o.keyJump, key)) f.onPress(SimKey.JUMP);
+        if (KeyInputs.matchesKey(o.keyShift, key)) f.onPress(SimKey.SNEAK);
+        if (KeyInputs.matchesKey(o.keySprint, key)) f.onPress(SimKey.SPRINT);
+        if (KeyInputs.matchesKey(o.keyAttack, key)) f.onPress(SimKey.ATTACK);
+        if (KeyInputs.matchesKey(o.keyUse, key)) f.onPress(SimKey.USE);
     }
 
-    private static void releaseKeys(ManualFactsTracker f, Options o, int key, int scan) {
-        if (o.keyUp.matches(key, scan)) f.onRelease(SimKey.FORWARD);
-        if (o.keyDown.matches(key, scan)) f.onRelease(SimKey.BACK);
-        if (o.keyLeft.matches(key, scan)) f.onRelease(SimKey.LEFT);
-        if (o.keyRight.matches(key, scan)) f.onRelease(SimKey.RIGHT);
-        if (o.keyJump.matches(key, scan)) f.onRelease(SimKey.JUMP);
-        if (o.keyShift.matches(key, scan)) f.onRelease(SimKey.SNEAK);
-        if (o.keySprint.matches(key, scan)) f.onRelease(SimKey.SPRINT);
-        if (o.keyAttack.matches(key, scan)) f.onRelease(SimKey.ATTACK);
-        if (o.keyUse.matches(key, scan)) f.onRelease(SimKey.USE);
+    private static void releaseKeys(ManualFactsTracker f, Options o, int key) {
+        if (KeyInputs.matchesKey(o.keyUp, key)) f.onRelease(SimKey.FORWARD);
+        if (KeyInputs.matchesKey(o.keyDown, key)) f.onRelease(SimKey.BACK);
+        if (KeyInputs.matchesKey(o.keyLeft, key)) f.onRelease(SimKey.LEFT);
+        if (KeyInputs.matchesKey(o.keyRight, key)) f.onRelease(SimKey.RIGHT);
+        if (KeyInputs.matchesKey(o.keyJump, key)) f.onRelease(SimKey.JUMP);
+        if (KeyInputs.matchesKey(o.keyShift, key)) f.onRelease(SimKey.SNEAK);
+        if (KeyInputs.matchesKey(o.keySprint, key)) f.onRelease(SimKey.SPRINT);
+        if (KeyInputs.matchesKey(o.keyAttack, key)) f.onRelease(SimKey.ATTACK);
+        if (KeyInputs.matchesKey(o.keyUse, key)) f.onRelease(SimKey.USE);
     }
 
     private static void pressButtons(ManualFactsTracker f, Options o, int b) {
-        if (o.keyUp.matchesMouse(b)) f.onPress(SimKey.FORWARD);
-        if (o.keyDown.matchesMouse(b)) f.onPress(SimKey.BACK);
-        if (o.keyLeft.matchesMouse(b)) f.onPress(SimKey.LEFT);
-        if (o.keyRight.matchesMouse(b)) f.onPress(SimKey.RIGHT);
-        if (o.keyJump.matchesMouse(b)) f.onPress(SimKey.JUMP);
-        if (o.keyShift.matchesMouse(b)) f.onPress(SimKey.SNEAK);
-        if (o.keySprint.matchesMouse(b)) f.onPress(SimKey.SPRINT);
-        if (o.keyAttack.matchesMouse(b)) f.onPress(SimKey.ATTACK);
-        if (o.keyUse.matchesMouse(b)) f.onPress(SimKey.USE);
+        if (KeyInputs.matchesButton(o.keyUp, b)) f.onPress(SimKey.FORWARD);
+        if (KeyInputs.matchesButton(o.keyDown, b)) f.onPress(SimKey.BACK);
+        if (KeyInputs.matchesButton(o.keyLeft, b)) f.onPress(SimKey.LEFT);
+        if (KeyInputs.matchesButton(o.keyRight, b)) f.onPress(SimKey.RIGHT);
+        if (KeyInputs.matchesButton(o.keyJump, b)) f.onPress(SimKey.JUMP);
+        if (KeyInputs.matchesButton(o.keyShift, b)) f.onPress(SimKey.SNEAK);
+        if (KeyInputs.matchesButton(o.keySprint, b)) f.onPress(SimKey.SPRINT);
+        if (KeyInputs.matchesButton(o.keyAttack, b)) f.onPress(SimKey.ATTACK);
+        if (KeyInputs.matchesButton(o.keyUse, b)) f.onPress(SimKey.USE);
     }
 
     private static void releaseButtons(ManualFactsTracker f, Options o, int b) {
-        if (o.keyUp.matchesMouse(b)) f.onRelease(SimKey.FORWARD);
-        if (o.keyDown.matchesMouse(b)) f.onRelease(SimKey.BACK);
-        if (o.keyLeft.matchesMouse(b)) f.onRelease(SimKey.LEFT);
-        if (o.keyRight.matchesMouse(b)) f.onRelease(SimKey.RIGHT);
-        if (o.keyJump.matchesMouse(b)) f.onRelease(SimKey.JUMP);
-        if (o.keyShift.matchesMouse(b)) f.onRelease(SimKey.SNEAK);
-        if (o.keySprint.matchesMouse(b)) f.onRelease(SimKey.SPRINT);
-        if (o.keyAttack.matchesMouse(b)) f.onRelease(SimKey.ATTACK);
-        if (o.keyUse.matchesMouse(b)) f.onRelease(SimKey.USE);
+        if (KeyInputs.matchesButton(o.keyUp, b)) f.onRelease(SimKey.FORWARD);
+        if (KeyInputs.matchesButton(o.keyDown, b)) f.onRelease(SimKey.BACK);
+        if (KeyInputs.matchesButton(o.keyLeft, b)) f.onRelease(SimKey.LEFT);
+        if (KeyInputs.matchesButton(o.keyRight, b)) f.onRelease(SimKey.RIGHT);
+        if (KeyInputs.matchesButton(o.keyJump, b)) f.onRelease(SimKey.JUMP);
+        if (KeyInputs.matchesButton(o.keyShift, b)) f.onRelease(SimKey.SNEAK);
+        if (KeyInputs.matchesButton(o.keySprint, b)) f.onRelease(SimKey.SPRINT);
+        if (KeyInputs.matchesButton(o.keyAttack, b)) f.onRelease(SimKey.ATTACK);
+        if (KeyInputs.matchesButton(o.keyUse, b)) f.onRelease(SimKey.USE);
     }
 
-    private static boolean matchesAny(KeyMapping[] mappings, int key, int scan) {
+    private static boolean matchesAny(KeyMapping[] mappings, int key) {
         for (KeyMapping m : mappings) {
-            if (m.matches(key, scan)) {
+            if (KeyInputs.matchesKey(m, key)) {
                 return true;
             }
         }

@@ -13,7 +13,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.util.Mth;
 import net.minecraft.world.phys.Vec3;
-import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
+import net.neoforged.neoforge.client.event.SubmitCustomGeometryEvent;
 
 import java.util.List;
 
@@ -88,8 +88,8 @@ public final class RunnersVisionModule implements IModule, IConfigurable {
         drawFrom = 0;
     }
 
-    public void onRenderLevel(RenderLevelStageEvent event) {
-        if (!enabled || vision.count() - drawFrom < 2 || event.getStage() != RenderLevelStageEvent.Stage.AFTER_PARTICLES) {
+    public void onRenderLevel(SubmitCustomGeometryEvent event) {
+        if (!enabled || vision.count() - drawFrom < 2) {
             return;
         }
         IVisuals visuals = Services.visualsOrNull();
@@ -98,8 +98,8 @@ public final class RunnersVisionModule implements IModule, IConfigurable {
         if (world == null || mc.player == null) {
             return; // Clean-Screen or no Shell: nothing to draw
         }
-        float pt = event.getPartialTick().getGameTimeDeltaPartialTick(false);
-        Vec3 cam = event.getCamera().getPosition();
+        float pt = event.getLevelRenderState().worldPartialTicks;
+        Vec3 cam = event.getLevelRenderState().cameraRenderState.pos;
         // the first point follows the rendered player so the line does not step at tick rate
         path[0] = (float) (Mth.lerp(pt, mc.player.xo, mc.player.getX()) - cam.x);
         path[1] = (float) (Mth.lerp(pt, mc.player.yo, mc.player.getY()) - cam.y) + LIFT;

@@ -171,7 +171,7 @@ public final class CrystalExposureModule extends WorldModule {
             return;
         }
         ticks++;
-        if (anchorsOn && !level.dimensionType().respawnAnchorWorks()) {
+        if (anchorsOn && !level.environmentAttributes().getDimensionValue(net.minecraft.world.attribute.EnvironmentAttributes.RESPAWN_ANCHOR_WORKS)) {
             sweepAnchors(level, self);
         } else {
             anchorCount = 0;
@@ -261,9 +261,9 @@ public final class CrystalExposureModule extends WorldModule {
     private void readProtection(ClientLevel level, LocalPlayer self) {
         if (holdersLevel != level) {
             holdersLevel = level;
-            var reg = level.registryAccess().registryOrThrow(Registries.ENCHANTMENT);
-            protection = reg.getHolder(Enchantments.PROTECTION).orElse(null);
-            blastProtection = reg.getHolder(Enchantments.BLAST_PROTECTION).orElse(null);
+            var reg = level.registryAccess().lookupOrThrow(Registries.ENCHANTMENT);
+            protection = reg.get(Enchantments.PROTECTION).orElse(null);
+            blastProtection = reg.get(Enchantments.BLAST_PROTECTION).orElse(null);
         }
         armour = self.getArmorValue();
         toughness = self.getAttributeValue(Attributes.ARMOR_TOUGHNESS);
@@ -282,7 +282,7 @@ public final class CrystalExposureModule extends WorldModule {
             }
         }
         epf = ExplosionDamage.epf(prot, blast);
-        MobEffectInstance res = self.getEffect(MobEffects.DAMAGE_RESISTANCE);
+        MobEffectInstance res = self.getEffect(MobEffects.RESISTANCE);
         resistanceAmp = res == null ? -1 : res.getAmplifier();
         difficulty = level.getDifficulty().getId();
     }

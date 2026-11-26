@@ -7,10 +7,9 @@ import com.utilitysuite.core.api.ManualFacts;
 import com.utilitysuite.core.api.SharedGrant;
 import com.utilitysuite.core.arbiter.ActionArbiter;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.player.Input;
+import net.minecraft.client.player.ClientInput;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.world.effect.MobEffects;
-import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.neoforged.neoforge.client.event.MovementInputUpdateEvent;
 
 import java.util.function.BooleanSupplier;
@@ -25,12 +24,14 @@ import java.util.function.BooleanSupplier;
  *
  * <h2>Writes</h2>
  * <ul>
- *   <li>{@code axes}: forward/strafe set together with {@code up/down/left/right} and the impulses; vanilla's sneak
- *       multiplier (already applied to the user's impulse) is applied to the written one too.</li>
+ *   <li>{@code axes}: forward/strafe set together with {@code up/down/left/right} and the impulses. In 26.3 the
+ *       move vector is raw (normalized, length at most 1) at the event and vanilla applies the sneak / item-use
+ *       multipliers afterwards ({@code LocalPlayer.modifyInput}), so the written vector gets them too: the game side
+ *       passes {@code slow = 1} and normalizes a diagonal write like vanilla's own keys.</li>
  *   <li>{@code jump}: ON sets, OFF withholds the user's jump for that tick.</li>
  *   <li>{@code sneak(true)} sets the sneak key; {@code sneak(false)} and KEEP never lift a sneak the user holds.</li>
  *   <li>{@code startSprint}: fill only, under vanilla's own start conditions ({@link #sprintAllowed}, mirrored from
- *       {@code LocalPlayer.aiStep} / {@code canStartSprinting} of 1.21.1); vanilla's stop rules run right after the
+ *       {@code LocalPlayer.aiStep} / {@code canStartSprinting} of 26.3, {@link #sprintStartAllowed}); vanilla's stop rules run right after the
  *       event in the same {@code aiStep}. The only {@code setSprinting} call of shared control.</li>
  *   <li>{@code withholdSprint}: for that tick a running sprint ends ({@code setSprinting(false)} in the event) and
  *       no sprint starts later in the same {@code aiStep}: {@link #isSprintStartBlocked()} is read by
@@ -221,39 +222,35 @@ public final class SharedInputOverlay implements ISharedControl {
             if (event.getEntity() != p || p == null) {
                 return;
             }
-            if (mc.screen != null) {
+            if (mc.gui.screen() != null) {
                 o.onScreenOpening();
                 return;
             }
-            Input in = event.getInput();
+            ClientInput in = event.getInput();
+            net.minecraft.world.entity.player.Input keys = in.keyPresses;
             MoveFields f = o.fields;
-            f.forwardImpulse = in.forwardImpulse;
-            f.leftImpulse = in.leftImpulse;
-            f.up = in.up;
-            f.down = in.down;
-            f.left = in.left;
-            f.right = in.right;
-            f.jumping = in.jumping;
-            f.shiftKeyDown = in.shiftKeyDown;
-            float slow = p.isMovingSlowly() ? (float) p.getAttributeValue(Attributes.SNEAKING_SPEED) : 1.0f;
-            boolean sprint = o.apply(f, slow);
+            f.forwardImpulse = MoveInputs.forward(in);
+            f.leftImpulse = MoveInputs.left(in);
+            f.up = keys.forward();
+            f.down = keys.backward();
+            f.left = keys.left();
+            f.right = keys.right();
+            f.jumping = keys.jump();
+            f.shiftKeyDown = keys.shift();
+            // 26.3: vanilla scales the move vector for sneaking after this event (modifyInput), so no multiplier here
+            boolean sprint = o.apply(f, 1.0f);
             if (o.sprintBlocked && p.isSprinting()) {
                 // withhold: a running sprint ends as if the sprint key were up and forward released for a tick; the
                 // mixin keeps aiStep from starting one again later in this tick
                 p.setSprinting(false);
             }
-            in.forwardImpulse = f.forwardImpulse;
-            in.leftImpulse = f.leftImpulse;
-            in.up = f.up;
-            in.down = f.down;
-            in.left = f.left;
-            in.right = f.right;
-            in.jumping = f.jumping;
-            in.shiftKeyDown = f.shiftKeyDown;
-            if (sprint && sprintAllowed(p.isSprinting(), in.forwardImpulse, p.isUnderWater(), p.isInWater(),
-                    p.canStartSwimming(), p.getFoodData().getFoodLevel(), p.isPassenger(), p.mayFly(),
-                    p.isUsingItem(), p.hasEffect(MobEffects.BLINDNESS), !p.isPassenger() || vehicleCanSprint(p),
-                    p.isFallFlying(), p.horizontalCollision && !p.minorHorizontalCollision)) {
+            MoveInputs.setMove(in, f.forwardImpulse, f.leftImpulse);
+            MoveInputs.setKeys(in, f.up, f.down, f.left, f.right, f.jumping, f.shiftKeyDown);
+            if (sprint && sprintStartAllowed(p.isSprinting(), MoveInputs.forward(in), p.isUnderWater(),
+                    p.isInShallowWater(), p.getAbilities().flying,
+                    p.getFoodData().hasEnoughFood() || p.mayFly(), p.isPassenger(), vehicleCanSprint(p),
+                    slowDueToUsingItem(p), p.hasEffect(MobEffects.BLINDNESS), p.isFallFlying(), p.isMovingSlowly(),
+                    p.horizontalCollision && !p.minorHorizontalCollision)) {
                 // fill only: vanilla's stop rules (forward released, hunger, a wall) run right after this event
                 p.setSprinting(true);
             }
@@ -261,7 +258,13 @@ public final class SharedInputOverlay implements ISharedControl {
 
         private static boolean vehicleCanSprint(LocalPlayer p) {
             net.minecraft.world.entity.Entity v = p.getVehicle();
-            return v != null && v.canSprint() && v.isControlledByLocalInstance();
+            return v != null && v.canSprint() && v.isLocalInstanceAuthoritative();
+        }
+
+        /** 26.3 {@code LocalPlayer.isSlowDueToUsingItem} (private there). */
+        private static boolean slowDueToUsingItem(LocalPlayer p) {
+            return p.isUsingItem() && !p.getUseItem().getOrDefault(net.minecraft.core.component.DataComponents.USE_EFFECTS,
+                    net.minecraft.world.item.component.UseEffects.DEFAULT).canSprint();
         }
     }
 
@@ -314,7 +317,26 @@ public final class SharedInputOverlay implements ISharedControl {
     }
 
     /**
-     * Vanilla's own conditions for starting a sprint (1.21.1 {@code LocalPlayer.aiStep} sprint-key branch and
+     * 26.3 vanilla's conditions for starting a sprint ({@code LocalPlayer.canStartSprinting} /
+     * {@code isSprintingPossible}), plus its stop rule for a wall so a started sprint is not undone in the same tick:
+     * not already sprinting; any forward impulse; not blind; riding only a vehicle that can sprint and is controlled
+     * locally, else food above 6 or able to fly; not in shallow water unless flying; not slowed by the item in use;
+     * not gliding and not sneaking/crawling unless under water; not against a wall (non-minor horizontal collision).
+     */
+    public static boolean sprintStartAllowed(boolean sprinting, float forwardImpulse, boolean underWater,
+                                             boolean shallowWater, boolean flying, boolean foodOk, boolean passenger,
+                                             boolean vehicleOk, boolean slowUsingItem, boolean blind,
+                                             boolean fallFlying, boolean movingSlowly, boolean againstWall) {
+        if (sprinting || forwardImpulse <= 1.0e-5f || blind || slowUsingItem || againstWall) {
+            return false;
+        }
+        boolean possible = (passenger ? vehicleOk : foodOk) && (flying || !shallowWater);
+        return possible && (!fallFlying || underWater) && (!movingSlowly || underWater);
+    }
+
+    /**
+     * Retained for the engine-free tests: vanilla's start conditions as they were in 1.21.1 (the game side uses
+     * {@link #sprintStartAllowed}). Vanilla's own conditions for starting a sprint (1.21.1 {@code LocalPlayer.aiStep} sprint-key branch and
      * {@code canStartSprinting}), plus its stop rule for a wall, so a started sprint is not undone in the same tick:
      * not already sprinting; forward impulse at least 0.8 on land (any forward impulse under water); not in water
      * unless under water or able to start swimming; food above 6 (or riding, or able to fly); not using an item; not

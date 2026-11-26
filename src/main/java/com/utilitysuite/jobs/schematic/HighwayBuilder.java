@@ -21,7 +21,7 @@ import com.utilitysuite.jobs.schematic.generated.TunnelDigQueue;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
-import net.minecraft.world.entity.vehicle.Boat;
+import net.minecraft.world.entity.vehicle.boat.Boat;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.level.block.state.BlockState;
 
@@ -159,7 +159,7 @@ public final class HighwayBuilder implements IModule, IConfigurable {
                 beginRetry--;
                 return;
             }
-            if (!begin(player, mc.level.dimension().location().toString())) {
+            if (!begin(player, mc.level.dimension().identifier().toString())) {
                 beginRetry = BEGIN_RETRY_TICKS;
                 return;
             }

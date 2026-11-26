@@ -10,7 +10,7 @@ import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.registries.BuiltInRegistries;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import net.minecraft.tags.FluidTags;
 import net.minecraft.tags.ItemTags;
 import net.minecraft.world.entity.player.Inventory;
@@ -91,7 +91,7 @@ public final class DebrisBlastModule extends FieldModule {
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer player = mc.player;
         ClientLevel level = mc.level;
-        if (player == null || level == null || mc.screen != null) {
+        if (player == null || level == null || mc.gui.screen() != null) {
             return;
         }
         if (hands.consumePreempted()) {
@@ -175,7 +175,7 @@ public final class DebrisBlastModule extends FieldModule {
         if (p == DebrisBlastCycle.Phase.PLACE_SHIELD || p == DebrisBlastCycle.Phase.TRIGGER) {
             // Vanilla's own ray test (rays from the blast centre over the player's box); only in the two phases that
             // check it, so idle tunnelling allocates nothing here.
-            obs.exposure = net.minecraft.world.level.Explosion.getSeenPercent(new Vec3(ex, ey, ez), player);
+            obs.exposure = net.minecraft.world.level.ServerExplosion.getSeenPercent(new Vec3(ex, ey, ez), player);
         }
         if (p == DebrisBlastCycle.Phase.RETREAT) {
             double want = Math.max(2.5, Math.min(cycle.standDistance(), cycle.requiredDistance(cycle.charge()) + 0.5));
@@ -207,7 +207,7 @@ public final class DebrisBlastModule extends FieldModule {
 
     private static Item plugItem(Inventory inv) {
         for (String id : FieldRules.PLUG_ITEMS) {
-            Item item = BuiltInRegistries.ITEM.get(ResourceLocation.parse(id));
+            Item item = BuiltInRegistries.ITEM.getValue(Identifier.parse(id));
             if (item != Items.AIR && inv.countItem(item) > 0) {
                 return item;
             }

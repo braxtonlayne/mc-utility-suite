@@ -43,7 +43,7 @@ public final class WorldIds {
         ResourceKey<Level> key = level.dimension();
         String s = DIMENSIONS.get(key);
         if (s == null) {
-            s = key.location().toString();
+            s = key.identifier().toString();
             DIMENSIONS.put(key, s);
         }
         return s;

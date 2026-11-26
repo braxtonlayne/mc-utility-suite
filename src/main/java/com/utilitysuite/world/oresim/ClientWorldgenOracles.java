@@ -17,16 +17,17 @@ import net.minecraft.world.level.biome.MultiNoiseBiomeSourceParameterList;
 import net.minecraft.world.level.levelgen.NoiseBasedChunkGenerator;
 import net.minecraft.world.level.levelgen.NoiseGeneratorSettings;
 import net.minecraft.world.level.levelgen.RandomState;
+import net.minecraft.world.level.levelgen.densityfunction.SamplerContext;
 
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Client-side rebuild of the vanilla 1.21.1 overworld / nether generator from a known seed, for remote servers where
+ * Client-side rebuild of the vanilla 26.3 overworld / nether generator from a known seed, for remote servers where
  * the integrated server's generator ({@link ServerWorldgenOracles}) is not available.
  * <p>
- * Feasibility (1.21.1): the client's {@code registryAccess()} only carries the synchronized registries (biomes,
+ * Feasibility (1.21.1, unchanged in 26.3): the client's {@code registryAccess()} only carries the synchronized registries (biomes,
  * dimension types, ...); noise settings, density functions, noise parameters and the multi-noise parameter lists are
- * not sent. The vanilla values are however built in code ({@code VanillaRegistries.createLookup()}, the same bootstrap
+ * not sent. The vanilla values are however built in code ({@code VanillaRegistries.createWorldLookup()}, the same bootstrap
  * the data generator uses), and the biome parameter presets are exposed directly as
  * {@code MultiNoiseBiomeSourceParameterList.knownPresets()} keyed by {@code ResourceKey<Biome>}, so biome ids need no
  * biome registry at all. From those a {@link RandomState} (noise router + climate sampler) and a
@@ -73,7 +74,7 @@ public final class ClientWorldgenOracles {
         /** Biome id at a quart position, straight from the climate noise (what {@code getNoiseBiome} returns). */
         public String noiseBiome(int qx, int qy, int qz) {
             ResourceKey<Biome> key = biomes.findValue(sampler.sample(qx, Math.max(minQy, Math.min(maxQy, qy)), qz));
-            return ids.computeIfAbsent(key, k -> k.location().toString());
+            return ids.computeIfAbsent(key, k -> k.identifier().toString());
         }
 
         public final BiomeOracle biomeOracle = new BiomeOracle() {
@@ -139,8 +140,8 @@ public final class ClientWorldgenOracles {
                     : NoiseGeneratorSettings.OVERWORLD;
             Holder<NoiseGeneratorSettings> settings = lookup.lookupOrThrow(Registries.NOISE_SETTINGS)
                     .getOrThrow(settingsKey);
-            RandomState random = RandomState.create(settings.value(),
-                    lookup.lookupOrThrow(Registries.NOISE), seed);
+            RandomState random = RandomState.create(lookup.lookupOrThrow(Registries.NOISE), seed,
+                    settings.value());
             HolderGetter<Biome> biomeGetter = lookup.lookupOrThrow(Registries.BIOME);
             // The biome source is never asked by the height/vein code; a fixed one keeps the generator light.
             NoiseBasedChunkGenerator generator = new NoiseBasedChunkGenerator(
@@ -151,7 +152,9 @@ public final class ClientWorldgenOracles {
                             : MultiNoiseBiomeSourceParameterList.Preset.OVERWORLD);
             NoiseCellHeights cells = NoiseCellHeights.create(generator, random,
                     LevelHeightAccessor.create(minY, height));
-            c = new Context(random.sampler(), params, net.minecraft.world.level.biome.BiomeManager.obfuscateSeed(seed),
+            // Uncached point sampling, like the server's own uncached biome resolver; the context is used by the
+            // simulation thread only.
+            c = new Context(random.createClimateSampler(SamplerContext.EMPTY_UNCACHED), params, net.minecraft.world.level.biome.BiomeManager.obfuscateSeed(seed),
                     minY, height, cells);
             if (CONTEXTS.size() > 8) {
                 CONTEXTS.clear();
@@ -181,7 +184,7 @@ public final class ClientWorldgenOracles {
             synchronized (ClientWorldgenOracles.class) {
                 p = vanilla;
                 if (p == null) {
-                    p = VanillaRegistries.createLookup();
+                    p = VanillaRegistries.createWorldLookup();
                     vanilla = p;
                 }
             }

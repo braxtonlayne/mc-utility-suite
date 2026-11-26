@@ -23,11 +23,14 @@ import com.utilitysuite.ui.kit.UiTheme;
 import com.utilitysuite.ui.tabs.WorldTab;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
-import org.lwjgl.glfw.GLFW;
+import com.mojang.blaze3d.platform.InputConstants;
+import net.minecraft.client.input.CharacterEvent;
+import net.minecraft.client.input.KeyEvent;
+import net.minecraft.client.input.MouseButtonEvent;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -261,7 +264,7 @@ public final class CommandPaletteScreen extends Screen {
         if (storage == null || mc.player == null || mc.level == null) {
             return new PaletteEntry("Intent", label, "Storage Memory is not available.", "", () -> null);
         }
-        String dim = mc.level.dimension().location().toString();
+        String dim = mc.level.dimension().identifier().toString();
         List<StorageEntry> found = storage.containersWith(in.target(), dim, mc.player.blockPosition().asLong());
         int total = storage.count(in.target(), false);
         if (found.isEmpty()) {
@@ -342,36 +345,39 @@ public final class CommandPaletteScreen extends Screen {
     // ---- input ------------------------------------------------------------------------------------------------------
 
     @Override
-    public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+    public boolean keyPressed(KeyEvent event) {
+        int keyCode = event.key();
         switch (keyCode) {
-            case GLFW.GLFW_KEY_ENTER, GLFW.GLFW_KEY_KP_ENTER -> {
+            case InputConstants.KEY_RETURN, InputConstants.KEY_NUMPADENTER -> {
                 runSelected();
                 return true;
             }
-            case GLFW.GLFW_KEY_DOWN, GLFW.GLFW_KEY_TAB -> {
+            case InputConstants.KEY_DOWN, InputConstants.KEY_TAB -> {
                 move(1);
                 return true;
             }
-            case GLFW.GLFW_KEY_UP -> {
+            case InputConstants.KEY_UP -> {
                 move(-1);
                 return true;
             }
             default -> {
-                if (keyCode != GLFW.GLFW_KEY_ESCAPE && field.box().keyPressed(keyCode, scanCode, modifiers)) {
+                if (keyCode != InputConstants.KEY_ESCAPE && field.box().keyPressed(event)) {
                     return true;
                 }
-                return super.keyPressed(keyCode, scanCode, modifiers);
+                return super.keyPressed(event);
             }
         }
     }
 
     @Override
-    public boolean charTyped(char c, int modifiers) {
-        return field.box().charTyped(c, modifiers) || super.charTyped(c, modifiers);
+    public boolean charTyped(CharacterEvent event) {
+        return field.box().charTyped(event) || super.charTyped(event);
     }
 
     @Override
-    public boolean mouseClicked(double mx, double my, int button) {
+    public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
+        double mx = event.x();
+        double my = event.y();
         int x = left();
         int rowsY = top() + PAD + StyledTextField.H + 6;
         if (mx >= x && mx < x + W && my >= rowsY && my < rowsY + results.size() * ROW_H) {
@@ -379,7 +385,7 @@ public final class CommandPaletteScreen extends Screen {
             runSelected();
             return true;
         }
-        return super.mouseClicked(mx, my, button);
+        return super.mouseClicked(event, doubleClick);
     }
 
     private void move(int d) {
@@ -396,10 +402,10 @@ public final class CommandPaletteScreen extends Screen {
         }
         Supplier<String> run = results.get(sel).run();
         Minecraft mc = Minecraft.getInstance();
-        mc.setScreen(null); // close first: actions such as Open Menu need no screen open
+        mc.gui.setScreen(null); // close first: actions such as Open Menu need no screen open
         String status = run.get();
         if (status != null && mc.player != null && !Services.modState().isCleanScreen()) {
-            mc.player.displayClientMessage(Component.literal(status), true);
+            mc.player.sendOverlayMessage(Component.literal(status));
         }
     }
 
@@ -414,8 +420,8 @@ public final class CommandPaletteScreen extends Screen {
     }
 
     @Override
-    public void render(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
-        super.render(g, mouseX, mouseY, partialTick);
+    public void extractRenderState(GuiGraphicsExtractor g, int mouseX, int mouseY, float partialTick) {
+        super.extractRenderState(g, mouseX, mouseY, partialTick);
         Font f = font;
         int x = left();
         int y = top();

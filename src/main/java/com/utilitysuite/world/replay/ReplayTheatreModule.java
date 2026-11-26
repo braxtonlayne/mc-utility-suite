@@ -15,8 +15,7 @@ import com.utilitysuite.world.render.WorldRenderKit;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.client.gui.LayeredDraw;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.world.entity.Entity;
@@ -24,6 +23,7 @@ import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.monster.Enemy;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.phys.Vec3;
+import net.neoforged.neoforge.client.gui.GuiLayer;
 
 import java.util.List;
 
@@ -43,7 +43,7 @@ import java.util.List;
  * ({@link ReplayClipCodec}, {@link ClipShelf}, at most {@link ClipShelf#MAX_CLIPS} per world) and reopened in the
  * replay screen; the module card lists and deletes both.
  */
-public final class ReplayTheatreModule extends WorldModule implements LayeredDraw.Layer {
+public final class ReplayTheatreModule extends WorldModule implements GuiLayer {
 
     public static final String ID = "replay_theatre";
 
@@ -325,7 +325,7 @@ public final class ReplayTheatreModule extends WorldModule implements LayeredDra
             if (clip == null) {
                 notice(NoticeKind.WARN, "That clip could not be read");
             } else if (mc.player != null) {
-                mc.setScreen(new ReplayScreen(this, clip.ring(), clip.info().selfId(), true));
+                mc.gui.setScreen(new ReplayScreen(this, clip.ring(), clip.info().selfId(), true));
             }
         }));
         return "Opening clip...";
@@ -361,9 +361,9 @@ public final class ReplayTheatreModule extends WorldModule implements LayeredDra
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer p = mc.player;
         while (freezeKey != null && freezeKey.consumeClick()) {
-            if (p != null && isEnabled() && ring.frames() > 1 && mc.screen == null) {
+            if (p != null && isEnabled() && ring.frames() > 1 && mc.gui.screen() == null) {
                 ring.setFrozen(true);
-                mc.setScreen(new ReplayScreen(this, ring, p.getId(), false));
+                mc.gui.setScreen(new ReplayScreen(this, ring, p.getId(), false));
             }
         }
         while (startKey != null && startKey.consumeClick()) {
@@ -436,7 +436,8 @@ public final class ReplayTheatreModule extends WorldModule implements LayeredDra
         long t = tickCounter;
         ring.beginFrame(t);
         int selfId = p.getId();
-        if (p.swinging && p.swingTime == 0) {
+        // 26.3: swing state is LivingEntity.SwingState; "just started" = swinging with the animation still at 0
+        if (p.isSwinging() && p.getSwingAnimation(1f) == 0f) {
             lastSwingTick = (int) t;
         }
         // hit taken
@@ -487,7 +488,7 @@ public final class ReplayTheatreModule extends WorldModule implements LayeredDra
             if (le.hurtTime > 0) {
                 f |= ReplayRing.F_HURT;
             }
-            if (le.swinging) {
+            if (le.isSwinging()) {
                 f |= ReplayRing.F_SWING;
             }
         }
@@ -532,13 +533,13 @@ public final class ReplayTheatreModule extends WorldModule implements LayeredDra
     // ---- HUD: split delta line ----------------------------------------------------------------------------------
 
     @Override
-    public void render(GuiGraphics g, DeltaTracker delta) {
+    public void render(GuiGraphicsExtractor g, DeltaTracker delta) {
         if (!isEnabled() || cleanScreen() || !splits.ready()) {
             return;
         }
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer p = mc.player;
-        if (p == null || mc.options.hideGui || mc.screen != null) {
+        if (p == null || mc.gui.hud.isHidden() || mc.gui.screen() != null) {
             return;
         }
         ParkourSplits.State st = splits.state();
@@ -552,7 +553,7 @@ public final class ReplayTheatreModule extends WorldModule implements LayeredDra
         int w = mc.font.width(cached);
         int x = (g.guiWidth() - w) / 2;
         int y = g.guiHeight() / 2 + 24;
-        g.drawString(mc.font, cached, x, y, 0xFFE0E0E0, true);
+        g.text(mc.font, cached, x, y, 0xFFE0E0E0, true);
     }
 
     /** Rebuilt at most once per tick. */

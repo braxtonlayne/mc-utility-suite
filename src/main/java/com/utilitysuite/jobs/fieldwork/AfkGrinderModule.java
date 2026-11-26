@@ -11,11 +11,8 @@ import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.Holder;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.world.entity.monster.Monster;
-import net.minecraft.world.item.AxeItem;
-import net.minecraft.world.item.Item;
+import com.utilitysuite.jobs.goal.McTools;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.SwordItem;
-import net.minecraft.world.item.TieredItem;
 import net.minecraft.world.item.enchantment.Enchantment;
 import net.minecraft.world.item.enchantment.EnchantmentHelper;
 import net.minecraft.world.item.enchantment.Enchantments;
@@ -74,7 +71,7 @@ public final class AfkGrinderModule extends FieldModule {
         tick++;
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer player = mc.player;
-        if (player == null || mc.level == null || mc.screen != null) {
+        if (player == null || mc.level == null || mc.gui.screen() != null) {
             return;
         }
         if (hands.consumePreempted()) {
@@ -86,15 +83,15 @@ public final class AfkGrinderModule extends FieldModule {
         }
         // Also checked at once while no weapon is in hand: the first hits used to land with whatever was held (fist
         // swings every 5 ticks) until the 20-tick check swapped to the sword (playtest find).
-        Item inHand = player.getMainHandItem().getItem();
-        if (swapWeapons && (tick % 20 == 0 || !(inHand instanceof SwordItem || inHand instanceof AxeItem))) {
+        ItemStack inHand = player.getMainHandItem();
+        if (swapWeapons && (tick % 20 == 0 || !(McTools.isSword(inHand) || McTools.isAxe(inHand)))) {
             int slot = pickWeapon(mc.level, player);
             if (slot < 0) {
                 status = "No weapon safe to use";
                 target = null;
                 return;
             }
-            if (slot != player.getInventory().selected) {
+            if (slot != player.getInventory().getSelectedSlot()) {
                 hands.selectSlot(slot);
                 return; // the swap restarts the attack charge: no swing this tick
             }
@@ -140,21 +137,21 @@ public final class AfkGrinderModule extends FieldModule {
     private int pickWeapon(ClientLevel level, LocalPlayer player) {
         if (mendingLevel != level) {
             mendingLevel = level;
-            mendingHolder = level.registryAccess().registryOrThrow(Registries.ENCHANTMENT)
-                    .getHolderOrThrow(Enchantments.MENDING);
+            mendingHolder = level.registryAccess().lookupOrThrow(Registries.ENCHANTMENT)
+                    .getOrThrow(Enchantments.MENDING);
         }
         for (int i = 0; i < 9; i++) {
-            ItemStack s = player.getInventory().items.get(i);
-            boolean w = s.getItem() instanceof SwordItem || s.getItem() instanceof AxeItem;
+            ItemStack s = player.getInventory().getNonEquipmentItems().get(i);
+            boolean sword = McTools.isSword(s);
+            boolean w = sword || McTools.isAxe(s);
             weapon[i] = w;
             damage[i] = s.getDamageValue();
             maxDamage[i] = s.getMaxDamage();
             mending[i] = w && EnchantmentHelper.getItemEnchantmentLevel(mendingHolder, s) > 0;
-            attack[i] = !w ? 0f : (s.getItem() instanceof SwordItem ? 1f : 0.5f)
-                    + (s.getItem() instanceof TieredItem t ? t.getTier().getAttackDamageBonus() : 0f);
+            attack[i] = !w ? 0f : (sword ? 1f : 0.5f) + McTools.materialAttackBonus(s);
         }
         return AfkGrinderRules.weaponSlot(weapon, damage, maxDamage, mending, attack, 9,
-                player.getInventory().selected, lowDurability);
+                player.getInventory().getSelectedSlot(), lowDurability);
     }
 
     @Override

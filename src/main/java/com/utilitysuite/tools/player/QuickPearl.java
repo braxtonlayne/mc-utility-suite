@@ -62,6 +62,16 @@ public final class QuickPearl implements IModule, IConfigurable, LeaseListener {
     static final String OWNER = ID;
     static final int STEP_TIMEOUT = 20;
 
+    /** Cooldowns are keyed by a stack's cooldown group now; one reused pearl stack asks for the pearl group. */
+    private ItemStack pearlProbe;
+
+    private ItemStack pearlProbe() {
+        if (pearlProbe == null) {
+            pearlProbe = new ItemStack(Items.ENDER_PEARL);
+        }
+        return pearlProbe;
+    }
+
     private boolean enabled = true;
     private boolean blockedCheck = true;
     private KeyMapping key;
@@ -170,7 +180,7 @@ public final class QuickPearl implements IModule, IConfigurable, LeaseListener {
             }
             if (seq.owesSwapBack()) {
                 settle(mc, player); // the swapped stack goes back before anything new starts
-            } else if (pressed && enabled && player != null && mc.screen == null) {
+            } else if (pressed && enabled && player != null && mc.gui.screen() == null) {
                 begin(player);
             }
             return;
@@ -189,12 +199,12 @@ public final class QuickPearl implements IModule, IConfigurable, LeaseListener {
     }
 
     private void begin(LocalPlayer player) {
-        if (player.getCooldowns().isOnCooldown(Items.ENDER_PEARL)) {
+        if (player.getCooldowns().isOnCooldown(pearlProbe())) {
             say("Pearl on cooldown");
             return;
         }
         Inventory inv = player.getInventory();
-        if (!plan.plan(inv.selected, i -> inv.items.get(i).is(Items.ENDER_PEARL))) {
+        if (!plan.plan(inv.getSelectedSlot(), i -> inv.getNonEquipmentItems().get(i).is(Items.ENDER_PEARL))) {
             say("No ender pearl");
             return;
         }
@@ -242,10 +252,10 @@ public final class QuickPearl implements IModule, IConfigurable, LeaseListener {
 
     private void advance(LocalPlayer player) {
         Inventory inv = player.getInventory();
-        PearlThrow.Action action = seq.tick(inv.selected, inv.items.get(plan.useSlot).is(Items.ENDER_PEARL),
+        PearlThrow.Action action = seq.tick(inv.getSelectedSlot(), inv.getNonEquipmentItems().get(plan.useSlot).is(Items.ENDER_PEARL),
                 Services.clicker().pending());
         if (action == PearlThrow.Action.USE) {
-            action = seq.useTapped(Services.input().scheduleKeyTap(lease, SimKey.USE, 1, 2), inv.selected);
+            action = seq.useTapped(Services.input().scheduleKeyTap(lease, SimKey.USE, 1, 2), inv.getSelectedSlot());
         }
         if (action == PearlThrow.Action.RESTORE) {
             if (seq.owesSwapBack()) {
@@ -274,8 +284,8 @@ public final class QuickPearl implements IModule, IConfigurable, LeaseListener {
             return;
         }
         Inventory inv = player.getInventory();
-        ItemStack inUse = inv.items.get(plan.useSlot);
-        ItemStack inFrom = inv.items.get(plan.swapFromInv);
+        ItemStack inUse = inv.getNonEquipmentItems().get(plan.useSlot);
+        ItemStack inFrom = inv.getNonEquipmentItems().get(plan.swapFromInv);
         if (!seq.debtStillValid(inUse.is(Items.ENDER_PEARL), inFrom.is(Items.ENDER_PEARL), inUse.isEmpty(),
                 inFrom.isEmpty())) {
             seq.reset(); // already back, or the user has moved things since: nothing to undo
@@ -286,7 +296,7 @@ public final class QuickPearl implements IModule, IConfigurable, LeaseListener {
             return;
         }
         IActionArbiter arbiter = Services.arbiter();
-        if (mc.screen != null || arbiter.isAutomationStopped()
+        if (mc.gui.screen() != null || arbiter.isAutomationStopped()
                 || arbiter.isManualOverrideActive(ControlChannel.HOTBAR)) {
             return;
         }

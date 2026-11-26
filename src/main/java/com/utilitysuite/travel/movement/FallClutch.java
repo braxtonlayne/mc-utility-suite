@@ -8,6 +8,7 @@ import com.utilitysuite.core.api.IAutopilot;
 import com.utilitysuite.core.api.IDangerModel;
 import com.utilitysuite.core.api.IInputSmoother;
 import com.utilitysuite.core.api.SimKey;
+import net.minecraft.world.attribute.EnvironmentAttributes;
 import net.minecraft.world.entity.EquipmentSlot;
 import com.utilitysuite.core.api.LeaseRequest;
 import com.utilitysuite.core.api.RotationMode;
@@ -170,7 +171,7 @@ final class FallClutch {
                 // the option ladder: the placed clutch against deploying a worn elytra and steering into water (the
                 // pearl is ranked by ClutchLadder too but has no in-game ledge search yet)
                 boolean elytraWorn = elytraDeploy && p.getItemBySlot(EquipmentSlot.CHEST).getItem() == Items.ELYTRA
-                        && net.minecraft.world.item.ElytraItem.isFlyEnabled(p.getItemBySlot(EquipmentSlot.CHEST));
+                        && !p.getItemBySlot(EquipmentSlot.CHEST).nextDamageWillBreak();
                 if (!planned && (!planner.predictLanding(now, yaw, p.isSprinting(), userF, userS, w)
                         || planner.landDamage() < Math.min(minDamage, health))) {
                     return; // no harmful landing predicted
@@ -236,7 +237,7 @@ final class FallClutch {
                 returnPitch = p.getXRot();
                 ticks = 0;
                 aim.reset();
-                if (p.getInventory().selected != slot) {
+                if (p.getInventory().getSelectedSlot() != slot) {
                     Services.input().selectHotbarSlot(lease, slot);
                 }
                 hasPlan = false;
@@ -264,7 +265,7 @@ final class FallClutch {
             Item it = inv.getItem(i).getItem();
             ClutchChain.Fallback f = it instanceof net.minecraft.world.item.BoatItem ? ClutchChain.Fallback.BOAT
                     : it == Items.TWISTING_VINES ? ClutchChain.Fallback.TWISTING_VINES
-                    : it == Items.WIND_CHARGE && !p.getCooldowns().isOnCooldown(Items.WIND_CHARGE)
+                    : it == Items.WIND_CHARGE && !p.getCooldowns().isOnCooldown(inv.getItem(i))
                     ? ClutchChain.Fallback.WIND_CHARGE : null;
             if (f != null && chainSlot[f.ordinal()] < 0) {
                 chainSlot[f.ordinal()] = i;
@@ -286,7 +287,7 @@ final class FallClutch {
         int cy = Mth.floor(planner.landY() + 1.0e-6);
         boolean placeable = w.fullBlock(lx, sy, lz) && !w.solid(lx, cy, lz);
         sup.set(lx, sy, lz);
-        return chain.choose(items, mc.level.dimensionType().ultraWarm(), chainHeights, planner.ticksToLand(),
+        return chain.choose(items, waterEvaporates(mc), chainHeights, planner.ticksToLand(),
                 p.getXRot(), ParkourBlocks.PLAN_DEG_PER_TICK, placeable) != null;
     }
 
@@ -320,7 +321,7 @@ final class FallClutch {
         ticks = 0;
         aim.reset();
         note = "fallback planned";
-        if (p.getInventory().selected != slot) {
+        if (p.getInventory().getSelectedSlot() != slot) {
             Services.input().selectHotbarSlot(lease, slot);
         }
         phase = Phase.FALLBACK;
@@ -346,7 +347,7 @@ final class FallClutch {
             return;
         }
         aim.aim(Services.input(), lease, p.getYRot(), chain.aimPitch(), RotationMode.VISIBLE, 10f);
-        if (p.getInventory().selected != slot || chain.useTick() > 0) {
+        if (p.getInventory().getSelectedSlot() != slot || chain.useTick() > 0) {
             return;
         }
         BlockHitResult bhr = null;
@@ -373,7 +374,7 @@ final class FallClutch {
         lastUse = r;
         note = r.consumesAction() ? "fallback used" : "fallback refused";
         if (r.consumesAction()) {
-            p.swing(InteractionHand.MAIN_HAND);
+            p.swing(InteractionHand.MAIN_HAND, p.getMainHandItem().getInteractAnimation(), false);
             fallbacks++;
         }
         startReturn();
@@ -401,13 +402,18 @@ final class FallClutch {
                 && !Services.arbiter().isAutomationStopped();
     }
 
+    /** 1.21.1 {@code DimensionType.ultraWarm()}: 26.3 moved it to the WATER_EVAPORATES environment attribute. */
+    private static boolean waterEvaporates(Minecraft mc) {
+        return mc.level.environmentAttributes().getDimensionValue(EnvironmentAttributes.WATER_EVAPORATES);
+    }
+
     /** Bit set of the clutch kinds in the hotbar that work here; fills {@link #kindSlot}. */
     private int kindsAtHand(Minecraft mc, LocalPlayer p) {
         int kinds = 0;
         Inventory inv = p.getInventory();
         for (FallClutchPlanner.Kind k : FallClutchPlanner.KINDS) {
             int s = -1;
-            if (k == FallClutchPlanner.Kind.WATER ? !mc.level.dimensionType().ultraWarm()
+            if (k == FallClutchPlanner.Kind.WATER ? !waterEvaporates(mc)
                     : useBlocks && !(k == FallClutchPlanner.Kind.SLIME && p.isShiftKeyDown())
                     && k.mode != FallClutchPlanner.Mode.CLIMB) {
                 // ladders and vines are planned but not used yet: in the playtest the crosshair sat on the planned wall
@@ -463,7 +469,7 @@ final class FallClutch {
         float yaw = horiz < 0.35 ? p.getYRot() : (float) Math.toDegrees(Math.atan2(-dx, dz));
         float pitch = (float) Math.toDegrees(-Math.atan2(dy, horiz));
         aim.aim(Services.input(), lease, yaw, pitch, RotationMode.VISIBLE, 10f);
-        if (p.getInventory().selected != slot) {
+        if (p.getInventory().getSelectedSlot() != slot) {
             return;
         }
         // the look right now (the use packet carries it): is the clicked face under the crosshair, within reach?
@@ -488,7 +494,7 @@ final class FallClutch {
         lastUse = r;
         note = r.consumesAction() ? "used" : "use refused";
         if (r.consumesAction()) {
-            p.swing(InteractionHand.MAIN_HAND);
+            p.swing(InteractionHand.MAIN_HAND, p.getMainHandItem().getInteractAnimation(), false);
             clutches++;
             kindCounts[kind.ordinal()]++;
             poured = planCell;
@@ -539,7 +545,7 @@ final class FallClutch {
             startReturn();
             return;
         }
-        if (p.getInventory().selected != s) {
+        if (p.getInventory().getSelectedSlot() != s) {
             Services.input().selectHotbarSlot(lease, s);
             return;
         }
@@ -561,7 +567,7 @@ final class FallClutch {
         }
         InteractionResult r = mc.gameMode.useItem(p, InteractionHand.MAIN_HAND);
         if (r.consumesAction()) {
-            p.swing(InteractionHand.MAIN_HAND);
+            p.swing(InteractionHand.MAIN_HAND, p.getMainHandItem().getInteractAnimation(), false);
             pickups++;
         }
         startReturn();
@@ -805,7 +811,7 @@ final class FallClutch {
         int x = p.getBlockX();
         int z = p.getBlockZ();
         int y = p.getBlockY();
-        int min = mc.level.getMinBuildHeight();
+        int min = mc.level.getMinY();
         for (int d = 0; d <= max && y - d >= min; d++) {
             column.set(x, y - d, z);
             if (!mc.level.getBlockState(column).getCollisionShape(mc.level, column).isEmpty()
@@ -830,7 +836,7 @@ final class FallClutch {
             return;
         }
         float health = p.getHealth() + p.getAbsorptionAmount();
-        int min = mc.level.getMinBuildHeight();
+        int min = mc.level.getMinY();
         if (p.getY() < min) {
             // below the world: void damage until death
             int ticks = (int) Math.max(0.0, (p.getY() - (min - 64)) / Math.max(0.1, -p.getDeltaMovement().y));
@@ -907,8 +913,8 @@ final class FallClutch {
             Items.LADDER, Items.VINE, Items.HAY_BLOCK};
 
     static int hotbarSlot(Inventory inv, Item item) {
-        if (inv.getItem(inv.selected).getItem() == item) {
-            return inv.selected;
+        if (inv.getItem(inv.getSelectedSlot()).getItem() == item) {
+            return inv.getSelectedSlot();
         }
         for (int i = 0; i < 9; i++) {
             if (inv.getItem(i).getItem() == item) {

@@ -137,7 +137,7 @@ public final class SeedLocatorModule extends WorldModule {
         IntegratedServer sp = mc.getSingleplayerServer();
         if (sp != null) {
             known = true;
-            seed = sp.getWorldData().worldGenOptions().seed();
+            seed = sp.getWorldGenSettings().options().seed();
         } else {
             GeneratorProfile prof = seedSource == null ? null : seedSource.get();
             known = prof != null && prof.seedKnown();

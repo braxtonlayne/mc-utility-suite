@@ -5,9 +5,14 @@ import com.utilitysuite.ui.holo.AnimStore;
 import com.utilitysuite.ui.holo.HoloFrames;
 import com.utilitysuite.ui.holo.HoloTheme;
 import net.minecraft.client.gui.Font;
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.EditBox;
+import net.minecraft.client.input.MouseButtonEvent;
+import net.minecraft.client.input.MouseButtonInfo;
 import net.minecraft.network.chat.Component;
+
+import java.util.function.Consumer;
+import java.util.function.Predicate;
 
 /**
  * Custom-drawn frame around a vanilla {@link EditBox} whose own background is disabled ({@code setBordered(false)}).
@@ -43,6 +48,38 @@ public final class StyledTextField extends UiNode {
         return box;
     }
 
+    private boolean reverting;
+    private String lastAccepted = "";
+
+    /**
+     * A responder behind an input filter (26.3 {@code EditBox} has no {@code setFilter}): an edit the filter rejects
+     * is rolled back to the last accepted text before {@code responder} hears of it. Call after the initial
+     * {@code setValue}.
+     */
+    public StyledTextField filteredResponder(Predicate<String> filter, Consumer<String> responder) {
+        lastAccepted = box.getValue();
+        box.setResponder(t -> {
+            if (reverting) {
+                return;
+            }
+            if (!filter.test(t)) {
+                int cursor = Math.max(0, Math.min(lastAccepted.length(), box.getCursorPosition() - 1));
+                reverting = true;
+                try {
+                    box.setValue(lastAccepted);
+                    box.setCursorPosition(cursor);
+                    box.setHighlightPos(cursor);
+                } finally {
+                    reverting = false;
+                }
+                return;
+            }
+            lastAccepted = t;
+            responder.accept(t);
+        });
+        return this;
+    }
+
     public String stateKey() {
         return stateKey;
     }
@@ -74,7 +111,7 @@ public final class StyledTextField extends UiNode {
     }
 
     @Override
-    public void render(GuiGraphics g, Font font, int sx, int sy, int mouseX, int mouseY) {
+    public void render(GuiGraphicsExtractor g, Font font, int sx, int sy, int mouseX, int mouseY) {
         position(sx, sy);
         boolean hover = inside(mouseX, mouseY, sx, sy, w, h);
         boolean f = box.isFocused();
@@ -94,7 +131,7 @@ public final class StyledTextField extends UiNode {
                     : HoloTheme.argb(HoloToken.TEXT_MUTED));
         }
         UiRenderUtils.scissor(g, sx + 1, sy + 1, Math.min(sx + w - 1, box.getX() + box.getWidth() + 1), sy + h - 1); // long hints never spill out of the frame
-        box.render(g, mouseX, mouseY, 0f);
+        box.extractRenderState(g, mouseX, mouseY, 0f);
         g.disableScissor();
     }
 
@@ -103,7 +140,7 @@ public final class StyledTextField extends UiNode {
     public boolean onClick(double mouseX, double mouseY, int button, int sx, int sy) {
         position(sx, sy);
         double cx = Math.max(box.getX(), Math.min(box.getX() + box.getWidth() - 1, mouseX));
-        box.mouseClicked(cx, box.getY() + 1, button);
+        box.mouseClicked(new MouseButtonEvent(cx, box.getY() + 1, new MouseButtonInfo(button, 0)), false);
         return true;
     }
 }

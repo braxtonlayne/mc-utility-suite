@@ -12,12 +12,12 @@ import com.utilitysuite.core.api.SettingSpec;
 import com.utilitysuite.core.api.visual.IHudContext;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
-import net.minecraft.client.renderer.MultiBufferSource;
-import net.minecraft.client.renderer.RenderType;
+import net.minecraft.client.renderer.SubmitNodeCollector;
+import net.minecraft.client.renderer.rendertype.RenderTypes;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.phys.Vec3;
-import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
+import net.neoforged.neoforge.client.event.SubmitCustomGeometryEvent;
 
 import java.util.List;
 
@@ -26,7 +26,7 @@ import java.util.List;
  * published into the primary target mark (an arc under the reticle with a chevron on the strafe side, see
  * {@link TargetHud#offerRead}); with the "Ring" setting it is drawn instead as a ring over the target that fills
  * with the cooldown and tilts toward the strafe. Reads {@link ReadState}; the ring draws in
- * {@link RenderLevelStageEvent} with one batched line buffer;
+ * {@link SubmitCustomGeometryEvent} with one batched line buffer;
  * off by default; nothing is drawn when idle or in Clean-Screen. All geometry is in {@link ReadRingGeometry}.
  * <p>
  * The constructor, {@link #ID} and {@link #onRenderLevel} are fixed for the volley (the combat wiring registers the
@@ -45,6 +45,15 @@ public final class ReadRingModule implements IModule, IConfigurable {
 
     private final ReadState read;
     private final float[] verts = new float[ReadRingGeometry.MAX_FLOATS];
+    /** The deferred draw (26.3 submits run later in the frame): one instance, reads the fields below. */
+    private final SubmitNodeCollector.CustomGeometryRenderer drawRing = this::drawRing;
+    private int drawArc;
+    private float drawOpacity;
+    private float arcR;
+    private float arcG;
+    private float arcB;
+    private float arcA;
+    private float lineWidth = 1f;
     private boolean enabled;
     private float radius = 0.6f;
     private float opacity = 0.8f;
@@ -55,8 +64,8 @@ public final class ReadRingModule implements IModule, IConfigurable {
         this.read = read;
     }
 
-    public void onRenderLevel(RenderLevelStageEvent event) {
-        if (!enabled || !ring || !read.active || event.getStage() != RenderLevelStageEvent.Stage.AFTER_PARTICLES) {
+    public void onRenderLevel(SubmitCustomGeometryEvent event) {
+        if (!enabled || !ring || !read.active) {
             return;
         }
         Minecraft mc = Minecraft.getInstance();
@@ -64,12 +73,11 @@ public final class ReadRingModule implements IModule, IConfigurable {
             return;
         }
         Entity e = mc.level.getEntity(read.targetId);
-        PoseStack pose = event.getPoseStack();
-        if (e == null || pose == null) {
+        if (e == null) {
             return;
         }
-        float pt = event.getPartialTick().getGameTimeDeltaPartialTick(false);
-        Vec3 cam = event.getCamera().getPosition();
+        float pt = event.getLevelRenderState().worldPartialTicks;
+        Vec3 cam = event.getLevelRenderState().cameraRenderState.pos;
         float cx = (float) (Mth.lerp(pt, e.xo, e.getX()) - cam.x);
         float cy = (float) (Mth.lerp(pt, e.yo, e.getY()) + e.getBbHeight() + LIFT - cam.y);
         float cz = (float) (Mth.lerp(pt, e.zo, e.getZ()) - cam.z);
@@ -80,10 +88,8 @@ public final class ReadRingModule implements IModule, IConfigurable {
         int arc = ReadRingGeometry.fill(verts, cx, cy, cz, radius * ctx.tacticalScale(), charge, showTilt ? read.tiltX : 0f,
                 showTilt ? read.tiltZ : 0f);
 
-        MultiBufferSource.BufferSource buffers = mc.renderBuffers().bufferSource();
-        VertexConsumer lines = buffers.getBuffer(RenderType.lines());
-        PoseStack.Pose last = pose.last();
-        draw(lines, last, 0, ReadRingGeometry.OUTLINE_VERTS, 0.8f, 0.8f, 0.8f, opacity * 0.35f);
+        drawArc = arc;
+        drawOpacity = opacity;
         if (arc > 0) {
             float c = Mth.clamp(charge, 0f, 1f);
             float r = Math.min(1f, 2f * (1f - c));
@@ -96,9 +102,22 @@ public final class ReadRingModule implements IModule, IConfigurable {
                 b = 0.7f;
                 a = 1f;
             }
-            draw(lines, last, ReadRingGeometry.OUTLINE_VERTS, arc, r, g, b, a);
+            arcR = r;
+            arcG = g;
+            arcB = b;
+            arcA = a;
         }
-        buffers.endBatch(RenderType.lines());
+        lineWidth = Math.max(1f, mc.gameRenderer.gameRenderState().windowRenderState.appropriateLineWidth);
+        event.getSubmitNodeCollector().submitCustomGeometry(event.getPoseStack(), RenderTypes.linesTranslucent(),
+                drawRing);
+    }
+
+    /** Deferred half: writes the ring computed this frame (camera-relative) into the batch. */
+    private void drawRing(PoseStack.Pose last, VertexConsumer lines) {
+        draw(lines, last, 0, ReadRingGeometry.OUTLINE_VERTS, 0.8f, 0.8f, 0.8f, drawOpacity * 0.35f);
+        if (drawArc > 0) {
+            draw(lines, last, ReadRingGeometry.OUTLINE_VERTS, drawArc, arcR, arcG, arcB, arcA);
+        }
     }
 
     private void draw(VertexConsumer c, PoseStack.Pose p, int firstVertex, int count, float r, float g, float b,
@@ -121,8 +140,8 @@ public final class ReadRingModule implements IModule, IConfigurable {
             nx /= len;
             ny /= len;
             nz /= len;
-            c.addVertex(p, x0, y0, z0).setColor(r, g, b, a).setNormal(p, nx, ny, nz);
-            c.addVertex(p, x1, y1, z1).setColor(r, g, b, a).setNormal(p, nx, ny, nz);
+            c.addVertex(p, x0, y0, z0).setColor(r, g, b, a).setNormal(p, nx, ny, nz).setLineWidth(lineWidth);
+            c.addVertex(p, x1, y1, z1).setColor(r, g, b, a).setNormal(p, nx, ny, nz).setLineWidth(lineWidth);
         }
     }
 

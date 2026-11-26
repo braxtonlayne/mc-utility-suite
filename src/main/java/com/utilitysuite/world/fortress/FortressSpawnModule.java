@@ -15,7 +15,7 @@ import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.client.server.IntegratedServer;
 import net.minecraft.core.BlockPos;
-import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.LightLayer;
 import net.minecraft.world.level.NaturalSpawner;
@@ -325,7 +325,7 @@ public final class FortressSpawnModule extends WorldModule {
     private int classifyFeet(ClientLevel level, int x, int y, int z) {
         pos.set(x, y - 1, z);
         BlockState fs = level.getBlockState(pos);
-        if (fs.isAir() || !fs.isValidSpawn(level, pos, EntityType.WITHER_SKELETON)) {
+        if (fs.isAir() || !fs.isValidSpawn(level, pos, EntityTypes.WITHER_SKELETON)) {
             return FortressSections.SPAWN_NONE;
         }
         int empty = 0;
@@ -333,7 +333,7 @@ public final class FortressSpawnModule extends WorldModule {
             above.set(x, y + k, z);
             BlockState s = level.getBlockState(above);
             if (!NaturalSpawner.isValidEmptySpawnBlock(level, above, s, s.getFluidState(),
-                    EntityType.WITHER_SKELETON)) {
+                    EntityTypes.WITHER_SKELETON)) {
                 break;
             }
             empty++;
@@ -370,7 +370,7 @@ public final class FortressSpawnModule extends WorldModule {
         IntegratedServer sp = mc.getSingleplayerServer();
         GeneratorProfile p = seedSource == null ? null : seedSource.get();
         if (sp != null) {
-            seed = sp.getWorldData().worldGenOptions().seed();
+            seed = sp.getWorldGenSettings().options().seed();
         } else if (p != null && p.seedKnown()) {
             seed = p.seed();
         } else {

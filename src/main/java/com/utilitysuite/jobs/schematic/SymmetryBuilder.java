@@ -16,16 +16,16 @@ import com.utilitysuite.jobs.schematic.model.SchematicVolume;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.renderer.LevelRenderer;
-import net.minecraft.client.renderer.MultiBufferSource;
-import net.minecraft.client.renderer.RenderType;
+import com.utilitysuite.jobs.schematic.mc.LineBoxes;
+import net.minecraft.client.renderer.SubmitNodeCollector;
+import net.minecraft.client.renderer.rendertype.RenderTypes;
 import net.minecraft.commands.arguments.blocks.BlockStateParser;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
-import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
+import net.neoforged.neoforge.client.event.SubmitCustomGeometryEvent;
 
 import java.util.List;
 
@@ -324,51 +324,50 @@ public final class SymmetryBuilder implements IModule, IConfigurable {
 
     // ---- guides -----------------------------------------------------------------------------------------------------
 
-    void onRenderLevel(RenderLevelStageEvent event) {
-        if (!enabled || !settings.guides() || centre == Long.MIN_VALUE
-                || event.getStage() != RenderLevelStageEvent.Stage.AFTER_TRANSLUCENT_BLOCKS) {
+    private static final int PLANE_X_ARGB = LineBoxes.argb(1f, 0.6f, 0.2f, 0.9f);
+    private static final int PLANE_Z_ARGB = LineBoxes.argb(0.2f, 0.7f, 1f, 0.9f);
+    private static final int DIAGONAL_ARGB = LineBoxes.argb(0.7f, 0.5f, 1f, 0.9f);
+    private static final int CENTRE_ARGB = LineBoxes.argb(1f, 1f, 1f, 1f);
+    /** Guide geometry for this frame, camera relative (set at submit, read by {@link #guideRenderer}). */
+    private float gx, gy, gz, gr, gWidth;
+    private SymmetryTransform.Mode gMode;
+    private final SubmitNodeCollector.CustomGeometryRenderer guideRenderer = this::emitGuides;
+
+    /** 26.3: submitted through {@link SubmitCustomGeometryEvent} (the immediate buffer source is gone). */
+    void onRenderLevel(SubmitCustomGeometryEvent event) {
+        if (!enabled || !settings.guides() || centre == Long.MIN_VALUE) {
             return;
         }
         IModState state = modState();
         if (state != null && state.isCleanScreen()) {
             return;
         }
-        Vec3 cam = event.getCamera().getPosition();
-        MultiBufferSource.BufferSource buffers = Minecraft.getInstance().renderBuffers().bufferSource();
-        VertexConsumer lines = buffers.getBuffer(RenderType.lines());
-        PoseStack pose = event.getPoseStack();
-        pose.pushPose();
-        pose.translate(-cam.x, -cam.y, -cam.z);
-        double cx = BlockPos.getX(centre) + 0.5, cy = BlockPos.getY(centre) + 1.02, cz = BlockPos.getZ(centre) + 0.5;
-        int r = settings.radius();
-        SymmetryTransform.Mode m = settings.mode();
+        Vec3 cam = event.getLevelRenderState().cameraRenderState.pos;
+        gx = (float) (BlockPos.getX(centre) + 0.5 - cam.x);
+        gy = (float) (BlockPos.getY(centre) + 1.02 - cam.y);
+        gz = (float) (BlockPos.getZ(centre) + 0.5 - cam.z);
+        gr = settings.radius();
+        gMode = settings.mode();
+        gWidth = LineBoxes.lineWidth();
+        event.getSubmitNodeCollector().submitCustomGeometry(event.getPoseStack(), RenderTypes.lines(), guideRenderer);
+    }
+
+    private void emitGuides(PoseStack.Pose pose, VertexConsumer lines) {
+        float cx = gx, cy = gy, cz = gz, r = gr, w = gWidth;
+        SymmetryTransform.Mode m = gMode;
         boolean planeX = m != SymmetryTransform.Mode.MIRROR_Z; // the x = centre plane (mirror X)
         boolean planeZ = m != SymmetryTransform.Mode.MIRROR_X;
         if (planeX) {
-            LevelRenderer.renderLineBox(pose, lines, cx, cy - 1, cz - r, cx, cy + 1, cz + r, 1f, 0.6f, 0.2f, 0.9f);
+            LineBoxes.box(lines, pose, cx, cy - 1, cz - r, cx, cy + 1, cz + r, PLANE_X_ARGB, w);
         }
         if (planeZ) {
-            LevelRenderer.renderLineBox(pose, lines, cx - r, cy - 1, cz, cx + r, cy + 1, cz, 0.2f, 0.7f, 1f, 0.9f);
+            LineBoxes.box(lines, pose, cx - r, cy - 1, cz, cx + r, cy + 1, cz, PLANE_Z_ARGB, w);
         }
         if (m == SymmetryTransform.Mode.RADIAL_8) {
-            float d = (float) (r * 0.7071);
-            line(pose, lines, cx - d, cy, cz - d, cx + d, cy, cz + d);
-            line(pose, lines, cx - d, cy, cz + d, cx + d, cy, cz - d);
+            float d = r * 0.7071f;
+            LineBoxes.segment(lines, pose, cx - d, cy, cz - d, cx + d, cy, cz + d, DIAGONAL_ARGB, w);
+            LineBoxes.segment(lines, pose, cx - d, cy, cz + d, cx + d, cy, cz - d, DIAGONAL_ARGB, w);
         }
-        LevelRenderer.renderLineBox(pose, lines, cx - 0.5, cy - 1.02, cz - 0.5, cx + 0.5, cy - 0.02, cz + 0.5, 1f, 1f,
-                1f, 1f);
-        pose.popPose();
-        buffers.endBatch(RenderType.lines());
-    }
-
-    private static void line(PoseStack pose, VertexConsumer c, double x0, double y0, double z0, double x1, double y1,
-                             double z1) {
-        PoseStack.Pose last = pose.last();
-        float nx = (float) (x1 - x0), nz = (float) (z1 - z0);
-        float len = (float) Math.sqrt(nx * nx + nz * nz);
-        nx /= len;
-        nz /= len;
-        c.addVertex(last, (float) x0, (float) y0, (float) z0).setColor(0.7f, 0.5f, 1f, 0.9f).setNormal(last, nx, 0, nz);
-        c.addVertex(last, (float) x1, (float) y1, (float) z1).setColor(0.7f, 0.5f, 1f, 0.9f).setNormal(last, nx, 0, nz);
+        LineBoxes.box(lines, pose, cx - 0.5f, cy - 1.02f, cz - 0.5f, cx + 0.5f, cy - 0.02f, cz + 0.5f, CENTRE_ARGB, w);
     }
 }

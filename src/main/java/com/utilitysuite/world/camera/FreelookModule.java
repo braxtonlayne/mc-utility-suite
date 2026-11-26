@@ -78,7 +78,7 @@ public final class FreelookModule extends WorldModule {
             return;
         }
         Minecraft mc = Minecraft.getInstance();
-        if (mc.screen == null && mc.player != null) {
+        if (mc.gui.screen() == null && mc.player != null) {
             toggleFromKey();
         }
     }
@@ -86,7 +86,7 @@ public final class FreelookModule extends WorldModule {
     @Override
     public void onTick() {
         Minecraft mc = Minecraft.getInstance();
-        holding = isEnabled() && key != null && mc.screen == null && mc.player != null && key.isDown();
+        holding = isEnabled() && key != null && mc.gui.screen() == null && mc.player != null && key.isDown();
     }
 
     /** Turn hook (client thread): true when the mouse turn was consumed by the camera. */

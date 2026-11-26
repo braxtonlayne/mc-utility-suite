@@ -202,7 +202,7 @@ public final class DotCommands implements IModule, IConfigurable {
         if (mc.player == null) {
             return;
         }
-        mc.player.displayClientMessage(Component.literal("[Suite] ").withStyle(ChatFormatting.DARK_AQUA)
-                .append(Component.literal(text).withStyle(error ? ChatFormatting.RED : ChatFormatting.GRAY)), false);
+        mc.player.sendSystemMessage(Component.literal("[Suite] ").withStyle(ChatFormatting.DARK_AQUA)
+                .append(Component.literal(text).withStyle(error ? ChatFormatting.RED : ChatFormatting.GRAY)));
     }
 }

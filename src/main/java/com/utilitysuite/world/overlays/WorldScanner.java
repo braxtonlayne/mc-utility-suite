@@ -253,8 +253,8 @@ public final class WorldScanner {
 
     public void onChunkLoad(Level l, ChunkAccess chunk) {
         ensureLevel(l);
-        int cx = chunk.getPos().x;
-        int cz = chunk.getPos().z;
+        int cx = chunk.getPos().x();
+        int cz = chunk.getPos().z();
         loadedChunks.add(BlockPosPacking.chunk(cx, cz));
         queueChunk(chunk, cx, cz);
         if (trackChunkAge) {
@@ -280,7 +280,7 @@ public final class WorldScanner {
                 for (BlockEntity be : lc.getBlockEntities().values()) {
                     if (be instanceof SpawnerBlockEntity sbe) {
                         BaseSpawner spawner = sbe.getSpawner();
-                        if (spawner.getSpin() != 0.0 || spawner.getoSpin() != 0.0) {
+                        if (spawner.getSpin() != 0.0 || spawner.getOSpin() != 0.0) {
                             spawnerActive = true;
                             break;
                         }
@@ -341,11 +341,11 @@ public final class WorldScanner {
         if (l != level) {
             return;
         }
-        int cx = chunk.getPos().x;
-        int cz = chunk.getPos().z;
+        int cx = chunk.getPos().x();
+        int cz = chunk.getPos().z();
         loadedChunks.remove(BlockPosPacking.chunk(cx, cz));
-        int minS = chunk.getMinSection();
-        int maxS = chunk.getMaxSection();
+        int minS = chunk.getMinSectionY();
+        int maxS = chunk.getMaxSectionY() + 1;
         for (int sy = minS; sy < maxS; sy++) {
             long key = HighlightIndex.sectionKey(cx, sy, cz);
             observed.removeSection(key);
@@ -357,7 +357,7 @@ public final class WorldScanner {
     }
 
     private void queueChunk(ChunkAccess chunk, int cx, int cz) {
-        for (int sy = chunk.getMinSection(); sy < chunk.getMaxSection(); sy++) {
+        for (int sy = chunk.getMinSectionY(); sy < chunk.getMaxSectionY() + 1; sy++) {
             long key = HighlightIndex.sectionKey(cx, sy, cz);
             if (queued.add(key)) {
                 queue.enqueue(key);
@@ -370,8 +370,8 @@ public final class WorldScanner {
         if (level == null) {
             return;
         }
-        int minS = level.getMinSection();
-        int maxS = level.getMaxSection();
+        int minS = level.getMinSectionY();
+        int maxS = level.getMaxSectionY() + 1;
         queue.clear(); // pending entries are all re-added below, in distance order
         queued.clear();
         long[] chunks = nearestFirst(loadedChunks, lastChunkX, lastChunkZ);
@@ -600,7 +600,7 @@ public final class WorldScanner {
             int dz = (i / side) % side - r;
             int dy = i / (side * side) - r;
             int sy = csy + dy;
-            if (sy < l.getMinSection() || sy >= l.getMaxSection()) {
+            if (sy < l.getMinSectionY() || sy >= l.getMaxSectionY() + 1) {
                 continue;
             }
             scanNear(l, csx + dx, sy, csz + dz);

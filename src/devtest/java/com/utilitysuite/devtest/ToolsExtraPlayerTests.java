@@ -14,7 +14,7 @@ import net.minecraft.client.gui.screens.DisconnectedScreen;
 import net.minecraft.client.multiplayer.ServerData;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.Entity;
-import net.minecraft.world.entity.projectile.ThrownEnderpearl;
+import net.minecraft.world.entity.projectile.throwableitemprojectile.ThrownEnderpearl;
 import net.minecraft.world.item.Items;
 import org.lwjgl.glfw.GLFW;
 

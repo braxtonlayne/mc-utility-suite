@@ -16,7 +16,7 @@ import com.utilitysuite.core.api.visual.IWorldMarks;
 import com.utilitysuite.core.api.visual.MarkKind;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.Entity;
@@ -126,8 +126,8 @@ public final class TargetHud implements IModule, IConfigurable {
                 || roster.contains(other.getUUID()) || Services.modState().isCleanScreen()) {
             return;
         }
-        self.displayClientMessage(Component.translatable("message.utilitysuite.visual_range",
-                other.getName().getString()), true);
+        self.sendOverlayMessage(Component.translatable("message.utilitysuite.visual_range",
+                other.getName().getString()));
     }
 
     public void onLeave(EntityLeaveLevelEvent event) {
@@ -237,7 +237,7 @@ public final class TargetHud implements IModule, IConfigurable {
      * Former GUI layer (still registered by the combat wiring): the target is now drawn by the Shell's reticle from
      * the published mark, so this draws nothing.
      */
-    public void render(GuiGraphics g, DeltaTracker delta) {
+    public void render(GuiGraphicsExtractor g, DeltaTracker delta) {
     }
 
     // ---- IModule / IConfigurable ----------------------------------------------------------------------------------

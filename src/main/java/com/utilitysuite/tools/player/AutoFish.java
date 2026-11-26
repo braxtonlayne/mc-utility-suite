@@ -102,7 +102,7 @@ public final class AutoFish implements IModule, IConfigurable, LeaseListener, Fi
         }
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer player = mc.player;
-        if (player == null || mc.screen != null || player.isDeadOrDying()) {
+        if (player == null || mc.gui.screen() != null || player.isDeadOrDying()) {
             return;
         }
         if (Services.arbiter().isAutomationStopped()) {
@@ -143,9 +143,9 @@ public final class AutoFish implements IModule, IConfigurable, LeaseListener, Fi
      * cycle must wait); false when no such rod exists, so the cycle stops as before.
      */
     private boolean swapRod(LocalPlayer player) {
-        int current = player.getInventory().selected;
+        int current = player.getInventory().getSelectedSlot();
         for (int i = 0; i < 9; i++) {
-            ItemStack st = player.getInventory().items.get(i);
+            ItemStack st = player.getInventory().getNonEquipmentItems().get(i);
             rodUses[i] = st.is(Items.FISHING_ROD)
                     ? (st.isDamageableItem() ? st.getMaxDamage() - st.getDamageValue() : Integer.MAX_VALUE)
                     : RodSwap.NO_ROD;
@@ -185,7 +185,7 @@ public final class AutoFish implements IModule, IConfigurable, LeaseListener, Fi
             return;
         }
         SoundInstance s = event.getSound();
-        if (s == null || !SoundEvents.FISHING_BOBBER_SPLASH.getLocation().equals(s.getLocation())) {
+        if (s == null || !SoundEvents.FISHING_BOBBER_SPLASH.location().equals(s.getIdentifier())) {
             return;
         }
         LocalPlayer player = Minecraft.getInstance().player;

@@ -11,9 +11,11 @@ import com.utilitysuite.core.api.ProfileConfig;
 import com.utilitysuite.core.api.Services;
 import com.utilitysuite.core.api.SettingSpec;
 import com.utilitysuite.core.api.SimKey;
+import com.utilitysuite.core.input.MoveInputs;
 import com.utilitysuite.travel.LeaseSlot;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.world.entity.player.Input;
 import net.neoforged.neoforge.client.event.MovementInputUpdateEvent;
 
 import java.util.List;
@@ -96,7 +98,7 @@ public final class MoveToggles implements IModule, IConfigurable {
             sneak.release();
             slot.reset();
         }
-        boolean want = sprint.tick(false, mc.screen != null);
+        boolean want = sprint.tick(false, mc.gui.screen() != null);
         if (want) {
             ControlLease l = slot.ensure(request);
             if (l != null && !sprintHeld) {
@@ -124,11 +126,14 @@ public final class MoveToggles implements IModule, IConfigurable {
         if (event.getEntity() != mc.player) {
             return;
         }
-        boolean realSneak = event.getInput().shiftKeyDown;
-        if (!sneak.tick(realSneak, mc.screen != null)) {
+        boolean realSneak = event.getInput().keyPresses.shift();
+        if (!sneak.tick(realSneak, mc.gui.screen() != null)) {
             return;
         }
-        event.getInput().shiftKeyDown = true;
+        // 26.3: the key state is an immutable record; MoveInputs hands out the cached instance (no allocation)
+        Input k = event.getInput().keyPresses;
+        event.getInput().keyPresses = MoveInputs.input(k.forward(), k.backward(), k.left(), k.right(), k.jump(), true,
+                k.sprint());
     }
 
     @Override

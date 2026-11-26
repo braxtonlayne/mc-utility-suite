@@ -25,8 +25,8 @@ public final class StructureNbtFormat implements SchematicFormatAdapter {
 
     @Override
     public boolean accepts(CompoundTag root) {
-        return root.contains("blocks", Tag.TAG_LIST) && root.contains("size")
-                && (root.contains("palette", Tag.TAG_LIST) || root.contains("palettes", Tag.TAG_LIST));
+        return SchematicFormatAdapter.has(root, "blocks", Tag.TAG_LIST) && root.contains("size")
+                && (SchematicFormatAdapter.has(root, "palette", Tag.TAG_LIST) || SchematicFormatAdapter.has(root, "palettes", Tag.TAG_LIST));
     }
 
     @Override
@@ -36,25 +36,26 @@ public final class StructureNbtFormat implements SchematicFormatAdapter {
             throw new SchematicParseException("Structure size must have 3 entries");
         }
         ListTag paletteTag;
-        if (root.contains("palette", Tag.TAG_LIST)) {
-            paletteTag = root.getList("palette", Tag.TAG_COMPOUND);
+        if (SchematicFormatAdapter.has(root, "palette", Tag.TAG_LIST)) {
+            paletteTag = SchematicFormatAdapter.listOf(root, "palette", Tag.TAG_COMPOUND);
         } else {
-            ListTag palettes = root.getList("palettes", Tag.TAG_LIST);
+            ListTag palettes = SchematicFormatAdapter.listOf(root, "palettes", Tag.TAG_LIST);
             if (palettes.isEmpty()) {
                 throw new SchematicParseException("Structure has no palette");
             }
-            paletteTag = palettes.getList(0);
+            paletteTag = palettes.getListOrEmpty(0);
         }
         SchematicVolume.Builder b = SchematicVolume.builder(name, id(), size[0], size[1], size[2]);
+        int dataVersion = SchematicFormatAdapter.dataVersion(root, "DataVersion");
         int[] remap = new int[paletteTag.size()];
         for (int i = 0; i < remap.length; i++) {
-            remap[i] = b.paletteId(SchematicFormatAdapter.stateFromCompound(paletteTag.getCompound(i)));
+            remap[i] = b.paletteId(SchematicFormatAdapter.stateFromCompound(paletteTag.getCompoundOrEmpty(i), dataVersion));
         }
-        ListTag blocks = root.getList("blocks", Tag.TAG_COMPOUND);
+        ListTag blocks = SchematicFormatAdapter.listOf(root, "blocks", Tag.TAG_COMPOUND);
         for (int i = 0; i < blocks.size(); i++) {
-            CompoundTag entry = blocks.getCompound(i);
+            CompoundTag entry = blocks.getCompoundOrEmpty(i);
             int[] pos = SchematicFormatAdapter.intList(entry, "pos");
-            int state = entry.getInt("state");
+            int state = entry.getIntOr("state", 0);
             if (state < 0 || state >= remap.length) {
                 throw new SchematicParseException("Block " + i + " palette index " + state + " out of range");
             }

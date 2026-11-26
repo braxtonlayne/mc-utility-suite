@@ -1,10 +1,11 @@
 package com.utilitysuite.ui.kit;
 
+import com.mojang.blaze3d.platform.InputConstants;
 import com.utilitysuite.core.api.visual.HoloToken;
 import com.utilitysuite.ui.holo.HoloFrames;
 import com.utilitysuite.ui.holo.HoloTheme;
 import net.minecraft.client.gui.Font;
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 
 /**
  * Header row of a collapsible block inside a card ("Advanced settings · 4"): chevron, title and a count chip, with a
@@ -40,7 +41,7 @@ public final class CollapsibleSection extends UiNode {
     }
 
     @Override
-    public void render(GuiGraphics g, Font font, int sx, int sy, int mouseX, int mouseY) {
+    public void render(GuiGraphicsExtractor g, Font font, int sx, int sy, int mouseX, int mouseY) {
         boolean hover = inside(mouseX, mouseY, sx, sy, w, h);
         float hv = hoverAmount(hover);
         if (open) {
@@ -66,7 +67,7 @@ public final class CollapsibleSection extends UiNode {
 
     @Override
     public boolean onClick(double mouseX, double mouseY, int button, int sx, int sy) {
-        if (button != 0) {
+        if (button != InputConstants.MOUSE_BUTTON_LEFT) {
             return false;
         }
         onToggle.run();

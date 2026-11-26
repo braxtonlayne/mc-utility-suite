@@ -3,7 +3,7 @@ package com.utilitysuite.jobs.schematic;
 import com.utilitysuite.core.api.Services;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.loading.FMLPaths;
-import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
+import net.neoforged.neoforge.client.event.SubmitCustomGeometryEvent;
 import net.neoforged.neoforge.common.NeoForge;
 
 /**
@@ -22,6 +22,9 @@ public final class SchematicBootstrap {
     }
 
     public static void init(IEventBus modBus) {
+        // 26.3: palettes saved by older game versions go through the DataFixer (block renames such as chain).
+        com.utilitysuite.jobs.schematic.format.SchematicFormats.setStateUpgrader(
+                new com.utilitysuite.jobs.schematic.mc.McStateUpgrader());
         SchematicLibrary library = new SchematicLibrary(FMLPaths.GAMEDIR.get());
         toolkit = new SchematicToolkit(library);
         Services.modules().register(toolkit);
@@ -32,7 +35,8 @@ public final class SchematicBootstrap {
         NeoForge.EVENT_BUS.addListener(SchematicBootstrap::onRenderLevel);
     }
 
-    private static void onRenderLevel(RenderLevelStageEvent event) {
+    /** 26.3: world lines are submitted through {@link SubmitCustomGeometryEvent} (once per frame). */
+    private static void onRenderLevel(SubmitCustomGeometryEvent event) {
         SchematicToolkit t = toolkit;
         if (t != null) {
             t.onRenderLevel(event);

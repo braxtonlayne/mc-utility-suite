@@ -5,8 +5,8 @@ import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
-import net.minecraft.world.entity.EntityType;
-import net.minecraft.world.entity.monster.Slime;
+import net.minecraft.world.entity.EntityTypes;
+import net.minecraft.world.entity.monster.cubemob.Slime;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.biome.Biomes;
@@ -38,11 +38,11 @@ final class ClientChunkClueScanner {
         void onBedrockSample(BedrockPatternVerifier.Layer layer, int x, int y, int z, boolean present);
     }
 
-    private static final Predicate<BlockState> DESERT_MARKER = s -> s.is(Blocks.BLUE_TERRACOTTA);
+    private static final Predicate<BlockState> DESERT_MARKER = s -> s.is(Blocks.DYED_TERRACOTTA.blue());
     private static final Predicate<BlockState> SWAMP_MARKER = s -> s.is(Blocks.CAULDRON);
     private static final Predicate<BlockState> JUNGLE_MARKER =
             s -> s.is(Blocks.DISPENSER) || s.is(Blocks.STICKY_PISTON);
-    private static final Predicate<BlockState> IGLOO_MARKER = s -> s.is(Blocks.RED_BED);
+    private static final Predicate<BlockState> IGLOO_MARKER = s -> s.is(Blocks.BED.red());
     private static final Predicate<BlockState> OUTPOST_MARKER = s -> s.is(Blocks.DARK_OAK_LOG);
     private static final Predicate<BlockState> RUINED_PORTAL_MARKER = s -> s.is(Blocks.CRYING_OBSIDIAN);
     private static final Predicate<BlockState> END_CITY_MARKER = s -> s.is(Blocks.PURPUR_BLOCK);
@@ -57,8 +57,8 @@ final class ClientChunkClueScanner {
     }
 
     void scanChunk(ClientLevel level, LevelChunk chunk, ClueSink sink) {
-        int cx = chunk.getPos().x;
-        int cz = chunk.getPos().z;
+        int cx = chunk.getPos().x();
+        int cz = chunk.getPos().z();
         int minX = cx << 4;
         int minZ = cz << 4;
 
@@ -103,8 +103,8 @@ final class ClientChunkClueScanner {
 
     /** Samples deterministic bedrock/deepslate columns in loaded Overworld or Nether chunks. */
     void scanBedrock(ClientLevel level, LevelChunk chunk, BedrockSink sink) {
-        int minX = chunk.getPos().x << 4;
-        int minZ = chunk.getPos().z << 4;
+        int minX = chunk.getPos().x() << 4;
+        int minZ = chunk.getPos().z() << 4;
         if (level.dimension() == Level.OVERWORLD) {
             for (int i = 0; i < SAMPLE_LX.length; i++) {
                 int wx = minX + SAMPLE_LX[i];
@@ -181,7 +181,7 @@ final class ClientChunkClueScanner {
             return;
         }
         slimeBuffer.clear();
-        level.getEntities(EntityType.SLIME, player.getBoundingBox().inflate(48.0),
+        level.getEntities(EntityTypes.SLIME, player.getBoundingBox().inflate(48.0),
                 e -> e != null && e.isAlive(), slimeBuffer);
         for (int i = 0; i < slimeBuffer.size(); i++) {
             Slime s = slimeBuffer.get(i);
@@ -236,7 +236,7 @@ final class ClientChunkClueScanner {
     private void scanDesertPyramid(ClientLevel level, LevelChunk chunk, int minX, int minZ, int cx, int cz,
                                    ClueSink sink) {
         LevelChunkSection[] sections = chunk.getSections();
-        int minSec = level.getMinSection();
+        int minSec = level.getMinSectionY();
         for (int s = 0; s < sections.length; s++) {
             int sy = (minSec + s) << 4;
             if (sy + 15 < 50 || sy > 95) {
@@ -253,15 +253,15 @@ final class ClientChunkClueScanner {
                 }
                 for (int lx = 0; lx < 16; lx++) {
                     for (int lz = 0; lz < 16; lz++) {
-                        if (!sec.getBlockState(lx, ly, lz).is(Blocks.BLUE_TERRACOTTA)) {
+                        if (!sec.getBlockState(lx, ly, lz).is(Blocks.DYED_TERRACOTTA.blue())) {
                             continue;
                         }
                         int wx = minX + lx;
                         int wz = minZ + lz;
-                        if (level.getBlockState(probe.set(wx + 1, wy, wz + 1)).is(Blocks.ORANGE_TERRACOTTA)
-                                && level.getBlockState(probe.set(wx - 1, wy, wz - 1)).is(Blocks.ORANGE_TERRACOTTA)
-                                && level.getBlockState(probe.set(wx + 1, wy, wz - 1)).is(Blocks.ORANGE_TERRACOTTA)
-                                && level.getBlockState(probe.set(wx - 1, wy, wz + 1)).is(Blocks.ORANGE_TERRACOTTA)) {
+                        if (level.getBlockState(probe.set(wx + 1, wy, wz + 1)).is(Blocks.DYED_TERRACOTTA.orange())
+                                && level.getBlockState(probe.set(wx - 1, wy, wz - 1)).is(Blocks.DYED_TERRACOTTA.orange())
+                                && level.getBlockState(probe.set(wx + 1, wy, wz - 1)).is(Blocks.DYED_TERRACOTTA.orange())
+                                && level.getBlockState(probe.set(wx - 1, wy, wz + 1)).is(Blocks.DYED_TERRACOTTA.orange())) {
                             BlockState adj = level.getBlockState(probe.set(wx + 1, wy, wz));
                             if (adj.is(Blocks.SANDSTONE) || adj.is(Blocks.CUT_SANDSTONE)) {
                                 sink.onStructure("desert_pyramid", cx, cz);
@@ -276,7 +276,7 @@ final class ClientChunkClueScanner {
 
     private void scanSwampHut(ClientLevel level, LevelChunk chunk, int minX, int minZ, int cx, int cz, ClueSink sink) {
         LevelChunkSection[] sections = chunk.getSections();
-        int minSec = level.getMinSection();
+        int minSec = level.getMinSectionY();
         for (int s = 0; s < sections.length; s++) {
             int sy = (minSec + s) << 4;
             if (sy + 15 < 56 || sy > 96) {
@@ -317,7 +317,7 @@ final class ClientChunkClueScanner {
     private void scanJungleTemple(ClientLevel level, LevelChunk chunk, int minX, int minZ, int cx, int cz,
                                   ClueSink sink) {
         LevelChunkSection[] sections = chunk.getSections();
-        int minSec = level.getMinSection();
+        int minSec = level.getMinSectionY();
         for (int s = 0; s < sections.length; s++) {
             int sy = (minSec + s) << 4;
             if (sy + 15 < 50 || sy > 115) {
@@ -363,7 +363,7 @@ final class ClientChunkClueScanner {
 
     private void scanIgloo(ClientLevel level, LevelChunk chunk, int minX, int minZ, int cx, int cz, ClueSink sink) {
         LevelChunkSection[] sections = chunk.getSections();
-        int minSec = level.getMinSection();
+        int minSec = level.getMinSectionY();
         for (int s = 0; s < sections.length; s++) {
             int sy = (minSec + s) << 4;
             if (sy + 15 < 55 || sy > 115) {
@@ -380,7 +380,7 @@ final class ClientChunkClueScanner {
                 }
                 for (int lx = 0; lx < 16; lx++) {
                     for (int lz = 0; lz < 16; lz++) {
-                        if (!sec.getBlockState(lx, ly, lz).is(Blocks.RED_BED)) {
+                        if (!sec.getBlockState(lx, ly, lz).is(Blocks.BED.red())) {
                             continue;
                         }
                         int wx = minX + lx;
@@ -415,7 +415,7 @@ final class ClientChunkClueScanner {
     private void scanPillagerOutpost(ClientLevel level, LevelChunk chunk, int minX, int minZ, int cx, int cz,
                                      ClueSink sink) {
         LevelChunkSection[] sections = chunk.getSections();
-        int minSec = level.getMinSection();
+        int minSec = level.getMinSectionY();
         for (int s = 0; s < sections.length; s++) {
             int sy = (minSec + s) << 4;
             if (sy + 15 < 60 || sy > 160) {
@@ -467,7 +467,7 @@ final class ClientChunkClueScanner {
     private void scanRuinedPortal(ClientLevel level, LevelChunk chunk, int minX, int minZ, int cx, int cz,
                                   ClueSink sink) {
         LevelChunkSection[] sections = chunk.getSections();
-        int minSec = level.getMinSection();
+        int minSec = level.getMinSectionY();
         for (int s = 0; s < sections.length; s++) {
             int sy = (minSec + s) << 4;
             if (sy + 15 < -56 || sy > 160) {
@@ -523,7 +523,7 @@ final class ClientChunkClueScanner {
             return;
         }
         LevelChunkSection[] sections = chunk.getSections();
-        int minSec = level.getMinSection();
+        int minSec = level.getMinSectionY();
         for (int s = 0; s < sections.length; s++) {
             int sy = (minSec + s) << 4;
             if (sy + 15 < 55 || sy > 150) {

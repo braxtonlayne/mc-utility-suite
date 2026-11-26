@@ -1,10 +1,11 @@
 package com.utilitysuite.world.replay;
 
-import net.minecraft.client.gui.GuiGraphics;
+import com.mojang.blaze3d.platform.InputConstants;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.input.KeyEvent;
+import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
-import org.joml.Matrix4f;
-import org.lwjgl.glfw.GLFW;
 
 /**
  * The replay theatre screen: the frozen 30 s scene drawn as an orbit view (drag to orbit, scroll to zoom) around the
@@ -90,13 +91,13 @@ public final class ReplayScreen extends Screen {
     }
 
     @Override
-    public void renderBackground(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
+    public void extractBackground(GuiGraphicsExtractor g, int mouseX, int mouseY, float partialTick) {
         g.fill(0, 0, width, height, 0xD0101418);
     }
 
     @Override
-    public void render(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
-        super.render(g, mouseX, mouseY, partialTick);
+    public void extractRenderState(GuiGraphicsExtractor g, int mouseX, int mouseY, float partialTick) {
+        super.extractRenderState(g, mouseX, mouseY, partialTick);
         long now = System.nanoTime();
         double dt = lastNanos == 0 ? 0 : (now - lastNanos) * 1e-9;
         lastNanos = now;
@@ -112,8 +113,7 @@ public final class ReplayScreen extends Screen {
         }
         view.setOrbit(center[0], center[1] + 1.0, center[2], orbitYaw, orbitPitch, distance, 70, width / (double) viewH);
         int n = 0;
-        Matrix4f m = g.pose().last().pose();
-        lines.begin(m, 0, 0, width, viewH);
+        lines.begin(g, 0, 0, width, viewH);
         // ground grid
         double gy = Math.floor(center[1]);
         int cx = (int) Math.floor(center[0]);
@@ -188,7 +188,7 @@ public final class ReplayScreen extends Screen {
         drawText(g, viewH, nowTick);
     }
 
-    private void drawTimeline(GuiGraphics g, int viewH) {
+    private void drawTimeline(GuiGraphicsExtractor g, int viewH) {
         int x0 = 10;
         int x1 = width - 10;
         int y = viewH + 8;
@@ -216,7 +216,7 @@ public final class ReplayScreen extends Screen {
         g.fill(px - 1, y - 4, px + 2, y + 10, 0xFFFFFFFF);
     }
 
-    private void drawText(GuiGraphics g, int viewH, long nowTick) {
+    private void drawText(GuiGraphicsExtractor g, int viewH, long nowTick) {
         StringBuilder b = new StringBuilder(96);
         b.append('-');
         ReplayTheatreModule.appendSeconds(b, timeline.secondsBeforeEnd() * ReplayTimeline.TICKS_PER_SECOND);
@@ -230,8 +230,8 @@ public final class ReplayScreen extends Screen {
                 b.append("they hit first by ").append(-gap).append(" t");
             }
         }
-        g.drawString(font, b.toString(), 10, viewH + 20, 0xFFE0E0E0, false);
-        g.drawString(font, "Space play  ←/→ step  ↑/↓ speed  drag orbit  scroll zoom  I in-point  "
+        g.text(font, b.toString(), 10, viewH + 20, 0xFFE0E0E0, false);
+        g.text(font, "Space play  ←/→ step  ↑/↓ speed  drag orbit  scroll zoom  I in-point  "
                 + "G save ghost  " + (savedClip ? "" : "K save clip  ") + "Esc close" + status, 10, viewH + 31, 0xFF8090A0, false);
     }
 
@@ -241,30 +241,33 @@ public final class ReplayScreen extends Screen {
     }
 
     @Override
-    public boolean mouseClicked(double mouseX, double mouseY, int button) {
-        if (button == 0 && mouseY >= height - BAR_H) {
+    public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
+        double mouseX = event.x();
+        double mouseY = event.y();
+        int button = event.button();
+        if (button == InputConstants.MOUSE_BUTTON_LEFT && mouseY >= height - BAR_H) {
             dragBar = true;
             scrubAt(mouseX);
             return true;
         }
-        if (button == 0) {
+        if (button == InputConstants.MOUSE_BUTTON_LEFT) {
             dragOrbit = true;
             return true;
         }
-        return super.mouseClicked(mouseX, mouseY, button);
+        return super.mouseClicked(event, doubleClick);
     }
 
     @Override
-    public boolean mouseReleased(double mouseX, double mouseY, int button) {
+    public boolean mouseReleased(MouseButtonEvent event) {
         dragOrbit = false;
         dragBar = false;
-        return super.mouseReleased(mouseX, mouseY, button);
+        return super.mouseReleased(event);
     }
 
     @Override
-    public boolean mouseDragged(double mouseX, double mouseY, int button, double dx, double dy) {
+    public boolean mouseDragged(MouseButtonEvent event, double dx, double dy) {
         if (dragBar) {
-            scrubAt(mouseX);
+            scrubAt(event.x());
             return true;
         }
         if (dragOrbit) {
@@ -272,7 +275,7 @@ public final class ReplayScreen extends Screen {
             orbitPitch = Math.max(-89f, Math.min(89f, orbitPitch + (float) dy * 0.5f));
             return true;
         }
-        return super.mouseDragged(mouseX, mouseY, button, dx, dy);
+        return super.mouseDragged(event, dx, dy);
     }
 
     @Override
@@ -282,22 +285,22 @@ public final class ReplayScreen extends Screen {
     }
 
     @Override
-    public boolean keyPressed(int key, int scan, int mods) {
-        switch (key) {
-            case GLFW.GLFW_KEY_SPACE -> timeline.togglePlay();
-            case GLFW.GLFW_KEY_LEFT -> timeline.step(-1);
-            case GLFW.GLFW_KEY_RIGHT -> timeline.step(1);
-            case GLFW.GLFW_KEY_UP -> timeline.faster();
-            case GLFW.GLFW_KEY_DOWN -> timeline.slower();
-            case GLFW.GLFW_KEY_I -> inPoint = (int) Math.round(timeline.position());
-            case GLFW.GLFW_KEY_G -> {
+    public boolean keyPressed(KeyEvent event) {
+        switch (event.key()) {
+            case InputConstants.KEY_SPACE -> timeline.togglePlay();
+            case InputConstants.KEY_LEFT -> timeline.step(-1);
+            case InputConstants.KEY_RIGHT -> timeline.step(1);
+            case InputConstants.KEY_UP -> timeline.faster();
+            case InputConstants.KEY_DOWN -> timeline.slower();
+            case InputConstants.KEY_I -> inPoint = (int) Math.round(timeline.position());
+            case InputConstants.KEY_G -> {
                 int n = module.saveGhost(ring, selfId, inPoint, (int) Math.round(timeline.position()));
                 status = n > 1 ? "   ghost saved (" + n + " ticks)" : "   nothing to save";
             }
-            case GLFW.GLFW_KEY_K -> status = savedClip ? "   already a saved clip"
+            case InputConstants.KEY_K -> status = savedClip ? "   already a saved clip"
                     : "   " + module.saveClip(ring, selfId);
             default -> {
-                return super.keyPressed(key, scan, mods);
+                return super.keyPressed(event);
             }
         }
         return true;

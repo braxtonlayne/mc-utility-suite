@@ -18,7 +18,7 @@ import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.Display;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
-import net.minecraft.world.entity.projectile.Arrow;
+import net.minecraft.world.entity.projectile.arrow.Arrow;
 import net.minecraft.world.level.block.TrialSpawnerBlock;
 import net.minecraft.world.level.block.VaultBlock;
 import net.minecraft.world.level.block.state.BlockState;

@@ -1,5 +1,6 @@
 package com.utilitysuite.ui;
 
+import com.mojang.blaze3d.platform.InputConstants;
 import com.utilitysuite.core.CoreBootstrap;
 import com.utilitysuite.core.api.IAutopilot;
 import com.utilitysuite.core.api.Services;
@@ -12,10 +13,10 @@ import com.utilitysuite.ui.holo.HoloTheme;
 import com.utilitysuite.ui.holo.Motion;
 import com.utilitysuite.ui.kit.UiNode;
 import com.utilitysuite.ui.kit.UiRenderUtils;
-import net.minecraft.Util;
+import net.minecraft.util.Util;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.gui.Font;
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 
 /**
  * The autopilot's own toggle, pinned across the top of the menu under the title bar, above the category panels. A
@@ -99,7 +100,7 @@ final class AutopilotBar extends UiNode {
 
     @Override
     public boolean onClick(double mouseX, double mouseY, int button, int sx, int sy) {
-        if (button != 0) {
+        if (button != InputConstants.MOUSE_BUTTON_LEFT) {
             return false;
         }
         if (mouseX >= sx + w - SETTINGS_W) {
@@ -112,7 +113,7 @@ final class AutopilotBar extends UiNode {
     }
 
     @Override
-    public void render(GuiGraphics g, Font font, int sx, int sy, int mouseX, int mouseY) {
+    public void render(GuiGraphicsExtractor g, Font font, int sx, int sy, int mouseX, int mouseY) {
         boolean hover = inside(mouseX, mouseY, sx, sy, w, h);
         boolean hoverSettings = hover && mouseX >= sx + w - SETTINGS_W;
         long now = Util.getMillis();

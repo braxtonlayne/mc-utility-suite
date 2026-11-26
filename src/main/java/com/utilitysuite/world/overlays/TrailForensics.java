@@ -12,7 +12,7 @@ import net.minecraft.tags.BlockTags;
 import net.minecraft.tags.FluidTags;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.Heightmap;
-import org.joml.Vector3f;
+import org.joml.Vector3fc;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -208,7 +208,7 @@ final class TrailForensics {
      * of the trail or looks straight at a stretch of it, how long ago the nearest / looked-at stretch was made.
      * {@code look} is the camera's look vector (read, not allocated). Allocates nothing.
      */
-    void renderLabels(RenderContext ctx, float y, long nowMs, Vector3f look) {
+    void renderLabels(RenderContext ctx, float y, long nowMs, Vector3fc look) {
         List<Shown> list = segments;
         for (int i = 0, n = list.size(); i < n; i++) {
             Shown shown = list.get(i);
@@ -234,7 +234,7 @@ final class TrailForensics {
     }
 
     /** The spine point being looked at, else the nearest one within reach, else -1. */
-    private static int ageLabelPoint(RenderContext ctx, float[] px, float[] pz, float y, Vector3f look) {
+    private static int ageLabelPoint(RenderContext ctx, float[] px, float[] pz, float y, Vector3fc look) {
         int nearest = -1;
         double nearestD2 = NEAR_BLOCKS * NEAR_BLOCKS;
         int hovered = -1;

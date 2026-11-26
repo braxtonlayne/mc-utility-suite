@@ -1,11 +1,12 @@
 package com.utilitysuite.ui.kit;
 
+import com.mojang.blaze3d.platform.InputConstants;
 import com.utilitysuite.core.api.visual.HoloToken;
 import com.utilitysuite.ui.holo.AnimStore;
 import com.utilitysuite.ui.holo.HoloFrames;
 import com.utilitysuite.ui.holo.HoloTheme;
 import net.minecraft.client.gui.Font;
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 
 import java.util.function.Consumer;
 
@@ -77,7 +78,7 @@ public final class ToggleSwitch extends UiNode {
     }
 
     @Override
-    public void render(GuiGraphics g, Font font, int sx, int sy, int mouseX, int mouseY) {
+    public void render(GuiGraphicsExtractor g, Font font, int sx, int sy, int mouseX, int mouseY) {
         boolean hover = inside(mouseX, mouseY, sx, sy, w, h);
         float hv = hoverAmount(hover);
         float press = pressAmount();
@@ -117,7 +118,7 @@ public final class ToggleSwitch extends UiNode {
 
     @Override
     public boolean onClick(double mouseX, double mouseY, int button, int sx, int sy) {
-        if (button != 0) {
+        if (button != InputConstants.MOUSE_BUTTON_LEFT) {
             return false;
         }
         set(!value, true);
@@ -126,7 +127,8 @@ public final class ToggleSwitch extends UiNode {
 
     @Override
     public boolean onKey(int keyCode, int scanCode, int modifiers) {
-        if (keyCode == 32 || keyCode == 257 || keyCode == 335) {
+        if (keyCode == InputConstants.KEY_SPACE || keyCode == InputConstants.KEY_RETURN
+                || keyCode == InputConstants.KEY_NUMPADENTER) {
             set(!value, true);
             return true;
         }

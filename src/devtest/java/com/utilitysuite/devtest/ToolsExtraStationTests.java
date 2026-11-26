@@ -18,7 +18,7 @@ import net.minecraft.core.registries.Registries;
 import net.minecraft.network.protocol.game.ServerboundSelectTradePacket;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.Entity;
-import net.minecraft.world.entity.npc.Villager;
+import net.minecraft.world.entity.npc.villager.Villager;
 import net.minecraft.world.inventory.ClickType;
 import net.minecraft.world.inventory.EnchantmentMenu;
 import net.minecraft.world.inventory.MerchantMenu;

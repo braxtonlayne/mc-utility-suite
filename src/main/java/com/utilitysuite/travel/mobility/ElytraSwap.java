@@ -18,7 +18,6 @@ import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.player.Inventory;
-import net.minecraft.world.item.ElytraItem;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 
@@ -91,7 +90,7 @@ public final class ElytraSwap implements IModule, IConfigurable {
         boolean idle = planner.phase() == ElytraSwapPlanner.Phase.IDLE;
         boolean grounded = p.onGround() || p.isInWater() || p.isInLava();
         if (idle && (grounded || p.getDeltaMovement().y >= -0.2 || p.getAbilities().flying
-                || p.getAbilities().invulnerable || p.isPassenger() || mc.screen != null)) {
+                || p.getAbilities().invulnerable || p.isPassenger() || mc.gui.screen() != null)) {
             return; // cheap early-out: nothing to do unless falling
         }
         ItemStack chest = p.getItemBySlot(EquipmentSlot.CHEST);
@@ -129,7 +128,7 @@ public final class ElytraSwap implements IModule, IConfigurable {
                 if (l == null) {
                     l = slot.ensure(request);
                 }
-                if (!swapBack || l == null || mc.screen != null || !queuePlan(l, planner.swappedFrom())) {
+                if (!swapBack || l == null || mc.gui.screen() != null || !queuePlan(l, planner.swappedFrom())) {
                     finish(ap);
                 }
             }
@@ -169,7 +168,7 @@ public final class ElytraSwap implements IModule, IConfigurable {
     static int findElytra(Inventory inv) {
         for (int i = 0; i < 36; i++) {
             ItemStack s = inv.getItem(i);
-            if (s.getItem() == Items.ELYTRA && ElytraItem.isFlyEnabled(s)) {
+            if (s.getItem() == Items.ELYTRA && !s.nextDamageWillBreak()) {
                 return i;
             }
         }
@@ -181,7 +180,7 @@ public final class ElytraSwap implements IModule, IConfigurable {
         int x = p.getBlockX();
         int z = p.getBlockZ();
         int y = p.getBlockY();
-        int min = mc.level.getMinBuildHeight();
+        int min = mc.level.getMinY();
         for (int d = 0; d <= SCAN_DEPTH && y - d >= min; d++) {
             pos.set(x, y - d, z);
             if (!mc.level.getBlockState(pos).getCollisionShape(mc.level, pos).isEmpty()

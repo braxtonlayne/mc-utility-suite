@@ -303,7 +303,7 @@ public final class ChangeTrackerModule extends WorldModule {
                 blocks[si] = b;
             }
         }
-        return new ChunkSnapshot(cx, cz, chunk.getMinSection(), System.currentTimeMillis(), ph, blocks,
+        return new ChunkSnapshot(cx, cz, chunk.getMinSectionY(), System.currentTimeMillis(), ph, blocks,
                 nonEmptyContainers(dim, cx, cz));
     }
 

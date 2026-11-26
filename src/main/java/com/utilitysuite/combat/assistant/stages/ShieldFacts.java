@@ -32,7 +32,7 @@ public interface ShieldFacts {
     /** Ticks the target has been using a shield (0 = not raised); it blocks once this reaches 5. */
     int targetShieldUseTicks();
 
-    /** The target's main hand disables shields ({@code ItemStack.canDisableShield}: an axe). */
+    /** The target's main hand disables shields (26.3: a {@code WEAPON} component with disable_blocking_for_seconds > 0, e.g. an axe). */
     boolean targetHoldsAxe();
 
     /**

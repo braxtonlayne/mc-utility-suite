@@ -1,10 +1,11 @@
 package com.utilitysuite.ui.kit;
 
+import com.mojang.blaze3d.platform.InputConstants;
 import com.utilitysuite.core.api.visual.HoloToken;
 import com.utilitysuite.ui.holo.HoloFrames;
 import com.utilitysuite.ui.holo.HoloTheme;
 import net.minecraft.client.gui.Font;
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 
 import java.util.function.Consumer;
 
@@ -75,7 +76,7 @@ public final class PillButton extends UiNode {
     }
 
     @Override
-    public void render(GuiGraphics g, Font font, int sx, int sy, int mouseX, int mouseY) {
+    public void render(GuiGraphicsExtractor g, Font font, int sx, int sy, int mouseX, int mouseY) {
         boolean hover = enabled && inside(mouseX, mouseY, sx, sy, w, h);
         float hv = hoverAmount(hover);
         float press = pressAmount();
@@ -158,7 +159,7 @@ public final class PillButton extends UiNode {
 
     @Override
     public boolean onClick(double mouseX, double mouseY, int button, int sx, int sy) {
-        if (!enabled || button != 0) {
+        if (!enabled || button != InputConstants.MOUSE_BUTTON_LEFT) {
             return false;
         }
         flashPress();

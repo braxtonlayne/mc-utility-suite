@@ -35,7 +35,7 @@ public final class TravelMessages {
         }
         Component text = Component.translatable(key, args);
         if (Services.modState().isCleanScreen()) {
-            mc.player.displayClientMessage(text.copy().withStyle(ChatFormatting.GOLD), false);
+            mc.player.sendSystemMessage(text.copy().withStyle(ChatFormatting.GOLD));
             return;
         }
         Services.visuals().notices().post(NoticeKind.WARN, text.getString(), null);

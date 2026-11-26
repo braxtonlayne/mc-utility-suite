@@ -15,7 +15,7 @@ import net.minecraft.tags.FluidTags;
 import net.minecraft.util.Mth;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
-import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
+import net.neoforged.neoforge.client.event.SubmitCustomGeometryEvent;
 
 import java.util.List;
 
@@ -24,7 +24,7 @@ import java.util.List;
  * flight as a soft camera-facing ribbon (the Shell's world kit) with a chevron every N ticks pointing along the flight,
  * an impact ring where it hits, and for an ender pearl a ghost silhouette (legs / body / head boxes) standing where
  * you would land. Physics are {@link TrajectoryIntegrator}'s (shared with the World Radar aim arc); all points,
- * chevrons and boxes go into preallocated arrays. Drawn in {@link RenderLevelStageEvent} (AFTER_PARTICLES, batched by
+ * chevrons and boxes go into preallocated arrays. Drawn in {@link SubmitCustomGeometryEvent} (the Shell world kit pass, batched by
  * the kit); nothing when nothing throwable is held or in Clean-Screen. Off by default.
  */
 public final class ProjectileRibbonModule extends WorldModule {
@@ -74,8 +74,8 @@ public final class ProjectileRibbonModule extends WorldModule {
         // all work happens in the frame (the path follows the interpolated look); nothing to do per tick
     }
 
-    public void onRenderLevel(RenderLevelStageEvent event) {
-        if (!isEnabled() || event.getStage() != RenderLevelStageEvent.Stage.AFTER_PARTICLES) {
+    public void onRenderLevel(SubmitCustomGeometryEvent event) {
+        if (!isEnabled()) {
             return;
         }
         Minecraft mc = Minecraft.getInstance();
@@ -89,7 +89,7 @@ public final class ProjectileRibbonModule extends WorldModule {
         if (world == null) {
             return; // no world pass: Clean-Screen or no Shell
         }
-        float pt = event.getPartialTick().getGameTimeDeltaPartialTick(false);
+        float pt = event.getLevelRenderState().worldPartialTicks;
         double x = Mth.lerp(pt, self.xOld, self.getX());
         double y = Mth.lerp(pt, self.yOld, self.getY()) + self.getEyeHeight() - 0.1;
         double z = Mth.lerp(pt, self.zOld, self.getZ());
@@ -98,7 +98,7 @@ public final class ProjectileRibbonModule extends WorldModule {
         sim.simulate(held.kind, x, y, z, self.getViewYRot(pt), self.getViewXRot(pt), held.power, motion.x,
                 self.onGround() ? 0.0 : motion.y, motion.z, collider);
         colliderLevel = null;
-        Vec3 cam = event.getCamera().getPosition();
+        Vec3 cam = event.getLevelRenderState().cameraRenderState.pos;
         int n = RibbonGeometry.path(sim, cam.x, cam.y, cam.z, path);
         if (n < 2) {
             return;

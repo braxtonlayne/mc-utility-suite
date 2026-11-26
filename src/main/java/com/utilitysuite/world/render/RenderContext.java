@@ -3,7 +3,6 @@ package com.utilitysuite.world.render;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import net.minecraft.client.gui.Font;
-import net.minecraft.client.renderer.MultiBufferSource;
 
 /**
  * Per-frame state handed to the world modules by the shared renderer. One instance, refilled every frame (no
@@ -13,7 +12,8 @@ public final class RenderContext {
 
     public final WorldRenderKit kit = new WorldRenderKit();
     public PoseStack.Pose pose;
-    public MultiBufferSource.BufferSource buffers;
+    /** Label target (26.3: the level pass submit collector); valid during the label phase only. */
+    public final WorldRenderKit.LabelBatch buffers = new WorldRenderKit.LabelBatch();
     /** Valid during the line phase only. */
     public VertexConsumer lines;
     public Font font;

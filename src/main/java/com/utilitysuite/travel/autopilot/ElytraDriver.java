@@ -10,13 +10,13 @@ import com.utilitysuite.travel.CameraAim;
 import com.utilitysuite.travel.GridRay;
 import com.utilitysuite.travel.HeldKeys;
 import com.utilitysuite.travel.TravelMessages;
+import net.minecraft.core.component.DataComponents;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.player.Inventory;
-import net.minecraft.world.item.ElytraItem;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.Level;
@@ -173,7 +173,7 @@ final class ElytraDriver {
         }
         airborneTicks = player.onGround() ? 0 : airborneTicks + 1;
         ItemStack chest = player.getItemBySlot(EquipmentSlot.CHEST);
-        if (!(chest.getItem() instanceof ElytraItem) || !ElytraItem.isFlyEnabled(chest)) {
+        if (!chest.has(DataComponents.GLIDER) || chest.nextDamageWillBreak()) {
             if (player.onGround()) {
                 failure = "message.utilitysuite.autopilot.no_elytra";
                 return Result.FAILED;
@@ -278,7 +278,7 @@ final class ElytraDriver {
         int bottleSlot = hotbarSlotOf(inv, Items.EXPERIENCE_BOTTLE);
         MendLoop.Action a = mend.step(player.onGround() && !player.isFallFlying(), player.getXRot(), durabilityLeft,
                 chest.getMaxDamage(), minDurability, countHotbar(inv, Items.EXPERIENCE_BOTTLE),
-                inv.getItem(inv.selected).is(Items.EXPERIENCE_BOTTLE));
+                inv.getItem(inv.getSelectedSlot()).is(Items.EXPERIENCE_BOTTLE));
         switch (a) {
             case AIM_DOWN -> aim.aim(input, lease, player.getYRot(), MendLoop.THROW_PITCH, RotationMode.VISIBLE, 1.0f);
             case SELECT_BOTTLE -> {
@@ -552,7 +552,7 @@ final class ElytraDriver {
             fx = Angles.dirX(player.getYRot());
             fz = Angles.dirZ(player.getYRot());
         }
-        int reach = (int) Math.min(96, Math.max(16, (player.getY() - player.level().getMinBuildHeight()) * 2));
+        int reach = (int) Math.min(96, Math.max(16, (player.getY() - player.level().getMinY()) * 2));
         search.start(player.getX(), player.getZ(), fx, fz, 2, Math.max(3, reach / 8), 3, 8);
         phase = Phase.SEARCH;
         if (searchAttempts == 0) {
@@ -596,7 +596,7 @@ final class ElytraDriver {
 
     private void fireSelectedRocket(LocalPlayer player, IInputSmoother input, ControlLease lease) {
         Inventory inv = player.getInventory();
-        if (inv.selected != pendingRocketSlot || !inv.getItem(pendingRocketSlot).is(Items.FIREWORK_ROCKET)) {
+        if (inv.getSelectedSlot() != pendingRocketSlot || !inv.getItem(pendingRocketSlot).is(Items.FIREWORK_ROCKET)) {
             return; // selection lands on the next tick
         }
         HitResult hit = Minecraft.getInstance().hitResult;
@@ -641,8 +641,8 @@ final class ElytraDriver {
     }
 
     private static int rocketSlot(Inventory inv) {
-        if (inv.getItem(inv.selected).is(Items.FIREWORK_ROCKET)) {
-            return inv.selected;
+        if (inv.getItem(inv.getSelectedSlot()).is(Items.FIREWORK_ROCKET)) {
+            return inv.getSelectedSlot();
         }
         for (int i = 0; i < Inventory.getSelectionSize(); i++) {
             if (inv.getItem(i).is(Items.FIREWORK_ROCKET)) {

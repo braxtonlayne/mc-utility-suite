@@ -1,12 +1,6 @@
 package com.utilitysuite.world.minimap;
 
 import com.mojang.blaze3d.platform.NativeImage;
-import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.vertex.BufferBuilder;
-import com.mojang.blaze3d.vertex.BufferUploader;
-import com.mojang.blaze3d.vertex.DefaultVertexFormat;
-import com.mojang.blaze3d.vertex.Tesselator;
-import com.mojang.blaze3d.vertex.VertexFormat;
 import com.utilitysuite.UtilitySuiteMod;
 import com.utilitysuite.core.api.IModState;
 import com.utilitysuite.core.api.Services;
@@ -18,27 +12,28 @@ import com.utilitysuite.ui.kit.UiRenderUtils;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
-import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.client.gui.LayeredDraw;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.gui.render.TextureSetup;
 import net.minecraft.client.player.LocalPlayer;
-import net.minecraft.client.renderer.GameRenderer;
 import net.minecraft.client.renderer.texture.DynamicTexture;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Entity;
-import org.joml.Matrix4f;
-import org.lwjgl.opengl.GL11;
+import net.neoforged.neoforge.client.gui.GuiLayer;
 
 /**
  * Draws the minimap as a GUI layer: bezel ring with compass letters, the terrain texture as a textured fan (rotated
  * through its UVs, so the wrapping ring buffer needs no copy), entity dots, the player arrow and the coordinate plate.
  * Hidden while the module is off, in Clean-Screen, with F1 / F3, and while any screen is open (the HUD edit screen
- * calls {@link #draw} itself). The texture is uploaded only when the tick wrote texels. Per frame it allocates only
- * the vertex builder the GUI itself uses; the coordinate string is rebuilt only when the block position changes.
+ * calls {@link #draw} itself). The texture is uploaded only when the tick wrote texels (its sampler repeats, which
+ * is DynamicTexture's default in 26.3). Geometry goes through recycled {@link GuiMesh} elements (GUI pipelines are
+ * quad-only, so fans and strips are emitted as quads); per frame the only allocations are the GUI's own bounds records
+ * and the frame/text states of the shared HUD kit; the coordinate string is rebuilt only when the block position
+ * changes.
  */
-public final class MinimapHud implements LayeredDraw.Layer {
+public final class MinimapHud implements GuiLayer {
 
-    private static final ResourceLocation TEXTURE = ResourceLocation.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID,
+    private static final Identifier TEXTURE = Identifier.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID,
             "minimap");
     private static final int SEGMENTS = 64;
     private static final float[] COS = new float[SEGMENTS + 1];
@@ -58,6 +53,8 @@ public final class MinimapHud implements LayeredDraw.Layer {
 
     private final MinimapModule module;
     private DynamicTexture texture;
+    private TextureSetup textureSetup;
+    private final GuiMesh.Pool meshes = new GuiMesh.Pool();
     private final StringBuilder coordBuilder = new StringBuilder(32);
     private String coords = "";
     private int lastBx = Integer.MIN_VALUE;
@@ -74,12 +71,12 @@ public final class MinimapHud implements LayeredDraw.Layer {
     }
 
     @Override
-    public void render(GuiGraphics g, DeltaTracker delta) {
+    public void render(GuiGraphicsExtractor g, DeltaTracker delta) {
         if (!module.isEnabled()) {
             return;
         }
         Minecraft mc = Minecraft.getInstance();
-        if (mc.player == null || mc.options.hideGui || mc.screen != null || mc.getDebugOverlay().showDebugScreen()) {
+        if (mc.player == null || mc.gui.hud.isHidden() || mc.gui.screen() != null || mc.getDebugOverlay().showDebugScreen()) {
             return;
         }
         IModState st = Services.modState();
@@ -99,24 +96,25 @@ public final class MinimapHud implements LayeredDraw.Layer {
             return;
         }
         NativeImage img = new NativeImage(NativeImage.Format.RGBA, MinimapModule.TEX, MinimapModule.TEX, true);
-        img.fillRect(0, 0, MinimapModule.TEX, MinimapModule.TEX, MinimapPalette.toAbgr(MinimapPalette.UNKNOWN));
-        texture = new DynamicTexture(img);
+        // 26.3 fillRect takes ARGB (setPixel); setPixelABGR is the raw write the tick uses
+        img.fillRect(0, 0, MinimapModule.TEX, MinimapModule.TEX, MinimapPalette.UNKNOWN);
+        // DynamicTexture's sampler is repeat + nearest, which is the wrap the ring-buffer UVs rely on
+        texture = new DynamicTexture(() -> "utilitysuite minimap", img);
         Minecraft.getInstance().getTextureManager().register(TEXTURE, texture);
-        texture.bind();
-        RenderSystem.texParameter(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_S, GL11.GL_REPEAT);
-        RenderSystem.texParameter(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_T, GL11.GL_REPEAT);
+        textureSetup = TextureSetup.singleTexture(texture.getTextureView(), texture.getSampler());
         module.image = img;
         module.dirty = false;
     }
 
     /** Draws the minimap with its body's top-left at (x, y). Also used by the HUD edit screen. */
-    public void draw(GuiGraphics g, int x, int y, int size, float pt) {
+    public void draw(GuiGraphicsExtractor g, int x, int y, int size, float pt) {
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer self = mc.player;
         if (self == null) {
             return;
         }
         ensureTexture();
+        meshes.reset();
         if (module.dirty) {
             texture.upload();
             module.dirty = false;
@@ -158,26 +156,18 @@ public final class MinimapHud implements LayeredDraw.Layer {
             }
         }
 
-        g.flush();
-        RenderSystem.enableBlend();
-        RenderSystem.defaultBlendFunc();
-        RenderSystem.disableDepthTest();
-        RenderSystem.disableCull();
-        Matrix4f m = g.pose().last().pose();
-
         // Frame: glass plate with hairline edge and corner brackets (square), or a hairline range ring with corner
         // brackets around it (round).
         int b = MinimapLayout.BEZEL;
         int arm = HoloTheme.bracketArm(size + 2 * b, size + 2 * b);
         if (round) {
-            annulus(m, cx, cy, half + 1, half + 2, HoloTheme.argb(HoloToken.VOID, 0.6f * op));
-            annulus(m, cx, cy, half, half + 1, HoloTheme.argb(HoloToken.LINE, op));
+            annulus(g, cx, cy, half + 1, half + 2, HoloTheme.argb(HoloToken.VOID, 0.6f * op));
+            annulus(g, cx, cy, half, half + 1, HoloTheme.argb(HoloToken.LINE, op));
         } else {
             HoloFrames.frame(g, x - b, y - b, size + 2 * b, size + 2 * b, FrameLevel.QUIET, false, HoloToken.GLASS_HUD,
                     HoloToken.LINE, op);
         }
         HoloFrames.brackets(g, x - b, y - b, size + 2 * b, size + 2 * b, arm, HoloTheme.argb(frameTok, op));
-        g.flush();
 
         // Terrain: a fan whose UVs are the rotated world positions in texel space (texture wraps).
         float pxTex = (float) (Mth.lerp(pt, self.xOld, self.getX()) / zoom);
@@ -188,38 +178,37 @@ public final class MinimapHud implements LayeredDraw.Layer {
         float v0 = Math.floorMod(baseZ, MinimapModule.TEX) + (pzTex - baseZ);
         float texPerPx = MinimapModule.VIEW_TEXELS / half;
         float inv = 1f / MinimapModule.TEX;
-        int alpha = (int) (255 * op);
-        RenderSystem.setShader(GameRenderer::getPositionTexColorShader);
-        RenderSystem.setShaderTexture(0, TEXTURE);
-        BufferBuilder buf = Tesselator.getInstance().begin(VertexFormat.Mode.TRIANGLE_FAN,
-                DefaultVertexFormat.POSITION_TEX_COLOR);
-        buf.addVertex(m, cx, cy, 0).setUv(u0 * inv, v0 * inv).setColor(255, 255, 255, alpha);
+        int texColor = ((int) (255 * op) << 24) | 0x00FFFFFF;
+        GuiMesh tex = meshes.beginTextured(g, textureSetup);
         if (round) {
-            for (int i = SEGMENTS; i >= 0; i--) {
-                texVertex(buf, m, cx, cy, COS[i] * half, SIN[i] * half, u0, v0, texPerPx, inv, alpha);
+            // the fan (centre, rim i, rim i-1, ...) as quads: each quad (centre, rim i, rim i-1, rim i-2) covers two
+            // fan triangles
+            for (int i = SEGMENTS; i >= 2; i -= 2) {
+                texVertex(tex, cx, cy, 0f, 0f, u0, v0, texPerPx, inv, texColor);
+                texVertex(tex, cx, cy, COS[i] * half, SIN[i] * half, u0, v0, texPerPx, inv, texColor);
+                texVertex(tex, cx, cy, COS[i - 1] * half, SIN[i - 1] * half, u0, v0, texPerPx, inv, texColor);
+                texVertex(tex, cx, cy, COS[i - 2] * half, SIN[i - 2] * half, u0, v0, texPerPx, inv, texColor);
             }
         } else {
-            texVertex(buf, m, cx, cy, half, -half, u0, v0, texPerPx, inv, alpha);
-            texVertex(buf, m, cx, cy, -half, -half, u0, v0, texPerPx, inv, alpha);
-            texVertex(buf, m, cx, cy, -half, half, u0, v0, texPerPx, inv, alpha);
-            texVertex(buf, m, cx, cy, half, half, u0, v0, texPerPx, inv, alpha);
-            texVertex(buf, m, cx, cy, half, -half, u0, v0, texPerPx, inv, alpha);
+            texVertex(tex, cx, cy, half, -half, u0, v0, texPerPx, inv, texColor);
+            texVertex(tex, cx, cy, -half, -half, u0, v0, texPerPx, inv, texColor);
+            texVertex(tex, cx, cy, -half, half, u0, v0, texPerPx, inv, texColor);
+            texVertex(tex, cx, cy, half, half, u0, v0, texPerPx, inv, texColor);
         }
-        BufferUploader.drawWithShader(buf.buildOrThrow());
+        tex.submit(g);
         if (style == MinimapPalette.Style.CLEAN) {
             // Dark glass tint over the terrain.
             if (round) {
-                disc(m, cx, cy, half, HoloTheme.argb(HoloToken.VOID, 0.31f * op));
+                disc(g, cx, cy, half, HoloTheme.argb(HoloToken.VOID, 0.31f * op));
             } else {
                 HoloFrames.plate(g, x, y, size, size, HoloToken.VOID, 0.31f * op);
-                g.flush();
             }
         }
 
         // Hairline range ring at half range, and the cardinal ticks on the edge (rotating with the map).
         float rangeR = half * 0.5f;
-        annulus(m, cx, cy, rangeR - 0.5f, rangeR + 0.5f, HoloTheme.argb(HoloToken.LINE_FAINT, op));
-        cardinalTicks(m, cx, cy, half, round, HoloTheme.argb(HoloToken.LINE, op), HoloTheme.argb(northTok, op));
+        annulus(g, cx, cy, rangeR - 0.5f, rangeR + 0.5f, HoloTheme.argb(HoloToken.LINE_FAINT, op));
+        cardinalTicks(g, cx, cy, half, round, HoloTheme.argb(HoloToken.LINE, op), HoloTheme.argb(northTok, op));
 
         // Entity dots.
         double selfX = Mth.lerp(pt, self.xOld, self.getX());
@@ -244,7 +233,6 @@ public final class MinimapHud implements LayeredDraw.Layer {
             HoloFrames.plate(g, ix - 2, iy - 2, 4, 4, HoloToken.VOID, op * 0.7f);
             HoloFrames.plate(g, ix - 1, iy - 1, 2, 2, dot, op);
         }
-        g.flush();
 
         // Player arrow: facing direction on screen.
         float fyaw = self.getViewYRot(pt) * Mth.DEG_TO_RAD;
@@ -255,8 +243,8 @@ public final class MinimapHud implements LayeredDraw.Layer {
         float rx = -fy;
         float ry = fx;
         // the player as an accent chevron over a dark outline
-        arrow(m, cx, cy, fx, fy, rx, ry, 1.4f, HoloTheme.argb(HoloToken.VOID, 0.75f * op));
-        arrow(m, cx, cy, fx, fy, rx, ry, 1f, HoloTheme.argb(HoloToken.ACCENT, op));
+        arrow(g, cx, cy, fx, fy, rx, ry, 1.4f, HoloTheme.argb(HoloToken.VOID, 0.75f * op));
+        arrow(g, cx, cy, fx, fy, rx, ry, 1f, HoloTheme.argb(HoloToken.ACCENT, op));
 
         // Compass letters on the bezel.
         Font font = mc.font;
@@ -293,9 +281,6 @@ public final class MinimapHud implements LayeredDraw.Layer {
         int py = y + size + b + 2;
         HoloFrames.frame(g, px, py, tw + 8, 11, FrameLevel.QUIET, false, HoloToken.GLASS_HUD, HoloToken.LINE, op);
         UiRenderUtils.text(g, font, coords, px + 4, py + 2, HoloTheme.argb(HoloToken.TEXT_SECONDARY, op));
-        g.flush();
-        RenderSystem.enableCull();
-        RenderSystem.enableDepthTest();
     }
 
     /** Tick length of the north mark and of the other three cardinal ticks, in px. */
@@ -304,13 +289,12 @@ public final class MinimapHud implements LayeredDraw.Layer {
     private static final float TICK_WIDTH = 1f;
 
     /**
-     * The four cardinal ticks on the edge of the map, pointing inwards, in one triangle batch: north in
+     * The four cardinal ticks on the edge of the map, pointing inwards, in one quad batch: north in
      * {@code northArgb}, the others in {@code argb}. On a square map they sit on the frame edge.
      */
-    private void cardinalTicks(Matrix4f m, float cx, float cy, float half, boolean round, int argb, int northArgb) {
-        RenderSystem.setShader(GameRenderer::getPositionColorShader);
-        BufferBuilder buf = Tesselator.getInstance().begin(VertexFormat.Mode.TRIANGLES,
-                DefaultVertexFormat.POSITION_COLOR);
+    private void cardinalTicks(GuiGraphicsExtractor g, float cx, float cy, float half, boolean round, int argb,
+                               int northArgb) {
+        GuiMesh buf = meshes.begin(g);
         for (int i = 0; i < 4; i++) {
             float dx = screenX(LETTER_DX[i], LETTER_DZ[i]) * blocksPerPx;
             float dy = screenY(LETTER_DX[i], LETTER_DZ[i]) * blocksPerPx;
@@ -329,14 +313,9 @@ public final class MinimapHud implements LayeredDraw.Layer {
             float ix = ex - dx * len;
             float iy = ey - dy * len;
             int col = i == 0 ? northArgb : argb;
-            buf.addVertex(m, ex - px, ey - py, 0).setColor(col);
-            buf.addVertex(m, ex + px, ey + py, 0).setColor(col);
-            buf.addVertex(m, ix + px, iy + py, 0).setColor(col);
-            buf.addVertex(m, ex - px, ey - py, 0).setColor(col);
-            buf.addVertex(m, ix + px, iy + py, 0).setColor(col);
-            buf.addVertex(m, ix - px, iy - py, 0).setColor(col);
+            buf.quad(ex - px, ey - py, ex + px, ey + py, ix + px, iy + py, ix - px, iy - py, col);
         }
-        BufferUploader.drawWithShader(buf.buildOrThrow());
+        buf.submit(g);
     }
 
     /** World offset (blocks) to screen offset (px). Inverse of the orthonormal map rotation. */
@@ -348,46 +327,40 @@ public final class MinimapHud implements LayeredDraw.Layer {
         return (s * wx - c * wz) / blocksPerPx;
     }
 
-    private void texVertex(BufferBuilder buf, Matrix4f m, float cx, float cy, float sx, float sy, float u0, float v0,
-                           float texPerPx, float inv, int alpha) {
+    private void texVertex(GuiMesh buf, float cx, float cy, float sx, float sy, float u0, float v0,
+                           float texPerPx, float inv, int argb) {
         // Screen offset -> world texel offset (rotation by the map yaw).
         float wx = (-c * sx + s * sy) * texPerPx;
         float wz = (-s * sx - c * sy) * texPerPx;
-        buf.addVertex(m, cx + sx, cy + sy, 0).setUv((u0 + wx) * inv, (v0 + wz) * inv).setColor(255, 255, 255, alpha);
+        buf.vertex(cx + sx, cy + sy, (u0 + wx) * inv, (v0 + wz) * inv, argb);
     }
 
-    private static void annulus(Matrix4f m, float cx, float cy, float r0, float r1, int argb) {
-        RenderSystem.setShader(GameRenderer::getPositionColorShader);
-        BufferBuilder buf = Tesselator.getInstance().begin(VertexFormat.Mode.TRIANGLE_STRIP,
-                DefaultVertexFormat.POSITION_COLOR);
-        for (int i = 0; i <= SEGMENTS; i++) {
-            buf.addVertex(m, cx + COS[i] * r1, cy + SIN[i] * r1, 0).setColor(argb);
-            buf.addVertex(m, cx + COS[i] * r0, cy + SIN[i] * r0, 0).setColor(argb);
+    private void annulus(GuiGraphicsExtractor g, float cx, float cy, float r0, float r1, int argb) {
+        GuiMesh buf = meshes.begin(g);
+        for (int i = 0; i < SEGMENTS; i++) {
+            buf.quad(cx + COS[i] * r1, cy + SIN[i] * r1, cx + COS[i] * r0, cy + SIN[i] * r0,
+                    cx + COS[i + 1] * r0, cy + SIN[i + 1] * r0, cx + COS[i + 1] * r1, cy + SIN[i + 1] * r1, argb);
         }
-        BufferUploader.drawWithShader(buf.buildOrThrow());
+        buf.submit(g);
     }
 
-    private static void disc(Matrix4f m, float cx, float cy, float r, int argb) {
-        RenderSystem.setShader(GameRenderer::getPositionColorShader);
-        BufferBuilder buf = Tesselator.getInstance().begin(VertexFormat.Mode.TRIANGLE_FAN,
-                DefaultVertexFormat.POSITION_COLOR);
-        buf.addVertex(m, cx, cy, 0).setColor(argb);
-        for (int i = SEGMENTS; i >= 0; i--) {
-            buf.addVertex(m, cx + COS[i] * r, cy + SIN[i] * r, 0).setColor(argb);
+    private void disc(GuiGraphicsExtractor g, float cx, float cy, float r, int argb) {
+        GuiMesh buf = meshes.begin(g);
+        // fan as quads, two triangles each
+        for (int i = SEGMENTS; i >= 2; i -= 2) {
+            buf.quad(cx, cy, cx + COS[i] * r, cy + SIN[i] * r, cx + COS[i - 1] * r, cy + SIN[i - 1] * r,
+                    cx + COS[i - 2] * r, cy + SIN[i - 2] * r, argb);
         }
-        BufferUploader.drawWithShader(buf.buildOrThrow());
+        buf.submit(g);
     }
 
     /** Arrow from forward (fx, fy) and right (rx, ry) unit vectors in screen space. */
-    private static void arrow(Matrix4f m, float cx, float cy, float fx, float fy, float rx, float ry, float scale,
-                              int argb) {
+    private void arrow(GuiGraphicsExtractor g, float cx, float cy, float fx, float fy, float rx, float ry, float scale,
+                       int argb) {
         float tipF = 6 * scale;
         float backF = -4 * scale;
         float notchF = -1.5f * scale;
         float side = 4 * scale;
-        RenderSystem.setShader(GameRenderer::getPositionColorShader);
-        BufferBuilder buf = Tesselator.getInstance().begin(VertexFormat.Mode.TRIANGLES,
-                DefaultVertexFormat.POSITION_COLOR);
         float tx = cx + fx * tipF;
         float ty = cy + fy * tipF;
         float nx = cx + fx * notchF;
@@ -396,13 +369,9 @@ public final class MinimapHud implements LayeredDraw.Layer {
         float ly = cy + fy * backF - ry * side;
         float qx = cx + fx * backF + rx * side;
         float qy = cy + fy * backF + ry * side;
-        // Two triangles (tip, left, notch) and (tip, notch, right); order both ways is fine without culling.
-        buf.addVertex(m, tx, ty, 0).setColor(argb);
-        buf.addVertex(m, lx, ly, 0).setColor(argb);
-        buf.addVertex(m, nx, ny, 0).setColor(argb);
-        buf.addVertex(m, tx, ty, 0).setColor(argb);
-        buf.addVertex(m, nx, ny, 0).setColor(argb);
-        buf.addVertex(m, qx, qy, 0).setColor(argb);
-        BufferUploader.drawWithShader(buf.buildOrThrow());
+        // The chevron as one quad (tip, left, notch, right) = triangles (tip, left, notch) and (notch, right, tip).
+        GuiMesh buf = meshes.begin(g);
+        buf.quad(tx, ty, lx, ly, nx, ny, qx, qy, argb);
+        buf.submit(g);
     }
 }

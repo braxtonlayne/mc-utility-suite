@@ -7,13 +7,13 @@ import com.utilitysuite.core.api.Services;
 import com.utilitysuite.core.input.KeybindManager;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.input.KeyEvent;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.game.ClientboundDamageEventPacket;
 import net.neoforged.neoforge.client.event.InputEvent;
 import net.neoforged.neoforge.client.event.RegisterKeyMappingsEvent;
 import net.neoforged.neoforge.client.settings.KeyConflictContext;
 import net.neoforged.neoforge.event.entity.player.AttackEntityEvent;
-import org.lwjgl.glfw.GLFW;
 
 /**
  * Forwards client events to the {@link CombatAssistant}: manual attacks ({@code AttackEntityEvent}), server damage
@@ -37,9 +37,9 @@ public final class CombatEventBridge {
     /** Mod-bus listener. */
     public static void onRegisterKeys(RegisterKeyMappingsEvent event) {
         retreatKey = new KeyMapping("key.utilitysuite.combat_retreat", KeyConflictContext.IN_GAME,
-                InputConstants.Type.KEYSYM, InputConstants.UNKNOWN.getValue(), KeybindManager.CATEGORY);
+                InputConstants.Type.KEYBOARD, InputConstants.UNKNOWN.getValue(), KeybindManager.CATEGORY);
         toggleKey = new KeyMapping("key.utilitysuite.combat_toggle", KeyConflictContext.IN_GAME,
-                InputConstants.Type.KEYSYM, InputConstants.UNKNOWN.getValue(), KeybindManager.CATEGORY);
+                InputConstants.Type.KEYBOARD, InputConstants.UNKNOWN.getValue(), KeybindManager.CATEGORY);
         event.register(retreatKey);
         event.register(toggleKey);
     }
@@ -63,36 +63,44 @@ public final class CombatEventBridge {
     }
 
     public static void onKey(InputEvent.Key event) {
-        if (event.getAction() != GLFW.GLFW_PRESS || assistant == null) {
+        if (event.getAction() != InputConstants.PRESS || assistant == null) {
             return;
         }
         Minecraft mc = Minecraft.getInstance();
-        if (mc.player == null || mc.screen != null) {
+        if (mc.player == null || mc.gui.screen() != null) {
             return;
         }
-        int key = event.getKey();
-        int scan = event.getScanCode();
-        if (retreatKey != null && retreatKey.matches(key, scan)) {
+        KeyEvent key = event.getKeyEvent();
+        if (retreatKey != null && retreatKey.matches(key)) {
             assistant.onCancelKey();
-        } else if (toggleKey != null && toggleKey.matches(key, scan)) {
+        } else if (toggleKey != null && toggleKey.matches(key)) {
             toggleArmed(mc);
         }
     }
 
     public static void onMouseButton(InputEvent.MouseButton.Pre event) {
-        if (event.getAction() != GLFW.GLFW_PRESS || assistant == null) {
+        if (event.getAction() != InputConstants.PRESS || assistant == null) {
             return;
         }
         Minecraft mc = Minecraft.getInstance();
-        if (mc.player == null || mc.screen != null) {
+        if (mc.player == null || mc.gui.screen() != null) {
             return;
         }
         int b = event.getButton();
-        if (retreatKey != null && retreatKey.matchesMouse(b)) {
+        if (matchesMouse(retreatKey, b)) {
             assistant.onCancelKey();
-        } else if (toggleKey != null && toggleKey.matchesMouse(b)) {
+        } else if (matchesMouse(toggleKey, b)) {
             toggleArmed(mc);
         }
+    }
+
+    /** {@code KeyMapping.matchesMouse} takes a positioned event now; the button id is all that matters here. */
+    private static boolean matchesMouse(KeyMapping m, int button) {
+        if (m == null || m.isUnbound()) {
+            return false;
+        }
+        InputConstants.Key k = m.getKey();
+        return k.getType() == InputConstants.Type.MOUSE && k.getValue() == button;
     }
 
     private static void toggleArmed(Minecraft mc) {
@@ -100,8 +108,8 @@ public final class CombatEventBridge {
         CoreBootstrap.modules().setModuleEnabled(CombatAssistant.ID, armed, Services.modState().profile());
         Services.modState().markDirty();
         if (mc.player != null && !Services.modState().isCleanScreen()) {
-            mc.player.displayClientMessage(Component.translatable(armed ? "message.utilitysuite.combat_armed"
-                    : "message.utilitysuite.combat_disarmed"), true);
+            mc.player.sendOverlayMessage(Component.translatable(armed ? "message.utilitysuite.combat_armed"
+                    : "message.utilitysuite.combat_disarmed"));
         }
     }
 }

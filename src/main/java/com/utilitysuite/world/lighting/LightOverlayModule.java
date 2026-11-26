@@ -14,7 +14,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
-import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.level.LightLayer;
 import net.minecraft.world.level.NaturalSpawner;
 import net.minecraft.world.level.block.state.BlockState;
@@ -196,8 +196,8 @@ public final class LightOverlayModule extends WorldModule {
     }
 
     private void scanColumn(ClientLevel level, int x, int z) {
-        int minY = Math.max(level.getMinBuildHeight(), scanY - below);
-        int maxY = Math.min(level.getMaxBuildHeight() - 3, scanY + above);
+        int minY = Math.max(level.getMinY(), scanY - below);
+        int maxY = Math.min(level.getMaxY() - 2, scanY + above);
         for (int y = minY; y <= maxY; y++) {
             long key = BlockPosPacking.pack(x, y, z);
             int kind = classifyFloor(level, x, y, z);
@@ -226,16 +226,16 @@ public final class LightOverlayModule extends WorldModule {
         feet.set(x, y + 1, z);
         BlockState feetState = level.getBlockState(feet);
         if (!NaturalSpawner.isValidEmptySpawnBlock(level, feet, feetState, feetState.getFluidState(),
-                EntityType.ZOMBIE)) {
+                EntityTypes.ZOMBIE)) {
             return SpawnableRule.NONE;
         }
         head.set(x, y + 2, z);
         BlockState headState = level.getBlockState(head);
         if (!NaturalSpawner.isValidEmptySpawnBlock(level, head, headState, headState.getFluidState(),
-                EntityType.ZOMBIE)) {
+                EntityTypes.ZOMBIE)) {
             return SpawnableRule.NONE;
         }
-        boolean floorValid = fs.isValidSpawn(level, floor, EntityType.ZOMBIE);
+        boolean floorValid = fs.isValidSpawn(level, floor, EntityTypes.ZOMBIE);
         return SpawnableRule.classify(floorValid, true, true, level.getBrightness(LightLayer.BLOCK, feet),
                 level.getBrightness(LightLayer.SKY, feet), threshold);
     }

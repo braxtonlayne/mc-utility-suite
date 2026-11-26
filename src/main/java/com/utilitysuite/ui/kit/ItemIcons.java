@@ -1,7 +1,7 @@
 package com.utilitysuite.ui.kit;
 
 import net.minecraft.core.registries.BuiltInRegistries;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
@@ -24,7 +24,7 @@ public final class ItemIcons {
         }
         ItemStack s = CACHE.get(id);
         if (s == null) {
-            ResourceLocation rl = ResourceLocation.tryParse(id);
+            Identifier rl = Identifier.tryParse(id);
             Item item = rl == null ? null : BuiltInRegistries.ITEM.getOptional(rl).orElse(null);
             s = item == null || item == Items.AIR ? stack(fallback) : new ItemStack(item);
             if (CACHE.size() > 256) {

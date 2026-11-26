@@ -1,13 +1,7 @@
 package com.utilitysuite.world.atlas;
 
+import com.mojang.blaze3d.platform.InputConstants;
 import com.mojang.blaze3d.platform.NativeImage;
-import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.vertex.BufferBuilder;
-import com.mojang.blaze3d.vertex.BufferUploader;
-import com.mojang.blaze3d.vertex.DefaultVertexFormat;
-import com.mojang.blaze3d.vertex.MeshData;
-import com.mojang.blaze3d.vertex.Tesselator;
-import com.mojang.blaze3d.vertex.VertexFormat;
 import com.utilitysuite.UtilitySuiteMod;
 import com.utilitysuite.core.api.ControlPriority;
 import com.utilitysuite.core.api.INavigator;
@@ -23,6 +17,7 @@ import com.utilitysuite.ui.kit.PillButton;
 import com.utilitysuite.ui.kit.UiRenderUtils;
 import com.utilitysuite.world.BlockPosPacking;
 import com.utilitysuite.world.WorldIds;
+import com.utilitysuite.world.minimap.GuiMesh;
 import com.utilitysuite.world.minimap.MinimapPalette;
 import com.utilitysuite.world.overlays.ChunkAgeTracker;
 import com.utilitysuite.world.overlays.WorldScanner;
@@ -34,14 +29,14 @@ import com.utilitysuite.world.spawn.SlimeAfkFinder;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.objects.ObjectIterator;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.input.KeyEvent;
+import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.client.player.LocalPlayer;
-import net.minecraft.client.renderer.GameRenderer;
 import net.minecraft.client.renderer.texture.DynamicTexture;
 import net.minecraft.network.chat.Component;
-import net.minecraft.resources.ResourceLocation;
-import org.joml.Matrix4f;
+import net.minecraft.resources.Identifier;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -66,12 +61,12 @@ public final class WorldAtlasScreen extends Screen {
 
     private static final class RegionTex {
         final DynamicTexture tex;
-        final ResourceLocation id;
+        final Identifier id;
         final int rx;
         final int rz;
         int version = -1;
 
-        RegionTex(int rx, int rz, DynamicTexture tex, ResourceLocation id) {
+        RegionTex(int rx, int rz, DynamicTexture tex, Identifier id) {
             this.rx = rx;
             this.rz = rz;
             this.tex = tex;
@@ -89,6 +84,7 @@ public final class WorldAtlasScreen extends Screen {
     private final float[] vx = new float[(MESH_CELLS + 1) * (MESH_CELLS + 1)];
     private final float[] vy = new float[(MESH_CELLS + 1) * (MESH_CELLS + 1)];
     private final List<PillButton> chips = new ArrayList<>();
+    private final GuiMesh.Pool meshes = new GuiMesh.Pool();
     private boolean mode3d;
     private int texSerial;
     private int frame;
@@ -267,17 +263,18 @@ public final class WorldAtlasScreen extends Screen {
     // ---- rendering ------------------------------------------------------------------------------------------------
 
     @Override
-    public void renderBackground(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
+    public void extractBackground(GuiGraphicsExtractor g, int mouseX, int mouseY, float partialTick) {
         HoloFrames.plate(g, 0, 0, width, height, HoloToken.VOID, 0.92f);
     }
 
     @Override
-    public void render(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
-        renderBackground(g, mouseX, mouseY, partialTick);
+    public void extractRenderState(GuiGraphicsExtractor g, int mouseX, int mouseY, float partialTick) {
+        // (Screen extracts the background itself, in its own stratum, before this)
         frame++;
+        meshes.reset();
         g.enableScissor(0, TOP, width, height);
-        g.pose().pushPose();
-        g.pose().translate(0, TOP, 0);
+        g.pose().pushMatrix();
+        g.pose().translate(0, TOP);
         int my = mouseY - TOP;
         if (mode3d) {
             render3d(g);
@@ -286,7 +283,7 @@ public final class WorldAtlasScreen extends Screen {
         }
         drawPins(g, mouseX, my);
         drawPlayer(g);
-        g.pose().popPose();
+        g.pose().popMatrix();
         g.disableScissor();
         // Top bar.
         HoloFrames.plate(g, 0, 0, width, TOP, HoloToken.GLASS_RAISED, 0.85f);
@@ -322,7 +319,7 @@ public final class WorldAtlasScreen extends Screen {
         return "X " + (int) Math.floor(view.toWorldX(mouseX)) + "  Z " + (int) Math.floor(view.toWorldZ(mouseY - TOP));
     }
 
-    private void render2d(GuiGraphics g) {
+    private void render2d(GuiGraphicsExtractor g) {
         AtlasTileStore store = module.store();
         int rx0 = Math.floorDiv((int) Math.floor(view.minWorldX()), AtlasTileStore.REGION_BLOCKS);
         int rx1 = Math.floorDiv((int) Math.floor(view.maxWorldX()), AtlasTileStore.REGION_BLOCKS);
@@ -344,13 +341,13 @@ public final class WorldAtlasScreen extends Screen {
                 if (t == null) {
                     continue;
                 }
-                g.pose().pushPose();
+                g.pose().pushMatrix();
                 g.pose().translate((float) view.toScreenX(rx * AtlasTileStore.REGION_BLOCKS),
-                        (float) view.toScreenY(rz * AtlasTileStore.REGION_BLOCKS), 0);
-                g.pose().scale(s, s, 1);
+                        (float) view.toScreenY(rz * AtlasTileStore.REGION_BLOCKS));
+                g.pose().scale(s, s);
                 int r = AtlasTileStore.REGION_BLOCKS;
-                g.blit(t.id, 0, 0, 0, 0, r, r, r, r);
-                g.pose().popPose();
+                g.blit(t.tex.getTextureView(), t.tex.getSampler(), 0, 0, r, r, 0f, 1f, 0f, 1f);
+                g.pose().popMatrix();
             }
         }
         if (module.layerTrail) {
@@ -364,9 +361,10 @@ public final class WorldAtlasScreen extends Screen {
                 evictFarRegion();
             }
             int r = AtlasTileStore.REGION_BLOCKS;
-            DynamicTexture tex = new DynamicTexture(new NativeImage(NativeImage.Format.RGBA, r, r, false));
-            ResourceLocation id = ResourceLocation.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID,
+            Identifier id = Identifier.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID,
                     "atlas/region_" + (texSerial++));
+            DynamicTexture tex = new DynamicTexture(id::toString,
+                    new NativeImage(NativeImage.Format.RGBA, r, r, false));
             Minecraft.getInstance().getTextureManager().register(id, tex);
             t = new RegionTex(rx, rz, tex, id);
             regions.put(AtlasTileStore.key(rx, rz), t);
@@ -377,7 +375,7 @@ public final class WorldAtlasScreen extends Screen {
         for (int y = 0; y < r; y++) {
             int row = y * r;
             for (int x = 0; x < r; x++) {
-                img.setPixelRGBA(x, y, MinimapPalette.toAbgr(compose[row + x]));
+                img.setPixelABGR(x, y, MinimapPalette.toAbgr(compose[row + x]));
             }
         }
         t.tex.upload();
@@ -407,7 +405,7 @@ public final class WorldAtlasScreen extends Screen {
         }
     }
 
-    private void drawChunkHeat(GuiGraphics g) {
+    private void drawChunkHeat(GuiGraphicsExtractor g) {
         ChunkAgeTracker tracker = WorldScanner.activeChunkAge();
         double s = view.scale();
         if (tracker == null || s * 16 < 2) {
@@ -440,7 +438,7 @@ public final class WorldAtlasScreen extends Screen {
         return Math.max(1, (int) Math.round(4 / view.scale()));
     }
 
-    private void render3d(GuiGraphics g) {
+    private void render3d(GuiGraphicsExtractor g) {
         LocalPlayer p = Minecraft.getInstance().player;
         int fallback = p == null ? 64 : p.getBlockY();
         if (frame % 10 == 0 || mesh.rebuilds() == 0) {
@@ -462,13 +460,8 @@ public final class WorldAtlasScreen extends Screen {
                 vy[i] = (float) iso.sy;
             }
         }
-        Matrix4f m = g.pose().last().pose();
-        RenderSystem.enableBlend();
-        RenderSystem.defaultBlendFunc();
-        RenderSystem.disableDepthTest();
-        RenderSystem.disableCull();
-        RenderSystem.setShader(GameRenderer::getPositionColorShader);
-        BufferBuilder buf = Tesselator.getInstance().begin(VertexFormat.Mode.QUADS, DefaultVertexFormat.POSITION_COLOR);
+        // one GUI element for the whole grid, quads in back-to-front order (the GUI pipeline is QUADS already)
+        GuiMesh buf = meshes.begin(g);
         int order = iso.paintOrder();
         boolean xUp = (order & 1) != 0;
         boolean zUp = (order & 2) != 0;
@@ -488,18 +481,11 @@ public final class WorldAtlasScreen extends Screen {
                 int r = clamp(((col >> 16) & 0xFF) + light);
                 int gg = clamp(((col >> 8) & 0xFF) + light);
                 int bb = clamp((col & 0xFF) + light + 12); // slight cyan holo cast
-                buf.addVertex(m, vx[a], vy[a], 0).setColor(r, gg, bb, alpha);
-                buf.addVertex(m, vx[d], vy[d], 0).setColor(r, gg, bb, alpha);
-                buf.addVertex(m, vx[c], vy[c], 0).setColor(r, gg, bb, alpha);
-                buf.addVertex(m, vx[b], vy[b], 0).setColor(r, gg, bb, alpha);
+                buf.quad(vx[a], vy[a], vx[d], vy[d], vx[c], vy[c], vx[b], vy[b],
+                        (alpha << 24) | (r << 16) | (gg << 8) | bb);
             }
         }
-        MeshData data = buf.build();
-        if (data != null) {
-            BufferUploader.drawWithShader(data);
-        }
-        RenderSystem.enableCull();
-        RenderSystem.enableDepthTest();
+        buf.submit(g);
     }
 
     private static int clamp(int v) {
@@ -507,7 +493,7 @@ public final class WorldAtlasScreen extends Screen {
     }
 
     /** Projects every pin into screen space (2D or 3D) and draws the visible ones. */
-    private void drawPins(GuiGraphics g, int mouseX, int mouseY) {
+    private void drawPins(GuiGraphicsExtractor g, int mouseX, int mouseY) {
         int mask = kindMask();
         int n = pins.count();
         double half = mesh.cells / 2.0 * mesh.step();
@@ -552,7 +538,7 @@ public final class WorldAtlasScreen extends Screen {
         }
     }
 
-    private void drawPlayer(GuiGraphics g) {
+    private void drawPlayer(GuiGraphicsExtractor g) {
         LocalPlayer p = Minecraft.getInstance().player;
         if (p == null) {
             return;
@@ -574,7 +560,7 @@ public final class WorldAtlasScreen extends Screen {
         g.fill(x - 2, y - 2, x + 3, y + 3, accent);
     }
 
-    private void drawMenu(GuiGraphics g, int mouseX, int mouseY) {
+    private void drawMenu(GuiGraphicsExtractor g, int mouseX, int mouseY) {
         String title = menuBlockX + ", " + menuBlockY + ", " + menuBlockZ;
         int w = 96;
         int h = 18 + 2 * (PillButton.H + 4);
@@ -592,7 +578,10 @@ public final class WorldAtlasScreen extends Screen {
     // ---- input ----------------------------------------------------------------------------------------------------
 
     @Override
-    public boolean mouseClicked(double mx, double my, int button) {
+    public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
+        double mx = event.x();
+        double my = event.y();
+        int button = event.button();
         if (menuOpen) {
             if (addButton.contains(mx, my, addButton.x, addButton.y)
                     && addButton.onClick(mx, my, button, addButton.x, addButton.y)) {
@@ -611,7 +600,7 @@ public final class WorldAtlasScreen extends Screen {
             }
         }
         if (my < TOP) {
-            return super.mouseClicked(mx, my, button);
+            return super.mouseClicked(event, doubleClick);
         }
         dragging = true;
         moved = false;
@@ -622,14 +611,17 @@ public final class WorldAtlasScreen extends Screen {
     }
 
     @Override
-    public boolean mouseDragged(double mx, double my, int button, double dx, double dy) {
+    public boolean mouseDragged(MouseButtonEvent event, double dx, double dy) {
         if (!dragging) {
-            return super.mouseDragged(mx, my, button, dx, dy);
+            return super.mouseDragged(event, dx, dy);
         }
+        double mx = event.x();
+        double my = event.y();
+        int button = event.button();
         if (Math.abs(mx - pressX) + Math.abs(my - pressY) > 3) {
             moved = true;
         }
-        if (mode3d && button == 0) {
+        if (mode3d && button == InputConstants.MOUSE_BUTTON_LEFT) {
             iso.rotate(dx * 0.01, -dy * 0.01);
         } else if (mode3d) {
             // Pan in the rotated frame: screen drag maps back through the yaw.
@@ -644,15 +636,18 @@ public final class WorldAtlasScreen extends Screen {
     }
 
     @Override
-    public boolean mouseReleased(double mx, double my, int button) {
+    public boolean mouseReleased(MouseButtonEvent event) {
+        double mx = event.x();
+        double my = event.y();
+        int button = event.button();
         if (dragging && button == pressButton) {
             dragging = false;
-            if (!moved && (button == 0 || button == 1)) {
+            if (!moved && (button == InputConstants.MOUSE_BUTTON_LEFT || button == InputConstants.MOUSE_BUTTON_RIGHT)) {
                 openMenu(mx, my);
             }
             return true;
         }
-        return super.mouseReleased(mx, my, button);
+        return super.mouseReleased(event);
     }
 
     @Override
@@ -745,14 +740,14 @@ public final class WorldAtlasScreen extends Screen {
     }
 
     @Override
-    public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+    public boolean keyPressed(KeyEvent event) {
         net.minecraft.client.KeyMapping k = com.utilitysuite.core.input.KeybindManager.mapping(
                 com.utilitysuite.core.input.KeybindManager.KeyId.OPEN_WORLD_ATLAS);
-        if (k != null && !k.isUnbound() && k.matches(keyCode, scanCode)) {
+        if (k != null && !k.isUnbound() && k.matches(event)) {
             onClose(); // the open key also closes the atlas
             return true;
         }
-        return super.keyPressed(keyCode, scanCode, modifiers);
+        return super.keyPressed(event);
     }
 
     private void say(String s) {

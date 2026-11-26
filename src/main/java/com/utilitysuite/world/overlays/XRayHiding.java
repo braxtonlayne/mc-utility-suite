@@ -48,8 +48,8 @@ public final class XRayHiding {
         active = want;
         if (changed) {
             Minecraft mc = Minecraft.getInstance();
-            if (mc.levelRenderer != null && mc.level != null) {
-                mc.levelRenderer.allChanged();
+            if (mc.levelExtractor != null && mc.level != null) {
+                mc.levelExtractor.allChanged();
             }
         }
     }

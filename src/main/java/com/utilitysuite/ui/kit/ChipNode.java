@@ -4,7 +4,7 @@ import com.utilitysuite.core.api.visual.HoloToken;
 import com.utilitysuite.ui.holo.HoloFrames;
 import com.utilitysuite.ui.holo.HoloTheme;
 import net.minecraft.client.gui.Font;
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 
 /**
  * Small status chip: text in a hairline frame with a small square marker ("Armed", "Running"; lit = the given colour,
@@ -34,7 +34,7 @@ public final class ChipNode extends UiNode {
     }
 
     @Override
-    public void render(GuiGraphics g, Font font, int sx, int sy, int mouseX, int mouseY) {
+    public void render(GuiGraphicsExtractor g, Font font, int sx, int sy, int mouseX, int mouseY) {
         if (keycap) {
             g.fill(sx, sy, sx + w, sy + h, HoloTheme.argb(HoloToken.FIELD));
             HoloFrames.edge(g, sx, sy, w, h, HoloTheme.argb(HoloToken.LINE));

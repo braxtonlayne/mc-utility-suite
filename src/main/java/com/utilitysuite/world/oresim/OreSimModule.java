@@ -316,7 +316,7 @@ public final class OreSimModule extends WorldModule {
         }
         IntegratedServer sp = mc.getSingleplayerServer();
         if (sp != null) {
-            long seed = sp.getWorldData().worldGenOptions().seed();
+            long seed = sp.getWorldGenSettings().options().seed();
             boolean custom = workbenchUncertain || !vanillaGenerator(sp, level.dimension());
             return new GeneratorProfile(seed, true, GeneratorProfile.CURRENT_VERSION,
                     GeneratorProfile.Source.INTEGRATED_SERVER, custom);
@@ -466,7 +466,7 @@ public final class OreSimModule extends WorldModule {
         } else if (observed == null || observedLevel != level
                 || observed.zoomSeed() != BiomeManager.obfuscateSeed(profile.seed())) {
             observed = new ObservedBiomeCache(BiomeManager.obfuscateSeed(profile.seed()),
-                    QuartPos.fromBlock(level.getMinBuildHeight()), QuartPos.fromBlock(level.getHeight()), 2048);
+                    QuartPos.fromBlock(level.getMinY()), QuartPos.fromBlock(level.getHeight()), 2048);
             observedLevel = level;
         }
         BiomeOracle seen = observed;
@@ -489,7 +489,7 @@ public final class OreSimModule extends WorldModule {
         if (cache == null) {
             return;
         }
-        int minQy = QuartPos.fromBlock(level.getMinBuildHeight());
+        int minQy = QuartPos.fromBlock(level.getMinY());
         int quartsY = QuartPos.fromBlock(level.getHeight());
         for (int ox = -1; ox <= 1; ox++) {
             for (int oz = -1; oz <= 1; oz++) {
@@ -505,7 +505,7 @@ public final class OreSimModule extends WorldModule {
                             Holder<Biome> b = level.getNoiseBiome(x * 4 + dx, minQy + dy, z * 4 + dz);
                             String id = biomeIds.get(b);
                             if (id == null) {
-                                id = b.unwrapKey().map(k -> k.location().toString()).orElse(null);
+                                id = b.unwrapKey().map(k -> k.identifier().toString()).orElse(null);
                                 if (id != null) {
                                     biomeIds.put(b, id);
                                 }

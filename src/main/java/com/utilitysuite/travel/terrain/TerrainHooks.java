@@ -10,7 +10,7 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.MoverType;
 import net.minecraft.world.entity.player.Player;
-import net.minecraft.world.level.block.LiquidBlock;
+import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.phys.shapes.CollisionContext;
@@ -58,20 +58,36 @@ public final class TerrainHooks {
     }
 
     /**
-     * LiquidBlockSolidSurfaceMixin: vanilla's half-height fluid top for an entity that stands on fluid becomes a full
-     * block for the local player while their feet are above it (SOLID_COLLISION stands on the surface, not half in it).
-     * Only reached when {@link #standOnFluid} already said yes for this player; constant shapes, no allocation.
+     * LiquidBlockSolidSurfaceMixin: a fluid source the local player stands on becomes a full block while their feet are
+     * above it (SOLID_COLLISION stands on the surface, not half in it). 26.3's {@code LiquidBlock.getCollisionShape}
+     * takes the stand-on shape from {@code LivingEntity.getLiquidCollisionShape()}, which is empty for players (only
+     * striders override it), so vanilla answers {@link Shapes#empty()} here even when {@link #standOnFluid} said yes:
+     * this re-asks the same {@code canStandOnFluid} question (which reaches {@link #standOnFluid} through the fluid
+     * surface mixin) for the local player over a source block. Constant shapes and one reused position, no allocation.
      */
     public static VoxelShape fluidSurfaceShape(VoxelShape original, BlockPos pos, CollisionContext context) {
-        if (original != LiquidBlock.STABLE_SHAPE || !(context instanceof EntityCollisionContext ec)) {
+        if (original != Shapes.empty() || assist == null || !(context instanceof EntityCollisionContext ec)) {
             return original;
         }
+        Minecraft mc = Minecraft.getInstance();
         Entity e = ec.getEntity();
-        if (e == null || e != Minecraft.getInstance().player) {
+        ClientLevel level = mc.level;
+        if (e == null || e != mc.player || level == null || !mc.isSameThread()) {
+            return original;
+        }
+        FluidState fluid = level.getFluidState(pos);
+        if (fluid.isEmpty() || !fluid.isSource()) {
+            return original; // vanilla gives flowing fluid no surface either
+        }
+        ABOVE.set(pos.getX(), pos.getY() + 1, pos.getZ());
+        if (!context.canStandOnFluid(level.getFluidState(ABOVE), fluid)) {
             return original;
         }
         return context.isAbove(Shapes.block(), pos, true) ? Shapes.block() : original;
     }
+
+    /** The block above the queried fluid (client thread only, see the thread check). */
+    private static final BlockPos.MutableBlockPos ABOVE = new BlockPos.MutableBlockPos();
 
     /**
      * ClientPacketListenerCorrectionMixin, before a server position packet is applied. The handler first runs on the

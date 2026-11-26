@@ -23,7 +23,7 @@ public abstract class EntityRenderDispatcherCullMixin {
 
     @Inject(method = "shouldRender", at = @At("HEAD"), cancellable = true)
     private void utilitysuite$budgetCull(Entity entity, Frustum frustum, double camX, double camY, double camZ,
-                                         CallbackInfoReturnable<Boolean> cir) {
+                                         float partialTicks, CallbackInfoReturnable<Boolean> cir) {
         if (EntityCullHooks.cull(entity, camX, camY, camZ)) {
             cir.setReturnValue(false);
         }

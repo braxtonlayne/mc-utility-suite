@@ -15,7 +15,7 @@ import com.utilitysuite.jobs.schematic.model.SchematicVolume;
 import com.utilitysuite.jobs.schematic.walk.ReachWalker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
-import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
+import net.neoforged.neoforge.client.event.SubmitCustomGeometryEvent;
 
 import java.nio.file.Path;
 import java.util.HashMap;
@@ -202,11 +202,11 @@ public final class SchematicToolkit implements IModule, IConfigurable {
     /** Max stack size of an item id (64 when unknown). */
     static int stackSize(String itemId) {
         try {
-            net.minecraft.resources.ResourceLocation rl = net.minecraft.resources.ResourceLocation.tryParse(itemId);
+            net.minecraft.resources.Identifier rl = net.minecraft.resources.Identifier.tryParse(itemId);
             if (rl == null) {
                 return 64;
             }
-            return net.minecraft.core.registries.BuiltInRegistries.ITEM.get(rl).getDefaultMaxStackSize();
+            return net.minecraft.core.registries.BuiltInRegistries.ITEM.getValue(rl).getDefaultMaxStackSize();
         } catch (RuntimeException | LinkageError notBootstrapped) {
             return 64;
         }
@@ -464,10 +464,9 @@ public final class SchematicToolkit implements IModule, IConfigurable {
 
     // ---- rendering --------------------------------------------------------------------------------------------------
 
-    void onRenderLevel(RenderLevelStageEvent event) {
+    void onRenderLevel(SubmitCustomGeometryEvent event) {
         SchematicProject p = project;
-        if (!enabled || p == null || !settings.ghostPreview() || p.request.gatherOnly()
-                || event.getStage() != RenderLevelStageEvent.Stage.AFTER_TRANSLUCENT_BLOCKS) {
+        if (!enabled || p == null || !settings.ghostPreview() || p.request.gatherOnly()) {
             return;
         }
         IModState state = modState();

@@ -123,7 +123,7 @@ public final class HoloAudioCues implements IModule, IConfigurable {
                 needed = t.getHealth() + t.getAbsorptionAmount();
             }
             // Density is not read (needs the enchantment registry): the estimate errs low, so "lethal" comes late.
-            int r = mace.update(p.getMainHandItem().is(Items.MACE), p.onGround(), p.fallDistance, 0, needed);
+            int r = mace.update(p.getMainHandItem().is(Items.MACE), p.onGround(), (float) p.fallDistance, 0, needed);
             if (r == MaceRiseCue.RISE) {
                 play(CueScheduler.Cue.MACE_RISE, SoundEvents.NOTE_BLOCK_BIT, mace.pitch());
             } else if (r == MaceRiseCue.LETHAL) {

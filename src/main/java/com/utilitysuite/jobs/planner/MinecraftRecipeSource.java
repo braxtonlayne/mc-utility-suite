@@ -1,13 +1,11 @@
 package com.utilitysuite.jobs.planner;
 
-import net.minecraft.core.HolderLookup;
+import net.minecraft.client.Minecraft;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.util.context.ContextMap;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.crafting.Ingredient;
-import net.minecraft.world.item.crafting.Recipe;
-import net.minecraft.world.item.crafting.RecipeHolder;
-import net.minecraft.world.item.crafting.RecipeManager;
-import net.minecraft.world.item.crafting.RecipeType;
+import net.minecraft.world.item.crafting.display.SlotDisplay;
+import net.minecraft.world.item.crafting.display.SlotDisplayContext;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -15,19 +13,26 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Snapshots the client's recipe manager (crafting, smelting, blasting, smoking) into an immutable
- * {@link MapRecipeSource}. Built on the client thread at login and when recipes are re-synced; planning then reads the
- * snapshot from the worker thread. Special (dynamic) recipes are skipped.
+ * Snapshots the recipes the client can use ({@link McRecipeCatalog}: crafting, smelting, blasting, smoking) into an
+ * immutable {@link MapRecipeSource}. Built on the client thread at login and when recipes are re-synced; planning then
+ * reads the snapshot from the worker thread. Special (dynamic) recipes are skipped.
+ * <p>
+ * 26.3: recipes are server-side. With the integrated server (single player) every recipe is read as before; on a
+ * remote server only recipes a server mod synced, or else the recipe book's unlocked recipes, are known.
  */
 public final class MinecraftRecipeSource {
 
     private MinecraftRecipeSource() {
     }
 
-    public static MapRecipeSource snapshot(RecipeManager manager, HolderLookup.Provider registries) {
+    public static MapRecipeSource snapshot(Minecraft mc) {
+        if (mc.level == null) {
+            return MapRecipeSource.EMPTY;
+        }
+        ContextMap ctx = SlotDisplayContext.fromLevel(mc.level);
         List<PlannerRecipe> out = new ArrayList<>();
-        for (RecipeHolder<?> holder : manager.getRecipes()) {
-            PlannerRecipe r = convert(holder, registries);
+        for (McRecipeCatalog.Entry e : McRecipeCatalog.all(mc)) {
+            PlannerRecipe r = convert(e, ctx);
             if (r != null) {
                 out.add(r);
             }
@@ -35,31 +40,24 @@ public final class MinecraftRecipeSource {
         return new MapRecipeSource(out);
     }
 
-    private static PlannerRecipe convert(RecipeHolder<?> holder, HolderLookup.Provider registries) {
-        Recipe<?> recipe = holder.value();
-        RecipeKind kind = kindOf(recipe.getType());
-        if (kind == null || recipe.isSpecial() || recipe.isIncomplete()) {
+    private static PlannerRecipe convert(McRecipeCatalog.Entry e, ContextMap ctx) {
+        ItemStack result = e.display().result().resolveForFirstStack(ctx);
+        if (result.isEmpty()) {
             return null;
         }
-        ItemStack result = recipe.getResultItem(registries);
-        if (result.isEmpty()) {
+        List<SlotDisplay> slots = McRecipeCatalog.ingredientSlots(e.display());
+        if (slots == null) {
             return null;
         }
         // group identical ingredient slots: 3 planks slots -> one ingredient x3
         Map<List<String>, Integer> grouped = new LinkedHashMap<>();
-        for (Ingredient ing : recipe.getIngredients()) {
-            if (ing.isEmpty()) {
+        for (SlotDisplay slot : slots) {
+            if (slot instanceof SlotDisplay.Empty) {
                 continue;
             }
-            List<String> options = new ArrayList<>();
-            for (ItemStack s : ing.getItems()) {
-                String id = BuiltInRegistries.ITEM.getKey(s.getItem()).toString();
-                if (!options.contains(id)) {
-                    options.add(id);
-                }
-            }
+            List<String> options = McRecipeCatalog.optionIds(slot, ctx);
             if (options.isEmpty()) {
-                return null;
+                return null; // an ingredient nothing satisfies (empty tag): the old "incomplete" recipe
             }
             grouped.merge(List.copyOf(options), 1, Integer::sum);
         }
@@ -68,26 +66,8 @@ public final class MinecraftRecipeSource {
         }
         List<RecipeIngredient> ings = new ArrayList<>(grouped.size());
         grouped.forEach((opts, n) -> ings.add(new RecipeIngredient(opts, n)));
-        boolean needsTable = kind == RecipeKind.CRAFTING && !recipe.canCraftInDimensions(2, 2);
-        return new PlannerRecipe(holder.id().toString(), kind,
-                BuiltInRegistries.ITEM.getKey(result.getItem()).toString(), result.getCount(), ings, needsTable);
-    }
-
-    private static RecipeKind kindOf(RecipeType<?> type) {
-        if (type == RecipeType.CRAFTING) {
-            return RecipeKind.CRAFTING;
-        }
-        if (type == RecipeType.SMELTING) {
-            return RecipeKind.SMELTING;
-        }
-        if (type == RecipeType.BLASTING) {
-            return RecipeKind.BLASTING;
-        }
-        if (type == RecipeType.SMOKING) {
-            return RecipeKind.SMOKING;
-        }
-        // Stonecutting is understood by the planner but left out of the in-game snapshot: the stonecutter has no
-        // recipe-book placement, so the executor cannot run it yet.
-        return null;
+        boolean needsTable = e.kind() == RecipeKind.CRAFTING && e.needsTable();
+        return new PlannerRecipe(e.id(), e.kind(), BuiltInRegistries.ITEM.getKey(result.getItem()).toString(),
+                result.getCount(), ings, needsTable);
     }
 }

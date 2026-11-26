@@ -116,7 +116,7 @@ public final class AtmosphereModule extends WorldModule {
             Holder<Biome> h = mc.level.getBiome(mc.player.blockPosition());
             if (h != lastBiome) { // only on a biome change: the key lookup allocates
                 lastBiome = h;
-                biomeTarget = h.unwrapKey().map(k -> AtmosphereMath.biomeTint(k.location().getPath()))
+                biomeTarget = h.unwrapKey().map(k -> AtmosphereMath.biomeTint(k.identifier().getPath()))
                         .orElse(AtmosphereMath.NO_TINT);
             }
             biome.step(biomeTarget, 0.05f);
@@ -134,12 +134,14 @@ public final class AtmosphereModule extends WorldModule {
             WorldHooks.clearSkyTint();
             return;
         }
-        daylight = AtmosphereMath.daylight(mc.level.getTimeOfDay(1f));
+        // 26.3: time of day = sun angle / 360 (what the clock item reads); one boxed Float per tick
+        daylight = AtmosphereMath.daylight(mc.gameRenderer.mainCamera().attributeProbe()
+                .getValue(net.minecraft.world.attribute.EnvironmentAttributes.SUN_ANGLE, 1f) / 360f);
         int target;
         float weight;
         switch (preset) {
             case SKY_RAMP -> {
-                target = ramp == null ? 0 : ramp.sample(mc.level.getDayTime());
+                target = ramp == null ? 0 : ramp.sample(mc.level.getOverworldClockTime());
                 weight = ramp == null ? 0f : strength;
             }
             case BIOME -> {
@@ -172,7 +174,7 @@ public final class AtmosphereModule extends WorldModule {
             case SKY_RAMP -> {
                 Minecraft mc = Minecraft.getInstance();
                 if (mc.level != null && ramp != null) {
-                    int c = ramp.sample(mc.level.getDayTime());
+                    int c = ramp.sample(mc.level.getOverworldClockTime());
                     tint(e, AtmosphereMath.r(c), AtmosphereMath.g(c), AtmosphereMath.b(c), strength);
                 }
             }
@@ -201,6 +203,5 @@ public final class AtmosphereModule extends WorldModule {
         float far = Math.max(e.getFarPlaneDistance(), waterDistance * (0.25f + 0.75f * strength));
         e.setNearPlaneDistance(Math.min(e.getNearPlaneDistance(), far * 0.1f));
         e.setFarPlaneDistance(far);
-        e.setCanceled(true);
     }
 }

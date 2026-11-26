@@ -14,7 +14,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.function.ToIntFunction;
 import net.minecraft.client.gui.Font;
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.resources.language.I18n;
 
 /**
@@ -193,7 +193,7 @@ public final class GoalConsole {
         }
 
         @Override
-        public void render(GuiGraphics g, Font font, int sx, int sy, int mouseX, int mouseY) {
+        public void render(GuiGraphicsExtractor g, Font font, int sx, int sy, int mouseX, int mouseY) {
             HoloFrames.plate(g, sx, sy, w, h, HoloToken.DANGER, 0.06f);
             HoloFrames.vLine(g, sx, sy, sy + h, HoloTheme.argb(HoloToken.DANGER));
             int argb = HoloTheme.argb(HoloToken.DANGER);
@@ -264,7 +264,7 @@ public final class GoalConsole {
         }
 
         @Override
-        public void render(GuiGraphics g, Font font, int sx, int sy, int mouseX, int mouseY) {
+        public void render(GuiGraphicsExtractor g, Font font, int sx, int sy, int mouseX, int mouseY) {
             HoloFrames.frame(g, sx, sy, w, h, FrameLevel.FRAMED, false, HoloToken.GLASS_RAISED, HoloToken.LINE, 1f);
             int y = sy + PAD;
             UiRenderUtils.text(g, font, CAPTION, sx + PAD, y, HoloTheme.argb(HoloToken.ACCENT, 0.85f));

@@ -14,7 +14,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.util.Mth;
 import net.minecraft.world.phys.Vec3;
-import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
+import net.neoforged.neoforge.client.event.SubmitCustomGeometryEvent;
 
 import java.util.List;
 
@@ -87,8 +87,8 @@ public final class GhostLineModule implements IModule, IConfigurable {
         }
     }
 
-    public void onRenderLevel(RenderLevelStageEvent event) {
-        if (!enabled || !ghost.active() || event.getStage() != RenderLevelStageEvent.Stage.AFTER_PARTICLES) {
+    public void onRenderLevel(SubmitCustomGeometryEvent event) {
+        if (!enabled || !ghost.active()) {
             return;
         }
         IVisuals visuals = Services.visualsOrNull();
@@ -97,8 +97,8 @@ public final class GhostLineModule implements IModule, IConfigurable {
         if (world == null || mc.player == null) {
             return; // no world pass (Clean-Screen, no Shell) or no player: nothing to draw
         }
-        float pt = event.getPartialTick().getGameTimeDeltaPartialTick(false);
-        Vec3 cam = event.getCamera().getPosition();
+        float pt = event.getLevelRenderState().worldPartialTicks;
+        Vec3 cam = event.getLevelRenderState().cameraRenderState.pos;
         ghost.interpolate(pt, pos);
         float gx = (float) (pos[0] - cam.x);
         float gy = (float) (pos[1] - cam.y);

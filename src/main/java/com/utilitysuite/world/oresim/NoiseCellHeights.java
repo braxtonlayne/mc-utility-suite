@@ -1,72 +1,68 @@
 package com.utilitysuite.world.oresim;
 
 import com.utilitysuite.UtilitySuiteMod;
+import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.LevelHeightAccessor;
-import net.minecraft.util.Mth;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.ChunkGenerator;
 import net.minecraft.world.level.levelgen.Aquifer;
-import net.minecraft.world.level.levelgen.DensityFunctions;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.levelgen.NoiseBasedChunkGenerator;
 import net.minecraft.world.level.levelgen.NoiseChunk;
 import net.minecraft.world.level.levelgen.NoiseGeneratorSettings;
 import net.minecraft.world.level.levelgen.NoiseSettings;
+import net.minecraft.world.level.levelgen.PositionalRandomFactory;
 import net.minecraft.world.level.levelgen.RandomState;
 import net.minecraft.world.level.levelgen.blending.Blender;
+import net.minecraft.world.level.levelgen.densityfunction.DensitySampler;
+import net.minecraft.world.level.levelgen.densityfunction.DensitySamplerSet;
+import net.minecraft.world.level.levelgen.densityfunction.DensityVolume;
+import net.minecraft.world.level.levelgen.densityfunction.ScopedDensityBuffer;
+import net.minecraft.world.level.levelgen.material.rule.MaterialRule;
+import net.minecraft.world.level.levelgen.material.rule.OreVeinRule;
+import net.minecraft.world.level.levelgen.material.rule.SequenceRule;
 
-import java.lang.invoke.MethodHandle;
-import java.lang.invoke.MethodHandles;
 import java.lang.reflect.Field;
-import java.lang.reflect.Method;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 
 /**
  * {@link ColumnHeightCache.CellFiller} that reproduces {@code NoiseBasedChunkGenerator.iterateNoiseColumn} (the body
- * of {@code getBaseHeight(.., OCEAN_FLOOR_WG, ..)}) for all columns of one noise cell with a single {@link NoiseChunk}.
- * Vanilla builds a whole NoiseChunk (a wrapped copy of the density-function graph, caches and an aquifer) for every
- * single column; here one build serves the cell's 16 columns. The per-column walk is vanilla's: same cell origin, same
- * corner slices (filled once by {@code advanceCellX}), same top-down {@code selectCellYZ}/{@code updateFor*} sequence,
- * same stopping predicate, so the heights are identical to {@code getBaseHeight}. Interpolation is only stopped after
- * the last column, because stopping switches the chunk to direct (non-interpolated) sampling.
+ * of {@code getBaseHeight(.., OCEAN_FLOOR_WG, ..)}) for all 16 columns of one 4 x 4 block cell with a single
+ * {@link NoiseChunk}. Vanilla (26.3) builds a NoiseChunk over a 1 x height x 1 {@link DensityVolume} for every single
+ * column; here one 4 x height x 4 volume serves the cell. The final density is interpolated on vanilla's absolute cell
+ * grid, so a wider volume yields the same per-block values; the per-column walk is vanilla's (top down, aquifer
+ * {@code computeSubstance}, default block for null, same stopping predicate), so the heights equal
+ * {@code getBaseHeight} (checked against it for 640 columns, and cross-checked here for the first cells).
  * <p>
- * Needs two non-public members (the generator's fluid picker and {@code NoiseChunk.getInterpolatedState}); if they
- * cannot be reached, or the generator is not exactly the vanilla noise generator, it falls back to calling
- * {@code getBaseHeight} per column (still cached by the {@link ColumnHeightCache}).
+ * Needs the generator's private fluid picker; if it cannot be reached, or the generator is not exactly the vanilla
+ * noise generator, it falls back to calling {@code getBaseHeight} per column (still cached by the
+ * {@link ColumnHeightCache}).
  */
 final class NoiseCellHeights implements ColumnHeightCache.CellFiller {
 
-    private static final MethodHandle INTERPOLATED_STATE;
     private static final Field FLUID_PICKER;
-    /** {@code DensityFunctions.BeardifierMarker.INSTANCE} (a protected enum): what vanilla passes for "no structures". */
-    private static final DensityFunctions.BeardifierOrMarker BEARDIFIER_MARKER;
 
     static {
-        MethodHandle mh = null;
-        Field fp = null;
-        DensityFunctions.BeardifierOrMarker marker = null;
+        Field fp;
         try {
-            Method m = NoiseChunk.class.getDeclaredMethod("getInterpolatedState");
-            m.setAccessible(true);
-            mh = MethodHandles.lookup().unreflect(m);
             fp = NoiseBasedChunkGenerator.class.getDeclaredField("globalFluidPicker");
             fp.setAccessible(true);
-            marker = (DensityFunctions.BeardifierOrMarker) Class.forName(
-                    "net.minecraft.world.level.levelgen.DensityFunctions$BeardifierMarker").getEnumConstants()[0];
         } catch (ReflectiveOperationException | RuntimeException e) {
             UtilitySuiteMod.LOGGER.warn("OreSim: per-cell surface heights unavailable, using getBaseHeight per column: {}",
                     e.toString());
-            mh = null;
             fp = null;
-            marker = null;
         }
-        INTERPOLATED_STATE = mh;
         FLUID_PICKER = fp;
-        BEARDIFIER_MARKER = marker;
     }
+
+    /** Columns per cell side (the overworld's horizontal interpolation cell; any width gives identical values). */
+    private static final int CELL = 4;
 
     /** Build-height bounds: the server level, or a fixed accessor for a client-side generator. */
     private final LevelHeightAccessor level;
@@ -76,6 +72,9 @@ final class NoiseCellHeights implements ColumnHeightCache.CellFiller {
     private final NoiseGeneratorSettings settings;
     private final NoiseSettings noiseSettings;
     private final Aquifer.FluidPicker fluidPicker;
+    /** The ore vein material rules (26.3: copper, then iron), in the order the material sequence tries them. */
+    private final OreVeinRule[] veinRules;
+    private final PositionalRandomFactory oreRandom;
     private final Predicate<BlockState> stopping = Heightmap.Types.OCEAN_FLOOR_WG.isOpaque();
     /** Off when the generator internals are unreachable or a parity self-check failed. */
     private boolean fastPath;
@@ -91,6 +90,38 @@ final class NoiseCellHeights implements ColumnHeightCache.CellFiller {
         this.noiseSettings = settings == null ? null : settings.noiseSettings().clampToHeightAccessor(level);
         this.fluidPicker = fluidPicker;
         this.fastPath = settings != null;
+        OreVeinRule[] veins = new OreVeinRule[0];
+        PositionalRandomFactory ore = null;
+        if (settings != null) {
+            List<OreVeinRule> found = new ArrayList<>(2);
+            collectVeinRules(settings.materialRule().value(), found, 0);
+            veins = found.toArray(new OreVeinRule[0]);
+            if (veins.length > 0) {
+                // the factory OreVeinRule.compile asks the rule context for (RandomState's "minecraft:ore")
+                ore = random.getOrCreateRandomFactory(Identifier.withDefaultNamespace("ore"));
+            }
+        }
+        this.veinRules = veins;
+        this.oreRandom = ore;
+    }
+
+    /**
+     * Collects the unconditional ore vein rules of the dimension's material rule (top-level sequence entries, through
+     * registry holders). Vanilla 26.3 overworld: [bedrock_floor, copper_ore_vein, iron_ore_vein, surface, underground].
+     */
+    private static void collectVeinRules(MaterialRule rule, List<OreVeinRule> out, int depth) {
+        if (depth > 8) {
+            return;
+        }
+        if (rule instanceof MaterialRule.HolderHolder(var holder)) {
+            collectVeinRules(holder.value(), out, depth + 1);
+        } else if (rule instanceof SequenceRule(List<MaterialRule> sequence)) {
+            for (MaterialRule r : sequence) {
+                collectVeinRules(r, out, depth + 1);
+            }
+        } else if (rule instanceof OreVeinRule vein) {
+            out.add(vein);
+        }
     }
 
     static ColumnHeightCache.CellFiller create(ServerLevel level) {
@@ -102,8 +133,7 @@ final class NoiseCellHeights implements ColumnHeightCache.CellFiller {
      * the vanilla generator from a known seed ({@link ClientWorldgenOracles}).
      */
     static NoiseCellHeights create(ChunkGenerator gen, RandomState random, LevelHeightAccessor level) {
-        if (gen.getClass() == NoiseBasedChunkGenerator.class && INTERPOLATED_STATE != null && FLUID_PICKER != null
-                && BEARDIFIER_MARKER != null) {
+        if (gen.getClass() == NoiseBasedChunkGenerator.class && FLUID_PICKER != null) {
             try {
                 NoiseBasedChunkGenerator noise = (NoiseBasedChunkGenerator) gen;
                 Supplier<?> sup = (Supplier<?>) FLUID_PICKER.get(noise);
@@ -123,57 +153,46 @@ final class NoiseCellHeights implements ColumnHeightCache.CellFiller {
             return;
         }
         NoiseSettings ns = noiseSettings;
-        int cellHeight = ns.getCellHeight();
-        int minY = ns.minY();
-        int cellMinY = Mth.floorDiv(minY, cellHeight);
-        int cellCountY = Mth.floorDiv(ns.height(), cellHeight);
-        int cellWidth = ns.getCellWidth();
-        int x0 = Math.floorDiv(x, cellWidth) * cellWidth;
-        int z0 = Math.floorDiv(z, cellWidth) * cellWidth;
-        int fallback = level.getMinBuildHeight();
-        if (cellCountY <= 0) {
-            for (int dx = 0; dx < cellWidth; dx++) {
-                for (int dz = 0; dz < cellWidth; dz++) {
+        int x0 = Math.floorDiv(x, CELL) * CELL;
+        int z0 = Math.floorDiv(z, CELL) * CELL;
+        int fallback = level.getMinY();
+        if (ns.height() <= 0) {
+            for (int dx = 0; dx < CELL; dx++) {
+                for (int dz = 0; dz < CELL; dz++) {
                     sink.store(x0 + dx, z0 + dz, fallback);
                 }
             }
             return;
         }
-        NoiseChunk chunk = new NoiseChunk(1, random, x0, z0, ns, BEARDIFIER_MARKER, settings,
-                fluidPicker, Blender.empty());
-        chunk.initializeForFirstCellX();
-        chunk.advanceCellX(0);
-        BlockState defaultBlock = settings.defaultBlock();
         int requested = Integer.MIN_VALUE;
-        for (int dx = 0; dx < cellWidth; dx++) {
-            int bx = x0 + dx;
-            double fx = (double) dx / (double) cellWidth;
-            for (int dz = 0; dz < cellWidth; dz++) {
-                int bz = z0 + dz;
-                double fz = (double) dz / (double) cellWidth;
-                int height = fallback;
-                search:
-                for (int cy = cellCountY - 1; cy >= 0; cy--) {
-                    chunk.selectCellYZ(cy, 0);
-                    for (int iy = cellHeight - 1; iy >= 0; iy--) {
-                        int by = (cellMinY + cy) * cellHeight + iy;
-                        chunk.updateForY(by, (double) iy / (double) cellHeight);
-                        chunk.updateForX(bx, fx);
-                        chunk.updateForZ(bz, fz);
-                        BlockState state = interpolatedState(chunk);
-                        if (stopping.test(state == null ? defaultBlock : state)) {
-                            height = by + 1;
-                            break search;
+        DensityVolume volume = new DensityVolume(CELL, ns.height(), CELL, x0, ns.minY(), z0);
+        BlockState defaultBlock = settings.defaultBlock();
+        try (NoiseChunk chunk = new NoiseChunk(random, null, settings, fluidPicker, Blender.empty(), volume)) {
+            Aquifer aquifer = chunk.aquifer();
+            DensitySampler.Bound finalDensity = chunk.cachingSamplers().get(settings.noiseRouter().finalDensity());
+            try (ScopedDensityBuffer density = finalDensity.sampleVolume(volume)) {
+                for (int dx = 0; dx < CELL; dx++) {
+                    int bx = x0 + dx;
+                    for (int dz = 0; dz < CELL; dz++) {
+                        int bz = z0 + dz;
+                        int height = fallback;
+                        for (int iy = volume.sizeY() - 1; iy >= 0; iy--) {
+                            int by = volume.blockY(iy);
+                            BlockState state = aquifer.computeSubstance(bx, by, bz,
+                                    density.get(volume.indexUnchecked(dx, iy, dz)));
+                            if (stopping.test(state == null ? defaultBlock : state)) {
+                                height = by + 1;
+                                break;
+                            }
+                        }
+                        sink.store(bx, bz, height);
+                        if (bx == x && bz == z) {
+                            requested = height;
                         }
                     }
                 }
-                sink.store(bx, bz, height);
-                if (bx == x && bz == z) {
-                    requested = height;
-                }
             }
         }
-        chunk.stopInterpolation();
         if (parityChecksLeft > 0) {
             parityChecksLeft--;
             int expected = generator.getBaseHeight(x, z, Heightmap.Types.OCEAN_FLOOR_WG, level, random);
@@ -181,8 +200,8 @@ final class NoiseCellHeights implements ColumnHeightCache.CellFiller {
                 fastPath = false;
                 UtilitySuiteMod.LOGGER.warn("OreSim: per-cell surface height {} != getBaseHeight {} at {},{}; "
                         + "using getBaseHeight per column", requested, expected, x, z);
-                for (int dx = 0; dx < cellWidth; dx++) {
-                    for (int dz = 0; dz < cellWidth; dz++) {
+                for (int dx = 0; dx < CELL; dx++) {
+                    for (int dz = 0; dz < CELL; dz++) {
                         sink.store(x0 + dx, z0 + dz, generator.getBaseHeight(x0 + dx, z0 + dz,
                                 Heightmap.Types.OCEAN_FLOOR_WG, level, random));
                     }
@@ -191,83 +210,99 @@ final class NoiseCellHeights implements ColumnHeightCache.CellFiller {
         }
     }
 
-    /** Vein Y bounds of both {@code OreVeinifier.VeinType}s (iron -60..-8, copper 0..50). */
-    private static final int VEIN_MIN_Y = -60;
-    private static final int VEIN_MAX_Y = 50;
-
     /**
-     * Replays vanilla's noise fill ({@code NoiseBasedChunkGenerator.doFill}) for the vein Y range of one chunk with a
-     * single NoiseChunk and reports the vein ore blocks the material rule produces ({@code OreVeinifier} runs inside
-     * {@code getInterpolatedState}, after the aquifer, exactly as in vanilla). Differences to the real chunk: no
-     * structure beardifier (rare at these depths) and no later carvers, which remove some blocks; both are left to
-     * verification like for decoration ores. About 16 x 16 x 112 interpolated samples, once per simulated chunk.
+     * Replays where vanilla 26.3 puts large-vein ore for the vein Y range of one chunk and reports the vein ore blocks
+     * ({@code copper_ore}, {@code deepslate_iron_ore}; raw ore blocks and filler are not reported).
+     * <p>
+     * 26.3 moved large veins from the noise fill ({@code OreVeinifier} in 1.21.1) into the material rules
+     * ({@link OreVeinRule}, applied by {@code MaterialSystem.buildSurface} to every solid block after the noise fill):
+     * a block is solid when the aquifer returns null (default block) for its final density, then the vein rules run
+     * in sequence order with prefilled density/richness, point-sampled filler gap and the {@code "minecraft:ore"}
+     * positional random, exactly as {@code OreVeinRule.compile} evaluates them. Differences to the real chunk: no
+     * structure beardifier, the bedrock floor gradient (first in the material sequence, Y -64..-60) is not applied
+     * before the iron rule, and no later carvers, which remove some blocks; all left to verification like for
+     * decoration ores. About 16 x 16 x 111 samples, once per simulated chunk (simulation thread).
      */
     boolean largeVeins(int chunkX, int chunkZ, TerrainOracle.LargeVeinSink sink) {
-        if (!fastPath || !settings.oreVeinsEnabled()) {
+        if (!fastPath || veinRules.length == 0) {
             return false;
         }
         NoiseSettings ns = noiseSettings;
-        int cellHeight = ns.getCellHeight();
-        int cellWidth = ns.getCellWidth();
-        if (cellWidth <= 0 || 16 % cellWidth != 0) {
-            return false;
+        int veinMinY = Integer.MAX_VALUE;
+        int veinMaxY = Integer.MIN_VALUE;
+        for (OreVeinRule.VeinType t : OreVeinRule.VeinType.values()) {
+            veinMinY = Math.min(veinMinY, t.minY);
+            veinMaxY = Math.max(veinMaxY, t.maxY);
         }
-        int cellMinY = Mth.floorDiv(ns.minY(), cellHeight);
-        int cellCountY = Mth.floorDiv(ns.height(), cellHeight);
-        int cyLow = Math.max(0, Mth.floorDiv(VEIN_MIN_Y, cellHeight) - cellMinY);
-        int cyHigh = Math.min(cellCountY - 1, Mth.floorDiv(VEIN_MAX_Y, cellHeight) - cellMinY);
-        if (cyHigh < cyLow) {
+        int yLow = Math.max(veinMinY, ns.minY());
+        int yHigh = Math.min(veinMaxY, ns.minY() + ns.height() - 1); // ns is already clamped to the level
+        if (yHigh < yLow) {
             return true;
         }
-        int cells = 16 / cellWidth;
         int minX = chunkX << 4;
         int minZ = chunkZ << 4;
+        DensityVolume volume = new DensityVolume(16, yHigh - yLow + 1, 16, minX, yLow, minZ);
         BlockState copper = Blocks.COPPER_ORE.defaultBlockState();
-        BlockState iron = Blocks.DEEPSLATE_IRON_ORE.defaultBlockState();
-        NoiseChunk chunk = new NoiseChunk(cells, random, minX, minZ, ns, BEARDIFIER_MARKER, settings, fluidPicker,
-                Blender.empty());
-        chunk.initializeForFirstCellX();
-        for (int cx = 0; cx < cells; cx++) {
-            chunk.advanceCellX(cx);
-            for (int cz = 0; cz < cells; cz++) {
-                for (int cy = cyHigh; cy >= cyLow; cy--) {
-                    chunk.selectCellYZ(cy, cz);
-                    for (int iy = cellHeight - 1; iy >= 0; iy--) {
-                        int by = (cellMinY + cy) * cellHeight + iy;
-                        chunk.updateForY(by, (double) iy / (double) cellHeight);
-                        if (by < VEIN_MIN_Y || by > VEIN_MAX_Y) {
-                            continue;
-                        }
-                        for (int ix = 0; ix < cellWidth; ix++) {
-                            int bx = minX + cx * cellWidth + ix;
-                            chunk.updateForX(bx, (double) ix / (double) cellWidth);
-                            for (int iz = 0; iz < cellWidth; iz++) {
-                                int bz = minZ + cz * cellWidth + iz;
-                                chunk.updateForZ(bz, (double) iz / (double) cellWidth);
-                                BlockState state = interpolatedState(chunk);
-                                if (state == copper) {
-                                    sink.acceptVeinOre(true, bx, by, bz);
-                                } else if (state == iron) {
-                                    sink.acceptVeinOre(false, bx, by, bz);
+        BlockState defaultBlock = settings.defaultBlock();
+        int rules = veinRules.length;
+        try (NoiseChunk chunk = new NoiseChunk(random, null, settings, fluidPicker, Blender.empty(), volume)) {
+            Aquifer aquifer = chunk.aquifer();
+            DensitySamplerSet samplers = chunk.cachingSamplers();
+            ScopedDensityBuffer finalDensity = samplers.get(settings.noiseRouter().finalDensity()).sampleVolume(volume);
+            ScopedDensityBuffer[] veinDensity = new ScopedDensityBuffer[rules];
+            ScopedDensityBuffer[] richness = new ScopedDensityBuffer[rules];
+            DensitySampler.Bound[] gap = new DensitySampler.Bound[rules];
+            try {
+                for (int r = 0; r < rules; r++) {
+                    veinDensity[r] = samplers.get(veinRules[r].density()).sampleVolume(volume);
+                    richness[r] = samplers.get(veinRules[r].richness()).sampleVolume(volume);
+                    gap[r] = samplers.get(veinRules[r].fillerGap());
+                }
+                for (int ix = 0; ix < 16; ix++) {
+                    int bx = minX + ix;
+                    for (int iz = 0; iz < 16; iz++) {
+                        int bz = minZ + iz;
+                        for (int iy = volume.sizeY() - 1; iy >= 0; iy--) {
+                            int by = volume.blockY(iy);
+                            int idx = volume.indexUnchecked(ix, iy, iz);
+                            BlockState base = aquifer.computeSubstance(bx, by, bz, finalDensity.get(idx));
+                            BlockState state = base == null ? defaultBlock : base;
+                            if (state.isAir() || !state.getFluidState().isEmpty()) {
+                                continue; // MaterialSystem only runs the rules on solid blocks
+                            }
+                            for (int r = 0; r < rules; r++) {
+                                OreVeinRule rule = veinRules[r];
+                                float d = veinDensity[r].get(idx);
+                                if (d <= 0.0F) {
+                                    continue;
                                 }
+                                RandomSource rnd = oreRandom.at(bx, by, bz);
+                                if (rnd.nextFloat() > d) {
+                                    continue;
+                                }
+                                float rich = richness[r].get(idx);
+                                if (rnd.nextFloat() < rich && gap[r].sampleValue(bx, by, bz) < 0.0F) {
+                                    if (!(rnd.nextFloat() < rule.rawOreChance())) {
+                                        sink.acceptVeinOre(rule.oreBlock() == copper, bx, by, bz);
+                                    }
+                                }
+                                break; // the rule produced ore, raw ore or filler: the sequence stops here
                             }
                         }
                     }
                 }
+            } finally {
+                for (int r = 0; r < rules; r++) {
+                    if (veinDensity[r] != null) {
+                        veinDensity[r].close();
+                    }
+                    if (richness[r] != null) {
+                        richness[r].close();
+                    }
+                }
+                finalDensity.close();
             }
-            chunk.swapSlices();
         }
-        chunk.stopInterpolation();
         return true;
-    }
-
-    private static BlockState interpolatedState(NoiseChunk chunk) {
-        try {
-            return (BlockState) INTERPOLATED_STATE.invokeExact(chunk);
-        } catch (RuntimeException | Error e) {
-            throw e;
-        } catch (Throwable t) {
-            throw new IllegalStateException(t);
-        }
     }
 }

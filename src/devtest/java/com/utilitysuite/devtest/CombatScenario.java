@@ -9,7 +9,7 @@ import com.utilitysuite.core.api.ControlLease;
 import com.utilitysuite.core.api.Services;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.Entity;
-import net.minecraft.world.entity.monster.Zombie;
+import net.minecraft.world.entity.monster.zombie.Zombie;
 
 import java.nio.file.Files;
 import java.nio.file.Path;

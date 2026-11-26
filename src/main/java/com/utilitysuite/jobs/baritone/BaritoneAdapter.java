@@ -683,7 +683,7 @@ public final class BaritoneAdapter implements MiningDriver {
         }
         if (level.dimension() != dimKey) {
             dimKey = level.dimension();
-            dimId = dimKey.location().toString();
+            dimId = dimKey.identifier().toString();
         }
         return true;
     }

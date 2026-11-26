@@ -19,11 +19,15 @@ import java.util.TreeMap;
  * A profile bundle: one JSON file holding a profile's module settings (Local Rules, pinned slots and every other module
  * object live in it), the suite key bindings ({@code translation key → key name}) and the source profile id. Engine
  * free (Gson + NIO). Files go to {@code <gameDir>/utilitysuite/bundles/}.
- * <pre>{"format":1,"source":"sp_World","settings":{...},"keybinds":{"key.utilitysuite.stop_all":"key.keyboard.backspace"}}</pre>
+ * <pre>{"format":2,"source":"sp_World","settings":{...},"keybinds":{"key.utilitysuite.stop_all":"key.keyboard.backspace"}}</pre>
+ * Format 1 bundles were written by the 1.21.1 builds (GLFW-era key names); their key names are migrated on read
+ * ({@link com.utilitysuite.core.input.LegacyKeyCodes#migrateSaveString}).
  */
 public final class ProfileBundle {
 
-    public static final int FORMAT = 1;
+    public static final int FORMAT = 2;
+    /** Last format written with GLFW-era (1.21.1) key names. */
+    public static final int FORMAT_GLFW = 1;
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create();
 
     private final String source;
@@ -71,11 +75,13 @@ public final class ProfileBundle {
         }
         JsonObject s = o.has("settings") && o.get("settings").isJsonObject() ? o.getAsJsonObject("settings")
                 : new JsonObject();
+        boolean legacyKeys = o.get("format").getAsInt() <= FORMAT_GLFW;
         Map<String, String> keys = new TreeMap<>();
         if (o.has("keybinds") && o.get("keybinds").isJsonObject()) {
             for (Map.Entry<String, JsonElement> e : o.getAsJsonObject("keybinds").entrySet()) {
                 if (e.getValue().isJsonPrimitive()) {
-                    keys.put(e.getKey(), e.getValue().getAsString());
+                    String v = e.getValue().getAsString();
+                    keys.put(e.getKey(), legacyKeys ? com.utilitysuite.core.input.LegacyKeyCodes.migrateSaveString(v) : v);
                 }
             }
         }

@@ -1,6 +1,5 @@
 package com.utilitysuite.ui.holo;
 
-import com.mojang.blaze3d.vertex.VertexConsumer;
 import com.utilitysuite.core.api.visual.EffectLevel;
 import com.utilitysuite.core.api.visual.FrameLevel;
 import com.utilitysuite.core.api.visual.Glyph;
@@ -10,16 +9,17 @@ import com.utilitysuite.core.api.visual.TextRole;
 import com.utilitysuite.ui.kit.ItemIcons;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.network.chat.Style;
 import net.minecraft.world.item.Items;
-import org.joml.Matrix4f;
+import org.joml.Matrix3x2f;
 
 /**
- * {@link IHoloCanvas} over {@link GuiGraphics}: the in-game HUD kit. Rectangles, hairlines, frames and brackets are
+ * {@link IHoloCanvas} over {@link GuiGraphicsExtractor}: the in-game HUD kit. Rectangles, hairlines, frames and brackets are
  * plain GUI fills (batched by the game); everything that is not axis-aligned goes through one soft-ribbon primitive,
  * a quad whose U coordinate crosses a falloff row of the {@link HoloAtlas}, so lines and arcs are anti-aliased and
- * glow for free. Vertices are written straight to the {@link VertexConsumer} with the current pose matrix.
+ * glow for free. Each ribbon, arc or glyph call becomes one pooled {@link HoloQuadBatch} in the GUI render state (26.3),
+ * carrying a copy of the current pose.
  * <p>
  * Rules: no {@code pushPose} (the HUD scale is applied once per frame by {@link #begin}/{@link #end} on the existing
  * matrix, restored from a saved copy), nothing allocated per call by this class (the game's own text and item paths
@@ -31,13 +31,13 @@ public final class HoloKit implements IHoloCanvas {
 
     private final Sinks sinks = new Sinks();
 
-    private GuiGraphics g;
+    private GuiGraphicsExtractor g;
     private Font font;
     private float scale = 1f;
     private boolean scaled;
-    private final Matrix4f saved = new Matrix4f();
-    private VertexConsumer vc;
-    private Matrix4f matrix;
+    private final Matrix3x2f saved = new Matrix3x2f();
+    private final HoloQuadBatch.Pool pool = new HoloQuadBatch.Pool();
+    private HoloQuadBatch batch;
     /** Tabular digit advance per {@link TextRole}, measured through the face that draws it; -1 = not measured. */
     private final int[] digitW = {-1, -1, -1};
     private int fontGeneration = Integer.MIN_VALUE;
@@ -50,7 +50,7 @@ public final class HoloKit implements IHoloCanvas {
     private static final String[] DIGITS = {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "-"};
 
     /** Starts a HUD frame: binds the graphics and applies the HUD scale to the current pose (no push). */
-    public void begin(GuiGraphics graphics) {
+    public void begin(GuiGraphicsExtractor graphics) {
         g = graphics;
         font = Minecraft.getInstance().font;
         SuiteFonts.Client.frame();
@@ -66,9 +66,8 @@ public final class HoloKit implements IHoloCanvas {
             digitW[2] = -1;
         }
         if (scaled) {
-            Matrix4f m = graphics.pose().last().pose();
-            saved.set(m);
-            m.scale(scale, scale, 1f);
+            saved.set(graphics.pose());
+            graphics.pose().scale(scale, scale);
         } else {
             scale = 1f;
         }
@@ -77,12 +76,12 @@ public final class HoloKit implements IHoloCanvas {
     /** Ends the frame and restores the pose. */
     public void end() {
         if (scaled && g != null) {
-            g.pose().last().pose().set(saved);
+            g.pose().set(saved);
         }
         scaled = false;
         SuiteFonts.Client.resetPoseScale();
         g = null;
-        vc = null;
+        batch = null;
     }
 
     private static float op(float alpha) {
@@ -152,7 +151,7 @@ public final class HoloKit implements IHoloCanvas {
     private final class Sinks implements Geometry.VertexSink, Geometry.FillSink {
         @Override
         public void vertex(float x, float y, float u, float v, int argb) {
-            vc.addVertex(matrix, x, y, 0f).setUv(u, v).setColor(argb);
+            batch.vertex(x, y, u, v, argb);
         }
 
         @Override
@@ -161,13 +160,18 @@ public final class HoloKit implements IHoloCanvas {
         }
     }
 
-    private boolean beginRibbons() {
-        if (HoloTheme.effects == EffectLevel.OFF) {
-            return false;
+    /** Opens one pooled quad batch on the current pose: linear filtering for ribbons, nearest for glyphs. */
+    private void openBatch(boolean linear) {
+        batch = pool.next(g, HoloRenderTypes.GUI_PIPELINE, HoloRenderTypes.guiTextures(linear));
+    }
+
+    /** Hands the open batch to the frame. */
+    private void closeBatch() {
+        HoloQuadBatch b = batch;
+        batch = null;
+        if (b != null) {
+            pool.submit(g, b);
         }
-        vc = g.bufferSource().getBuffer(HoloRenderTypes.gui());
-        matrix = g.pose().last().pose();
-        return true;
     }
 
     @Override
@@ -176,7 +180,7 @@ public final class HoloKit implements IHoloCanvas {
         if ((argb >>> 24) == 0) {
             return;
         }
-        if (!beginRibbons()) {
+        if (HoloTheme.effects == EffectLevel.OFF) {
             // flat look: axis-aligned lines as fills, anything else as a hard 1 px ribbon
             if (y0 == y1) {
                 fill(ri(Math.min(x0, x1)), ri(y0), ri(Math.max(x0, x1)), ri(y0) + 1, argb);
@@ -186,15 +190,17 @@ public final class HoloKit implements IHoloCanvas {
                 fill(ri(x0), ri(Math.min(y0, y1)), ri(x0) + 1, ri(Math.max(y0, y1)), argb);
                 return;
             }
-            vc = g.bufferSource().getBuffer(HoloRenderTypes.gui());
-            matrix = g.pose().last().pose();
+            openBatch(true);
             Geometry.ribbon(sinks, x0, y0, x1, y1, 1f, argb, Geometry.ROW_HARD);
+            closeBatch();
             return;
         }
+        openBatch(true);
         Geometry.ribbon(sinks, x0, y0, x1, y1, width, argb, Geometry.ROW_SOFT);
         if (HoloTheme.effects == EffectLevel.FULL) {
             Geometry.ribbon(sinks, x0, y0, x1, y1, width * 3f, HoloTheme.fade(argb, 0.5f), Geometry.ROW_GLOW);
         }
+        closeBatch();
     }
 
     @Override
@@ -204,10 +210,10 @@ public final class HoloKit implements IHoloCanvas {
         if ((argb >>> 24) == 0 || radius <= 0f) {
             return;
         }
-        vc = g.bufferSource().getBuffer(HoloRenderTypes.gui());
-        matrix = g.pose().last().pose();
+        openBatch(true);
         if (HoloTheme.effects == EffectLevel.OFF) {
             Geometry.arc(sinks, cx, cy, radius, startDeg, sweepDeg, 1f, argb, Geometry.ROW_HARD);
+            closeBatch();
             return;
         }
         Geometry.arc(sinks, cx, cy, radius, startDeg, sweepDeg, width, argb, Geometry.ROW_SOFT);
@@ -215,6 +221,7 @@ public final class HoloKit implements IHoloCanvas {
             Geometry.arc(sinks, cx, cy, radius, startDeg, sweepDeg, width * 3f, HoloTheme.fade(argb, 0.5f),
                     Geometry.ROW_GLOW);
         }
+        closeBatch();
     }
 
     @Override
@@ -223,9 +230,9 @@ public final class HoloKit implements IHoloCanvas {
         if ((argb >>> 24) == 0) {
             return;
         }
-        vc = g.bufferSource().getBuffer(HoloRenderTypes.glyphs());
-        matrix = g.pose().last().pose();
+        openBatch(false);
         Geometry.glyph(sinks, glyph.ordinal(), ri(x), ri(y), argb);
+        closeBatch();
     }
 
     // ---- text -------------------------------------------------------------------------------------------------------
@@ -242,10 +249,24 @@ public final class HoloKit implements IHoloCanvas {
      */
     private void drawText(TextRole role, String s, float x, float y, int argb) {
         Style style = SuiteFonts.Client.style(role);
+        int ix = (int) x;
+        int iy = (int) y;
+        // 26.3 text takes int positions: a fractional position moves the pose instead (no allocation, the stack
+        // reuses its matrices), so scaled HUD text keeps its sub-pixel placement
+        boolean frac = ix != x || iy != y;
+        if (frac) {
+            g.pose().pushMatrix();
+            g.pose().translate(x, y);
+            ix = 0;
+            iy = 0;
+        }
         if (style == null) {
-            g.drawString(font, s, x, y, argb, false);
+            g.text(font, s, ix, iy, argb, false);
         } else {
-            g.drawString(font, run.set(s, style), x, y, argb, false);
+            g.text(font, run.set(s, style), ix, iy, argb, false);
+        }
+        if (frac) {
+            g.pose().popMatrix();
         }
     }
 
@@ -324,7 +345,7 @@ public final class HoloKit implements IHoloCanvas {
         if (registryId == null || registryId.isEmpty() || op(alpha) < 0.5f) {
             return;
         }
-        g.renderItem(ItemIcons.forId(registryId, Items.PAPER), ri(x), ri(y));
+        g.item(ItemIcons.forId(registryId, Items.PAPER), ri(x), ri(y));
     }
 
     @Override

@@ -18,7 +18,7 @@ import net.minecraft.world.entity.OwnableEntity;
 import net.minecraft.world.entity.decoration.ArmorStand;
 import net.minecraft.world.entity.monster.Blaze;
 import net.minecraft.world.entity.monster.Creeper;
-import net.minecraft.world.entity.monster.EnderMan;
+import net.minecraft.world.entity.monster.Enderman;
 import net.minecraft.world.entity.monster.Enemy;
 import net.minecraft.world.entity.monster.Ghast;
 import net.minecraft.world.entity.monster.RangedAttackMob;
@@ -167,7 +167,7 @@ public final class McNearbyThreats extends NearbyThreats implements LineOfSight.
         if (!e.isAlive() || e.isRemoved() || e instanceof Player || e instanceof ArmorStand) {
             return false;
         }
-        if (e instanceof OwnableEntity o && o.getOwnerUUID() != null) {
+        if (e instanceof OwnableEntity o && o.getOwnerReference() != null) {
             return false; // a pet (ours or someone's): never a fight row
         }
         return e instanceof Enemy || (e instanceof Mob m && m.isAggressive());
@@ -181,7 +181,7 @@ public final class McNearbyThreats extends NearbyThreats implements LineOfSight.
     static int rowFlags(LivingEntity e, double rx, double ry, double rz, double dist, double fwdX, double fwdZ) {
         int f = 0;
         double facing = facing(e, rx, rz, dist);
-        boolean aggressive = e instanceof Mob m && m.isAggressive() || e instanceof EnderMan em && em.isCreepy();
+        boolean aggressive = e instanceof Mob m && m.isAggressive() || e instanceof Enderman em && em.isCreepy();
         boolean enemy = e instanceof Enemy && (!(e instanceof NeutralMob) || aggressive);
         boolean swelling = e instanceof Creeper c && c.getSwellDir() > 0;
         boolean drawing = drawing(e) && facing >= FACING_COS;

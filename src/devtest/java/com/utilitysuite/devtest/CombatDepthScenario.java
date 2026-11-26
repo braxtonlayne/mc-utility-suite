@@ -19,9 +19,9 @@ import com.utilitysuite.travel.movement.MovementAssist;
 import net.minecraft.network.protocol.game.ServerboundPlayerCommandPacket;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.Entity;
-import net.minecraft.world.entity.monster.AbstractSkeleton;
-import net.minecraft.world.entity.monster.Zombie;
-import net.minecraft.world.entity.projectile.AbstractArrow;
+import net.minecraft.world.entity.monster.skeleton.AbstractSkeleton;
+import net.minecraft.world.entity.monster.zombie.Zombie;
+import net.minecraft.world.entity.projectile.arrow.AbstractArrow;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.entity.EntityJoinLevelEvent;
 

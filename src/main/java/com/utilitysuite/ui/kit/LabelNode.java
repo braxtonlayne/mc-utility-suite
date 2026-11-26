@@ -1,7 +1,7 @@
 package com.utilitysuite.ui.kit;
 
 import net.minecraft.client.gui.Font;
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 
 import java.util.function.Supplier;
 
@@ -60,7 +60,7 @@ public final class LabelNode extends UiNode {
     }
 
     @Override
-    public void render(GuiGraphics g, Font font, int sx, int sy, int mouseX, int mouseY) {
+    public void render(GuiGraphicsExtractor g, Font font, int sx, int sy, int mouseX, int mouseY) {
         if (shown.isEmpty()) {
             return;
         }

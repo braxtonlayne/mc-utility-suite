@@ -2,7 +2,7 @@ package com.utilitysuite.ui.kit;
 
 import com.utilitysuite.ui.holo.AnimStore;
 import net.minecraft.client.gui.Font;
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 
 /**
  * Base of every custom-drawn menu element. A node has a fixed layout box ({@code x, y, w, h}) computed when the tab is
@@ -73,14 +73,26 @@ public abstract class UiNode {
         this.h = h;
     }
 
-    public abstract void render(GuiGraphics g, Font font, int sx, int sy, int mouseX, int mouseY);
+    public abstract void render(GuiGraphicsExtractor g, Font font, int sx, int sy, int mouseX, int mouseY);
 
     /** True when the node reacts to the mouse (hover cursor, click sound, tooltip priority). */
     public boolean interactive() {
         return false;
     }
 
-    /** Mouse press inside the node; return true when consumed. */
+    /**
+     * The button passed to {@link #onClick}: 26.3 SDL numbering, as {@code MouseButtonEvent.button()} reports it
+     * ({@code InputConstants.MOUSE_BUTTON_LEFT} = 1, middle 2, right 3; 1.21.1 used GLFW 0 = left, 1 = right).
+     * Screens may pass {@code event.button()} straight through; this helper only names that.
+     */
+    public static int button(net.minecraft.client.input.MouseButtonEvent event) {
+        return event.button();
+    }
+
+    /**
+     * Mouse press inside the node (button: SDL, {@code InputConstants.MOUSE_BUTTON_LEFT} = 1, right 3); return true
+     * when consumed.
+     */
     public boolean onClick(double mouseX, double mouseY, int button, int sx, int sy) {
         return false;
     }
@@ -91,7 +103,11 @@ public abstract class UiNode {
     public void onRelease() {
     }
 
-    /** Keyboard input while focused; return true when consumed. */
+    /**
+     * Keyboard input while focused; return true when consumed. 26.3: {@code keyCode} is the SDL scancode
+     * ({@code KeyEvent.key()}, compare with {@code InputConstants.KEY_*}), {@code scanCode} carries the SDL keycode
+     * ({@code KeyEvent.keycode()}).
+     */
     public boolean onKey(int keyCode, int scanCode, int modifiers) {
         return false;
     }

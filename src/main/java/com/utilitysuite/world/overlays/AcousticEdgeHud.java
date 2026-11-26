@@ -7,23 +7,23 @@ import com.utilitysuite.tools.packetlab.PacketLab;
 import net.minecraft.client.Camera;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.client.gui.LayeredDraw;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.world.phys.Vec3;
+import net.neoforged.neoforge.client.gui.GuiLayer;
 
 /**
  * Screen-edge direction cues for acoustic pings outside the field of view: a small marker on the screen border on the
  * side of the sound, with a dot pointing back toward the centre, fading with age. Draws nothing unless World Radar's
  * "Off-screen sound cues" is on and a recent ping is off-screen; hidden by Clean-Screen. Allocates nothing per frame.
  */
-public final class AcousticEdgeHud implements LayeredDraw.Layer {
+public final class AcousticEdgeHud implements GuiLayer {
 
     private static final long MAX_AGE_MS = 3000L;
 
     private final WorldRadarModule module;
     private final float[] edge = new float[3];
     private final AcousticRadar.Visitor visitor = this::cue;
-    private GuiGraphics g;
+    private GuiGraphicsExtractor g;
     private double camX;
     private double camZ;
     private float camYaw;
@@ -35,12 +35,12 @@ public final class AcousticEdgeHud implements LayeredDraw.Layer {
     }
 
     @Override
-    public void render(GuiGraphics graphics, DeltaTracker delta) {
+    public void render(GuiGraphicsExtractor graphics, DeltaTracker delta) {
         if (!module.wantsEdgeCues()) {
             return;
         }
         Minecraft mc = Minecraft.getInstance();
-        if (mc.player == null || mc.options.hideGui || mc.screen != null) {
+        if (mc.player == null || mc.gui.hud.isHidden() || mc.gui.screen() != null) {
             return;
         }
         IModState st = Services.modState();
@@ -51,11 +51,11 @@ public final class AcousticEdgeHud implements LayeredDraw.Layer {
         if (radar == null || radar.size() == 0) {
             return;
         }
-        Camera cam = mc.gameRenderer.getMainCamera();
-        Vec3 p = cam.getPosition();
+        Camera cam = mc.gameRenderer.mainCamera();
+        Vec3 p = cam.position();
         camX = p.x;
         camZ = p.z;
-        camYaw = cam.getYRot();
+        camYaw = cam.yRot();
         hFov = AcousticRipples.horizontalFov(mc.options.fov().get(),
                 (float) graphics.guiWidth() / Math.max(1, graphics.guiHeight()));
         now = System.currentTimeMillis();

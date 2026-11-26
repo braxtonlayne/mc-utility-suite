@@ -65,7 +65,7 @@ public final class TravelKeys {
     }
 
     private static KeyMapping mapping(String key) {
-        return new KeyMapping(key, KeyConflictContext.IN_GAME, InputConstants.Type.KEYSYM,
+        return new KeyMapping(key, KeyConflictContext.IN_GAME, InputConstants.Type.KEYBOARD,
                 InputConstants.UNKNOWN.getValue(), KeybindManager.CATEGORY);
     }
 

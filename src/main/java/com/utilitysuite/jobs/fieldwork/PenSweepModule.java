@@ -7,9 +7,9 @@ import com.utilitysuite.core.api.SimKey;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.registries.BuiltInRegistries;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import net.minecraft.world.entity.animal.Animal;
-import net.minecraft.world.entity.animal.Sheep;
+import net.minecraft.world.entity.animal.sheep.Sheep;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.Items;
@@ -68,7 +68,7 @@ public final class PenSweepModule extends FieldModule {
         tick++;
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer player = mc.player;
-        if (player == null || mc.level == null || mc.screen != null) {
+        if (player == null || mc.level == null || mc.gui.screen() != null) {
             return;
         }
         if (!penSet) {
@@ -136,7 +136,7 @@ public final class PenSweepModule extends FieldModule {
         return switch (act) {
             case SHEAR -> Items.SHEARS;
             case MILK -> Items.BUCKET;
-            case BREED -> firstFood(a.getType().builtInRegistryHolder().key().location().toString());
+            case BREED -> firstFood(a.getType().builtInRegistryHolder().key().identifier().toString());
             default -> null;
         };
     }
@@ -147,7 +147,7 @@ public final class PenSweepModule extends FieldModule {
             return null;
         }
         for (String id : PenRules.breedingFoods(type)) {
-            Item item = BuiltInRegistries.ITEM.get(ResourceLocation.parse(id));
+            Item item = BuiltInRegistries.ITEM.getValue(Identifier.parse(id));
             if (inv.countItem(item) > 0) {
                 return item;
             }
@@ -170,7 +170,7 @@ public final class PenSweepModule extends FieldModule {
         for (int k = 0; k < found.size() && count < CAP; k++) {
             Animal a = found.get(k);
             animals[count] = a;
-            types[count] = a.getType().builtInRegistryHolder().key().location().toString();
+            types[count] = a.getType().builtInRegistryHolder().key().identifier().toString();
             adult[count] = !a.isBaby();
             long fed = fedAt.get(a.getId());
             ready[count] = PenRules.breedReady(adult[count], fed, tick);

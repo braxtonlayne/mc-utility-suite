@@ -6,16 +6,19 @@ import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.phys.Vec3;
+import net.minecraft.client.renderer.state.OptionsRenderState;
+import net.minecraft.client.renderer.state.level.CameraEntityRenderState;
+import net.minecraft.client.renderer.state.level.CameraRenderState;
+import net.minecraft.client.renderer.state.level.LevelRenderState;
 import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
 import org.joml.Matrix4f;
 import org.joml.Matrix4fc;
 
 /**
  * Projects every occupied {@link IWorldMarks} slot to the screen once per rendered frame, so the reticle layer (GUI)
- * only reads primitive arrays. Runs in {@link RenderLevelStageEvent.Stage#AFTER_LEVEL}: in 1.21.1 that stage gets
- * the camera-rotation matrix as the model-view matrix and the projection matrix with view bobbing, hurt shake and the
- * nausea warp already multiplied in (see {@code GameRenderer.renderLevel}), and world coordinates relative to the
- * camera position. Both are copied into reused {@link Matrix4f}s.
+ * only reads primitive arrays. Runs in {@link RenderLevelStageEvent.AfterLevel}: that stage gets the camera-rotation matrix as
+ * the model-view matrix; the projection is rebuilt with view bobbing, hurt shake and the nausea warp (see
+ * {@link #bobbedProjection}), and world coordinates are relative to the camera position. Both are copied into reused {@link Matrix4f}s.
  * <p>
  * Results are normalised (0..1 of the screen, y down) so the layer can scale them to whatever canvas size the HUD
  * host uses. Per slot: the screen rectangle of the eight box corners, a state (on screen, off screen, behind the
@@ -68,10 +71,7 @@ public final class ScreenProjector {
 
     // ---- event entry ------------------------------------------------------------------------------------------------
 
-    public void onRenderLevel(RenderLevelStageEvent event) {
-        if (event.getStage() != RenderLevelStageEvent.Stage.AFTER_LEVEL) {
-            return;
-        }
+    public void onRenderLevel(RenderLevelStageEvent.AfterLevel event) {
         IWorldMarks m = marks;
         if (m == null || (!anyOccupied(m) && auxMode == AUX_NONE)) {
             auxState = NONE;
@@ -88,11 +88,67 @@ public final class ScreenProjector {
             lb = levelBounds = new LevelBounds(); // once per session
         }
         lb.level = mc.level;
-        lb.partialTick = event.getPartialTick().getGameTimeDeltaPartialTick(false);
-        Vec3 cam = event.getCamera().getPosition();
-        project(m, event.getModelViewMatrix(), event.getProjectionMatrix(), cam.x, cam.y, cam.z, lb);
+        LevelRenderState state = event.getLevelRenderState();
+        CameraRenderState camera = state.cameraRenderState;
+        lb.partialTick = mc.getDeltaTracker().getGameTimeDeltaPartialTick(false);
+        bobbedProjection(camera, state, mc.gameRenderer.gameRenderState().optionsRenderState, levelProjection);
+        Vec3 cam = camera.pos;
+        project(m, event.getModelViewMatrix(), levelProjection, cam.x, cam.y, cam.z, lb);
         projectAux(cam.x, cam.y, cam.z, lb);
         lb.level = null;
+    }
+
+    private final Matrix4f levelProjection = new Matrix4f();
+    private final Matrix4f bob = new Matrix4f();
+
+    /**
+     * The projection the level was drawn with: 26.3 no longer hands it to the stage event, so the camera projection
+     * gets the same hurt shake, view bobbing and nausea/portal warp {@code GameRenderer.renderLevel} multiplies in
+     * (mirrored from its private {@code bobHurt}/{@code bobView}; reused matrices, no allocation).
+     */
+    private void bobbedProjection(CameraRenderState camera, LevelRenderState state, OptionsRenderState options,
+                                  Matrix4f out) {
+        out.set(camera.projectionMatrix);
+        Matrix4f b = bob.identity();
+        CameraEntityRenderState e = camera.entityRenderState;
+        if (e.isLiving) {
+            float hurt = e.hurtTime;
+            if (e.isDeadOrDying) {
+                float duration = Math.min(e.deathTime, 20.0F);
+                b.rotateZ((40.0F - 8000.0F / (duration + 200.0F)) * Mth.DEG_TO_RAD);
+            }
+            if (hurt >= 0.0F && !e.preventFlinch) {
+                hurt /= e.hurtDuration;
+                hurt = Mth.sin(hurt * hurt * hurt * hurt * (float) Math.PI);
+                float rr = e.hurtDir;
+                b.rotateY(-rr * Mth.DEG_TO_RAD);
+                b.rotateZ((float) (-hurt * 14.0 * options.damageTiltStrength) * Mth.DEG_TO_RAD);
+                b.rotateY(rr * Mth.DEG_TO_RAD);
+            }
+        }
+        if (options.bobView && e.isPlayer) {
+            float walk = e.backwardsInterpolatedWalkDistance;
+            float amount = e.bob;
+            b.translate(Mth.sin(walk * (float) Math.PI) * amount * 0.5F,
+                    -Math.abs(Mth.cos(walk * (float) Math.PI) * amount), 0.0F);
+            b.rotateZ(Mth.sin(walk * (float) Math.PI) * amount * 3.0F * Mth.DEG_TO_RAD);
+            b.rotateX(Math.abs(Mth.cos(walk * (float) Math.PI - 0.2F) * amount) * 5.0F * Mth.DEG_TO_RAD);
+        }
+        out.mul(b);
+        float scale = options.screenEffectScale;
+        float spin = Math.max(state.playerRenderState.portalEffectIntensity,
+                state.playerRenderState.nauseaEffectIntensity) * (scale * scale);
+        if (spin > 0.0F) {
+            float skew = 5.0F / (spin * spin + 5.0F) - spin * 0.04F;
+            skew *= skew;
+            float angle = state.playerRenderState.spinningEffectAngle * (float) (Math.PI / 180.0);
+            float ax = 0f;
+            float ay = Mth.SQRT_OF_TWO / 2.0F;
+            float az = Mth.SQRT_OF_TWO / 2.0F;
+            out.rotate(angle, ax, ay, az);
+            out.scale(1.0F / skew, 1.0F, 1.0F);
+            out.rotate(-angle, ax, ay, az);
+        }
     }
 
     // ---- per frame --------------------------------------------------------------------------------------------------

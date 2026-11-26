@@ -1,6 +1,5 @@
 package com.utilitysuite.core.input;
 
-import com.mojang.blaze3d.platform.InputConstants;
 import com.utilitysuite.core.api.IActionArbiter;
 import com.utilitysuite.core.api.IInputSmoother;
 import com.utilitysuite.core.api.ManualInput;
@@ -8,7 +7,6 @@ import com.utilitysuite.core.api.SimKey;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.Options;
-import org.lwjgl.glfw.GLFW;
 
 /**
  * Menu movement support (added for SmartInventory's "move in menus" option). While an inventory/container screen is
@@ -49,12 +47,11 @@ public final class ScreenMovementPassthrough {
             return;
         }
         Options o = mc.options;
-        long window = mc.getWindow().getWindow();
         boolean reported = false;
         for (int i = 0; i < KEYS.length; i++) {
             SimKey key = KEYS[i];
             KeyMapping m = mapping(o, key);
-            boolean physical = (key != SimKey.SNEAK || includeSneak) && isPhysicallyDown(window, m);
+            boolean physical = (key != SimKey.SNEAK || includeSneak) && KeyInputs.isPhysicallyDown(m);
             if (physical && !LAST_DOWN[i] && !reported) {
                 arbiter.onManualInput(ManualInput.MOVEMENT_KEY);
                 reported = true;
@@ -81,7 +78,6 @@ public final class ScreenMovementPassthrough {
         active = false;
         Minecraft mc = Minecraft.getInstance();
         Options o = mc.options;
-        long window = mc.getWindow().getWindow();
         IInputSmoother input = com.utilitysuite.core.api.Services.input();
         for (int i = 0; i < KEYS.length; i++) {
             LAST_DOWN[i] = false;
@@ -90,7 +86,7 @@ public final class ScreenMovementPassthrough {
                 continue;
             }
             KeyMapping m = mapping(o, key);
-            boolean physical = mc.screen == null && isPhysicallyDown(window, m);
+            boolean physical = mc.gui.screen() == null && KeyInputs.isPhysicallyDown(m);
             if (m.isDown() != physical) {
                 m.setDown(physical);
             }
@@ -117,19 +113,5 @@ public final class ScreenMovementPassthrough {
             case SPRINT -> o.keySprint;
             default -> throw new IllegalArgumentException(key.name());
         };
-    }
-
-    private static boolean isPhysicallyDown(long window, KeyMapping m) {
-        if (m.isUnbound()) {
-            return false;
-        }
-        InputConstants.Key k = m.getKey();
-        if (k.getType() == InputConstants.Type.KEYSYM) {
-            return InputConstants.isKeyDown(window, k.getValue());
-        }
-        if (k.getType() == InputConstants.Type.MOUSE) {
-            return GLFW.glfwGetMouseButton(window, k.getValue()) == GLFW.GLFW_PRESS;
-        }
-        return false;
     }
 }

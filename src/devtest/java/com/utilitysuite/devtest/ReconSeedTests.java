@@ -8,7 +8,7 @@ import com.utilitysuite.world.seed.SeedDiffService;
 import com.utilitysuite.world.seed.SeedScannerModule;
 import com.utilitysuite.world.seed.Sha256Long;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
-import net.minecraft.client.GuiMessage;
+import net.minecraft.client.multiplayer.chat.GuiMessage;
 import net.minecraft.client.gui.components.ChatComponent;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.world.level.chunk.LevelChunk;

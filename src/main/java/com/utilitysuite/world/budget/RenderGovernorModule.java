@@ -5,7 +5,6 @@ import com.utilitysuite.core.api.RenderBudget;
 import com.utilitysuite.core.api.SettingSpec;
 import com.utilitysuite.world.WorldModule;
 import net.minecraft.client.Minecraft;
-import net.minecraft.world.entity.decoration.ArmorStand;
 import net.neoforged.neoforge.client.event.RenderFrameEvent;
 import net.neoforged.neoforge.client.event.RenderLivingEvent;
 
@@ -154,14 +153,22 @@ public final class RenderGovernorModule extends WorldModule {
      * Distant armor stands are not drawn at tier 3 (fixed rule) or, opt-in, from the chosen step past the cull
      * distance. They stay in the world; only their rendering is skipped. Allocation free.
      */
-    public void onRenderLiving(RenderLivingEvent.Pre<?, ?> e) {
+    public void onRenderLiving(RenderLivingEvent.Pre<?, ?, ?> e) {
         int tier = RenderBudget.tier();
-        if (tier == 0 || !(e.getEntity() instanceof ArmorStand stand)) {
+        // 26.3 renders from extracted state: identify the armor stand by its entity type
+        net.minecraft.client.renderer.entity.state.LivingEntityRenderState st = e.getRenderState();
+        if (tier == 0 || st.entityType != net.minecraft.world.entity.EntityTypes.ARMOR_STAND) {
             return;
         }
         Minecraft mc = Minecraft.getInstance();
-        if (mc.player != null && EntityCullPolicy.shouldCullArmorStand(cullMask, tier, cullFromTier,
-                stand.distanceToSqr(mc.player), cullDistance * cullDistance)) {
+        if (mc.player == null) {
+            return;
+        }
+        double dx = st.x - mc.player.getX();
+        double dy = st.y - mc.player.getY();
+        double dz = st.z - mc.player.getZ();
+        if (EntityCullPolicy.shouldCullArmorStand(cullMask, tier, cullFromTier,
+                dx * dx + dy * dy + dz * dz, cullDistance * cullDistance)) {
             e.setCanceled(true);
         }
     }

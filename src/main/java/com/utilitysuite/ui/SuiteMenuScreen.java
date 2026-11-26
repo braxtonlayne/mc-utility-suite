@@ -1,6 +1,5 @@
 package com.utilitysuite.ui;
 
-import com.mojang.blaze3d.systems.RenderSystem;
 import com.utilitysuite.UtilitySuiteMod;
 import com.utilitysuite.core.CoreBootstrap;
 import com.utilitysuite.core.api.IConfigurable;
@@ -23,6 +22,7 @@ import com.utilitysuite.ui.holo.HoloTheme;
 import com.utilitysuite.ui.holo.Motion;
 import com.utilitysuite.core.input.KeybindManager;
 import com.utilitysuite.ui.kit.CollapsibleSection;
+import com.utilitysuite.ui.kit.FadingGraphics;
 import com.utilitysuite.ui.kit.GoalHeroCard;
 import com.utilitysuite.ui.kit.ItemIcons;
 import com.utilitysuite.ui.kit.MenuScale;
@@ -37,12 +37,15 @@ import com.utilitysuite.ui.tabs.JobsTab;
 import com.utilitysuite.ui.tabs.ToolsTab;
 import com.utilitysuite.ui.tabs.TravelTab;
 import com.utilitysuite.ui.tabs.WorldTab;
-import net.minecraft.Util;
+import com.mojang.blaze3d.platform.InputConstants;
+import net.minecraft.util.Util;
 import net.minecraft.client.gui.Font;
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.components.events.GuiEventListener;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.input.KeyEvent;
+import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.client.resources.sounds.SimpleSoundInstance;
 import net.minecraft.network.chat.Component;
 import net.minecraft.sounds.SoundEvents;
@@ -968,7 +971,7 @@ public final class SuiteMenuScreen extends Screen {
         }
         CollapsibleSection s = panel.sections().get(0);
         if (s.isOpen() != open) {
-            s.onClick(0, 0, 0, 0, 0);
+            s.onClick(0, 0, InputConstants.MOUSE_BUTTON_LEFT, 0, 0);
         }
         rebuildKeepingFocus();
         if (!panel.sections().isEmpty()) {
@@ -1062,10 +1065,11 @@ public final class SuiteMenuScreen extends Screen {
     }
 
     @Override
-    public boolean mouseClicked(double mx, double my, int button) {
+    public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
         boot.skip(); // any input ends the boot sequence; the input itself is handled as usual
-        mx = toVirtual(mx);
-        my = toVirtual(my);
+        double mx = toVirtual(event.x());
+        double my = toVirtual(event.y());
+        int button = event.button(); // SDL numbering: InputConstants.MOUSE_BUTTON_LEFT = 1, RIGHT = 3
         for (int i = chrome.size() - 1; i >= 0; i--) {
             UiNode n = chrome.get(i);
             if (chromeVisible(n) && n.contains(mx, my, n.x, n.y) && click(n, mx, my, button, n.x, n.y, false)) {
@@ -1087,7 +1091,8 @@ public final class SuiteMenuScreen extends Screen {
             return true;
         }
         int max = maxScroll();
-        if (max > 0 && button == 0 && mx >= viewX + viewW - 9 && mx < viewX + viewW && inView(mx, my)) {
+        if (max > 0 && button == InputConstants.MOUSE_BUTTON_LEFT && mx >= viewX + viewW - 9 && mx < viewX + viewW
+                && inView(mx, my)) {
             scrollDragging = true;
             dragScrollbar(my);
             return true;
@@ -1121,9 +1126,9 @@ public final class SuiteMenuScreen extends Screen {
     }
 
     @Override
-    public boolean mouseDragged(double mx, double my, int button, double dx, double dy) {
-        mx = toVirtual(mx);
-        my = toVirtual(my);
+    public boolean mouseDragged(MouseButtonEvent event, double dx, double dy) {
+        double mx = toVirtual(event.x());
+        double my = toVirtual(event.y());
         dx = toVirtual(dx);
         dy = toVirtual(dy);
         if (scrollDragging) {
@@ -1136,20 +1141,20 @@ public final class SuiteMenuScreen extends Screen {
             dragNode.onDrag(mx, my, sx, sy);
             return true;
         }
-        return super.mouseDragged(mx, my, button, dx, dy);
+        return super.mouseDragged(new MouseButtonEvent(mx, my, event.buttonInfo()), dx, dy);
     }
 
     @Override
-    public boolean mouseReleased(double mx, double my, int button) {
-        mx = toVirtual(mx);
-        my = toVirtual(my);
+    public boolean mouseReleased(MouseButtonEvent event) {
+        double mx = toVirtual(event.x());
+        double my = toVirtual(event.y());
         scrollDragging = false;
         if (dragNode != null) {
             dragNode.onRelease();
             dragNode = null;
             return true;
         }
-        return super.mouseReleased(mx, my, button);
+        return super.mouseReleased(new MouseButtonEvent(mx, my, event.buttonInfo()));
     }
 
     @Override
@@ -1170,21 +1175,24 @@ public final class SuiteMenuScreen extends Screen {
     }
 
     @Override
-    public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+    public boolean keyPressed(KeyEvent event) {
+        int keyCode = event.key(); // 26.3: SDL scancode (InputConstants.KEY_*)
+        int scanCode = event.keycode();
+        int modifiers = event.modifiers();
         var openKey = KeybindManager.mapping(KeybindManager.KeyId.OPEN_MENU);
-        if (openKeyReleased || openKey == null || !openKey.matches(keyCode, scanCode)) {
+        if (openKeyReleased || openKey == null || !openKey.matches(event)) {
             boot.skip(); // any input skips the boot, except the key-repeat of the press that opened the menu
         }
         if (KeyRebind.onKey(keyCode, scanCode, this::setStatus)) { // a hotkey row is waiting for its new key
             requestRebuild();
             return true;
         }
-        if (keyCode == 256) {
+        if (keyCode == InputConstants.KEY_ESCAPE) {
             onClose();
             return true;
         }
         GuiEventListener f = getFocused();
-        if (goalField != null && f == goalField.box() && (keyCode == 257 || keyCode == 335)) {
+        if (goalField != null && f == goalField.box() && (keyCode == InputConstants.KEY_RETURN || keyCode == InputConstants.KEY_NUMPADENTER)) {
             if (tab != Tab.JOBS) {
                 selectTab(Tab.JOBS);
             }
@@ -1192,27 +1200,27 @@ public final class SuiteMenuScreen extends Screen {
             return true;
         }
         if (f != null) {
-            if (f.keyPressed(keyCode, scanCode, modifiers)) {
+            if (f.keyPressed(event)) {
                 return true;
             }
         } else if (focusNode != null && focusNode.onKey(keyCode, scanCode, modifiers)) {
             return true;
         }
-        if (keyCode == 258) {
+        if (keyCode == InputConstants.KEY_TAB) {
             focus(null);
-            return super.keyPressed(keyCode, scanCode, modifiers); // Tab: move between text fields
+            return super.keyPressed(event); // Tab: move between text fields
         }
         if (!(f instanceof EditBox)) {
             int page = viewH - 40;
             switch (keyCode) {
-                case 266 -> scrollTarget -= page;      // Page Up
-                case 267 -> scrollTarget += page;      // Page Down
-                case 268 -> scrollTarget = 0;          // Home
-                case 269 -> scrollTarget = maxScroll(); // End
+                case InputConstants.KEY_PAGEUP -> scrollTarget -= page;      // Page Up
+                case InputConstants.KEY_PAGEDOWN -> scrollTarget += page;      // Page Down
+                case InputConstants.KEY_HOME -> scrollTarget = 0;          // Home
+                case InputConstants.KEY_END -> scrollTarget = maxScroll(); // End
                 default -> {
                     // Right Shift closes the menu again unless a text box is being typed in.
                     var open = KeybindManager.mapping(KeybindManager.KeyId.OPEN_MENU);
-                    if (open != null && open.matches(keyCode, scanCode)) {
+                    if (open != null && open.matches(event)) {
                         // Only a fresh press closes: not the key-repeat of the press that opened the menu, and not
                         // within the first moments after opening.
                         if (openKeyReleased && Util.getMillis() - openedAt >= OPEN_KEY_GRACE_MS) {
@@ -1231,12 +1239,12 @@ public final class SuiteMenuScreen extends Screen {
     }
 
     @Override
-    public boolean keyReleased(int keyCode, int scanCode, int modifiers) {
+    public boolean keyReleased(KeyEvent event) {
         var open = KeybindManager.mapping(KeybindManager.KeyId.OPEN_MENU);
-        if (open != null && open.matches(keyCode, scanCode)) {
+        if (open != null && open.matches(event)) {
             openKeyReleased = true;
         }
-        return super.keyReleased(keyCode, scanCode, modifiers);
+        return super.keyReleased(event);
     }
 
     @Override
@@ -1246,7 +1254,7 @@ public final class SuiteMenuScreen extends Screen {
             closeReason = "escape/onClose";
         }
         UtilitySuiteMod.LOGGER.info("Suite menu closed ({})", closeReason);
-        minecraft.setScreen(parent);
+        minecraft.gui.setScreen(parent);
     }
 
     @Override
@@ -1273,7 +1281,7 @@ public final class SuiteMenuScreen extends Screen {
         }
     }
 
-    /** True when the Open-Menu key is physically held right now (GLFW state, independent of key contexts). */
+    /** True when the Open-Menu key is physically held right now (SDL keyboard state, independent of key contexts). */
     public static boolean openKeyHeld() {
         var open = KeybindManager.mapping(KeybindManager.KeyId.OPEN_MENU);
         net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
@@ -1281,8 +1289,7 @@ public final class SuiteMenuScreen extends Screen {
             return false;
         }
         var key = open.getKey();
-        return key.getType() == com.mojang.blaze3d.platform.InputConstants.Type.KEYSYM
-                && com.mojang.blaze3d.platform.InputConstants.isKeyDown(mc.getWindow().getWindow(), key.getValue());
+        return key.getType() == InputConstants.Type.KEYBOARD && InputConstants.isKeyDown(key.getValue());
     }
 
     @Override
@@ -1295,20 +1302,28 @@ public final class SuiteMenuScreen extends Screen {
     /** Fraction of the backdrop tint drawn this frame (it fades in with the frame unfold). */
     private float backdropAlpha = 1f;
 
-    /** Backdrop: VOID at 55 % over the vanilla menu blur (the blur itself runs first, in {@link #render}). */
+    /**
+     * 26.3: the screen framework extracts this first, in a stratum of its own: only the vanilla menu blur
+     * ({@code blurBeforeThisStratum}, which reads the player's Menu Background Blur option and does nothing at 0), so
+     * the world and HUD behind the menu are blurred and the menu itself is not.
+     */
     @Override
-    public void renderBackground(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
+    public void extractBackground(GuiGraphicsExtractor g, int mouseX, int mouseY, float partialTick) {
+        extractBlurredBackground(g);
+        minecraft.gui.hud.extractDeferredSubtitles();
+    }
+
+    /** Backdrop: VOID at 55 % over the vanilla menu blur. */
+    private void drawBackdrop(GuiGraphicsExtractor g) {
         g.fill(0, 0, width, height, HoloTheme.argb(HoloToken.VOID, 0.55f * backdropAlpha));
     }
 
+    /** The content-fade extractor (26.3 has no shader colour), reused across frames. */
+    private FadingGraphics fade;
+
     @Override
-    public void render(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
+    public void extractRenderState(GuiGraphicsExtractor g, int mouseX, int mouseY, float partialTick) {
         FrameClock.sample();
-        // Screen#renderBlurredBackground (1.21.1, NeoForge-patched to disable depth first): runs the vanilla blur post
-        // effect, which reads the player's Menu Background Blur accessibility option and does nothing at 0. Flush
-        // first so whatever the HUD batched before the screen is part of the blurred image.
-        g.flush();
-        renderBlurredBackground(partialTick);
         double gs = guiScale();
         float f = (float) MenuScale.factor(gs);
         if (f == 1f) {
@@ -1316,15 +1331,15 @@ public final class SuiteMenuScreen extends Screen {
             return;
         }
         // effective scale 2 at GUI scale 3-4: virtual layout px -> GUI px by 2 / guiScale
-        g.pose().pushPose();
-        g.pose().scale(f, f, 1f);
+        g.pose().pushMatrix();
+        g.pose().scale(f, f);
         MenuScale.setActive(f);
         try {
             renderScaled(g, (int) MenuScale.toVirtual(mouseX, gs), (int) MenuScale.toVirtual(mouseY, gs),
                     partialTick);
         } finally {
             MenuScale.reset();
-            g.pose().popPose();
+            g.pose().popMatrix();
         }
     }
 
@@ -1353,9 +1368,9 @@ public final class SuiteMenuScreen extends Screen {
      * The 900 ms boot (design 8.2): centre line, frame unfold with a bracket snap and flicker, the columns revealed
      * left to right behind a bright caret, then a counting readout. Input stays live (any input skips to the end).
      */
-    private void renderBoot(GuiGraphics g, int mouseX, int mouseY, float partialTick, long t, long now) {
+    private void renderBoot(GuiGraphicsExtractor g, int mouseX, int mouseY, float partialTick, long t, long now) {
         backdropAlpha = clamp01(t / (float) BootSequence.LINE_END_MS);
-        renderBackground(g, mouseX, mouseY, partialTick);
+        drawBackdrop(g);
         stepScroll(now);
         int accent = HoloTheme.argb(HoloToken.ACCENT);
         int cx = wx + ww / 2;
@@ -1419,7 +1434,7 @@ public final class SuiteMenuScreen extends Screen {
     }
 
     /** Scissors a column to its revealed part; false (nothing pushed) while it is still hidden. */
-    private static boolean revealClip(GuiGraphics g, int x, int y, int w, int h, float reveal) {
+    private static boolean revealClip(GuiGraphicsExtractor g, int x, int y, int w, int h, float reveal) {
         int rw = Math.round(w * reveal);
         if (rw <= 0 || h <= 0) {
             return false;
@@ -1429,7 +1444,7 @@ public final class SuiteMenuScreen extends Screen {
     }
 
     /** The bright 1 px caret at a column's reveal edge while it is moving. */
-    private static void revealCaret(GuiGraphics g, int x, int y, int w, int h, float reveal, int argb) {
+    private static void revealCaret(GuiGraphicsExtractor g, int x, int y, int w, int h, float reveal, int argb) {
         if (reveal > 0f && reveal < 1f) {
             int ex = x + Math.round(w * reveal);
             g.fill(ex, y, ex + 1, y + h, argb);
@@ -1445,7 +1460,7 @@ public final class SuiteMenuScreen extends Screen {
      * switch fades the content column in and slides it 6 px. Input is live from the first frame (nothing here gates
      * a click), Stop all is a chrome node and never waits. Motion OFF: all instant; REDUCED: fades only.
      */
-    private void renderScaled(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
+    private void renderScaled(GuiGraphicsExtractor g, int mouseX, int mouseY, float partialTick) {
         long now = Util.getMillis();
         long bootT = boot.elapsed(now);
         if (bootT >= 0L) {
@@ -1459,36 +1474,34 @@ public final class SuiteMenuScreen extends Screen {
         float switchP = motion == Motion.OFF || contentSwitchAt == 0L ? 1f
                 : clamp01((now - contentSwitchAt) / SWITCH_MS);
         backdropAlpha = frameP;
-        renderBackground(g, mouseX, mouseY, partialTick);
+        drawBackdrop(g);
         stepScroll(now);
         drawWindow(g, frameP, now);
         boolean fading = contentA < 1f;
-        if (fading) {
-            g.flush();
-            RenderSystem.setShaderColor(1f, 1f, 1f, Math.max(0.02f, contentA));
-        }
-        drawTopBar(g, mouseX, mouseY);
-        drawSidebar(g, mouseX, mouseY);
-        drawList(g, mouseX, mouseY);
         boolean switching = switchP < 1f;
         float sw = AnimStore.easeOut(switchP);
+        // 26.3: the content fades through an alpha-multiplying extractor (the shader colour is gone); unfaded frames
+        // draw straight into the real one
+        GuiGraphicsExtractor c = g;
+        FadingGraphics fg = null;
+        if (fading || switching) {
+            fg = fade = FadingGraphics.begin(fade, g, mouseX, mouseY);
+            c = fg.alpha(fading ? Math.max(0.02f, contentA) : 1f);
+        }
+        drawTopBar(c, mouseX, mouseY);
+        drawSidebar(c, mouseX, mouseY);
+        drawList(c, mouseX, mouseY);
         if (switching) {
-            g.flush();
-            RenderSystem.setShaderColor(1f, 1f, 1f, Math.max(0.02f, contentA * sw));
+            fg.alpha(Math.max(0.02f, contentA * sw));
         }
         int slide = switching && motion == Motion.FULL ? Math.round(SWITCH_SLIDE * (1f - sw)) : 0;
-        drawContent(g, mouseX, mouseY, slide);
+        drawContent(c, mouseX, mouseY, slide);
         if (switching) {
-            g.flush();
-            RenderSystem.setShaderColor(1f, 1f, 1f, fading ? Math.max(0.02f, contentA) : 1f);
+            fg.alpha(fading ? Math.max(0.02f, contentA) : 1f);
         }
-        drawToast(g);
+        drawToast(c);
         updateHover(mouseX, mouseY, now);
-        drawTooltip(g, mouseX, mouseY, now);
-        if (fading) {
-            g.flush();
-            RenderSystem.setShaderColor(1f, 1f, 1f, 1f);
-        }
+        drawTooltip(c, mouseX, mouseY, now);
     }
 
     private void stepScroll(long now) {
@@ -1507,7 +1520,7 @@ public final class SuiteMenuScreen extends Screen {
      * surface split by faint hairlines. Without the player's blur the glass gets a darker base so HUD text behind
      * the window cannot ghost through.
      */
-    private void drawWindow(GuiGraphics g, float frameP, long now) {
+    private void drawWindow(GuiGraphicsExtractor g, float frameP, long now) {
         int fy = wy;
         int fh = wh;
         float fa = 1f;
@@ -1540,7 +1553,7 @@ public final class SuiteMenuScreen extends Screen {
     }
 
     /** A 24 px band at 5 % accent travelling down the window on open and then every 8 s (effects FULL, motion FULL). */
-    private void drawSweep(GuiGraphics g, long now) {
+    private void drawSweep(GuiGraphicsExtractor g, long now) {
         if (HoloTheme.effects != EffectLevel.FULL || HoloTheme.motion != Motion.FULL) {
             return;
         }
@@ -1575,7 +1588,7 @@ public final class SuiteMenuScreen extends Screen {
         return listSy(n);
     }
 
-    private void drawList(GuiGraphics g, int mouseX, int mouseY) {
+    private void drawList(GuiGraphicsExtractor g, int mouseX, int mouseY) {
         if (listW == 0) {
             return;
         }
@@ -1617,17 +1630,17 @@ public final class SuiteMenuScreen extends Screen {
      * Small caps text (chips, captions, version). In the suite MICRO face it is drawn natively at its own size: a TTF
      * pose-scaled to 0.75 loses its thin strokes. The vanilla fallback keeps the 0.75 pose scaling.
      */
-    static void smallText(GuiGraphics g, Font font, String s, int x, int y, int color) {
+    static void smallText(GuiGraphicsExtractor g, Font font, String s, int x, int y, int color) {
         net.minecraft.network.chat.Style st = microStyle();
         if (st != null) {
-            g.drawString(font, SMALL_RUN.set(s, st), x, y, color, false);
+            g.text(font, SMALL_RUN.set(s, st), x, y, color, false);
             return;
         }
-        g.pose().pushPose();
-        g.pose().translate(x, y, 0);
-        g.pose().scale(0.75f, 0.75f, 1f);
-        g.drawString(font, s, 0, 0, color, false);
-        g.pose().popPose();
+        g.pose().pushMatrix();
+        g.pose().translate(x, y);
+        g.pose().scale(0.75f, 0.75f);
+        g.text(font, s, 0, 0, color, false);
+        g.pose().popMatrix();
     }
 
     static int smallWidth(Font font, String s) {
@@ -1636,7 +1649,7 @@ public final class SuiteMenuScreen extends Screen {
     }
 
     /** Square brackets around a readout, drawn as hairlines (no fill). */
-    private static void readoutBrackets(GuiGraphics g, int x, int y, int w, int h, int argb) {
+    private static void readoutBrackets(GuiGraphicsExtractor g, int x, int y, int w, int h, int argb) {
         g.fill(x, y, x + 1, y + h, argb);
         g.fill(x + 1, y, x + 3, y + 1, argb);
         g.fill(x + 1, y + h - 1, x + 3, y + h, argb);
@@ -1646,7 +1659,7 @@ public final class SuiteMenuScreen extends Screen {
     }
 
     /** The "acting" glyph: a 5 px diamond centred on (cx, cy). */
-    static void diamond(GuiGraphics g, int cx, int cy, int argb) {
+    static void diamond(GuiGraphicsExtractor g, int cx, int cy, int argb) {
         g.fill(cx, cy - 2, cx + 1, cy - 1, argb);
         g.fill(cx - 1, cy - 1, cx + 2, cy, argb);
         g.fill(cx - 2, cy, cx + 3, cy + 1, argb);
@@ -1655,20 +1668,20 @@ public final class SuiteMenuScreen extends Screen {
     }
 
     /** The "armed" glyph: a 3 px dot with a faint 5 px halo, centred on (cx, cy). */
-    static void armedDot(GuiGraphics g, int cx, int cy, HoloToken token) {
+    static void armedDot(GuiGraphicsExtractor g, int cx, int cy, HoloToken token) {
         g.fill(cx - 2, cy - 2, cx + 3, cy + 3, HoloTheme.argb(token, 0.22f));
         g.fill(cx - 1, cy - 1, cx + 2, cy + 2, HoloTheme.argb(token));
     }
 
     /** The "stopped" glyph: a 5 px cross with its top-left at (x, y). */
-    static void cross(GuiGraphics g, int x, int y, int argb) {
+    static void cross(GuiGraphicsExtractor g, int x, int y, int argb) {
         for (int i = 0; i < 5; i++) {
             g.fill(x + i, y + i, x + i + 1, y + i + 1, argb);
             g.fill(x + 4 - i, y + i, x + 5 - i, y + i + 1, argb);
         }
     }
 
-    private void drawTopBar(GuiGraphics g, int mx, int my) {
+    private void drawTopBar(GuiGraphicsExtractor g, int mx, int my) {
         int ty = wy + (UiTheme.TOP_BAR_H - 8) / 2;
         HoloFrames.sideBar(g, wx + 12, ty - 1, 10, HoloToken.ACCENT, 1f);
         UiRenderUtils.text(g, font, TITLE, wx + 20, ty, HoloTheme.argb(HoloToken.TEXT));
@@ -1708,7 +1721,7 @@ public final class SuiteMenuScreen extends Screen {
         }
     }
 
-    private void drawSidebar(GuiGraphics g, int mx, int my) {
+    private void drawSidebar(GuiGraphicsExtractor g, int mx, int my) {
         SidebarTab active = null;
         for (int i = 0; i < chrome.size(); i++) {
             UiNode n = chrome.get(i);
@@ -1741,7 +1754,7 @@ public final class SuiteMenuScreen extends Screen {
         }
     }
 
-    private void drawContent(GuiGraphics g, int mouseX, int mouseY, int slide) {
+    private void drawContent(GuiGraphicsExtractor g, int mouseX, int mouseY, int slide) {
         boolean mouseIn = inView(mouseX, mouseY);
         int mx = mouseIn ? mouseX : -10000;
         int my = mouseIn ? mouseY : -10000;
@@ -1778,7 +1791,7 @@ public final class SuiteMenuScreen extends Screen {
         }
     }
 
-    private void drawToast(GuiGraphics g) {
+    private void drawToast(GuiGraphicsExtractor g) {
         if (status.isEmpty()) {
             return;
         }
@@ -1845,7 +1858,7 @@ public final class SuiteMenuScreen extends Screen {
      * The tooltip: a framed GLASS_RAISED plate after 350 ms with a 90 ms fade, placed below-right of the pointer and
      * flipped above or beside the control when clipped, so it never covers the control it explains.
      */
-    private void drawTooltip(GuiGraphics g, int mouseX, int mouseY, long now) {
+    private void drawTooltip(GuiGraphicsExtractor g, int mouseX, int mouseY, long now) {
         long since = now - hoverSince - TOOLTIP_DELAY_MS;
         if (hoverNode == null || dragNode != null || since < 0L) {
             return;
@@ -1869,14 +1882,12 @@ public final class SuiteMenuScreen extends Screen {
                 4);
         int x = TooltipPlacement.x(pos);
         int y = TooltipPlacement.y(pos);
-        g.pose().pushPose();
-        g.pose().translate(0, 0, 400);
+        g.nextStratum(); // tooltip above everything drawn so far (was a z translate of 400)
         HoloFrames.frame(g, x, y, w, h, FrameLevel.FRAMED, false, HoloToken.GLASS_RAISED, HoloToken.LINE, a);
         int text = HoloTheme.argb(HoloToken.TEXT_SECONDARY, a);
         for (int i = 0; i < tipLines.size(); i++) {
-            g.drawString(font, tipLines.get(i), x + 8, y + 6 + i * 10, text, false);
+            g.text(font, tipLines.get(i), x + 8, y + 6 + i * 10, text, false);
         }
-        g.pose().popPose();
     }
 
     /**
@@ -1962,7 +1973,7 @@ public final class SuiteMenuScreen extends Screen {
 
         /** Quiet rows; the selected one is raised glass with brackets (its accent bar is drawn by the screen). */
         @Override
-        public void render(GuiGraphics g, Font font, int sx, int sy, int mouseX, int mouseY) {
+        public void render(GuiGraphicsExtractor g, Font font, int sx, int sy, int mouseX, int mouseY) {
             boolean hover = inside(mouseX, mouseY, sx, sy, w, h);
             if (active) {
                 g.fill(sx, sy, sx + w, sy + h, HoloTheme.argb(HoloToken.GLASS_RAISED));
@@ -1985,7 +1996,7 @@ public final class SuiteMenuScreen extends Screen {
 
         @Override
         public boolean onClick(double mouseX, double mouseY, int button, int sx, int sy) {
-            if (button != 0 || active) {
+            if (button != InputConstants.MOUSE_BUTTON_LEFT || active) {
                 return false;
             }
             selectTab(t);
@@ -2016,7 +2027,7 @@ public final class SuiteMenuScreen extends Screen {
         }
 
         @Override
-        public void render(GuiGraphics g, Font font, int sx, int sy, int mouseX, int mouseY) {
+        public void render(GuiGraphicsExtractor g, Font font, int sx, int sy, int mouseX, int mouseY) {
             if (textW < 0) {
                 textW = smallWidth(font, text);
             }
@@ -2070,7 +2081,7 @@ public final class SuiteMenuScreen extends Screen {
         }
 
         @Override
-        public void render(GuiGraphics g, Font font, int sx, int sy, int mouseX, int mouseY) {
+        public void render(GuiGraphicsExtractor g, Font font, int sx, int sy, int mouseX, int mouseY) {
             boolean hover = inside(mouseX, mouseY, sx, sy, w, h);
             if (isSelected) {
                 g.fill(sx, sy, sx + w, sy + h, HoloTheme.argb(HoloToken.GLASS_RAISED));
@@ -2104,7 +2115,7 @@ public final class SuiteMenuScreen extends Screen {
 
         @Override
         public boolean onClick(double mouseX, double mouseY, int button, int sx, int sy) {
-            if (button == 1 && !overview) {
+            if (button == InputConstants.MOUSE_BUTTON_RIGHT && !overview) {
                 try {
                     Optional<IModule> m = Services.modules().byId(moduleId);
                     if (m.isPresent()) {
@@ -2119,7 +2130,7 @@ public final class SuiteMenuScreen extends Screen {
                 }
                 return true;
             }
-            if (button != 0) {
+            if (button != InputConstants.MOUSE_BUTTON_LEFT) {
                 return false;
             }
             selectModule(target, moduleId);
@@ -2231,7 +2242,7 @@ public final class SuiteMenuScreen extends Screen {
          * changes), so nothing is built per frame.
          */
         @Override
-        public void render(GuiGraphics g, Font font, int sx, int sy, int mouseX, int mouseY) {
+        public void render(GuiGraphicsExtractor g, Font font, int sx, int sy, int mouseX, int mouseY) {
             if (!widthsReady) {
                 widthsReady = true;
                 for (int i = 0; i < LEVELS.length; i++) {
@@ -2280,7 +2291,7 @@ public final class SuiteMenuScreen extends Screen {
 
         @Override
         public boolean onClick(double mouseX, double mouseY, int button, int sx, int sy) {
-            if (button != 0 || mouseY > sy + 14) {
+            if (button != InputConstants.MOUSE_BUTTON_LEFT || mouseY > sy + 14) {
                 return false;
             }
             int bw = w - 8;
