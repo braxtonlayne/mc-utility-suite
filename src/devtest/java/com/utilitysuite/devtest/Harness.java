@@ -39,7 +39,7 @@ public final class Harness {
 
     public static final String WORLD = "utilitysuite-playtest";
     public static final long SEED = 8_675_309L;
-    private static final long GLOBAL_TIMEOUT_MS = Long.getLong("utilitysuite.playtest.timeoutMs", 25 * 60_000L);
+    private static final long GLOBAL_TIMEOUT_MS = Long.getLong("utilitysuite.playtest.timeoutMs", 40 * 60_000L); // the full suite runs about 27 min (2026-11-25)
     private static final int WORLD_SETTLE_TICKS = 100;
 
     enum Phase { BOOT, CREATE_REQUESTED, CONFIGURE, LOADING, SETTLE, RUN, LEAVING, AFTER_LEAVE, DONE }

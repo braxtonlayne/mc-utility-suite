@@ -607,6 +607,11 @@ public final class CombatAssistant implements IModule, IConfigurable, LeaseListe
         if (state == CombatState.ENGAGED && targetId == entityId) {
             return;
         }
+        if (arbiter.isAutomationStopped()) {
+            // Stop-All holds until Resume: a hit taken or landed meanwhile (defensive, offensive, ally defense,
+            // hand-over) must not re-arm the fight behind the user's back (playtest 19-combatextra, 2026-11-25).
+            return;
+        }
         boolean fresh = state == CombatState.DORMANT;
         leaveRoute(); // a target switch ends any pursuit or flight from the old one
         stalemate.reset(null); // a new opponent: no stall yet, no escalation memory (the route was left above)

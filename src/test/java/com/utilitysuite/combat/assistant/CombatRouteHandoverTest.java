@@ -321,6 +321,22 @@ class CombatRouteHandoverTest {
     }
 
     @Test
+    void aHitAfterStopAllDoesNotReEngageUntilResume() {
+        engage();
+        assertEquals(CombatState.ENGAGED, assistant.state());
+        arbiter.stopAll("test");
+        tick(1);
+        assertEquals(CombatState.DORMANT, assistant.state());
+        assistant.onDamageEvent(LOCAL, "minecraft:mob_attack", TARGET, TARGET); // hit again while Stop-All holds
+        tick(2);
+        assertEquals(CombatState.DORMANT, assistant.state(), "Stop-All holds until Resume");
+        assertFalse(backend.isDown(SimKey.FORWARD));
+        arbiter.resumeAutomation();
+        engage();
+        assertEquals(CombatState.ENGAGED, assistant.state(), "a hit after Resume engages again");
+    }
+
+    @Test
     void theRunnerStopsWhenDisarmed() {
         world.entities.get(TARGET).x = 12;
         engage();

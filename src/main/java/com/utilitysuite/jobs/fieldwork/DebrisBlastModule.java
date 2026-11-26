@@ -464,6 +464,17 @@ public final class DebrisBlastModule extends FieldModule {
     }
 
     @Override
+    public void setEnabled(boolean on) {
+        if (on && !enabled) {
+            // A fresh start: no "waiting: NOT_NETHER" left over from the last time it was on elsewhere, and the first
+            // precondition check runs on the next tick, not after a stale retry wait.
+            status = "";
+            waitTicks = 0;
+        }
+        super.setEnabled(on);
+    }
+
+    @Override
     protected void stopWork() {
         // a hand-off nobody else ticks would stay "busy" forever and block the next cycle
         if (!lavaPlug.isEnabled()) {

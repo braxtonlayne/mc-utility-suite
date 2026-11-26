@@ -171,6 +171,8 @@ public final class BuildAssist implements LeaseListener {
     private int cleanupLeftUnder = -1;
     private int cleanupOutOfReach = -1;
     private String cleanupNotice;
+    /** A recorded scaffold block sits in a schematic cell: clean up before the build finishes, not after. */
+    private boolean scaffoldInCells;
 
     /**
      * Called once when the build has run out of materials: nothing in the look-ahead window is placeable with what the
@@ -376,6 +378,7 @@ public final class BuildAssist implements LeaseListener {
     public void clearScaffolding() {
         ledger.clear();
         cleanupPending = false;
+        scaffoldInCells = false;
     }
 
     /** {@link IBlockChangeFeed} listener: cheap and allocation free, only buffers positions while a walk runs. */
@@ -403,7 +406,13 @@ public final class BuildAssist implements LeaseListener {
             }
             int lx = x - scan.originX(), ly = y - scan.originY(), lz = z - scan.originZ();
             if (v.contains(lx, ly, lz) && v.isBlock(v.paletteIndex(lx, ly, lz))) {
-                continue; // part of the schematic
+                int w = probe.probe(x, y, z, v.paletteIndex(lx, ly, lz));
+                if (w == PlacementStatus.W_MATCH || w == PlacementStatus.W_SAME_BLOCK) {
+                    continue; // the schematic's own block
+                }
+                // The walk put a scaffold block where the build needs another one (playtest 14-fieldjobs dome stuck at
+                // 24/33): it is ours to take down, and it blocks that cell until it is.
+                scaffoldInCells = true;
             }
             ledger.record(p);
         }
@@ -488,7 +497,8 @@ public final class BuildAssist implements LeaseListener {
             checkLayerSupply(player);
         }
         if (targetStep < 0 && !cleanupTarget && !selectTarget(player, reach)
-                && !(firstOpen >= plan.size() && cleanupPending && pickCleanupTarget(player, reach))) {
+                && !((firstOpen >= plan.size() || scaffoldInCells) && cleanupPending
+                        && pickCleanupTarget(player, reach))) {
             stalledLastTick = firstOpen < plan.size(); // nothing to walk to once only scaffold cleanup is left
             if (++idleTicks > IDLE_RELEASE_TICKS) {
                 releaseLease();
