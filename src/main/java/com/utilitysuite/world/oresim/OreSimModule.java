@@ -101,6 +101,9 @@ public final class OreSimModule extends WorldModule {
     private volatile SeedWorkbench.Report lastReport;
     private SeedWorkbench.Verdict announcedVerdict;
     private String configKey = "";
+    /** The profile needs re-resolving by {@link #profile()} while OreSim is off (when on, its tick does it). */
+    private boolean profileStale = true;
+    private ClientLevel profileLevel;
     private int[] spiralX = new int[0];
     private int[] spiralZ = new int[0];
     private int spiralCursor;
@@ -136,7 +139,26 @@ public final class OreSimModule extends WorldModule {
         return predictions;
     }
 
+    /**
+     * The current world's generator profile. Seed Scanner, Seed Diff, Seed Locator, Spawn Geometry and Fortress Spawns
+     * read it, so it must not depend on OreSim being on: while OreSim is off (its tick, which normally resolves the
+     * profile, does not run) it is resolved here, once per change (world, dimension, /seed reply, scanned seed,
+     * settings). Client thread. Allocates only when something changed.
+     */
     public GeneratorProfile profile() {
+        if (isEnabled()) {
+            return profile;
+        }
+        Minecraft mc = Minecraft.getInstance();
+        ClientLevel level = mc.level;
+        if (level == null) {
+            return GeneratorProfile.none();
+        }
+        if (profileStale || level != profileLevel) {
+            profileStale = false;
+            profileLevel = level;
+            profile = resolveProfile(mc, level);
+        }
         return profile;
     }
 
@@ -204,7 +226,7 @@ public final class OreSimModule extends WorldModule {
             lastReport = null;
             announcedVerdict = null;
         }
-        configKey = ""; // force reconfiguration on the next tick
+        configKey = ""; profileStale = true; // force reconfiguration on the next tick
         ghostsDirty = true;
     }
 
@@ -232,7 +254,7 @@ public final class OreSimModule extends WorldModule {
 
     @Override
     protected void onEnable() {
-        configKey = "";
+        configKey = ""; profileStale = true;
     }
 
     @Override
@@ -244,7 +266,7 @@ public final class OreSimModule extends WorldModule {
         observed = null;
         observedLevel = null;
         knowledge.setPredictionSource(PredictionSource.NONE);
-        configKey = "";
+        configKey = ""; profileStale = true;
         ghostCount = 0;
     }
 
@@ -261,9 +283,10 @@ public final class OreSimModule extends WorldModule {
         clientContextKey = "";
         observed = null;
         observedLevel = null;
-        configKey = "";
+        configKey = ""; profileStale = true;
         ghostCount = 0;
         profile = GeneratorProfile.none();
+        profileLevel = null;
         lastCenter = Long.MIN_VALUE;
     }
 
@@ -282,7 +305,7 @@ public final class OreSimModule extends WorldModule {
         ProfileConfig p = Services.modState().profile();
         p.set(ID, "chat_seed", chatSeed);
         Services.modState().markDirty();
-        configKey = "";
+        configKey = ""; profileStale = true;
     }
 
     private GeneratorProfile resolveProfile(Minecraft mc, ClientLevel level) {
@@ -314,7 +337,7 @@ public final class OreSimModule extends WorldModule {
         ProfileConfig p = Services.modState().profile();
         p.set(ID, "scanned_seed", scannedSeed);
         Services.modState().markDirty();
-        configKey = "";
+        configKey = ""; profileStale = true;
     }
 
     /** Vanilla noise generator with the vanilla settings for this dimension (else predictions are uncertain). */
@@ -346,7 +369,7 @@ public final class OreSimModule extends WorldModule {
         String dim = WorldIds.dimension(level);
         if (contextArrived) {
             contextArrived = false; // client-side generator finished building: switch to it
-            configKey = "";
+            configKey = ""; profileStale = true;
         }
         if (configKey.isEmpty() || level != configuredLevel) {
             configuredLevel = level; // dimension change / respawn: re-resolve (not polled)
@@ -561,7 +584,7 @@ public final class OreSimModule extends WorldModule {
         boolean uncertain = report.verdict() == SeedWorkbench.Verdict.NO_MATCH;
         if (uncertain != workbenchUncertain) {
             workbenchUncertain = uncertain;
-            configKey = "";
+            configKey = ""; profileStale = true;
         }
         if (report.verdict() == announcedVerdict) {
             return;

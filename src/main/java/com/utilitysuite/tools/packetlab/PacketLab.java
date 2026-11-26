@@ -58,7 +58,10 @@ public final class PacketLab implements IModule, IConfigurable {
     private final RateRing eventRates = new RateRing(WINDOW_SECONDS, 5);
     private final TimelineEvents events = new TimelineEvents(512);
     private final CorrectionBursts bursts = new CorrectionBursts(3, 5000L);
-    private final AcousticRadar acousticRadar = new AcousticRadar();
+    /** One radar, shared: fed while Packet Lab is on or while World Radar asks for acoustic pings (see {@link #setAcousticDemand}). */
+    private static final AcousticRadar SHARED_RADAR = new AcousticRadar();
+    private static volatile boolean acousticDemand;
+    private final AcousticRadar acousticRadar = SHARED_RADAR;
     private final ServerPhysicsMonitor physicsMonitor = new ServerPhysicsMonitor();
     private final PacketProbes.Probe probe = new PacketProbes.Probe(ring, types, packetRates);
     private final PacketProbes.Frame frameHandler = new PacketProbes.Frame(probe);
@@ -282,10 +285,26 @@ public final class PacketLab implements IModule, IConfigurable {
         return bursts;
     }
 
-    /** Active acoustic radar instance when PacketLab is enabled, or {@code null} when disabled. */
+    /**
+     * The acoustic radar while it should be fed: Packet Lab is on, or World Radar has acoustic pings, ripples or edge
+     * cues on ({@link #setAcousticDemand}). {@code null} otherwise, so the sound mixin stays a cheap no-op.
+     */
     public static AcousticRadar acousticRadar() {
-        PacketLab inst = activeInstance;
-        return inst != null ? inst.acousticRadar : null;
+        return activeInstance != null || acousticDemand ? SHARED_RADAR : null;
+    }
+
+    /**
+     * World Radar's acoustic display wants pings without the user having to switch Packet Lab on too. Turning the
+     * demand off (with Packet Lab also off) clears old pings so nothing stale shows when it comes back.
+     */
+    public static void setAcousticDemand(boolean on) {
+        if (acousticDemand == on) {
+            return;
+        }
+        acousticDemand = on;
+        if (!on && activeInstance == null) {
+            SHARED_RADAR.clear();
+        }
     }
 
     public AcousticRadar radar() {

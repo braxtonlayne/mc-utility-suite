@@ -147,7 +147,7 @@ public final class WorldRadarModule extends WorldModule {
                 SettingSpec.integer("trail_window", "Trail window (ticks)", 60, 10, 200, "Advanced",
                         "How long after a chunk arrives fluid updates count as 'new'.").asAdvanced(),
                 SettingSpec.bool("acoustic_pings", "Acoustic pings", false, "Groups",
-                        "3D markers for recent sound and global packet activity (requires Packet Lab)."),
+                        "3D markers for recent sound and global packet activity."),
                 SettingSpec.integer("acoustic_max_age_sec", "Acoustic ping age (s)", 8, 1, 30, "Display",
                         "How long acoustic ping markers remain visible."),
                 SettingSpec.bool("acoustic_ripples", "Echo ripples", false, "Display",
@@ -179,6 +179,7 @@ public final class WorldRadarModule extends WorldModule {
         acousticMaxAgeMs = integer(p, "acoustic_max_age_sec") * 1000L;
         acousticRipples = bool(p, "acoustic_ripples");
         acousticEdgeCues = bool(p, "acoustic_edge_cues");
+        updateAcousticDemand();
         trailClasses = bool(p, "trail_classes");
         if (!trailClasses) {
             trailForensics.clear();
@@ -199,12 +200,19 @@ public final class WorldRadarModule extends WorldModule {
     @Override
     protected void onEnable() {
         runtime.setTrackChunkAge(trails);
+        updateAcousticDemand();
     }
 
     @Override
     protected void onDisable() {
         runtime.setTrackChunkAge(false);
         clearItems();
+        updateAcousticDemand();
+    }
+
+    /** Acoustic pings, ripples and edge cues get their sound feed without Packet Lab having to be on as well. */
+    private void updateAcousticDemand() {
+        PacketLab.setAcousticDemand(isEnabled() && (acousticPings || acousticRipples || acousticEdgeCues));
     }
 
     @Override

@@ -12,7 +12,7 @@ import com.utilitysuite.world.seed.SeedDiffModule;
 import com.utilitysuite.world.seed.SeedScannerModule;
 
 /**
- * Scenario 14: in-game playtest coverage for W3/W7 (Seed Scanner, .seed commands, BiomeManager hash &amp; bedrock pattern
+ * Scenario 16-recon: in-game playtest coverage for W3/W7 (Seed Scanner, .seed commands, BiomeManager hash &amp; bedrock pattern
  * verification), W5 (Seed-Diff base/tunnel scan), W4/W9 (Chunk Forensics, oxidized copper/palette signals, binary
  * persistence, TrailVector &amp; AutopilotMode.TRAIL), U1 (AcousticRadar &amp; ClientSoundPacketMixin), and U2
  * (ServerPhysicsMonitor tick tracking &amp; setback step-down). Select alone with {@code -PplaytestOnly=Recon}.
