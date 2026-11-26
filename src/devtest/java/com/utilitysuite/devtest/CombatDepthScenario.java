@@ -138,11 +138,15 @@ final class CombatDepthScenario {
         s.cmd(() -> Arena.tp(0.5, 0.5, 0f));
     }
 
-    private static String zombie(double dx, double dz, boolean ai, String extra) {
+    /**
+     * {@code extraEquipment} goes inside the 26.x {@code equipment} compound (e.g. {@code ,offhand:{...}}): 26.3 reads
+     * mob gear only from {@code equipment:{slot:stack}} and silently ignores the 1.21.1 HandItems/ArmorItems lists.
+     */
+    private static String zombie(double dx, double dz, boolean ai, String extraEquipment) {
         return "summon minecraft:zombie " + (Arena.cx + dx) + " " + (Arena.FLOOR + 1) + " " + (Arena.cz + dz)
                 + " {PersistenceRequired:1b,NoAI:" + (ai ? "0b" : "1b") + ",Health:500f,"
                 + "attributes:[{id:\"minecraft:max_health\",base:500d}],"
-                + "ArmorItems:[{},{},{},{id:\"minecraft:leather_helmet\",count:1}]" + extra + "}";
+                + "equipment:{head:{id:\"minecraft:leather_helmet\",count:1}" + extraEquipment + "}}";
     }
 
     /** A private field of {@code o} (or a superclass), or null. */
@@ -297,7 +301,7 @@ final class CombatDepthScenario {
             H.setting(CA, "pop_pressure", true);
             H.enable(CA, true);
         });
-        s.cmd(() -> zombie(0.5, 2.8, false, ",HandItems:[{},{id:\"minecraft:totem_of_undying\",count:1}]"));
+        s.cmd(() -> zombie(0.5, 2.8, false, ",offhand:{id:\"minecraft:totem_of_undying\",count:1}"));
         engage(s, ca, "pop", 3.5);
         s.run("lethal hit", () -> {
             popAt[0] = (Long) field(ca, "lastOpponentPopAt");
@@ -486,8 +490,8 @@ final class CombatDepthScenario {
             lastCount[0] = arrows;
         });
         s.cmd(() -> "summon minecraft:skeleton " + (Arena.cx + 0.5) + " " + (Arena.FLOOR + 1) + " "
-                + (Arena.cz + 9.5) + " {PersistenceRequired:1b,Rotation:[180f,0f],HandItems:[{id:\"minecraft:bow\",count:1},{}],"
-                + "ArmorItems:[{},{},{},{id:\"minecraft:leather_helmet\",count:1}]}");
+                + (Arena.cz + 9.5) + " {PersistenceRequired:1b,Rotation:[180f,0f],equipment:{mainhand:{id:\"minecraft:bow\",count:1},"
+                + "head:{id:\"minecraft:leather_helmet\",count:1}}}");
         s.waitUpTo("skeleton shoots", 20 * 14, () -> {
             AbstractSkeleton sk = null;
             for (Entity e : H.mc().level.entitiesForRendering()) {
@@ -750,7 +754,7 @@ final class CombatDepthScenario {
         s.cmd(() -> "tp @e[type=minecraft:wither] " + Arena.cx + " -300 " + Arena.cz);
         // dragon breath cloud under the player
         s.cmd(() -> "summon minecraft:area_effect_cloud " + (Arena.cx + 0.5) + " " + (Arena.FLOOR + 1) + " "
-                + (Arena.cz - 6.5) + " {Particle:{type:\"minecraft:dragon_breath\"},Radius:3.0f,Duration:600,"
+                + (Arena.cz - 6.5) + " {custom_particle:{type:\"minecraft:dragon_breath\"},Radius:3.0f,Duration:600,"
                 + "WaitTime:0}");
         s.waitTicks(15);
         Shots.add(s, "boss-breath-ring");

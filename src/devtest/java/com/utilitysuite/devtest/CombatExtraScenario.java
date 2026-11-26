@@ -141,7 +141,7 @@ final class CombatExtraScenario {
         return "summon minecraft:zombie " + (Arena.cx + dx) + " " + (Arena.FLOOR + 1) + " " + (Arena.cz + dz)
                 + " {PersistenceRequired:1b,NoAI:" + (ai ? "0b" : "1b") + ",Health:" + health + "f,"
                 + "attributes:[{id:\"minecraft:max_health\",base:" + health + "d}],"
-                + "ArmorItems:[{},{},{},{id:\"minecraft:leather_helmet\",count:1}]}";
+                + "equipment:{head:{id:\"minecraft:leather_helmet\",count:1}}}";
     }
 
     /** The user's own melee hit (test scaffolding plays the user). */
@@ -176,6 +176,7 @@ final class CombatExtraScenario {
     private static void spawnPal(double dz) {
         removePal();
         RemotePlayer rp = new RemotePlayer(H.mc().level, new GameProfile(PAL, "PlaytestPal"));
+        rp.setId(-0x9A1); // 26.3: client-made entities need an id before addEntity (negative: never a server id)
         rp.snapTo(Arena.cx + 0.5, Arena.FLOOR + 1, Arena.cz + dz, 180f, 0f);
         rp.setOldPosAndRot();
         H.mc().level.addEntity(rp);

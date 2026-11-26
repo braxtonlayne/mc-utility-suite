@@ -59,7 +59,7 @@ final class CombatScenario {
                     "enabled=" + ca.isEnabled() + " state=" + ca.state());
         });
         s.cmd(() -> "summon minecraft:zombie " + (Arena.cx + 0.5) + " " + (Arena.FLOOR + 1) + " " + (Arena.cz + 3.5)
-                + " {ArmorItems:[{},{},{},{id:\"minecraft:leather_helmet\",count:1}],PersistenceRequired:1b}");
+                + " {equipment:{head:{id:\"minecraft:leather_helmet\",count:1}},PersistenceRequired:1b}");
         s.waitFor("zombie visible", 60, () -> nearestZombie() != null);
         s.waitUpTo("zombie close", 60, () -> nearestZombie().distanceTo(H.p()) < 2.8);
         s.run("user's first hit", () -> {
@@ -210,7 +210,7 @@ final class CombatScenario {
 
     private static String idleZombie(double dx, double dy, double dz, String extra) {
         return "summon minecraft:zombie " + (Arena.cx + dx) + " " + (Arena.FLOOR + dy) + " " + (Arena.cz + dz)
-                + " {NoAI:1b,PersistenceRequired:1b,ArmorItems:[{},{},{},{id:\"minecraft:leather_helmet\",count:1}]"
+                + " {NoAI:1b,PersistenceRequired:1b,equipment:{head:{id:\"minecraft:leather_helmet\",count:1}}"
                 + extra + "}";
     }
 

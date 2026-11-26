@@ -82,7 +82,11 @@ final class WorldScenario {
                 if (real.equals(id)) {
                     ok++;
                 } else if (firstBad.isEmpty()) {
-                    firstBad = "first mismatch: index says " + id + ", world has " + real;
+                    int bx = BlockPosPacking.x(p), by = BlockPosPacking.y(p), bz = BlockPosPacking.z(p);
+                    var lvl = net.minecraft.client.Minecraft.getInstance().level;
+                    firstBad = "first mismatch: index says " + id + ", world has " + real + " at " + bx + " " + by
+                            + " " + bz + " (chunk loaded " + lvl.hasChunk(bx >> 4, bz >> 4) + ", build y "
+                            + lvl.getMinY() + ".." + lvl.getMaxY() + ")";
                 }
             }
             s.check("X-Ray index holds ores and matches the world", n > 0 && ok == checked,

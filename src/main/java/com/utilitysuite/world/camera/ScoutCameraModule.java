@@ -48,6 +48,9 @@ import java.util.List;
  */
 public final class ScoutCameraModule extends WorldModule {
 
+    /** Client-only id of the scout camera entity (negative, so it never collides with a server-assigned id). */
+    private static final int CAMERA_ENTITY_ID = -0x5C0A7;
+
     public static final String ID = "scout_camera";
 
     private final FreecamMotion motion = new FreecamMotion();
@@ -171,6 +174,9 @@ public final class ScoutCameraModule extends WorldModule {
         }
         if (camera == null || camera.level() != level) {
             camera = new Marker(EntityTypes.MARKER, level);
+            // 26.3 assigns entity ids only through the server; a client-only camera needs its own (negative: never a
+            // server id) or getId() throws when vanilla or another mod reads the camera entity
+            camera.setId(CAMERA_ENTITY_ID);
         }
         double x = player.getX();
         double y = player.getEyeY();
