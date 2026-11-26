@@ -39,6 +39,7 @@ final class Scenarios {
         add(q, "StationJobsScenario", StationJobsScenario::build);
         add(q, "FeaturesScenario", FeaturesScenario::build);
         add(q, "ReconScenario", ReconScenario::build);
+        add(q, "ToolsExtraScenario", ToolsExtraScenario::build);
         add(q, "PerfScenario", PerfScenario::build);
     }
 
