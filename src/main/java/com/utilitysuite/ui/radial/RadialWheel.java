@@ -15,8 +15,8 @@ import com.utilitysuite.ui.kit.UiTheme;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
-import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.client.gui.LayeredDraw;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.neoforged.neoforge.client.gui.GuiLayer;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -32,7 +32,7 @@ import java.util.Optional;
  * <p>
  * Tick and render are allocation free: slice labels are resolved once when the wheel opens.
  */
-public final class RadialWheel implements IModule, IConfigurable, LayeredDraw.Layer {
+public final class RadialWheel implements IModule, IConfigurable, GuiLayer {
 
     public static final String ID = "radial_wheel";
     public static final int SLICES = 8;
@@ -80,7 +80,7 @@ public final class RadialWheel implements IModule, IConfigurable, LayeredDraw.La
     @Override
     public void onTick() {
         Minecraft mc = Minecraft.getInstance();
-        boolean held = hold.held(KeybindManager.isHeld(KeybindManager.KeyId.RADIAL_WHEEL)) && mc.screen == null
+        boolean held = hold.held(KeybindManager.isHeld(KeybindManager.KeyId.RADIAL_WHEEL)) && mc.gui.screen() == null
                 && mc.player != null;
         if (held) {
             if (!open) {
@@ -90,7 +90,7 @@ public final class RadialWheel implements IModule, IConfigurable, LayeredDraw.La
             pull();
         } else if (open) {
             pull();
-            close(mc.screen == null); // released in game: fire; a screen opened meanwhile: cancel
+            close(mc.gui.screen() == null); // released in game: fire; a screen opened meanwhile: cancel
         }
     }
 
@@ -202,12 +202,12 @@ public final class RadialWheel implements IModule, IConfigurable, LayeredDraw.La
     // ---- render -----------------------------------------------------------------------------------------------------
 
     @Override
-    public void render(GuiGraphics g, DeltaTracker delta) {
+    public void render(GuiGraphicsExtractor g, DeltaTracker delta) {
         if (!open) {
             return;
         }
         Minecraft mc = Minecraft.getInstance();
-        if (mc.options.hideGui || Services.modState().isCleanScreen()) {
+        if (mc.gui.hud.isHidden() || Services.modState().isCleanScreen()) {
             return;
         }
         pull(); // per frame: the highlight follows the flick between ticks

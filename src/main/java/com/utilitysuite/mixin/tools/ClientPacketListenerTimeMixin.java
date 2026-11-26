@@ -19,13 +19,17 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * </ul>
  * Why a mixin: NeoForge has no client event for {@code ClientboundSetTimePacket}. TAIL runs only on the client thread
  * (on the network thread {@code ensureRunningOnSameThread} throws before reaching it). Read-only.
+ * <p>
+ * 26.3: NeoForge's custom time payload ({@code ClientboundCustomSetTimePayload}) is gone (world clocks are vanilla
+ * now), so this vanilla packet is the only heartbeat on every server; the former {@code NeoTimePayloadMixin} was
+ * removed. The packet is a record ({@code gameTime()}).
  */
 @Mixin(ClientPacketListener.class)
 public abstract class ClientPacketListenerTimeMixin {
 
     @Inject(method = "handleSetTime", at = @At("TAIL"))
     private void utilitysuite$serverHeartbeat(ClientboundSetTimePacket packet, CallbackInfo ci) {
-        ServerTickFeed.onTimePacket(System.currentTimeMillis(), packet.getGameTime());
-        LagGuard.onServerTimePacket(packet.getGameTime());
+        ServerTickFeed.onTimePacket(System.currentTimeMillis(), packet.gameTime());
+        LagGuard.onServerTimePacket(packet.gameTime());
     }
 }

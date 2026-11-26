@@ -22,12 +22,18 @@ public abstract class ClientPacketListenerVelocityMixin {
 
     @Inject(method = "handleSetEntityMotion", at = @At("RETURN"))
     private void utilitysuite$scaleVelocity(ClientboundSetEntityMotionPacket packet, CallbackInfo ci) {
-        VelocityScale.afterEntityMotion(packet.getId(), packet.getXa(), packet.getYa(), packet.getZa());
+        net.minecraft.world.phys.Vec3 m = packet.movement(); // 26.3: record (id, movement)
+        VelocityScale.afterEntityMotion(packet.id(), m.x, m.y, m.z);
     }
 
     /** Explosions add their knockback to the local player's velocity in the same handler: take back the unscaled share. */
     @Inject(method = "handleExplosion", at = @At("RETURN"))
     private void utilitysuite$scaleExplosion(ClientboundExplodePacket packet, CallbackInfo ci) {
-        VelocityScale.afterExplosion(packet.getKnockbackX(), packet.getKnockbackY(), packet.getKnockbackZ());
+        // 26.3: the knockback is optional (absent when the explosion did not push the local player)
+        java.util.Optional<net.minecraft.world.phys.Vec3> kb = packet.playerKnockback();
+        if (kb.isPresent()) {
+            net.minecraft.world.phys.Vec3 k = kb.get();
+            VelocityScale.afterExplosion(k.x, k.y, k.z);
+        }
     }
 }

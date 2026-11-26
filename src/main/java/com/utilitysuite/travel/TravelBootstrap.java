@@ -17,7 +17,6 @@ import net.minecraft.client.Minecraft;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
 import net.neoforged.neoforge.client.event.MovementInputUpdateEvent;
-import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
 import net.neoforged.neoforge.common.NeoForge;
 
 /**
@@ -103,6 +102,8 @@ public final class TravelBootstrap {
         NeoForge.EVENT_BUS.addListener(terrain::onRenderLevel);
         NeoForge.EVENT_BUS.addListener(terrain::onMovementInput);
         movement.setSafeWalk(terrain::isSafeWalkActive);
+        onPinKey = movement::pinLookedAtTarget;
+        onMarkKey = movement::markLookedAtBlock;
         Services.registerPlannedJump(movement); // SafeWalk (and other edge guards) yield to its jumps and run-ups
         NeoForge.EVENT_BUS.addListener(movement::onMovementInput);
         NeoForge.EVENT_BUS.addListener(movement::onRenderLevel);
@@ -132,6 +133,8 @@ public final class TravelBootstrap {
     private static VelocityScale velocity;
     private static Runnable onToggleSprint;
     private static Runnable onToggleSneak;
+    private static Runnable onPinKey;
+    private static Runnable onMarkKey;
 
     private static void onTickPost(ClientTickEvent.Post event) {
         Minecraft mc = Minecraft.getInstance();
@@ -140,6 +143,7 @@ public final class TravelBootstrap {
         }
         TravelKeys.tick(onAutopilotKey, onBridgeKey, onBridgeMarkKey);
         TravelKeys.tickToggles(onToggleSprint, onToggleSneak);
+        TravelKeys.tickParkour(onPinKey, onMarkKey);
         elytraSwap.tick(); // also the autopilot's ELYTRA_SWAP reflex while the module is off
     }
 

@@ -23,9 +23,14 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 @Mixin(Block.class)
 public abstract class BlockFaceHidingMixin {
 
-    @Inject(method = "shouldRenderFace", at = @At("HEAD"), cancellable = true)
-    private static void utilitysuite$hideFaces(BlockState state, BlockGetter level, BlockPos offset, Direction face,
-                                               BlockPos pos, CallbackInfoReturnable<Boolean> cir) {
+    // 26.3 (checked against the sources): vanilla's shouldRenderFace(BlockState, BlockState, Direction) delegates to
+    // NeoForge's level-aware overload, which the block model renderer also calls directly; hooking the overload
+    // covers both.
+    @Inject(method = "shouldRenderFace(Lnet/minecraft/world/level/BlockGetter;Lnet/minecraft/core/BlockPos;"
+            + "Lnet/minecraft/world/level/block/state/BlockState;Lnet/minecraft/world/level/block/state/BlockState;"
+            + "Lnet/minecraft/core/Direction;)Z", at = @At("HEAD"), cancellable = true)
+    private static void utilitysuite$hideFaces(BlockGetter level, BlockPos pos, BlockState state, BlockState neighbor,
+                                               Direction face, CallbackInfoReturnable<Boolean> cir) {
         if (XRayHiding.active()) {
             cir.setReturnValue(XRayHiding.isVisible(state));
         }

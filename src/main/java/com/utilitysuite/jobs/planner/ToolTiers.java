@@ -1,7 +1,7 @@
 package com.utilitysuite.jobs.planner;
 
 /**
- * Pickaxe harvest tiers, matching {@code IInventoryView.bestPickaxeTier()}: 0 none, 1 wood/gold, 2 stone, 3 iron,
+ * Pickaxe harvest tiers, matching {@code IInventoryView.bestPickaxeTier()}: 0 none, 1 wood/gold, 2 stone/copper, 3 iron,
  * 4 diamond, 5 netherite.
  */
 public final class ToolTiers {
@@ -25,7 +25,7 @@ public final class ToolTiers {
     public static int tierOf(String itemId) {
         return switch (itemId) {
             case "minecraft:wooden_pickaxe", "minecraft:golden_pickaxe" -> 1;
-            case "minecraft:stone_pickaxe" -> 2;
+            case "minecraft:stone_pickaxe", "minecraft:copper_pickaxe" -> 2;
             case "minecraft:iron_pickaxe" -> 3;
             case "minecraft:diamond_pickaxe" -> 4;
             case "minecraft:netherite_pickaxe" -> 5;

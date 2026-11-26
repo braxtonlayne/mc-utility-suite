@@ -19,7 +19,7 @@ import com.utilitysuite.core.api.SettingSpec;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.registries.BuiltInRegistries;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.monster.RangedAttackMob;
 import net.minecraft.world.entity.player.Inventory;
@@ -237,7 +237,7 @@ public final class OffhandManager implements IModule, IConfigurable, LeaseListen
         state.gliding = player.isFallFlying();
         state.rangedThreatNear = rangedNear;
         state.projectileDanger = Services.danger().has(HazardKind.PROJECTILE);
-        state.screenOpen = mc.screen != null;
+        state.screenOpen = mc.gui.screen() != null;
         state.usingItem = player.isUsingItem();
         state.clickPending = lease != null;
         ItemStack off = player.getOffhandItem();
@@ -249,7 +249,7 @@ public final class OffhandManager implements IModule, IConfigurable, LeaseListen
         shieldSlot = -1;
         preferredSlot = -1;
         for (int i = 0; i < 36; i++) {
-            ItemStack s = inv.items.get(i);
+            ItemStack s = inv.getNonEquipmentItems().get(i);
             if (s.isEmpty()) {
                 continue;
             }
@@ -349,9 +349,9 @@ public final class OffhandManager implements IModule, IConfigurable, LeaseListen
         String id = p.getString(ID, K_PREFERRED, "").trim();
         preferred = Items.AIR;
         if (!id.isEmpty()) {
-            ResourceLocation rl = ResourceLocation.tryParse(id.contains(":") ? id : "minecraft:" + id);
+            Identifier rl = Identifier.tryParse(id.contains(":") ? id : "minecraft:" + id);
             if (rl != null && BuiltInRegistries.ITEM.containsKey(rl)) {
-                preferred = BuiltInRegistries.ITEM.get(rl);
+                preferred = BuiltInRegistries.ITEM.getValue(rl);
             }
         }
         config.preferredEnabled = preferred != Items.AIR;

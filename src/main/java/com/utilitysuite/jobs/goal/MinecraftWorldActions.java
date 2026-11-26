@@ -15,6 +15,8 @@ import com.utilitysuite.jobs.planner.PackedPos;
 import com.utilitysuite.jobs.planner.WaterFill;
 import com.utilitysuite.jobs.planner.FuelTable;
 import com.utilitysuite.jobs.planner.FurnaceBatchPlanner;
+import com.utilitysuite.jobs.planner.McRecipeCatalog;
+import com.utilitysuite.jobs.planner.RecipeKind;
 import com.utilitysuite.jobs.planner.SlotTransfer;
 import com.utilitysuite.jobs.planner.StepKind;
 import net.minecraft.world.inventory.BrewingStandMenu;
@@ -31,7 +33,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceKey;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import net.minecraft.tags.FluidTags;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.item.PrimedTnt;
@@ -45,12 +47,11 @@ import net.minecraft.world.inventory.InventoryMenu;
 import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.inventory.ShulkerBoxMenu;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.crafting.Ingredient;
-import net.minecraft.world.item.crafting.Recipe;
-import net.minecraft.world.item.crafting.RecipeHolder;
-import net.minecraft.world.item.crafting.RecipeType;
-import net.minecraft.world.item.crafting.ShapedRecipe;
-import net.minecraft.world.item.crafting.ShapelessRecipe;
+import net.minecraft.util.context.ContextMap;
+import net.minecraft.world.item.crafting.display.ShapedCraftingRecipeDisplay;
+import net.minecraft.world.item.crafting.display.ShapelessCraftingRecipeDisplay;
+import net.minecraft.world.item.crafting.display.SlotDisplay;
+import net.minecraft.world.item.crafting.display.SlotDisplayContext;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.entity.EntityTypeTest;
 import net.minecraft.world.level.block.Block;
@@ -115,7 +116,7 @@ public final class MinecraftWorldActions implements WorldActions {
     /** Ticks to wait for a recipe unlock packet before giving up on a locked recipe. */
     private static final int RECIPE_UNLOCK_WAIT = 20;
     private PlanStep step;
-    private RecipeHolder<?> recipe;
+    private McRecipeCatalog.Entry recipe;
     /** The craft recipe reduced to ids for hand placement; null for special recipes (those need the recipe book). */
     private ManualCraftPlanner.Shape manualShape;
     /** The current craft round fills the grid by hand. */
@@ -133,6 +134,12 @@ public final class MinecraftWorldActions implements WorldActions {
     private double aimX, aimY, aimZ;
     private int craftsLeft;
     private int startCount;
+    /**
+     * CRAFT: items the step's crafts make in all. The planner's step count is only what it asked for beyond the
+     * virtual spares of the same node (planks for the table, then the pickaxe, then the sticks that reuse the
+     * pickaxe's spare plank: count 8, 3 crafts = 12), so stopping at the count left the last plank craft undone.
+     */
+    private int craftTarget;
     private Map<String, Integer> wanted = Map.of();
     private final Map<String, Integer> before = new LinkedHashMap<>();
     private Map<String, Integer> transferred = Map.of();
@@ -150,16 +157,17 @@ public final class MinecraftWorldActions implements WorldActions {
     @Override
     public void beginCraft(PlanStep s, ControlLease l) {
         start(Op.CRAFT, s, l);
-        Optional<RecipeHolder<?>> r = lookupRecipe(s.recipeId());
+        Optional<McRecipeCatalog.Entry> r = lookupRecipe(s.recipeId());
         if (r.isEmpty()) {
             fail("Unknown recipe " + s.recipeId());
             return;
         }
         recipe = r.get();
-        manualShape = shapeOf(recipe.value());
+        manualShape = shapeOf(recipe);
         craftsLeft = Math.max(1, s.crafts());
         startCount = inv.count(s.itemId());
-        boolean table = !recipe.value().canCraftInDimensions(2, 2);
+        craftTarget = Math.max(s.count(), craftsLeft * recipe.resultCount(Minecraft.getInstance().level));
+        boolean table = recipe.needsTable();
         station = table ? Items.CRAFTING_TABLE : null;
         phase = table ? Phase.FIND : Phase.WORK;
     }
@@ -167,14 +175,14 @@ public final class MinecraftWorldActions implements WorldActions {
     @Override
     public void beginSmelt(PlanStep s, ControlLease l) {
         start(Op.SMELT, s, l);
-        Optional<RecipeHolder<?>> r = lookupRecipe(s.recipeId());
+        Optional<McRecipeCatalog.Entry> r = lookupRecipe(s.recipeId());
         if (r.isEmpty()) {
             fail("Unknown recipe " + s.recipeId());
             return;
         }
         recipe = r.get();
-        RecipeType<?> t = recipe.value().getType();
-        station = t == RecipeType.BLASTING ? Items.BLAST_FURNACE : t == RecipeType.SMOKING ? Items.SMOKER
+        RecipeKind t = recipe.kind();
+        station = t == RecipeKind.BLASTING ? Items.BLAST_FURNACE : t == RecipeKind.SMOKING ? Items.SMOKER
                 : Items.FURNACE;
         startCount = inv.count(s.itemId());
         craftsLeft = Math.max(1, s.crafts());
@@ -239,7 +247,7 @@ public final class MinecraftWorldActions implements WorldActions {
         if (player != null) {
             Inventory pinv = player.getInventory();
             for (int i = 0; i < 36; i++) {
-                NestedContainer box = ShulkerItems.read(pinv.items.get(i));
+                NestedContainer box = ShulkerItems.read(pinv.getNonEquipmentItems().get(i));
                 if (box != null && box.count(itemId) > 0
                         && (chosen == null || box.containerItemId().equals(boxItemId))) {
                     chosen = box.containerItemId();
@@ -391,7 +399,7 @@ public final class MinecraftWorldActions implements WorldActions {
         int hotbar = -1;
         int main = -1;
         for (int i = 0; i < 36; i++) {
-            if (pinv.items.get(i).getItem() == item && (op != Op.SHULKER || boxHolds(pinv.items.get(i)))) {
+            if (pinv.getNonEquipmentItems().get(i).getItem() == item && (op != Op.SHULKER || boxHolds(pinv.getNonEquipmentItems().get(i)))) {
                 if (i < 9) {
                     hotbar = i;
                     break;
@@ -483,7 +491,7 @@ public final class MinecraftWorldActions implements WorldActions {
         AbstractContainerMenu menu = player.containerMenu;
         switch (op) {
             case CRAFT -> {
-                if (craftsLeft <= 0 || inv.count(step.itemId()) - startCount >= step.count()) {
+                if (craftsLeft <= 0 || inv.count(step.itemId()) - startCount >= craftTarget) {
                     finish(player, "Crafted " + step.itemId());
                     return;
                 }
@@ -492,8 +500,10 @@ public final class MinecraftWorldActions implements WorldActions {
                         fail("No game mode");
                         return;
                     }
-                    if (!bookFailed && player.getRecipeBook().contains(recipe.id())) {
-                        if (!Services.clicker().placeRecipe(lease, recipe.id().toString(), false)) {
+                    int bookId = bookFailed ? -1 : McRecipeCatalog.bookIndex(mc, recipe);
+                    if (bookId >= 0) {
+                        // 26.3: the recipe-book request names the display id (core parses the decimal string)
+                        if (!Services.clicker().placeRecipe(lease, Integer.toString(bookId), false)) {
                             fail("Could not place recipe " + recipe.id());
                             return;
                         }
@@ -669,7 +679,7 @@ public final class MinecraftWorldActions implements WorldActions {
 
     private void snapshotPlayer(Inventory pinv) {
         for (int i = 0; i < PLAYER_SLOTS; i++) {
-            ItemStack st = pinv.items.get(i);
+            ItemStack st = pinv.getNonEquipmentItems().get(i);
             hallBefore[i] = st.isEmpty() ? 0 : st.getCount();
             hallBeforeKey[i] = st.isEmpty() ? null
                     : HallSortSteps.key(inv.idOf(st.getItem()), StorageMemoryModule.variantKey(st));
@@ -699,7 +709,7 @@ public final class MinecraftWorldActions implements WorldActions {
         // what an interrupted attempt of this step already took is not taken again
         Map<String, Integer> already = new LinkedHashMap<>();
         for (int i = 0; i < PLAYER_SLOTS; i++) {
-            ItemStack st = pinv.items.get(i);
+            ItemStack st = pinv.getNonEquipmentItems().get(i);
             int d = (st.isEmpty() ? 0 : st.getCount()) - hallBefore[i];
             if (d > 0) {
                 already.merge(HallSortSteps.key(inv.idOf(st.getItem()), StorageMemoryModule.variantKey(st)), d,
@@ -754,7 +764,7 @@ public final class MinecraftWorldActions implements WorldActions {
         // ledger now = ledger at the first attempt minus what an interrupted attempt already put
         Map<String, Integer> already = new LinkedHashMap<>();
         for (int i = 0; i < PLAYER_SLOTS; i++) {
-            ItemStack st = pinv.items.get(i);
+            ItemStack st = pinv.getNonEquipmentItems().get(i);
             int d = Math.max(0, Math.min(hallBefore[i] - (st.isEmpty() ? 0 : st.getCount()), hallLedgerStart[i]));
             hallLedger[i] = hallLedgerStart[i] - d;
             if (d > 0 && hallBeforeKey[i] != null) {
@@ -827,7 +837,7 @@ public final class MinecraftWorldActions implements WorldActions {
         Inventory pinv = player.getInventory();
         boolean take = step.kind() == StepKind.HALL_TAKE;
         for (int i = 0; i < PLAYER_SLOTS; i++) {
-            ItemStack st = pinv.items.get(i);
+            ItemStack st = pinv.getNonEquipmentItems().get(i);
             int now = st.isEmpty() ? 0 : st.getCount();
             if (take) {
                 int d = Math.max(0, now - hallBefore[i]);
@@ -1046,7 +1056,7 @@ public final class MinecraftWorldActions implements WorldActions {
         net.minecraft.world.item.Item item = inv.itemOf(itemId);
         int main = -1;
         for (int i = 0; i < 36; i++) {
-            if (pinv.items.get(i).getItem() == item) {
+            if (pinv.getNonEquipmentItems().get(i).getItem() == item) {
                 if (i < 9) {
                     Services.input().selectHotbarSlot(lease, i);
                     return true;
@@ -1508,26 +1518,33 @@ public final class MinecraftWorldActions implements WorldActions {
     }
 
     /** Shaped/shapeless crafting recipe as ids for {@link ManualCraftPlanner}; null for any other recipe. */
-    private ManualCraftPlanner.Shape shapeOf(Recipe<?> r) {
-        if (r instanceof ShapedRecipe sr) {
-            return ManualCraftPlanner.Shape.shaped(sr.getWidth(), sr.getHeight(), idsOf(sr.getIngredients()));
+    private ManualCraftPlanner.Shape shapeOf(McRecipeCatalog.Entry e) {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.level == null) {
+            return null;
         }
-        if (r instanceof ShapelessRecipe) {
-            return ManualCraftPlanner.Shape.shapeless(idsOf(r.getIngredients()));
+        ContextMap ctx = SlotDisplayContext.fromLevel(mc.level);
+        if (e.display() instanceof ShapedCraftingRecipeDisplay sr) {
+            return ManualCraftPlanner.Shape.shaped(sr.width(), sr.height(), idsOf(sr.ingredients(), ctx));
+        }
+        if (e.display() instanceof ShapelessCraftingRecipeDisplay sl) {
+            return ManualCraftPlanner.Shape.shapeless(idsOf(sl.ingredients(), ctx));
         }
         return null;
     }
 
-    private List<Set<String>> idsOf(List<Ingredient> ingredients) {
+    private List<Set<String>> idsOf(List<SlotDisplay> ingredients, ContextMap ctx) {
         List<Set<String>> out = new ArrayList<>(ingredients.size());
-        for (Ingredient ing : ingredients) {
-            if (ing.isEmpty()) {
+        for (SlotDisplay ing : ingredients) {
+            if (ing instanceof SlotDisplay.Empty) {
                 out.add(Set.of());
                 continue;
             }
             Set<String> ids = new HashSet<>();
-            for (ItemStack st : ing.getItems()) {
-                ids.add(inv.idOf(st.getItem()));
+            for (ItemStack st : ing.resolveForStacks(ctx)) {
+                if (!st.isEmpty()) {
+                    ids.add(inv.idOf(st.getItem()));
+                }
             }
             out.add(Set.copyOf(ids));
         }
@@ -1536,8 +1553,8 @@ public final class MinecraftWorldActions implements WorldActions {
 
     private void loadFurnace(LocalPlayer player, AbstractContainerMenu menu) {
         Inventory pinv = player.getInventory();
-        Recipe<?> r = recipe.value();
-        Ingredient ing = r.getIngredients().isEmpty() ? Ingredient.EMPTY : r.getIngredients().get(0);
+        McRecipeCatalog.Entry ing = recipe;
+        net.minecraft.client.multiplayer.ClientLevel level = Minecraft.getInstance().level;
         int needInput = craftsLeft;
         double needFuel = craftsLeft;
         Slot fuelSlot = menu.getSlot(AbstractFurnaceMenu.FUEL_SLOT);
@@ -1549,13 +1566,13 @@ public final class MinecraftWorldActions implements WorldActions {
                 continue;
             }
             ItemStack st = s.getItem();
-            if (needInput > 0 && ing.test(st)) {
+            if (needInput > 0 && ing.acceptsInput(st, level)) {
                 Services.clicker().queueClick(lease, s.index, 0, IContainerClicker.Click.QUICK_MOVE);
                 needInput -= st.getCount();
                 continue;
             }
             double per = fuels.smeltsPer(inv.idOf(st.getItem()));
-            if (needFuel > 0 && per > 0 && !ing.test(st)) {
+            if (needFuel > 0 && per > 0 && !ing.acceptsInput(st, level)) {
                 Services.clicker().queueClick(lease, s.index, 0, IContainerClicker.Click.QUICK_MOVE);
                 needFuel -= per * st.getCount();
             }
@@ -1632,7 +1649,7 @@ public final class MinecraftWorldActions implements WorldActions {
     private void selectBreakTool(LocalPlayer player) {
         Inventory pinv = player.getInventory();
         for (int i = 0; i < 9; i++) {
-            ItemStack s = pinv.items.get(i);
+            ItemStack s = pinv.getNonEquipmentItems().get(i);
             if (!s.isEmpty() && inv.idOf(s.getItem()).endsWith("_pickaxe")) {
                 Services.input().selectHotbarSlot(lease, i);
                 return;
@@ -1860,7 +1877,7 @@ public final class MinecraftWorldActions implements WorldActions {
         Level level = Minecraft.getInstance().level;
         if (level != null && level.dimension() != dimKey) {
             dimKey = level.dimension();
-            dimId = dimKey.location().toString();
+            dimId = dimKey.identifier().toString();
         }
         return dimId;
     }
@@ -1900,9 +1917,29 @@ public final class MinecraftWorldActions implements WorldActions {
             if (!(player.containerMenu instanceof InventoryMenu)) {
                 player.closeContainer();
             }
-            Services.clicker().queueClick(l, slot, player.getInventory().selected, IContainerClicker.Click.SWAP);
+            Services.clicker().queueClick(l, slot, player.getInventory().getSelectedSlot(), IContainerClicker.Click.SWAP);
         }
         return d;
+    }
+
+    @Override
+    public boolean heldToolHelpsWith(java.util.List<String> blockIds) {
+        LocalPlayer player = Minecraft.getInstance().player;
+        if (player == null || blockIds.isEmpty()) {
+            return true; // unknown targets: keep guarding
+        }
+        net.minecraft.world.item.ItemStack held = player.getMainHandItem();
+        for (int i = 0; i < blockIds.size(); i++) {
+            net.minecraft.resources.Identifier id = net.minecraft.resources.Identifier.tryParse(blockIds.get(i));
+            if (id == null) {
+                continue;
+            }
+            net.minecraft.world.level.block.Block b = net.minecraft.core.registries.BuiltInRegistries.BLOCK.getValue(id);
+            if (held.getDestroySpeed(b.defaultBlockState()) > 1.0f) {
+                return true;
+            }
+        }
+        return false;
     }
 
     @Override
@@ -2181,12 +2218,8 @@ public final class MinecraftWorldActions implements WorldActions {
         return id;
     }
 
-    private static Optional<RecipeHolder<?>> lookupRecipe(String id) {
-        Minecraft mc = Minecraft.getInstance();
-        ResourceLocation rl = id == null ? null : ResourceLocation.tryParse(id);
-        if (mc.level == null || rl == null) {
-            return Optional.empty();
-        }
-        return mc.level.getRecipeManager().byKey(rl);
+    /** 26.3: recipes are server-side; the catalogue reads the integrated server, synced recipes or the recipe book. */
+    private static Optional<McRecipeCatalog.Entry> lookupRecipe(String id) {
+        return Optional.ofNullable(McRecipeCatalog.byId(Minecraft.getInstance(), id));
     }
 }

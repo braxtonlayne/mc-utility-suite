@@ -1,6 +1,6 @@
 package com.utilitysuite.devtest;
 
-import org.lwjgl.glfw.GLFW;
+import com.mojang.blaze3d.platform.InputConstants;
 import com.utilitysuite.core.api.ControlChannel;
 import com.utilitysuite.core.api.ControlLease;
 import com.utilitysuite.core.api.ControlPriority;
@@ -53,7 +53,7 @@ final class ParkourScenario {
         int[] correctionsBefore = new int[1];
         boolean[] shot = new boolean[3];
         Arena.ensure(s);
-        s.cmd("gamerule fallDamage false");
+        s.cmd("gamerule fall_damage false");
         s.cmd(() -> "forceload add " + (Arena.cx + OX + b[0] - 4) + " " + (Arena.cz + OZ + b[2] - 4) + " "
                 + (Arena.cx + OX + b[3] + 4) + " " + (Arena.cz + OZ + b[5] + 4));
         s.waitTicks(40);
@@ -161,7 +161,7 @@ final class ParkourScenario {
         Shots.add(s, "movement-escape-path");
         s.always("clean up", () -> {
             Harness.command("kill @e[type=minecraft:zombie]");
-            Harness.command("gamerule fallDamage true");
+            Harness.command("gamerule fall_damage true");
             H.setting(MovementAssist.ID, "assist_automation", false);
             H.enable(MovementAssist.ID, false);
             if (lease[0] != null && lease[0].isActive()) {
@@ -220,8 +220,8 @@ final class ParkourScenario {
                         TravelBootstrap.movement().status()));
             }
             if (!wall && p.onGround() && z > 9.5 && takeoffs.length() < 600) {
-                takeoffs.append(Harness.fmt(" g[z%.2f spr %s fwd %.2f jump %s]", z, p.isSprinting(), p.input.forwardImpulse,
-                        p.input.jumping));
+                takeoffs.append(Harness.fmt(" g[z%.2f spr %s fwd %.2f jump %s]", z, p.isSprinting(), com.utilitysuite.core.input.MoveInputs.forward(p.input),
+                        p.input.keyPresses.jump()));
             }
             wasGround[0] = p.onGround();
             if (wall && z >= 7.0) {
@@ -295,7 +295,7 @@ final class ParkourScenario {
         s.cmd("clear @s");
         s.cmd("give @s minecraft:water_bucket");
         s.cmd("effect give @s minecraft:instant_health 1 10 true");
-        s.cmd("gamerule fallDamage true");
+        s.cmd("gamerule fall_damage true");
         s.waitTicks(10);
         s.run("clutch: drop", () -> {
             H.setting(MovementAssist.ID, "water_clutch", !viaAutopilot);
@@ -337,7 +337,7 @@ final class ParkourScenario {
                     Harness.fmt("clutches %d, pickups %d, health %.1f -> %.1f, water bucket back %s, water left %d,"
                                     + " pitch now %.1f", ma.fallClutches() - before[0], ma.clutchPickups(), hp[0],
                             p.getHealth(), bucket, water, p.getXRot()));
-            Harness.command("gamerule fallDamage false");
+            Harness.command("gamerule fall_damage false");
         });
     }
 
@@ -359,7 +359,7 @@ final class ParkourScenario {
         s.cmd("clear @s");
         s.cmd("give @s minecraft:" + item + " 4");
         s.cmd("effect give @s minecraft:instant_health 1 10 true");
-        s.cmd("gamerule fallDamage true");
+        s.cmd("gamerule fall_damage true");
         s.waitTicks(10);
         s.run(kind + " clutch: drop", () -> {
             H.setting(MovementAssist.ID, "water_clutch", true);
@@ -394,7 +394,7 @@ final class ParkourScenario {
                                     + " pitch now %.1f", kind, used, ma.clutchPlans() - before[2], ma.clutchNote(),
                             hp[0],
                             p.getHealth(), maxLoss, p.getY() - Arena.FLOOR, p.getXRot()));
-            Harness.command("gamerule fallDamage false");
+            Harness.command("gamerule fall_damage false");
         });
         s.cmd(() -> fillWorld(dx - 3, 1, -3, dx + 3, drop + 4, 3, "air"));
     }
@@ -548,7 +548,7 @@ final class ParkourScenario {
             H.setting(MovementAssist.ID, "landing_hold", true);
             H.setting(MovementAssist.ID, "hold_release", "FRESH_INPUT");
             H.enable(MovementAssist.ID, true);
-            Harness.command("gamerule fallDamage false");
+            Harness.command("gamerule fall_damage false");
         });
         int idx = 0;
         for (Mode mode : Mode.values()) {
@@ -597,7 +597,7 @@ final class ParkourScenario {
                 H.enable(TerrainAssist.ID, terrainWas[0]);
                 H.enable(MovementAssist.ID, moduleWas[0]);
             }
-            Harness.command("gamerule fallDamage true");
+            Harness.command("gamerule fall_damage true");
         });
     }
 
@@ -636,8 +636,8 @@ final class ParkourScenario {
             H.setting(MovementAssist.ID, "control_mode", mode.name());
             // Physical keys, like the owner playing. An automation lease on MOVEMENT makes the assist stand down
             // ("automation drives movement"), so leased keys would test nothing. The tp above sets the view.
-            H.physicalKey(GLFW.GLFW_KEY_W, true);
-            H.physicalKey(GLFW.GLFW_KEY_LEFT_CONTROL, true);
+            H.physicalKey(InputConstants.KEY_W, true);
+            H.physicalKey(InputConstants.KEY_LCONTROL, true);
             // the lane assumes the view the teleport set; a view left over from the lane before makes the result void
             float view = net.minecraft.util.Mth.wrapDegrees(H.p().getYRot());
             if (Math.abs(view) > 0.5f) {
@@ -652,9 +652,9 @@ final class ParkourScenario {
                 return true;
             }
             if (t == 0) {
-                H.physicalKey(GLFW.GLFW_KEY_W, false);
+                H.physicalKey(InputConstants.KEY_W, false);
             } else if (t == 2) {
-                H.physicalKey(GLFW.GLFW_KEY_W, true);
+                H.physicalKey(InputConstants.KEY_W, true);
             }
             if (t >= 3 && !r.leftTop && !onTop(H.p(), topY, post[0], post[1], kind.limit)) {
                 r.leftTop = true;
@@ -756,7 +756,7 @@ final class ParkourScenario {
             r.standNote = Harness.fmt("never landed; last seen at lane tick %d: z %.2f, x %+.2f from the post centre,"
                             + " y %.2f, on ground %s, status '%s', forward %.1f, strafe %.1f, sneak %s, jump %s", r.tick,
                     z, p.getX() - postCx, p.getY() - Arena.FLOOR, p.onGround(), TravelBootstrap.movement().status(),
-                    in.forwardImpulse, in.leftImpulse, in.shiftKeyDown, in.jumping);
+                    com.utilitysuite.core.input.MoveInputs.forward(in), com.utilitysuite.core.input.MoveInputs.left(in), in.keyPresses.shift(), in.keyPresses.jump());
         }
         if (p.getY() < Arena.FLOOR - 2) {
             r.fell = true;
@@ -770,17 +770,17 @@ final class ParkourScenario {
         // override phase: from the tick after sneak went down, effective input must equal the raw keys
         if (r.overrideTick >= 0 && r.tick > r.overrideTick && r.overrideTicksChecked < 6) {
             var o = H.mc().options;
-            boolean same = in.up == o.keyUp.isDown() && in.down == o.keyDown.isDown()
-                    && in.left == o.keyLeft.isDown() && in.right == o.keyRight.isDown()
-                    && in.jumping == o.keyJump.isDown() && in.shiftKeyDown == o.keyShift.isDown();
+            boolean same = in.keyPresses.forward() == o.keyUp.isDown() && in.keyPresses.backward() == o.keyDown.isDown()
+                    && in.keyPresses.left() == o.keyLeft.isDown() && in.keyPresses.right() == o.keyRight.isDown()
+                    && in.keyPresses.jump() == o.keyJump.isDown() && in.keyPresses.shift() == o.keyShift.isDown();
             r.overrideTicksChecked++;
             if (!same) {
                 r.overrideMismatches++;
                 if (r.overrideFirst.isEmpty()) {
                     r.overrideFirst = Harness.fmt("(first at +%d: up %s/%s down %s/%s left %s/%s right %s/%s jump %s/%s"
-                                    + " sneak %s/%s, input/raw)", r.tick - r.overrideTick, in.up, o.keyUp.isDown(),
-                            in.down, o.keyDown.isDown(), in.left, o.keyLeft.isDown(), in.right,
-                            o.keyRight.isDown(), in.jumping, o.keyJump.isDown(), in.shiftKeyDown,
+                                    + " sneak %s/%s, input/raw)", r.tick - r.overrideTick, in.keyPresses.forward(), o.keyUp.isDown(),
+                            in.keyPresses.backward(), o.keyDown.isDown(), in.keyPresses.left(), o.keyLeft.isDown(), in.keyPresses.right(),
+                            o.keyRight.isDown(), in.keyPresses.jump(), o.keyJump.isDown(), in.keyPresses.shift(),
                             o.keyShift.isDown());
                 }
             }
@@ -793,18 +793,18 @@ final class ParkourScenario {
         // the planned press: at the trigger, once, also when the assist has already taken the jump (a press on the
         // post after an early assisted takeoff would be a second jump the "user" never meant)
         if (r.jumpTick < 0 && z >= 10.85) {
-            H.physicalKey(GLFW.GLFW_KEY_SPACE, true);
+            H.physicalKey(InputConstants.KEY_SPACE, true);
             r.jumpTick = r.tick;
             r.jumpZ = z;
         } else if (r.jumpTick >= 0 && r.tick == r.jumpTick + 1) {
-            H.physicalKey(GLFW.GLFW_KEY_SPACE, false);
+            H.physicalKey(InputConstants.KEY_SPACE, false);
         }
         if (r.jumpTick >= 0) {
             int k = r.tick - r.jumpTick;
             if (kind.corner && k == TAP_START) {
-                H.physicalKey(GLFW.GLFW_KEY_A, true);
+                H.physicalKey(InputConstants.KEY_A, true);
             } else if (kind.corner && k == TAP_START + TAP_LEN) {
-                H.physicalKey(GLFW.GLFW_KEY_A, false);
+                H.physicalKey(InputConstants.KEY_A, false);
             }
             if (ovr != Override.NONE && k == 4 && r.overrideTick < 0) {
                 r.overrideTick = r.tick;
@@ -815,14 +815,14 @@ final class ParkourScenario {
                     r.leaseRef[0] = r.lease;
                     Services.input().setKeyHeld(r.lease, SimKey.SNEAK, true);
                 } else {
-                    H.physicalKey(GLFW.GLFW_KEY_LEFT_SHIFT, true);
+                    H.physicalKey(InputConstants.KEY_LSHIFT, true);
                 }
             }
             if (ovr != Override.NONE && r.overrideTicksChecked >= 6) {
                 if (r.lease != null) {
                     Services.input().setKeyHeld(r.lease, SimKey.SNEAK, false);
                 }
-                H.physicalKey(GLFW.GLFW_KEY_LEFT_SHIFT, false);
+                H.physicalKey(InputConstants.KEY_LSHIFT, false);
             }
         }
         if (r.landedTick < 0 && r.jumpTick >= 0 && r.tick > r.jumpTick + 2 && p.onGround() && z > 11.0) {
@@ -838,8 +838,8 @@ final class ParkourScenario {
         return false;
     }
 
-    private static final int[] LANE_KEYS = {GLFW.GLFW_KEY_W, GLFW.GLFW_KEY_LEFT_CONTROL, GLFW.GLFW_KEY_SPACE,
-            GLFW.GLFW_KEY_A, GLFW.GLFW_KEY_LEFT_SHIFT};
+    private static final int[] LANE_KEYS = {InputConstants.KEY_W, InputConstants.KEY_LCONTROL, InputConstants.KEY_SPACE,
+            InputConstants.KEY_A, InputConstants.KEY_LSHIFT};
 
     private static void releaseLaneKeys(LaneRun r, ControlLease[] leaseRef) {
         for (int key : LANE_KEYS) {
@@ -874,12 +874,12 @@ final class ParkourScenario {
                                    double postCx) {
         var in = p.input;
         r.shapes.begin(p.level());
-        int fwd = impulse(in.forwardImpulse);
-        int str = impulse(in.leftImpulse);
+        int fwd = impulse(com.utilitysuite.core.input.MoveInputs.forward(in));
+        int str = impulse(com.utilitysuite.core.input.MoveInputs.left(in));
         float yaw = p.yRotO;
         boolean sprint = p.isSprinting();
-        boolean jump = in.jumping;
-        boolean sneak = in.shiftKeyDown;
+        boolean jump = in.keyPresses.jump();
+        boolean sneak = in.keyPresses.shift();
         if (!r.simReady) {
             capture(r.sim, p, 0);
             capture(r.prev, p, 0);
@@ -912,7 +912,7 @@ final class ParkourScenario {
                             + " sprint %s jump %s sneak %s; before: onGround %s v (%.5f %.5f %.5f); real after:"
                             + " onGround %s v (%.5f %.5f %.5f) pos (%.5f %.5f %.5f); replica after: onGround %s"
                             + " v (%.5f %.5f %.5f) pos (%.5f %.5f %.5f)",
-                    ONE_STEP_FLAG, r.tick, r.jumpTick, stepErr, fwd, in.forwardImpulse, str, in.leftImpulse, yaw,
+                    ONE_STEP_FLAG, r.tick, r.jumpTick, stepErr, fwd, com.utilitysuite.core.input.MoveInputs.forward(in), str, com.utilitysuite.core.input.MoveInputs.left(in), yaw,
                     p.getYRot(), sprint, jump, sneak, wasGround, r.prev.vx, r.prev.vy, r.prev.vz, p.onGround(),
                     v.x, v.y, v.z, p.getX(), p.getY(), p.getZ(), r.step.onGround, r.step.vx, r.step.vy, r.step.vz,
                     r.step.x, r.step.y, r.step.z);

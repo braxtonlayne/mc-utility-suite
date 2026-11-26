@@ -7,9 +7,10 @@ import com.utilitysuite.core.api.visual.EffectLevel;
 import com.utilitysuite.core.api.visual.HoloToken;
 import com.utilitysuite.core.api.visual.IHoloWorld;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.renderer.MultiBufferSource;
-import net.minecraft.client.renderer.RenderType;
-import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
+import net.minecraft.client.renderer.SubmitNodeCollector;
+import net.minecraft.client.renderer.rendertype.RenderType;
+import net.minecraft.client.renderer.rendertype.RenderTypes;
+import net.neoforged.neoforge.client.event.SubmitCustomGeometryEvent;
 import org.joml.Matrix4f;
 
 import java.lang.invoke.MethodHandle;
@@ -25,7 +26,7 @@ import java.lang.invoke.MethodType;
  *     the distance of each end, so it holds about {@link #CORE_GUI_PX} GUI pixels on screen, sampling the soft
  *     falloff row of the {@link HoloAtlas}; at FULL a second, three times wider quad on the glow row at half alpha.
  *     Render type {@link HoloRenderTypes#world()};</li>
- *     <li>plain 1 px lines ({@link EffectLevel#OFF}, or a shader pack is active): vanilla {@code RenderType.lines()}
+ *     <li>plain 1 px lines ({@link EffectLevel#OFF}, or a shader pack is active): vanilla {@code RenderTypes.lines()}
  *     with the same palette.</li>
  * </ul>
  * Geometry emission is separate from the vertex sink ({@link Sink}), so tests count segments, check the cap and
@@ -119,6 +120,11 @@ public final class HoloWorldKit implements IHoloWorld {
 
     public boolean plain() {
         return plain;
+    }
+
+    /** Stops collecting but keeps the segments for a later {@link #flush} (the deferred world draw). */
+    public void close() {
+        open = false;
     }
 
     /** Ends the pass without drawing. */
@@ -417,18 +423,26 @@ public final class HoloWorldKit implements IHoloWorld {
     // ---- the level-render pass --------------------------------------------------------------------------------------
 
     /**
-     * Drives the kit from the level render: {@link #onBegin} (highest priority) opens the pass and publishes the kit
-     * through {@link Visuals#useWorld}; adopters draw at normal priority through {@code Services.visuals().world()};
-     * {@link #onEnd} (lowest priority) withdraws the kit and flushes one batch. Nothing is touched when nobody drew,
-     * in Clean-Screen, or without a level. Registered by {@link MarksBootstrap}.
+     * Drives the kit from the level render (26.3: {@link SubmitCustomGeometryEvent}, fired once per frame after
+     * particles are submitted): {@link #onBegin} (highest priority) opens the pass and publishes the kit through
+     * {@link Visuals#useWorld}; adopters draw at normal priority in their own {@code SubmitCustomGeometryEvent}
+     * listener through {@code Services.visuals().world()}; {@link #onEnd} (lowest priority) withdraws the kit and submits
+     * one custom-geometry node that flushes the batch when the game draws its submits. Nothing is submitted when nobody
+     * drew, in Clean-Screen, or without a level. Registered by {@link MarksBootstrap}.
      */
     public static final class Pass {
 
-        /** The stage the pass runs in (the stage Ghost Line always drew in). */
-        public static final RenderLevelStageEvent.Stage STAGE = RenderLevelStageEvent.Stage.AFTER_PARTICLES;
+        /** The event the pass runs in; adopters draw in a listener of the same event. */
+        public static final Class<SubmitCustomGeometryEvent> EVENT = SubmitCustomGeometryEvent.class;
 
         private static final HoloWorldKit KIT = new HoloWorldKit();
         private static final BufferSink SINK = new BufferSink();
+        /** The deferred draw: one instance, so a frame's submit allocates nothing of ours. */
+        private static final SubmitNodeCollector.CustomGeometryRenderer DRAW = (pose, consumer) -> {
+            SINK.bind(consumer, pose);
+            KIT.flush(SINK);
+            SINK.unbind();
+        };
 
         private Pass() {
         }
@@ -437,44 +451,35 @@ public final class HoloWorldKit implements IHoloWorld {
             return KIT;
         }
 
-        public static void onBegin(RenderLevelStageEvent event) {
-            if (event.getStage() != STAGE) {
-                return;
-            }
+        public static void onBegin(SubmitCustomGeometryEvent event) {
             Minecraft mc = Minecraft.getInstance();
-            if (mc.level == null || event.getPoseStack() == null || Services.modState().isCleanScreen()) {
+            if (mc.level == null || Services.modState().isCleanScreen()) {
                 Visuals.useWorld(null);
                 return;
             }
             float heightPx = Math.max(1, mc.getWindow().getHeight());
-            float m11 = event.getProjectionMatrix().m11();
+            float m11 = event.getLevelRenderState().cameraRenderState.projectionMatrix.m11();
             float worldPerPx = m11 > 1.0e-4f ? 2f / (m11 * heightPx) : 0.001f;
             float core = CORE_GUI_PX * (float) Math.max(1.0, mc.getWindow().getGuiScale());
             boolean plain = HoloTheme.effects == EffectLevel.OFF || ShaderPacks.active();
             float dash = HoloTheme.motion == Motion.FULL ? (FrameClock.nowMs() % 3_600_000L) / 1000f : 0f;
+            SINK.lineWidth = Math.max(1f, mc.gameRenderer.gameRenderState().windowRenderState.appropriateLineWidth);
             KIT.begin(plain, HoloTheme.effects == EffectLevel.FULL, worldPerPx, core, dash);
             Visuals.useWorld(KIT);
         }
 
-        public static void onEnd(RenderLevelStageEvent event) {
-            if (event.getStage() != STAGE) {
-                return;
-            }
+        public static void onEnd(SubmitCustomGeometryEvent event) {
             Visuals.useWorld(null);
             if (!KIT.isOpen()) {
                 return;
             }
             if (KIT.count() == 0) {
-                KIT.cancel(); // idle: no buffer, no batch
+                KIT.cancel(); // idle: no submit, no batch
                 return;
             }
-            PoseStack pose = event.getPoseStack();
-            MultiBufferSource.BufferSource buffers = Minecraft.getInstance().renderBuffers().bufferSource();
-            RenderType type = KIT.plain() ? RenderType.lines() : HoloRenderTypes.world();
-            SINK.bind(buffers.getBuffer(type), pose.last());
-            KIT.flush(SINK);
-            SINK.unbind();
-            buffers.endBatch(type);
+            KIT.close(); // collection ends here; the segments wait for the deferred draw
+            RenderType type = KIT.plain() ? RenderTypes.lines() : HoloRenderTypes.world();
+            event.getSubmitNodeCollector().submitCustomGeometry(event.getPoseStack(), type, DRAW);
         }
     }
 
@@ -483,6 +488,8 @@ public final class HoloWorldKit implements IHoloWorld {
         private VertexConsumer vc;
         private PoseStack.Pose pose;
         private Matrix4f matrix;
+        /** Width of plain lines (26.3 lines carry a per-vertex width), set per frame by the pass. */
+        float lineWidth = 1f;
 
         void bind(VertexConsumer consumer, PoseStack.Pose p) {
             vc = consumer;
@@ -513,8 +520,8 @@ public final class HoloWorldKit implements IHoloWorld {
             nx /= len;
             ny /= len;
             nz /= len;
-            vc.addVertex(pose, x0, y0, z0).setColor(argb).setNormal(pose, nx, ny, nz);
-            vc.addVertex(pose, x1, y1, z1).setColor(argb).setNormal(pose, nx, ny, nz);
+            vc.addVertex(pose, x0, y0, z0).setColor(argb).setNormal(pose, nx, ny, nz).setLineWidth(lineWidth);
+            vc.addVertex(pose, x1, y1, z1).setColor(argb).setNormal(pose, nx, ny, nz).setLineWidth(lineWidth);
         }
     }
 

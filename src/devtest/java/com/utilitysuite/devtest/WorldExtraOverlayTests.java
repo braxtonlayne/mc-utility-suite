@@ -18,7 +18,7 @@ import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.Display;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
-import net.minecraft.world.entity.projectile.Arrow;
+import net.minecraft.world.entity.projectile.arrow.Arrow;
 import net.minecraft.world.level.block.TrialSpawnerBlock;
 import net.minecraft.world.level.block.VaultBlock;
 import net.minecraft.world.level.block.state.BlockState;
@@ -53,7 +53,7 @@ final class WorldExtraOverlayTests {
     private static String rel(long p, net.minecraft.client.multiplayer.ClientLevel lvl) {
         int x = BlockPosPacking.x(p), y = BlockPosPacking.y(p), z = BlockPosPacking.z(p);
         String block = lvl == null ? "?" : lvl.getBlockState(new net.minecraft.core.BlockPos(x, y, z)).getBlock()
-                .builtInRegistryHolder().key().location().getPath();
+                .builtInRegistryHolder().key().identifier().getPath();
         return "(" + (x - Arena.cx) + "," + (y - Arena.FLOOR) + "," + (z - Arena.cz) + ")=" + block;
     }
 
@@ -341,7 +341,7 @@ final class WorldExtraOverlayTests {
         s.run("stealth: sources", () -> {
             StealthVisionModule m = H.module(StealthVisionModule.ID);
             Source w = source(m, net.minecraft.world.entity.monster.warden.Warden.class);
-            Source e = source(m, net.minecraft.world.entity.monster.EnderMan.class);
+            Source e = source(m, net.minecraft.world.entity.monster.Enderman.class);
             Source b = source(m, net.minecraft.world.entity.monster.piglin.PiglinBrute.class);
             s.check("stealth_vision: Warden 6 blocks away hears you (no wool)", w != null && w.alert(),
                     "warden " + (w == null ? "not tracked" : "alert=" + w.alert()) + ", sources "
@@ -358,7 +358,7 @@ final class WorldExtraOverlayTests {
         s.waitTicks(3);
         s.run("stealth: look away, then pumpkin", () -> {
             StealthVisionModule m = H.module(StealthVisionModule.ID);
-            Source e = source(m, net.minecraft.world.entity.monster.EnderMan.class);
+            Source e = source(m, net.minecraft.world.entity.monster.Enderman.class);
             s.check("stealth_vision: looking away clears the Enderman stare", e != null && !e.alert(),
                     "enderman " + (e == null ? "not tracked" : "alert=" + e.alert()));
             Harness.command("item replace entity @s armor.head with minecraft:carved_pumpkin");
@@ -367,7 +367,7 @@ final class WorldExtraOverlayTests {
         s.waitTicks(10);
         s.run("stealth: pumpkin check, wool around the sensor", () -> {
             StealthVisionModule m = H.module(StealthVisionModule.ID);
-            Source e = source(m, net.minecraft.world.entity.monster.EnderMan.class);
+            Source e = source(m, net.minecraft.world.entity.monster.Enderman.class);
             boolean pumpkin = H.p().getItemBySlot(net.minecraft.world.entity.EquipmentSlot.HEAD)
                     .is(net.minecraft.world.item.Items.CARVED_PUMPKIN);
             s.check("stealth_vision: a carved pumpkin makes the Enderman stare safe", pumpkin && e != null && !e.alert(),
@@ -405,7 +405,7 @@ final class WorldExtraOverlayTests {
         s.cmd(() -> Arena.tp(0.5, -6.5, 0f));
         s.waitTicks(10);
         s.run("ribbon: hold a pearl, aim at the floor", () -> {
-            H.p().getInventory().selected = 0;
+            H.p().getInventory().setSelectedSlot(0);
             H.enable(ProjectileRibbonModule.ID, true);
             WorldExtraScenario.lookAt(0.5, 1.0, 3.5);
         });
@@ -451,7 +451,7 @@ final class WorldExtraOverlayTests {
         s.cmd(() -> Arena.tp(0.5, -6.5, 0f));
         s.waitTicks(10);
         s.run("ribbon: draw the bow", () -> {
-            H.p().getInventory().selected = 0;
+            H.p().getInventory().setSelectedSlot(0);
             WorldExtraScenario.lookAt(0.5, 1.0, 1.5);
             H.mc().options.keyUse.setDown(true); // the user holding right click (test scaffolding)
         });
@@ -539,9 +539,12 @@ final class WorldExtraOverlayTests {
 
     /** Asks the real render dispatcher (with the cull mixin) whether it would draw {@code e} this frame. */
     private static boolean wouldRender(Entity e) {
-        Frustum f = (Frustum) WorldExtraScenario.field(H.mc().levelRenderer, "cullingFrustum");
-        Vec3 cam = H.mc().gameRenderer.getMainCamera().getPosition();
-        return f != null && H.mc().getEntityRenderDispatcher().shouldRender(e, f, cam.x, cam.y, cam.z);
+        // 26.3: the frame's cull frustum lives on the camera (LevelExtractor reads camera.getCullFrustum())
+        var camera = H.mc().gameRenderer.mainCamera();
+        Frustum f = camera.getCullFrustum();
+        Vec3 cam = camera.position();
+        return f != null && H.mc().getEntityRenderDispatcher().shouldRender(e, f, cam.x, cam.y, cam.z,
+                H.mc().getDeltaTracker().getGameTimeDeltaPartialTick(false));
     }
 
     private static void renderGovernor(Scenario s) {
@@ -578,7 +581,7 @@ final class WorldExtraOverlayTests {
             Display.ItemDisplay far = displayNear(ax(0) + 0.5, ay(1) + 1.5, az(7) + 0.5);
             boolean nearDrawn = near != null && wouldRender(near);
             boolean farDrawn = far != null && wouldRender(far);
-            Vec3 cam = H.mc().gameRenderer.getMainCamera().getPosition();
+            Vec3 cam = H.mc().gameRenderer.mainCamera().position();
             s.check("render_governor: far item display hidden while detail is reduced, near one drawn",
                     near != null && far != null && nearDrawn && !farDrawn && RenderBudget.tier() >= 1,
                     "near " + (near == null ? "missing" : "drawn=" + nearDrawn) + ", far "

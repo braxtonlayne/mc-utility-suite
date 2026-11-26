@@ -8,17 +8,20 @@ import net.neoforged.bus.api.IEventBus;
 import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
 import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
+import net.neoforged.neoforge.client.event.RegisterRenderPipelinesEvent;
 import net.neoforged.neoforge.client.event.ScreenEvent;
+import net.neoforged.neoforge.client.event.SubmitCustomGeometryEvent;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.entity.player.PlayerInteractEvent;
 
 /**
  * Wires the world-mark reticles, the authority indicator, the world drawing kit and the suite font: the
- * {@link ScreenProjector} listens to the level render, and the {@link ReticleLayer} and {@link AuthorityIndicator} are registered with {@code Services.visuals().hud()} on
- * the first client tick (the Shell registers its host late in start-up, so registering in {@link #init} would hit the
- * no-op host). The {@link HoloWorldKit.Pass} brackets every other listener of its level-render stage (highest and
- * lowest priority) so adopters draw through {@code Services.visuals().world()} into one batch; {@link SuiteFonts}
- * registers its pack finder and reload check on the mod bus. On logout every mark is cleared (claims stay: modules
+ * {@link ScreenProjector} listens to the level render, and the {@link ReticleLayer} and {@link AuthorityIndicator}
+ * are registered with {@code Services.visuals().hud()} on the first client tick (the Shell registers its host late in
+ * start-up, so registering in {@link #init} would hit the no-op host). The {@link HoloWorldKit.Pass} brackets every
+ * other listener of {@code SubmitCustomGeometryEvent} (highest and lowest priority) so adopters draw through
+ * {@code Services.visuals().world()} into one batch; {@link SuiteFonts} registers its pack finder and reload check on
+ * the mod bus. On logout every mark is cleared (claims stay: modules
  * keep the slots they own).
  * Called once, after {@code UiBootstrap.init(modBus)}.
  */
@@ -36,10 +39,11 @@ public final class MarksBootstrap {
     public static void init(IEventBus modBus) {
         SuiteFonts.Client.init(modBus); // suite font: pack finder + reload check (switches on by file presence)
         IEventBus bus = NeoForge.EVENT_BUS;
-        bus.addListener(RenderLevelStageEvent.class, PROJECTOR::onRenderLevel);
-        // the world kit pass: opened before every other listener of the stage, flushed after all of them
-        bus.addListener(EventPriority.HIGHEST, RenderLevelStageEvent.class, HoloWorldKit.Pass::onBegin);
-        bus.addListener(EventPriority.LOWEST, RenderLevelStageEvent.class, HoloWorldKit.Pass::onEnd);
+        modBus.addListener(RegisterRenderPipelinesEvent.class, HoloRenderTypes::onRegisterPipelines);
+        bus.addListener(RenderLevelStageEvent.AfterLevel.class, PROJECTOR::onRenderLevel);
+        // the world kit pass: opened before every other listener of the event, submitted after all of them
+        bus.addListener(EventPriority.HIGHEST, SubmitCustomGeometryEvent.class, HoloWorldKit.Pass::onBegin);
+        bus.addListener(EventPriority.LOWEST, SubmitCustomGeometryEvent.class, HoloWorldKit.Pass::onEnd);
         bus.addListener(ClientTickEvent.Post.class, MarksBootstrap::onClientTick);
         // V3 holo-cards (off by default): learns from opened menus, anchors through the projector
         Services.modules().register(CARDS);

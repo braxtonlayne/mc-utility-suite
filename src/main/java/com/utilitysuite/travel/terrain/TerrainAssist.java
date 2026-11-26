@@ -21,10 +21,15 @@ import com.utilitysuite.travel.TravelMessages;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
-import net.minecraft.client.renderer.LevelRenderer;
-import net.minecraft.client.renderer.MultiBufferSource;
-import net.minecraft.client.renderer.RenderType;
-import net.minecraft.resources.ResourceLocation;
+import com.utilitysuite.mixin.input.ClientInputAccessor;
+import com.utilitysuite.world.render.WorldRenderKit;
+import net.minecraft.client.player.ClientInput;
+import net.minecraft.client.renderer.SubmitNodeCollector;
+import net.minecraft.client.renderer.rendertype.RenderTypes;
+import net.minecraft.core.component.DataComponents;
+import net.minecraft.world.item.component.UseEffects;
+import net.minecraft.world.phys.Vec2;
+import net.minecraft.resources.Identifier;
 import net.minecraft.tags.FluidTags;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.MoverType;
@@ -36,7 +41,7 @@ import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import net.neoforged.neoforge.client.event.MovementInputUpdateEvent;
-import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
+import net.neoforged.neoforge.client.event.SubmitCustomGeometryEvent;
 import net.neoforged.neoforge.common.NeoForgeMod;
 
 import java.util.List;
@@ -62,7 +67,7 @@ public final class TerrainAssist implements IModule, IConfigurable {
 
     public static final String ID = "terrain_assist";
 
-    static final ResourceLocation STEP_MODIFIER_ID = ResourceLocation.fromNamespaceAndPath("utilitysuite", "terrain_step");
+    static final Identifier STEP_MODIFIER_ID = Identifier.fromNamespaceAndPath("utilitysuite", "terrain_step");
     private static final double VANILLA_STEP = 0.6;
     private static final int EDGE_JUMP_COOLDOWN = 8;
     private static final int TAP_HOLD_TICKS = 3;
@@ -500,8 +505,11 @@ public final class TerrainAssist implements IModule, IConfigurable {
     }
 
     /**
-     * NeoForge fires this after the movement input was computed and before vanilla multiplies it by 0.2 while an item
-     * is in use; pre-scaling by 5 makes that factor a no-op. No mixin needed.
+     * NeoForge fires this after the movement input was computed and before vanilla scales it while an item is in use
+     * (26.3 {@code LocalPlayer.modifyInput}: the use item's {@code USE_EFFECTS} speed multiplier, 0.2 by default);
+     * pre-scaling by its inverse makes that factor a no-op. 26.3's move vector has no public setter, so the write goes
+     * through the {@code ClientInputAccessor} accessor (unnormalized on purpose: vanilla clamps the length to 1
+     * after the scale). The scaled vector is cached, so steady input allocates nothing.
      */
     public void onMovementInput(MovementInputUpdateEvent event) {
         if (!enabled || !noSlowdown) {
@@ -511,43 +519,71 @@ public final class TerrainAssist implements IModule, IConfigurable {
         if (p != Minecraft.getInstance().player || !p.isUsingItem() || p.isPassenger()) {
             return;
         }
-        event.getInput().leftImpulse *= 5.0f;
-        event.getInput().forwardImpulse *= 5.0f;
+        float m = p.getUseItem().getOrDefault(DataComponents.USE_EFFECTS, UseEffects.DEFAULT).speedMultiplier();
+        if (!(m > 1.0e-3f && m < 1f)) {
+            return; // no slowdown to undo (or a zero factor nothing can undo)
+        }
+        ClientInput in = event.getInput();
+        Vec2 cur = in.getMoveVector();
+        if (cur.x == 0f && cur.y == 0f) {
+            return;
+        }
+        float k = 1f / m;
+        if (scaledMove == null || cur.x != scaledFromX || cur.y != scaledFromY || k != scaledBy) {
+            scaledFromX = cur.x;
+            scaledFromY = cur.y;
+            scaledBy = k;
+            scaledMove = new Vec2(cur.x * k, cur.y * k);
+        }
+        ((ClientInputAccessor) in).utilitysuite$setMoveVector(scaledMove);
     }
+
+    private Vec2 scaledMove;
+    private float scaledFromX;
+    private float scaledFromY;
+    private float scaledBy;
 
     // ---- hazard overlay -----------------------------------------------------------------------------------------------
 
     /** Draws the last completed hazard sweep. Nothing when disabled, empty or in Clean-Screen. */
-    public void onRenderLevel(RenderLevelStageEvent event) {
-        if (!enabled || !hazards || event.getStage() != RenderLevelStageEvent.Stage.AFTER_PARTICLES
+    public void onRenderLevel(SubmitCustomGeometryEvent event) {
+        if (!enabled || !hazards
                 || !scanner.hasMarkers() || Services.modState().isCleanScreen()) {
             return;
         }
-        PoseStack pose = event.getPoseStack();
-        if (pose == null) {
-            return;
-        }
-        Vec3 cam = event.getCamera().getPosition();
-        MultiBufferSource.BufferSource buffers = Minecraft.getInstance().renderBuffers().bufferSource();
-        VertexConsumer lines = buffers.getBuffer(RenderType.lines());
-        drawBoxes(pose, lines, scanner.markers(HazardScanner.DROP), cam, 1.0f, 0.55f, 0.1f, 0.0, 0.9);
-        drawBoxes(pose, lines, scanner.markers(HazardScanner.LAVA), cam, 1.0f, 0.15f, 0.1f, 0.0, 1.0);
-        drawBoxes(pose, lines, scanner.markers(HazardScanner.LOW_CEILING), cam, 1.0f, 0.9f, 0.2f, 1.0, 1.95);
-        buffers.endBatch(RenderType.lines());
+        Vec3 cam = event.getLevelRenderState().cameraRenderState.pos;
+        hazardCamX = cam.x;
+        hazardCamY = cam.y;
+        hazardCamZ = cam.z;
+        event.getSubmitNodeCollector().submitCustomGeometry(event.getPoseStack(), RenderTypes.linesTranslucent(),
+                drawHazards);
     }
 
-    private static void drawBoxes(PoseStack pose, VertexConsumer lines, LongArrayList markers, Vec3 cam, float r,
-                                  float g, float b, double yLo, double yHi) {
-        double cx = cam.x;
-        double cy = cam.y;
-        double cz = cam.z;
+    /** The deferred draw (26.3 submits run later in the same frame, same thread): one instance. */
+    private final SubmitNodeCollector.CustomGeometryRenderer drawHazards = this::drawHazards;
+    private double hazardCamX;
+    private double hazardCamY;
+    private double hazardCamZ;
+
+    private void drawHazards(PoseStack.Pose pose, VertexConsumer lines) {
+        drawBoxes(pose, lines, scanner.markers(HazardScanner.DROP), 0xCCFF8C1A, 0.0, 0.9);
+        drawBoxes(pose, lines, scanner.markers(HazardScanner.LAVA), 0xCCFF261A, 0.0, 1.0);
+        drawBoxes(pose, lines, scanner.markers(HazardScanner.LOW_CEILING), 0xCCFFE633, 1.0, 1.95);
+    }
+
+    /** Colors are the 1.21.1 ones (r, g, b at alpha 0.8) packed as ARGB. */
+    private void drawBoxes(PoseStack.Pose pose, VertexConsumer lines, LongArrayList markers, int argb, double yLo,
+                           double yHi) {
+        double cx = hazardCamX;
+        double cy = hazardCamY;
+        double cz = hazardCamZ;
         for (int i = 0, n = markers.size(); i < n; i++) {
             long p = markers.getLong(i);
-            double x = Packed.x(p) - cx;
-            double y = Packed.y(p) - cy;
-            double z = Packed.z(p) - cz;
-            LevelRenderer.renderLineBox(pose, lines, x + 0.05, y + yLo + 0.02, z + 0.05, x + 0.95, y + yHi, z + 0.95,
-                    r, g, b, 0.8f);
+            float x = (float) (Packed.x(p) - cx);
+            float y = (float) (Packed.y(p) - cy);
+            float z = (float) (Packed.z(p) - cz);
+            WorldRenderKit.box(lines, pose, x + 0.05f, (float) (y + yLo + 0.02), z + 0.05f, x + 0.95f,
+                    (float) (y + yHi), z + 0.95f, argb);
         }
     }
 

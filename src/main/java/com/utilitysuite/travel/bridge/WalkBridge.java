@@ -104,7 +104,7 @@ final class WalkBridge {
         delay = 0;
         sneakTicks = 0;
         placed = 0;
-        previousSlot = player.getInventory().selected;
+        previousSlot = player.getInventory().getSelectedSlot();
         allowedCheckIn = 0;
         pausedNotified = false;
         aimed = false;
@@ -251,7 +251,7 @@ final class WalkBridge {
             return null;
         }
         int wanted = placeableSlot.getAsInt();
-        if (player.getInventory().selected != wanted) {
+        if (player.getInventory().getSelectedSlot() != wanted) {
             input.selectHotbarSlot(lease, wanted);
             return null; // lands next tick
         }
@@ -295,7 +295,7 @@ final class WalkBridge {
             InteractionResult r = mc.gameMode.useItemOn(player, InteractionHand.MAIN_HAND,
                     new BlockHitResult(new Vec3(hx, hy, hz), toSupport.getOpposite(), support, false));
             if (r.consumesAction()) {
-                player.swing(InteractionHand.MAIN_HAND);
+                player.swing(InteractionHand.MAIN_HAND, player.getMainHandItem().getInteractAnimation(), false);
                 placed++;
                 done++;
                 if (sneak == ServerSneak.AT_EDGE) {

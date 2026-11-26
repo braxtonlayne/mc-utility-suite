@@ -110,6 +110,12 @@ public final class DotCommands implements IModule, IConfigurable {
                     seed(cmd.arg());
                     return;
                 }
+                if ("jumpcap".equals(cmd.name())) {
+                    java.nio.file.Path file = JumpCapture.capture(cmd.arg());
+                    reply(file == null ? "No world to capture" : "Jump captured: " + file.getFileName()
+                            + " (in utilitysuite/jumpcap)", file == null);
+                    return;
+                }
                 notice("Unknown command '" + cmd.name() + "' (not sent)", NoticeKind.ERROR);
                 reply(DotCommandParser.helpText(prefix), false); // the list of commands is output the user reads
             }
@@ -202,7 +208,7 @@ public final class DotCommands implements IModule, IConfigurable {
         if (mc.player == null) {
             return;
         }
-        mc.player.displayClientMessage(Component.literal("[Suite] ").withStyle(ChatFormatting.DARK_AQUA)
-                .append(Component.literal(text).withStyle(error ? ChatFormatting.RED : ChatFormatting.GRAY)), false);
+        mc.player.sendSystemMessage(Component.literal("[Suite] ").withStyle(ChatFormatting.DARK_AQUA)
+                .append(Component.literal(text).withStyle(error ? ChatFormatting.RED : ChatFormatting.GRAY)));
     }
 }

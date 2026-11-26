@@ -23,8 +23,8 @@ import com.utilitysuite.travel.autopilot.TravelAutopilot;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.Entity;
-import net.minecraft.world.entity.animal.Cow;
-import net.minecraft.world.entity.animal.Sheep;
+import net.minecraft.world.entity.animal.cow.Cow;
+import net.minecraft.world.entity.animal.sheep.Sheep;
 import net.minecraft.world.entity.monster.piglin.Piglin;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
@@ -72,8 +72,8 @@ final class FieldJobsScenario {
         debris(s);
         piglin(s);
         s.always("disarm", () -> {
-            if (H.mc().screen != null) {
-                H.mc().setScreen(null);
+            if (H.mc().gui.screen() != null) {
+                H.mc().gui.setScreen(null);
             }
             for (String id : MODULES) {
                 H.enable(id, false);
@@ -196,7 +196,7 @@ final class FieldJobsScenario {
         s.cmd(() -> Arena.fill(-12, 1, 5, 12, 6, 11, "air"));
         s.cmd(() -> Arena.fill(-9, 1, 6, 10, 4, 10, "stone"));
         s.cmd("clear @s");
-        s.cmd("give @s minecraft:diamond_pickaxe[enchantments={levels:{\"minecraft:efficiency\":5}}]");
+        s.cmd("give @s minecraft:diamond_pickaxe[enchantments={\"minecraft:efficiency\":5}]");
         s.cmd("give @s minecraft:netherrack 64");
         s.cmd("effect give @s minecraft:haste 300 1 true");
         s.cmd(() -> Arena.tp(-9.5, 8.5, -90f));
@@ -205,7 +205,7 @@ final class FieldJobsScenario {
         s.run("highway (tunnel) on", () -> {
             IWaypointService wp = Services.waypoints();
             wp.byName(WAYPOINT).ifPresent(w -> wp.remove(w.id()));
-            wp.add(WAYPOINT, "Playtest", ax(10), ay(1), az(8), H.mc().level.dimension().location().toString());
+            wp.add(WAYPOINT, "Playtest", ax(10), ay(1), az(8), H.mc().level.dimension().identifier().toString());
             H.setting(HighwayBuilder.ID, "target", WAYPOINT);
             H.setting(HighwayBuilder.ID, "mode", "TUNNEL");
             H.setting(HighwayBuilder.ID, "width", 3);
@@ -216,8 +216,18 @@ final class FieldJobsScenario {
             H.enable(HighwayBuilder.ID, true);
         });
         String[] lastStatus = {""};
+        int[] diagClock = {0};
         s.waitUpTo("highway (tunnel) digs to the end", 20 * 180, () -> {
             HighwayBuilder m = H.module(HighwayBuilder.ID);
+            if (diagClock[0]++ % 100 == 0) {
+                Object q = deepField(m, "digQueue");
+                s.note("highway t=" + (diagClock[0] - 1) + ": air " + tunnelAir() + "/" + TUNNEL_CELLS + ", queue "
+                        + (q == null ? "?" : H.fields(q, "size")) + ", " + H.fields(m, "digCell", "stepTarget",
+                        "navFailures") + ", stepRun " + deepField(m, "stepRun") + ", held " + H.p().getMainHandItem()
+                        + " slot " + H.p().getInventory().getSelectedSlot() + ", destroy "
+                        + H.fields(H.mc().gameMode, "destroyProgress", "isDestroying", "destroyBlockPos") + "; "
+                        + handsDiag(m));
+            }
             if (!m.status().equals(lastStatus[0])) {
                 lastStatus[0] = m.status();
                 s.note("highway status: " + lastStatus[0] + " at " + H.posStr() + ", tunnel air " + tunnelAir()
@@ -278,9 +288,9 @@ final class FieldJobsScenario {
 
     private static void highwayIce(Scenario s) {
         s.cmd(() -> Arena.fill(-12, 0, -1, 12, 0, 1, "minecraft:packed_ice"));
-        s.cmd(() -> "summon minecraft:boat " + (ax(-10) + 0.5) + " " + ay(1) + " " + (az(0) + 0.5));
+        s.cmd(() -> "summon minecraft:oak_boat " + (ax(-10) + 0.5) + " " + ay(1) + " " + (az(0) + 0.5));
         s.cmd(() -> Arena.tp(-9.5, 0.5, -90f));
-        s.cmd("ride @s mount @e[type=minecraft:boat,limit=1,sort=nearest]");
+        s.cmd("ride @s mount @e[type=minecraft:oak_boat,limit=1,sort=nearest]");
         s.waitUpTo("in the boat", 40, () -> H.p().getVehicle() != null);
         boolean[] sawBoat = new boolean[1];
         double[] startX = new double[1];
@@ -288,7 +298,7 @@ final class FieldJobsScenario {
         s.run("highway (ice) on", () -> {
             IWaypointService wp = Services.waypoints();
             wp.byName(WAYPOINT).ifPresent(w -> wp.remove(w.id()));
-            wp.add(WAYPOINT, "Playtest", ax(11), ay(1), az(0), H.mc().level.dimension().location().toString());
+            wp.add(WAYPOINT, "Playtest", ax(11), ay(1), az(0), H.mc().level.dimension().identifier().toString());
             H.setting(HighwayBuilder.ID, "mode", "ICE");
             H.setting(HighwayBuilder.ID, "width", 2);
             H.setting(HighwayBuilder.ID, "boat_handoff", true);
@@ -297,9 +307,22 @@ final class FieldJobsScenario {
             startX[0] = H.p().getX();
             H.enable(HighwayBuilder.ID, true);
         });
+        int[] boatClock = {0};
         s.waitUpTo("boat route starts", 20 * 10, () -> {
             TravelAutopilot ap = H.module(TravelAutopilot.ID);
             HighwayBuilder m = H.module(HighwayBuilder.ID);
+            if (boatClock[0]++ % 20 == 0) {
+                Entity v = H.p().getVehicle();
+                var keys = H.p().input.keyPresses;
+                var o = H.mc().options;
+                s.note("boat t=" + (boatClock[0] - 1) + ": run " + ap.runName() + ", keys up/left/right "
+                        + o.keyUp.isDown() + "/" + o.keyLeft.isDown() + "/" + o.keyRight.isDown() + ", keyPresses "
+                        + keys + ", vehicle " + (v == null ? "none" : v.getType() + " yaw "
+                        + Harness.fmt("%.1f", v.getYRot()) + " v " + v.getDeltaMovement() + " x "
+                        + Harness.fmt("%.2f", v.getX())) + ", player yaw/pitch " + Harness.fmt("%.1f", H.p().getYRot())
+                        + "/" + Harness.fmt("%.1f", H.p().getXRot()) + ", mouse grabbed "
+                        + H.mc().mouseHandler.isMouseGrabbed() + ", " + H.arbiterState());
+            }
             if (!m.status().equals(seen[0])) {
                 seen[0] = m.status();
                 s.note("highway (ice) status: " + seen[0]);
@@ -325,7 +348,7 @@ final class FieldJobsScenario {
             }
         });
         s.cmd("ride @s dismount");
-        s.cmd("kill @e[type=minecraft:boat]");
+        s.cmd("kill @e[type=minecraft:oak_boat]");
         s.cmd(() -> Arena.fill(-12, 0, -1, 12, 0, 1, "stone"));
         s.cmd(() -> Arena.fill(-12, 1, -2, 12, 3, 2, "air"));
         s.cmd(() -> Arena.tp(0.5, 0.5, 0f));
@@ -397,8 +420,8 @@ final class FieldJobsScenario {
         s.cmd("item replace entity @s hotbar.0 with minecraft:iron_sword");
         s.cmd(() -> Arena.tp(0.5, -9.5, 0f));
         s.cmd(() -> "summon minecraft:husk " + (ax(0) + 0.5) + " " + ay(1) + " " + (az(-7) + 0.5)
-                + " {NoAI:1b,PersistenceRequired:1b,Health:500f,attributes:[{id:\"minecraft:generic.max_health\","
-                + "base:500d},{id:\"minecraft:generic.knockback_resistance\",base:1d}]}");
+                + " {NoAI:1b,PersistenceRequired:1b,Health:500f,attributes:[{id:\"minecraft:max_health\","
+                + "base:500d},{id:\"minecraft:knockback_resistance\",base:1d}]}");
         s.waitTicks(10);
         List<int[]> swings = new ArrayList<>(); // tick, charge*100
         int[] clock = new int[1];
@@ -417,12 +440,12 @@ final class FieldJobsScenario {
             clock[0]++;
             float now = H.p().getAttackStrengthScale(0f);
             if (clock[0] <= 60) {
-                trace.append(Math.round(now * 100)).append(H.p().getInventory().selected == 0 ? "" : "s"
-                        + H.p().getInventory().selected).append(H.mc().options.keyAttack.isDown() ? "A" : "").append(' ');
+                trace.append(Math.round(now * 100)).append(H.p().getInventory().getSelectedSlot() == 0 ? "" : "s"
+                        + H.p().getInventory().getSelectedSlot()).append(H.mc().options.keyAttack.isDown() ? "A" : "").append(' ');
             } else if (clock[0] == 61) {
                 s.note("grinder strength trace (%, sN = other slot, A = attack key down): " + trace);
             }
-            int slotNow = H.p().getInventory().selected;
+            int slotNow = H.p().getInventory().getSelectedSlot();
             boolean swapped = prevSlot[0] >= 0 && slotNow != prevSlot[0]; // a hotbar swap also resets the meter
             prevSlot[0] = slotNow;
             if (now < prev[0] - 0.4f && !swapped) {
@@ -482,8 +505,8 @@ final class FieldJobsScenario {
         s.cmd("kill @e[type=minecraft:husk]");
     }
 
-    private static net.minecraft.world.entity.monster.Husk husk() {
-        var list = H.mc().level.getEntitiesOfClass(net.minecraft.world.entity.monster.Husk.class,
+    private static net.minecraft.world.entity.monster.zombie.Husk husk() {
+        var list = H.mc().level.getEntitiesOfClass(net.minecraft.world.entity.monster.zombie.Husk.class,
                 H.p().getBoundingBox().inflate(8));
         return list.isEmpty() ? null : list.get(0);
     }
@@ -623,7 +646,7 @@ final class FieldJobsScenario {
         s.cmd("clear @s");
         s.cmd("weather rain");
         s.cmd("item replace entity @s armor.chest with minecraft:elytra");
-        s.cmd("item replace entity @s weapon.mainhand with minecraft:trident[enchantments={levels:{\"minecraft:riptide\":3}}]");
+        s.cmd("item replace entity @s weapon.mainhand with minecraft:trident[enchantments={\"minecraft:riptide\":3}]");
         s.cmd("give @s minecraft:firework_rocket 8");
         // stand in the arena pool (1 deep): wet and on the ground
         s.cmd(() -> "tp @s " + (ax(6) + 0.5) + " " + ay(0) + " " + (az(-6) + 0.5) + " 0 0");
@@ -682,7 +705,7 @@ final class FieldJobsScenario {
                 + (NZ + 8) + " minecraft:obsidian");
         s.cmd(NETHER + "fill " + (NX - 2) + " " + NY + " " + NZ + " " + NX + " " + (NY + 1) + " " + NZ + " air");
         s.cmd("clear @s");
-        s.cmd("give @s minecraft:diamond_pickaxe[enchantments={levels:{\"minecraft:efficiency\":5}}]");
+        s.cmd("give @s minecraft:diamond_pickaxe[enchantments={\"minecraft:efficiency\":5}]");
         s.cmd("give @s minecraft:netherrack 32");
         s.cmd("effect give @s minecraft:haste 300 1 true");
         s.cmd(NETHER + "tp @s " + NX + ".5 " + NY + " " + NZ + ".5 -90 0");
@@ -813,7 +836,7 @@ final class FieldJobsScenario {
                         if (busy && phaseTicks % 100 == 0) {
                             s.note("debris hand-offs still busy after " + phaseTicks + " ticks: "
                                     + H.fields(H.module(LavaPlugModule.ID), "status")
-                                    + " / vein " + H.fields(H.module(VeinWorkModule.ID), "current", "pickBusy", "running", "scanning", "relaxed") + " held " + H.p().getMainHandItem() + " slot " + H.p().getInventory().selected + " destroy " + H.fields(H.mc().gameMode, "destroyProgress", "isDestroying", "destroyBlockPos") + "; vein hands: " + handsDiag(H.module(VeinWorkModule.ID)));
+                                    + " / vein " + H.fields(H.module(VeinWorkModule.ID), "current", "pickBusy", "running", "scanning", "relaxed") + " held " + H.p().getMainHandItem() + " slot " + H.p().getInventory().getSelectedSlot() + " destroy " + H.fields(H.mc().gameMode, "destroyProgress", "isDestroying", "destroyBlockPos") + "; vein hands: " + handsDiag(H.module(VeinWorkModule.ID)));
                         }
                         return !busy || phaseTicks > 20 * 30;
                     }

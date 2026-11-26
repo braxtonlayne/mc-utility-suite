@@ -19,7 +19,7 @@ import com.utilitysuite.ui.kit.UiTheme;
 import it.unimi.dsi.fastutil.objects.Object2IntMap;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.screens.inventory.AnvilScreen;
 import net.minecraft.core.Holder;
 import net.minecraft.core.Registry;
@@ -189,8 +189,8 @@ public final class AnvilPlanModule implements IModule, IConfigurable, LeaseListe
         Set<String> applicable = targetBook ? null : applicableTo(mc, target);
         List<Piece> inputs = new ArrayList<>();
         var inv = mc.player.getInventory();
-        for (int i = 0; i < inv.items.size(); i++) {
-            ItemStack s = inv.items.get(i);
+        for (int i = 0; i < inv.getNonEquipmentItems().size(); i++) {
+            ItemStack s = inv.getNonEquipmentItems().get(i);
             if (s == target || s.isEmpty() || s.getCount() != 1) {
                 continue;
             }
@@ -224,11 +224,11 @@ public final class AnvilPlanModule implements IModule, IConfigurable, LeaseListe
 
     private static Set<String> applicableTo(Minecraft mc, ItemStack target) {
         Set<String> out = new HashSet<>();
-        Registry<Enchantment> reg = mc.level.registryAccess().registryOrThrow(Registries.ENCHANTMENT);
+        Registry<Enchantment> reg = mc.level.registryAccess().lookupOrThrow(Registries.ENCHANTMENT);
         // NeoForge's AnvilMenu asks the stack (supportsEnchantment honours item overrides)
-        reg.holders().forEach(h -> {
+        reg.listElements().forEach(h -> {
             if (target.supportsEnchantment(h)) {
-                out.add(h.key().location().toString());
+                out.add(h.key().identifier().toString());
             }
         });
         return out;
@@ -239,7 +239,7 @@ public final class AnvilPlanModule implements IModule, IConfigurable, LeaseListe
         Map<String, Integer> map = new TreeMap<>();
         for (Object2IntMap.Entry<Holder<Enchantment>> e : ench.entrySet()) {
             Optional<net.minecraft.resources.ResourceKey<Enchantment>> key = e.getKey().unwrapKey();
-            key.ifPresent(k -> map.put(k.location().toString(), e.getIntValue()));
+            key.ifPresent(k -> map.put(k.identifier().toString(), e.getIntValue()));
         }
         String label = book ? "Book (" + AnvilPlanner.describe(new Piece("", true, 0, map)) + ")"
                 : s.getHoverName().getString();
@@ -365,9 +365,9 @@ public final class AnvilPlanModule implements IModule, IConfigurable, LeaseListe
         }
         List<String> ls = lines;
         Font font = Minecraft.getInstance().font;
-        GuiGraphics g = event.getGuiGraphics();
-        int x = screen.getGuiLeft() + screen.getXSize() + 6;
-        int y = screen.getGuiTop();
+        GuiGraphicsExtractor g = event.getGuiGraphics();
+        int x = screen.getLeftPos() + screen.getImageWidth() + 6;
+        int y = screen.getTopPos();
         int w = Math.max(80, screen.width - x - 6);
         if (ls != fittedFrom || w != fittedWidth) { // re-fit only when the plan or the window changes
             String[] f = new String[ls.size()];

@@ -107,10 +107,10 @@ public final class TriggerAssist implements IModule, IConfigurable, LeaseListene
         }
         boolean canCrit = !p.isInWater() && !p.onClimbable() && !p.isPassenger()
                 && !p.hasEffect(MobEffects.BLINDNESS);
-        boolean hold = gate.critHold(critWait, p.onGround(), canCrit, p.getDeltaMovement().y, p.fallDistance, edge);
+        boolean hold = gate.critHold(critWait, p.onGround(), canCrit, p.getDeltaMovement().y, (float) p.fallDistance, edge);
         // vanilla only picks entities inside the interaction range, so a crosshair hit is in reach
         boolean valid = TriggerGate.valid(id, living, kind, ally, id >= 0, p.getAttackStrengthScale(0.5f),
-                mc.screen != null, p.isUsingItem(), manual, hold) && !arbiter.isAutomationStopped()
+                mc.gui.screen() != null, p.isUsingItem(), manual, hold) && !arbiter.isAutomationStopped()
                 && !arbiter.isHeldBy(ControlChannel.WORLD_INTERACT, CombatAssistant.ID); // the assistant swings itself
         int delay = valid && gate.needsDelay(id)
                 ? Services.humanizer().reactionTicks(REACTION_MEDIAN, REACTION_MIN, REACTION_MAX) : 0;

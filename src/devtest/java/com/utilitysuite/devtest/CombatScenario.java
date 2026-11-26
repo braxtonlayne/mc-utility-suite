@@ -9,7 +9,7 @@ import com.utilitysuite.core.api.ControlLease;
 import com.utilitysuite.core.api.Services;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.Entity;
-import net.minecraft.world.entity.monster.Zombie;
+import net.minecraft.world.entity.monster.zombie.Zombie;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -59,7 +59,7 @@ final class CombatScenario {
                     "enabled=" + ca.isEnabled() + " state=" + ca.state());
         });
         s.cmd(() -> "summon minecraft:zombie " + (Arena.cx + 0.5) + " " + (Arena.FLOOR + 1) + " " + (Arena.cz + 3.5)
-                + " {ArmorItems:[{},{},{},{id:\"minecraft:leather_helmet\",count:1}],PersistenceRequired:1b}");
+                + " {equipment:{head:{id:\"minecraft:leather_helmet\",count:1}},PersistenceRequired:1b}");
         s.waitFor("zombie visible", 60, () -> nearestZombie() != null);
         s.waitUpTo("zombie close", 60, () -> nearestZombie().distanceTo(H.p()) < 2.8);
         s.run("user's first hit", () -> {
@@ -67,7 +67,7 @@ final class CombatScenario {
             H.p().lookAt(net.minecraft.commands.arguments.EntityAnchorArgument.Anchor.EYES,
                     target[0].getEyePosition());
             H.mc().gameMode.attack(H.p(), target[0]);
-            H.p().swing(InteractionHand.MAIN_HAND);
+            H.p().swing(InteractionHand.MAIN_HAND, H.p().getMainHandItem().getAttackAnimation(), false);
             s.note("hit zombie #" + target[0].getId() + " at distance " + Harness.fmt("%.2f",
                     target[0].distanceTo(H.p())));
         });
@@ -210,7 +210,7 @@ final class CombatScenario {
 
     private static String idleZombie(double dx, double dy, double dz, String extra) {
         return "summon minecraft:zombie " + (Arena.cx + dx) + " " + (Arena.FLOOR + dy) + " " + (Arena.cz + dz)
-                + " {NoAI:1b,PersistenceRequired:1b,ArmorItems:[{},{},{},{id:\"minecraft:leather_helmet\",count:1}]"
+                + " {NoAI:1b,PersistenceRequired:1b,equipment:{head:{id:\"minecraft:leather_helmet\",count:1}}"
                 + extra + "}";
     }
 

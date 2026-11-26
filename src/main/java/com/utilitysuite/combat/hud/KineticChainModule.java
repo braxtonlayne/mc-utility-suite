@@ -19,8 +19,8 @@ import com.utilitysuite.core.api.visual.IVisuals;
 import com.utilitysuite.core.api.visual.TextRole;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
-import net.minecraft.client.renderer.MultiBufferSource;
-import net.minecraft.client.renderer.RenderType;
+import net.minecraft.client.renderer.SubmitNodeCollector;
+import net.minecraft.client.renderer.rendertype.RenderTypes;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.entity.Entity;
@@ -32,7 +32,7 @@ import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.EntityHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
-import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
+import net.neoforged.neoforge.client.event.SubmitCustomGeometryEvent;
 
 import java.util.List;
 
@@ -157,7 +157,7 @@ public final class KineticChainModule implements IModule, IConfigurable, HudElem
     }
 
     private boolean visible(Minecraft mc) {
-        return enabled && active && !mc.options.hideGui && !Services.modState().isCleanScreen();
+        return enabled && active && !mc.gui.hud.isHidden() && !Services.modState().isCleanScreen();
     }
 
     // ---- HUD element: apex and mace-damage readout beside the crosshair ------------------------------------------
@@ -189,30 +189,39 @@ public final class KineticChainModule implements IModule, IConfigurable, HudElem
     }
 
     /** World pass: outline every launch face, brighter for a higher apex, in one batched line buffer. */
-    public void onRenderLevel(RenderLevelStageEvent event) {
-        if (event.getStage() != RenderLevelStageEvent.Stage.AFTER_PARTICLES) {
-            return;
-        }
+    public void onRenderLevel(SubmitCustomGeometryEvent event) {
         Minecraft mc = Minecraft.getInstance();
         if (!showSpots || !visible(mc) || scanner.count == 0) {
             return;
         }
-        PoseStack pose = event.getPoseStack();
-        if (pose == null) {
-            return;
-        }
-        Vec3 cam = event.getCamera().getPosition();
+        Vec3 cam = event.getLevelRenderState().cameraRenderState.pos;
+        spotCamX = cam.x;
+        spotCamY = cam.y;
+        spotCamZ = cam.z;
+        lineWidth = Math.max(1f, mc.gameRenderer.gameRenderState().windowRenderState.appropriateLineWidth);
+        event.getSubmitNodeCollector().submitCustomGeometry(event.getPoseStack(), RenderTypes.linesTranslucent(),
+                drawSpots);
+    }
+
+    /** The deferred draw (26.3 submits run later in the same frame): one instance. */
+    private final SubmitNodeCollector.CustomGeometryRenderer drawSpots = this::drawSpots;
+    private double spotCamX;
+    private double spotCamY;
+    private double spotCamZ;
+    private float lineWidth = 1f;
+
+    private void drawSpots(PoseStack.Pose last, VertexConsumer lines) {
         double top = scanner.best >= 0 ? Math.max(1e-3, scanner.apex[scanner.best]) : 1;
-        MultiBufferSource.BufferSource buffers = mc.renderBuffers().bufferSource();
-        VertexConsumer lines = buffers.getBuffer(RenderType.lines());
-        PoseStack.Pose last = pose.last();
+        double camX = spotCamX;
+        double camY = spotCamY;
+        double camZ = spotCamZ;
         for (int i = 0; i < scanner.count; i++) {
             float t = (float) (scanner.apex[i] / top);
             float r = 0.3f + 0.7f * t, gr = 0.8f, b = 1f - 0.6f * t, a = 0.35f + 0.6f * t;
             int f = scanner.face[i];
             int nx = KineticSpotScanner.normalX(f), ny = KineticSpotScanner.normalY(f);
-            float x = (float) (scanner.bx[i] - cam.x), y = (float) (scanner.by[i] - cam.y);
-            float z = (float) (scanner.bz[i] - cam.z);
+            float x = (float) (scanner.bx[i] - camX), y = (float) (scanner.by[i] - camY);
+            float z = (float) (scanner.bz[i] - camZ);
             // tangent axes of the face plane
             float ux, uy, uz, wx, wy, wz;
             if (ny != 0) {
@@ -230,10 +239,9 @@ public final class KineticChainModule implements IModule, IConfigurable, HudElem
             edge(lines, last, x + ux + wx, y + uy + wy, z + uz + wz, x - ux + wx, y - uy + wy, z - uz + wz, r, gr, b, a);
             edge(lines, last, x - ux + wx, y - uy + wy, z - uz + wz, x - ux - wx, y - uy - wy, z - uz - wz, r, gr, b, a);
         }
-        buffers.endBatch(RenderType.lines());
     }
 
-    private static void edge(VertexConsumer c, PoseStack.Pose p, float x0, float y0, float z0, float x1, float y1,
+    private void edge(VertexConsumer c, PoseStack.Pose p, float x0, float y0, float z0, float x1, float y1,
                              float z1, float r, float g, float b, float a) {
         float nx = x1 - x0, ny = y1 - y0, nz = z1 - z0;
         float len = (float) Math.sqrt(nx * nx + ny * ny + nz * nz);
@@ -243,8 +251,8 @@ public final class KineticChainModule implements IModule, IConfigurable, HudElem
         nx /= len;
         ny /= len;
         nz /= len;
-        c.addVertex(p, x0, y0, z0).setColor(r, g, b, a).setNormal(p, nx, ny, nz);
-        c.addVertex(p, x1, y1, z1).setColor(r, g, b, a).setNormal(p, nx, ny, nz);
+        c.addVertex(p, x0, y0, z0).setColor(r, g, b, a).setNormal(p, nx, ny, nz).setLineWidth(lineWidth);
+        c.addVertex(p, x1, y1, z1).setColor(r, g, b, a).setNormal(p, nx, ny, nz).setLineWidth(lineWidth);
     }
 
     @Override

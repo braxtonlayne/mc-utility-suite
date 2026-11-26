@@ -18,17 +18,16 @@ class MapArtPaletteVanillaTest {
     @Test
     void shadesMatchVanillaBrightness() {
         int rgb = MapColor.GRASS.col;
-        assertEquals(argbToRgb(MapColor.GRASS.calculateRGBColor(MapColor.Brightness.LOW)),
+        assertEquals(argbToRgb(MapColor.GRASS.calculateARGBColor(MapColor.Brightness.LOW)),
                 MapArtPalette.shade(rgb, MapArtPalette.SHADE_LOW));
-        assertEquals(argbToRgb(MapColor.GRASS.calculateRGBColor(MapColor.Brightness.NORMAL)),
+        assertEquals(argbToRgb(MapColor.GRASS.calculateARGBColor(MapColor.Brightness.NORMAL)),
                 MapArtPalette.shade(rgb, MapArtPalette.SHADE_FLAT));
-        assertEquals(argbToRgb(MapColor.GRASS.calculateRGBColor(MapColor.Brightness.HIGH)),
+        assertEquals(argbToRgb(MapColor.GRASS.calculateARGBColor(MapColor.Brightness.HIGH)),
                 MapArtPalette.shade(rgb, MapArtPalette.SHADE_HIGH));
     }
 
-    /** calculateRGBColor returns ABGR for the map texture; convert to 0xRRGGBB. */
-    private static int argbToRgb(int abgr) {
-        int r = abgr & 0xFF, g = (abgr >> 8) & 0xFF, b = (abgr >> 16) & 0xFF;
-        return (r << 16) | (g << 8) | b;
+    /** calculateARGBColor returns opaque ARGB; drop the alpha to get 0xRRGGBB. */
+    private static int argbToRgb(int argb) {
+        return argb & 0xFFFFFF;
     }
 }

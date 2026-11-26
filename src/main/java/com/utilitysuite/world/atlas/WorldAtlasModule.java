@@ -93,7 +93,7 @@ public final class WorldAtlasModule extends WorldModule {
         if (mc.player == null || mc.level == null) {
             return;
         }
-        mc.setScreen(new WorldAtlasScreen(this));
+        mc.gui.setScreen(new WorldAtlasScreen(this));
     }
 
     public AtlasTileStore store() {
@@ -165,7 +165,7 @@ public final class WorldAtlasModule extends WorldModule {
     }
 
     private void sampleChunk(ClientLevel level, AtlasTileStore.Tile t) {
-        int minY = level.getMinBuildHeight();
+        int minY = level.getMinY();
         int baseX = t.chunkX << 4;
         int baseZ = t.chunkZ << 4;
         boolean northLoaded = level.hasChunk(t.chunkX, t.chunkZ - 1);

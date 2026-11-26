@@ -18,9 +18,9 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.boss.enderdragon.EndCrystal;
 import net.minecraft.world.entity.boss.enderdragon.EnderDragon;
 import net.minecraft.world.entity.boss.wither.WitherBoss;
-import net.minecraft.world.entity.projectile.WitherSkull;
+import net.minecraft.world.entity.projectile.hurtingprojectile.WitherSkull;
 import net.minecraft.world.phys.Vec3;
-import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
+import net.neoforged.neoforge.client.event.SubmitCustomGeometryEvent;
 import net.neoforged.neoforge.event.entity.EntityJoinLevelEvent;
 import net.neoforged.neoforge.event.entity.EntityLeaveLevelEvent;
 
@@ -386,8 +386,8 @@ public final class BossHelperModule implements IModule, IConfigurable {
     // ---- world overlays (Shell world kit, batched) ---------------------------------------------------------------
 
     /** Draws the cached arc, incoming skull lines and breath rings. Nothing when idle, off or in Clean-Screen. */
-    public void onRenderLevel(RenderLevelStageEvent event) {
-        if (!enabled || !worldOverlays || event.getStage() != RenderLevelStageEvent.Stage.AFTER_PARTICLES) {
+    public void onRenderLevel(SubmitCustomGeometryEvent event) {
+        if (!enabled || !worldOverlays) {
             return;
         }
         if (dragon == null && wither == null && !anyTracked()) {
@@ -400,8 +400,8 @@ public final class BossHelperModule implements IModule, IConfigurable {
         if (world == null || p == null) {
             return; // no world pass (Clean-Screen, no Shell)
         }
-        Vec3 cam = event.getCamera().getPosition();
-        float pt = event.getPartialTick().getGameTimeDeltaPartialTick(false);
+        Vec3 cam = event.getLevelRenderState().cameraRenderState.pos;
+        float pt = event.getLevelRenderState().worldPartialTicks;
         if (dragonHints && dragon != null && arcCount >= 2) {
             // solid up to the point before the blocked segment, dashed red from there on
             int clearEnd = arcBlockedAt >= 0 ? arcBlockedAt + 1 : arcCount;

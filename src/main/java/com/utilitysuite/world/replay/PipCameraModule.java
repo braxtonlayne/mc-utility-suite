@@ -1,52 +1,56 @@
 package com.utilitysuite.world.replay;
 
+import com.mojang.blaze3d.ProjectionType;
 import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.blaze3d.pipeline.TextureTarget;
+import com.mojang.blaze3d.resource.CrossFrameResourcePool;
 import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.vertex.BufferBuilder;
-import com.mojang.blaze3d.vertex.BufferUploader;
-import com.mojang.blaze3d.vertex.DefaultVertexFormat;
-import com.mojang.blaze3d.vertex.Tesselator;
-import com.mojang.blaze3d.vertex.VertexFormat;
-import com.mojang.blaze3d.vertex.VertexSorting;
+import com.mojang.renderpearl.api.GpuFormat;
+import com.mojang.renderpearl.api.textures.FilterMode;
 import com.utilitysuite.UtilitySuiteMod;
 import com.utilitysuite.core.api.ProfileConfig;
 import com.utilitysuite.core.api.SecondaryView;
 import com.utilitysuite.core.api.SettingSpec;
 import com.utilitysuite.core.api.visual.FrameLevel;
 import com.utilitysuite.core.api.visual.HoloToken;
-import com.utilitysuite.mixin.world.LevelRendererCullStateAccessor;
-import com.utilitysuite.mixin.world.MinecraftMainTargetAccessor;
+import com.utilitysuite.mixin.world.GameRendererMainTargetAccessor;
+import com.utilitysuite.mixin.world.LevelExtractorCullStateAccessor;
 import com.utilitysuite.mixin.world.SectionOcclusionGraphAccessor;
 import com.utilitysuite.ui.holo.HoloFrames;
 import com.utilitysuite.ui.holo.HoloTheme;
 import com.utilitysuite.ui.kit.UiRenderUtils;
 import com.utilitysuite.world.WorldModule;
+import com.utilitysuite.world.minimap.GuiMesh;
 import com.utilitysuite.world.replay.PipRenderPolicy.Fallback;
 import com.utilitysuite.world.replay.PipRenderPolicy.RenderMode;
 import net.minecraft.client.Camera;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.client.gui.LayeredDraw;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.gui.render.TextureSetup;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
-import net.minecraft.client.renderer.FogRenderer;
 import net.minecraft.client.renderer.GameRenderer;
 import net.minecraft.client.renderer.LevelRenderer;
+import net.minecraft.client.renderer.Projection;
+import net.minecraft.client.renderer.ProjectionMatrixBuffer;
+import net.minecraft.client.renderer.RenderPipelines;
+import net.minecraft.client.renderer.culling.Frustum;
+import net.minecraft.client.renderer.fog.FogRenderer;
+import net.minecraft.client.renderer.state.level.CameraRenderState;
+import net.minecraft.client.renderer.state.level.LevelRenderState;
+import net.minecraft.util.profiling.Profiler;
 import net.minecraft.util.profiling.ProfilerFiller;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.monster.Enemy;
 import net.minecraft.world.entity.player.Player;
-import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.phys.Vec3;
 import net.neoforged.fml.ModList;
 import net.neoforged.neoforge.client.event.RenderFrameEvent;
+import net.neoforged.neoforge.client.gui.GuiLayer;
 import org.joml.Matrix4f;
-import org.joml.Quaternionf;
-import org.lwjgl.opengl.GL11;
 
 import java.util.List;
 
@@ -59,27 +63,30 @@ import java.util.List;
  * </ul>
  * Render modes:
  * <ul>
- *   <li><b>Full render</b>: a true second world render. At {@code RenderFrameEvent.Pre} (before the main frame, so
- *       everything the second pass touches is set up again by the main pass) the level is rendered with
- *       {@code LevelRenderer.renderLevel} from a private {@link Camera} into an offscreen {@link TextureTarget} at
- *       reduced resolution, at most once every N frames; the HUD layer blits that texture into the kit frame every
- *       frame. During the pass: {@code Minecraft.mainRenderTarget} is swapped for the offscreen target (accessor
- *       mixin; the target forces its own viewport on every bind, so a post chain resizing the viewport cannot spill
- *       out of it), {@code RenderLevelStageEvent} is not dispatched ({@link SecondaryView}, so no overlay of ours or
- *       anyone's recurses or double-draws), the projection matrix is backed up and restored, and the level
- *       renderer's culling bookkeeping is primed so the second camera neither invalidates the main section-occlusion
- *       graph nor leaves its frustum-culled section list to the main pass (and a frame is skipped while a full
- *       occlusion rebuild is pending, so that rebuild is always scheduled from the main camera). Everything is restored in a
- *       {@code finally}; a failure switches the panel to the wireframe for the session.</li>
+ *   <li><b>Full render</b>: a true second world render. 26.3 splits a frame into extract (level render state) and
+ *       render, and {@code RenderFrameEvent.Pre} fires after the main extract, so the second pass runs at
+ *       {@code RenderFrameEvent.Post} instead (the main frame is finished; its level state may be overwritten because
+ *       the next frame extracts again). The pass: a private {@link Camera} pinned to the second pose is updated and
+ *       extracted into the shared {@code CameraRenderState}, {@code LevelExtractor.extract} fills the level state from
+ *       it, then {@code LevelRenderer.render} draws into an offscreen {@link TextureTarget} at reduced resolution (the
+ *       {@code GameRenderer} main target is swapped for it through an accessor mixin, so every frame-graph target the
+ *       level renderer creates is sized to it), at most once every N frames, with its own projection buffer, fog
+ *       buffer and resource pool. The HUD layer blits the last image (opaque) into the kit frame every frame, so the
+ *       panel shows the image of the previous frame. {@link SecondaryView} is active for the pass (our world overlays
+ *       skip themselves), entity outlines are off for it, and the culling bookkeeping is primed so the second camera
+ *       neither invalidates the main section-occlusion graph nor leaves its frustum-culled section list to the main
+ *       pass (and a frame is skipped while a full occlusion rebuild is pending, so that rebuild is always scheduled
+ *       from the main camera). Everything is restored in a {@code finally}; a failure switches the panel to the
+ *       wireframe for the session.</li>
  *   <li><b>Wireframe</b> (default, and the fallback): entity boxes coloured by kind, velocity ticks and a ground grid
  *       projected with {@link ViewProjector} from the second pose into a preallocated segment cache.</li>
  * </ul>
  * Full render is unavailable with Sodium, Embeddium, Iris or Oculus loaded (they replace the level renderer's
- * internals) and with Fabulous graphics (its transparency post chain is sized to the window); the panel then draws
+ * internals) and with Fabulous / improved transparency (kept from 1.21.1; untested in 26.3); the panel then draws
  * the wireframe and says why. Off by default; nothing is drawn or rendered when off, in Clean-Screen, with F1 or F3,
  * or with a screen open, and the offscreen target is freed when the module turns off.
  */
-public final class PipCameraModule extends WorldModule implements LayeredDraw.Layer {
+public final class PipCameraModule extends WorldModule implements GuiLayer {
 
     public static final String ID = "pip_camera";
 
@@ -125,12 +132,14 @@ public final class PipCameraModule extends WorldModule implements LayeredDraw.La
     private float posePitch;
     private float poseFov;
 
-    // Full render state; created lazily on the render thread (never in the constructor, so unit tests stay GL free).
-    private PipTarget target;
+    // Full render state; created lazily on the render thread (never in the constructor, so unit tests stay GPU free).
+    private TextureTarget target;
     private PipCamera camera;
-    private Matrix4f projection;
-    private Matrix4f viewRotation;
-    private Quaternionf scratchRotation;
+    private Projection projection;
+    private ProjectionMatrixBuffer projectionBuffer;
+    private FogRenderer fog;
+    private CrossFrameResourcePool pool;
+    private final GuiMesh blit = new GuiMesh();
     private boolean fullValid;
     private boolean fullFailed;
     private int rendererMod = -1;
@@ -201,6 +210,12 @@ public final class PipCameraModule extends WorldModule implements LayeredDraw.La
             target.destroyBuffers();
             target = null;
         }
+        if (pool != null) {
+            pool.clear(); // frees the pass's frame-graph targets
+        }
+        // The fog renderer and projection buffer are kept for the session (a few hundred bytes): the fog renderer's
+        // constructor points the global shader fog at its own buffer, so closing it could leave that pointing at a
+        // freed buffer until the main pass sets its own again (not at all on the title screen).
     }
 
     @Override
@@ -210,21 +225,24 @@ public final class PipCameraModule extends WorldModule implements LayeredDraw.La
                 parked = false; // second press: back to the chase drone
                 continue;
             }
-            Camera cam = Minecraft.getInstance().gameRenderer.getMainCamera();
-            Vec3 pos = cam.getPosition(); // the camera's own field
+            Camera cam = Minecraft.getInstance().gameRenderer.mainCamera();
+            Vec3 pos = cam.position(); // the camera's own field
             parkX = pos.x;
             parkY = pos.y;
             parkZ = pos.z;
-            parkYaw = cam.getYRot();
-            parkPitch = cam.getXRot();
+            parkYaw = cam.yRot();
+            parkPitch = cam.xRot();
             parked = true;
+        }
+        if (camera != null && renderMode == RenderMode.FULL) {
+            camera.tick(); // eye height, fov easing and the environment-attribute probe (sky / fog colours)
         }
     }
 
     /** True when the panel would be drawn this frame. */
     private boolean panelVisible(Minecraft mc) {
         return isEnabled() && renderMode != RenderMode.OFF && !cleanScreen() && mc.player != null && mc.level != null
-                && !mc.options.hideGui && mc.screen == null && !mc.getDebugOverlay().showDebugScreen();
+                && !mc.gui.hud.isHidden() && mc.gui.screen() == null && !mc.getDebugOverlay().showDebugScreen();
     }
 
     private boolean rendererModLoaded() {
@@ -236,17 +254,23 @@ public final class PipCameraModule extends WorldModule implements LayeredDraw.La
     }
 
     private Fallback fallback() {
-        return PipRenderPolicy.fallback(renderMode, rendererModLoaded(), Minecraft.useShaderTransparency(),
+        return PipRenderPolicy.fallback(renderMode, rendererModLoaded(),
+                Minecraft.getInstance().gameRenderer.useImprovedTransparency(),
                 fullFailed);
     }
 
     // ---------------------------------------------------------------------------------------------------------------
-    // Full render: the second level pass (RenderFrameEvent.Pre, before the main frame)
+    // Full render: the second level pass (RenderFrameEvent.Post, after the main frame)
     // ---------------------------------------------------------------------------------------------------------------
 
-    /** Game bus, every frame. Early-outs unless the full render is on, visible and due. */
-    public void onRenderFrame(RenderFrameEvent.Pre e) {
-        if (!isEnabled() || renderMode != RenderMode.FULL || SecondaryView.active()) {
+    /**
+     * Game bus, every frame. Early-outs unless the full render is on, visible and due. Takes the base event so the
+     * bootstrap can subscribe either phase; only {@code Post} renders (in 26.3 {@code Pre} fires after the main
+     * frame's extract, so a pass there would overwrite the state the main frame is about to draw).
+     */
+    public void onRenderFrame(RenderFrameEvent e) {
+        if (!(e instanceof RenderFrameEvent.Post) || !isEnabled() || renderMode != RenderMode.FULL
+                || SecondaryView.active()) {
             return;
         }
         Minecraft mc = Minecraft.getInstance();
@@ -258,8 +282,7 @@ public final class PipCameraModule extends WorldModule implements LayeredDraw.La
         if (!fullGate.tick()) {
             return;
         }
-        LevelRendererCullStateAccessor lr = (LevelRendererCullStateAccessor) mc.levelRenderer;
-        if (((SectionOcclusionGraphAccessor) lr.utilitysuite$occlusionGraph()).utilitysuite$needsFullUpdate()) {
+        if (((SectionOcclusionGraphAccessor) mc.levelRenderer.sectionOcclusionGraph()).utilitysuite$needsFullUpdate()) {
             // A full occlusion rebuild is pending and would be scheduled from our camera: keep the last image and
             // let the main pass schedule it from the main camera; try again next frame.
             fullGate.invalidate();
@@ -276,96 +299,139 @@ public final class PipCameraModule extends WorldModule implements LayeredDraw.La
         int tw = PipRenderPolicy.targetWidth(panelWidth, mc.getWindow().getGuiScale(), resolutionPct);
         int th = PipRenderPolicy.targetHeight(tw);
         if (target == null) {
-            target = new PipTarget(tw, th);
-            target.setFilterMode(GL11.GL_LINEAR);
+            target = new TextureTarget("utilitysuite pip", tw, th, GpuFormat.RGBA8_UNORM, GpuFormat.D32_FLOAT);
         } else if (target.width != tw || target.height != th) {
-            target.resize(tw, th, Minecraft.ON_OSX);
-            target.setFilterMode(GL11.GL_LINEAR);
+            target.resize(tw, th);
         }
         if (camera == null) {
             camera = new PipCamera();
-            projection = new Matrix4f();
-            viewRotation = new Matrix4f();
-            scratchRotation = new Quaternionf();
+            projection = new Projection();
+            projectionBuffer = new ProjectionMatrixBuffer("utilitysuite pip");
+            fog = new FogRenderer();
+            pool = new CrossFrameResourcePool(3);
         }
         float pt = delta.getGameTimeDeltaPartialTick(false);
         computePose(p, pt);
-        camera.place(level, p, mode == Mode.DRONE, pt, poseX, poseY, poseZ, poseYaw, posePitch);
-        projection.setPerspective((float) Math.toRadians(poseFov), tw / (float) th, 0.05f, gr.getDepthFar());
-        viewRotation.rotation(camera.rotation().conjugate(scratchRotation));
-
-        RenderTarget main = mc.getMainRenderTarget();
-        MinecraftMainTargetAccessor targets = (MinecraftMainTargetAccessor) mc;
-        LevelRendererCullStateAccessor cull = (LevelRendererCullStateAccessor) lr;
-        double savedX = cull.utilitysuite$prevCamX();
-        double savedY = cull.utilitysuite$prevCamY();
-        double savedZ = cull.utilitysuite$prevCamZ();
-        // Same 8-block cell as our camera: setupRender won't invalidate the main occlusion graph. NaN rotation: it
-        // re-culls the section list for our frustum instead of keeping the main view's.
-        cull.utilitysuite$setPrevCamX(Math.floor(poseX / 8.0));
-        cull.utilitysuite$setPrevCamY(Math.floor(poseY / 8.0));
-        cull.utilitysuite$setPrevCamZ(Math.floor(poseZ / 8.0));
-        cull.utilitysuite$setPrevCamRotX(Double.NaN);
-        cull.utilitysuite$setPrevCamRotY(Double.NaN);
-        ProfilerFiller profiler = mc.getProfiler();
+        LevelRenderState levelState = gr.gameRenderState().levelRenderState;
+        CameraRenderState cs = levelState.cameraRenderState;
+        SectionOcclusionGraphAccessor occlusion = (SectionOcclusionGraphAccessor) lr.sectionOcclusionGraph();
+        LevelExtractorCullStateAccessor extractorCull = (LevelExtractorCullStateAccessor) mc.levelExtractor;
+        GameRendererMainTargetAccessor targets = (GameRendererMainTargetAccessor) gr;
+        RenderTarget main = gr.mainRenderTarget();
+        double savedX = occlusion.utilitysuite$prevCamX();
+        double savedY = occlusion.utilitysuite$prevCamY();
+        double savedZ = occlusion.utilitysuite$prevCamZ();
+        ProfilerFiller profiler = Profiler.get();
         profiler.push("utilitysuite_pip");
         RenderSystem.backupProjectionMatrix();
         SecondaryView.begin();
-        targets.utilitysuite$setMainRenderTarget(target);
+        boolean swapped = false;
         try {
-            target.bindWrite(true);
-            RenderSystem.setProjectionMatrix(projection, VertexSorting.DISTANCE_TO_ORIGIN);
-            lr.prepareCullFrustum(camera.getPosition(), viewRotation, projection);
-            lr.renderLevel(delta, false, camera, gr, gr.lightTexture(), viewRotation, projection);
+            camera.place(mc, level, p, mode == Mode.DRONE, delta, poseX, poseY, poseZ, poseYaw, posePitch, poseFov,
+                    tw / (float) th);
+            camera.extractRenderState(cs, delta);
+            cs.cullFrustum.set(camera.getCullFrustum());
+            cs.fogType = camera.getFluidInCamera();
+            cs.fogData = fog.setupFog(camera, mc.options.getEffectiveRenderDistance(), delta,
+                    gr.bossOverlayWorldDarkening(pt), level);
+            projection.setupPerspective(Camera.PROJECTION_Z_NEAR, cs.depthFar, poseFov, tw, th);
+            projection.getMatrix(cs.projectionMatrix);
+            // NaN rotation: the extractor re-culls the section list for our frustum instead of keeping the main one.
+            extractorCull.utilitysuite$setPrevCamRotX(Double.NaN);
+            extractorCull.utilitysuite$setPrevCamRotY(Double.NaN);
+            mc.levelExtractor.extract(delta, camera, pt);
+            levelState.shouldShowEntityOutlines = false; // the outline target is window sized
+            // Same 8-block cell as our camera: the occlusion update won't invalidate the main occlusion graph.
+            occlusion.utilitysuite$setPrevCamX(Math.floor(poseX / 8.0));
+            occlusion.utilitysuite$setPrevCamY(Math.floor(poseY / 8.0));
+            occlusion.utilitysuite$setPrevCamZ(Math.floor(poseZ / 8.0));
+            targets.utilitysuite$setMainRenderTarget(target);
+            swapped = true;
+            RenderSystem.setProjectionMatrix(projectionBuffer.getBuffer(cs.projectionMatrix), ProjectionType.PERSPECTIVE);
+            fog.updateBuffer(cs.fogData);
+            lr.render(pool, false, cs, fog.getBuffer(FogRenderer.FogMode.WORLD), cs.fogData.color, true, false);
             fullValid = true;
         } catch (RuntimeException ex) {
             fullFailed = true;
             fullValid = false;
             UtilitySuiteMod.LOGGER.warn("Picture-in-picture full render failed; using the wireframe from now on", ex);
         } finally {
-            targets.utilitysuite$setMainRenderTarget(main);
+            if (swapped) {
+                targets.utilitysuite$setMainRenderTarget(main);
+            }
             SecondaryView.end();
-            main.bindWrite(true);
             RenderSystem.restoreProjectionMatrix();
-            cull.utilitysuite$setPrevCamX(savedX);
-            cull.utilitysuite$setPrevCamY(savedY);
-            cull.utilitysuite$setPrevCamZ(savedZ);
+            occlusion.utilitysuite$setPrevCamX(savedX);
+            occlusion.utilitysuite$setPrevCamY(savedY);
+            occlusion.utilitysuite$setPrevCamZ(savedZ);
             // Force the main pass to re-cull its section list for its own frustum.
-            cull.utilitysuite$setPrevCamRotX(Double.NaN);
-            cull.utilitysuite$setPrevCamRotY(Double.NaN);
-            // The state Minecraft set before RenderFrameEvent.Pre.
-            FogRenderer.setupNoFog();
-            RenderSystem.enableCull();
-            RenderSystem.enableDepthTest();
-            RenderSystem.depthMask(true);
-            RenderSystem.disableBlend();
-            RenderSystem.defaultBlendFunc();
+            extractorCull.utilitysuite$setPrevCamRotX(Double.NaN);
+            extractorCull.utilitysuite$setPrevCamRotY(Double.NaN);
+            fog.endFrame();
+            pool.endFrame();
             profiler.pop();
         }
     }
 
-    /** Offscreen level target. Every bind restores its own viewport (a post pass may have set the window's). */
-    private static final class PipTarget extends TextureTarget {
-        PipTarget(int w, int h) {
-            super(w, h, true, Minecraft.ON_OSX);
+    /**
+     * A camera pinned to an arbitrary pose (vanilla's only follows an entity). {@code update} still runs (depth far,
+     * fov, initialised flag, the entity link), but the position / rotation setters keep the pinned pose, and the cull
+     * frustum is our own, built for the panel's fov and aspect. {@code isDetached} decides whether the entity itself is
+     * drawn (drone: yes; rear view from the eye: no).
+     */
+    private static final class PipCamera extends Camera {
+        private boolean pinned;
+        private boolean showEntity;
+        private Vec3 pinPos = Vec3.ZERO;
+        private float pinYaw;
+        private float pinPitch;
+        private Frustum frustum;
+        private final Matrix4f viewRot = new Matrix4f();
+        private final Matrix4f cullProjection = new Matrix4f();
+
+        void place(Minecraft mc, ClientLevel level, Entity entity, boolean detached, DeltaTracker delta, double x,
+                   double y, double z, float yaw, float pitch, float fov, float aspect) {
+            showEntity = detached;
+            pinPos = new Vec3(x, y, z); // once per pass (every N frames)
+            pinYaw = yaw;
+            pinPitch = pitch;
+            pinned = true;
+            setLevel(level);
+            setEntity(entity);
+            update(delta);
+            // the same culling projection vanilla builds, for our fov / aspect
+            float depthFar = Math.max(mc.options.getEffectiveRenderDistance() * 16 * 4.0F,
+                    mc.options.cloudRange().get() * 16);
+            cullProjection.setPerspective(fov * DEG_TO_RAD, aspect, Camera.PROJECTION_Z_NEAR, depthFar,
+                    RenderSystem.getDevice().getDeviceInfo().isZZeroToOne());
+            frustum = new Frustum(getViewRotationMatrix(viewRot), cullProjection);
+            frustum.prepare(x, y, z);
+        }
+
+        private static final float DEG_TO_RAD = (float) (Math.PI / 180.0);
+
+        @Override
+        protected void setPosition(Vec3 position) {
+            super.setPosition(pinned ? pinPos : position);
         }
 
         @Override
-        public void bindWrite(boolean setViewport) {
-            super.bindWrite(true);
+        protected void setRotation(float yRot, float xRot, float roll) {
+            if (pinned) {
+                super.setRotation(pinYaw, pinPitch, 0f);
+            } else {
+                super.setRotation(yRot, xRot, roll);
+            }
         }
-    }
 
-    /** A camera placed at an arbitrary pose (vanilla's only follows an entity). */
-    private static final class PipCamera extends Camera {
-        /**
-         * @param detached true when the entity should be drawn (drone); false hides it (rear view from the eye)
-         */
-        void place(BlockGetter level, Entity entity, boolean detached, float pt, double x, double y, double z,
-                   float yaw, float pitch) {
-            setup(level, entity, detached, false, pt);
-            setRotation(yaw, pitch, 0f);
-            setPosition(x, y, z);
+        @Override
+        public Frustum getCullFrustum() {
+            return frustum != null ? frustum : super.getCullFrustum();
+        }
+
+        @Override
+        public boolean isDetached() {
+            return showEntity;
         }
     }
 
@@ -374,7 +440,7 @@ public final class PipCameraModule extends WorldModule implements LayeredDraw.La
     // ---------------------------------------------------------------------------------------------------------------
 
     @Override
-    public void render(GuiGraphics g, DeltaTracker delta) {
+    public void render(GuiGraphicsExtractor g, DeltaTracker delta) {
         Minecraft mc = Minecraft.getInstance();
         if (!panelVisible(mc)) {
             return;
@@ -407,34 +473,32 @@ public final class PipCameraModule extends WorldModule implements LayeredDraw.La
         }
     }
 
-    /** Draws the offscreen texture (GL origin bottom-left, so v runs 1 to 0 down the panel). */
-    private void blitTarget(GuiGraphics g, int x, int y, int w, int h, boolean flip) {
-        g.flush();
-        RenderSystem.disableBlend();
-        RenderSystem.disableDepthTest();
-        RenderSystem.setShader(GameRenderer::getPositionTexShader);
-        RenderSystem.setShaderTexture(0, target.getColorTextureId());
-        Matrix4f m = g.pose().last().pose();
+    /**
+     * Draws the offscreen texture opaque (the level target's alpha is not meaningful), bottom-left origin like
+     * vanilla's own picture-in-picture blit, so v runs 1 to 0 down the panel. One recycled element.
+     */
+    private void blitTarget(GuiGraphicsExtractor g, int x, int y, int w, int h, boolean flip) {
+        if (target.getColorTextureView() == null) {
+            return;
+        }
         float u0 = flip ? 1f : 0f;
         float u1 = flip ? 0f : 1f;
-        BufferBuilder buf = Tesselator.getInstance().begin(VertexFormat.Mode.QUADS, DefaultVertexFormat.POSITION_TEX);
-        buf.addVertex(m, x, y, 0).setUv(u0, 1f);
-        buf.addVertex(m, x, y + h, 0).setUv(u0, 0f);
-        buf.addVertex(m, x + w, y + h, 0).setUv(u1, 0f);
-        buf.addVertex(m, x + w, y, 0).setUv(u1, 1f);
-        BufferUploader.drawWithShader(buf.buildOrThrow());
-        RenderSystem.enableBlend();
-        RenderSystem.defaultBlendFunc();
-        RenderSystem.enableDepthTest();
+        blit.begin(g, RenderPipelines.GUI_OPAQUE_TEXTURED_BACKGROUND,
+                TextureSetup.singleTexture(target.getColorTextureView(),
+                        RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR)), true);
+        blit.vertex(x, y, u0, 1f, -1);
+        blit.vertex(x, y + h, u0, 0f, -1);
+        blit.vertex(x + w, y + h, u1, 0f, -1);
+        blit.vertex(x + w, y, u1, 1f, -1);
+        blit.submit(g);
     }
 
-    private void drawWireframe(GuiGraphics g, Minecraft mc, int x, int y, int w, int h, boolean flip, float pt) {
+    private void drawWireframe(GuiGraphicsExtractor g, Minecraft mc, int x, int y, int w, int h, boolean flip, float pt) {
         if (gate.tick()) {
             refresh(mc.player, mc.level, pt, w / (double) h);
         }
         HoloFrames.plate(g, x, y, w, h, HoloToken.VOID, 0.7f);
-        g.flush();
-        lines.begin(g.pose().last().pose(), x, y, w, h);
+        lines.begin(g, x, y, w, h);
         for (int s = 0; s < segCount; s++) {
             int k = s * 4;
             float ax = flip ? -segs[k] : segs[k];

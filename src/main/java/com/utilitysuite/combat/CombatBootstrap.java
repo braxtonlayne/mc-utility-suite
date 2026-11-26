@@ -26,7 +26,7 @@ import com.utilitysuite.combat.reflex.CombatReflexes;
 import com.utilitysuite.combat.tactics.ReadState;
 import com.utilitysuite.combat.trigger.TriggerAssist;
 import com.utilitysuite.core.api.Services;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.loading.FMLPaths;
 import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent;
@@ -149,7 +149,7 @@ public final class CombatBootstrap {
 
         modBus.addListener(CombatEventBridge::onRegisterKeys);
         modBus.addListener(RegisterGuiLayersEvent.class, event -> event.registerAbove(VanillaGuiLayers.CROSSHAIR,
-                ResourceLocation.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID, "fight_coach"), hud));
+                Identifier.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID, "fight_coach"), hud));
 
         IEventBus bus = NeoForge.EVENT_BUS;
         bus.addListener(CombatEventBridge::onAttack);
@@ -189,7 +189,7 @@ public final class CombatBootstrap {
         bus.addListener(targetHud::onJoin);
         bus.addListener(targetHud::onLeave);
         modBus.addListener(RegisterGuiLayersEvent.class, event -> event.registerAbove(VanillaGuiLayers.CROSSHAIR,
-                ResourceLocation.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID, "target_hud"), targetHud::render));
+                Identifier.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID, "target_hud"), targetHud::render));
     }
 
     /**

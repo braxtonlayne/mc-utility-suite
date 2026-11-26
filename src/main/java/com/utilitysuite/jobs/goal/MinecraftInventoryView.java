@@ -1,16 +1,12 @@
 package com.utilitysuite.jobs.goal;
 
 import com.utilitysuite.core.api.IInventoryView;
-import com.utilitysuite.jobs.planner.ToolTiers;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.registries.BuiltInRegistries;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.PickaxeItem;
-import net.minecraft.world.item.Tier;
-import net.minecraft.world.item.Tiers;
 import net.minecraft.world.item.enchantment.EnchantmentHelper;
 import net.minecraft.world.item.enchantment.Enchantments;
 
@@ -46,8 +42,8 @@ public final class MinecraftInventoryView implements IInventoryView {
     public Item itemOf(String id) {
         Item it = itemById.get(id);
         if (it == null) {
-            ResourceLocation rl = ResourceLocation.tryParse(id);
-            it = rl == null ? net.minecraft.world.item.Items.AIR : BuiltInRegistries.ITEM.get(rl);
+            Identifier rl = Identifier.tryParse(id);
+            it = rl == null ? net.minecraft.world.item.Items.AIR : BuiltInRegistries.ITEM.getValue(rl);
             itemById.put(id, it);
         }
         return it;
@@ -60,9 +56,14 @@ public final class MinecraftInventoryView implements IInventoryView {
         if (inv == null) {
             return out;
         }
-        add(out, inv.items);
-        add(out, inv.offhand);
+        add(out, inv.getNonEquipmentItems());
+        add(out, offhand(inv));
         return out;
+    }
+
+    /** The offhand as a one-element list (26.3: {@code Inventory.offhand} is gone; slot {@link Inventory#SLOT_OFFHAND}). */
+    private static List<ItemStack> offhand(Inventory inv) {
+        return List.of(inv.getItem(Inventory.SLOT_OFFHAND));
     }
 
     private void add(Map<String, Integer> out, List<ItemStack> stacks) {
@@ -86,7 +87,7 @@ public final class MinecraftInventoryView implements IInventoryView {
         if (pc == null || pc.potion().isEmpty()) {
             return null;
         }
-        return pc.potion().get().unwrapKey().map(k -> itemId + "#" + k.location()).orElse(null);
+        return pc.potion().get().unwrapKey().map(k -> itemId + "#" + k.identifier()).orElse(null);
     }
 
     @Override
@@ -96,8 +97,8 @@ public final class MinecraftInventoryView implements IInventoryView {
             return List.of();
         }
         List<com.utilitysuite.core.api.NestedContainer> out = new java.util.ArrayList<>();
-        com.utilitysuite.jobs.storage.ShulkerItems.collect(inv.items, out);
-        com.utilitysuite.jobs.storage.ShulkerItems.collect(inv.offhand, out);
+        com.utilitysuite.jobs.storage.ShulkerItems.collect(inv.getNonEquipmentItems(), out);
+        com.utilitysuite.jobs.storage.ShulkerItems.collect(offhand(inv), out);
         return out;
     }
 
@@ -108,7 +109,8 @@ public final class MinecraftInventoryView implements IInventoryView {
             return 0;
         }
         Item item = itemOf(itemId);
-        return count(inv.items, item) + count(inv.offhand, item);
+        ItemStack off = inv.getItem(Inventory.SLOT_OFFHAND);
+        return count(inv.getNonEquipmentItems(), item) + (off.getItem() == item ? off.getCount() : 0);
     }
 
     private static int count(List<ItemStack> stacks, Item item) {
@@ -129,29 +131,21 @@ public final class MinecraftInventoryView implements IInventoryView {
             return 0;
         }
         int best = 0;
-        for (int i = 0, n = inv.items.size(); i < n; i++) {
-            ItemStack s = inv.items.get(i);
-            if (s.getItem() instanceof PickaxeItem p) {
-                best = Math.max(best, tierOf(p, s));
+        for (int i = 0, n = inv.getNonEquipmentItems().size(); i < n; i++) {
+            ItemStack s = inv.getNonEquipmentItems().get(i);
+            if (McTools.isPickaxe(s)) {
+                best = Math.max(best, tierOf(s));
             }
         }
         return best;
     }
 
-    /** Harvest tier of a pickaxe; modded tiers fall back to their vanilla equivalent by registry id, else 2. */
-    public int tierOf(PickaxeItem p, ItemStack s) {
-        Tier t = p.getTier();
-        if (t instanceof Tiers v) {
-            return switch (v) {
-                case WOOD, GOLD -> 1;
-                case STONE -> 2;
-                case IRON -> 3;
-                case DIAMOND -> 4;
-                case NETHERITE -> 5;
-            };
-        }
-        int byId = ToolTiers.tierOf(idOf(s.getItem()));
-        return byId > 0 ? byId : 2;
+    /**
+     * Harvest tier of a pickaxe: vanilla by registry id, modded by the tool component's "incorrect for" tag, else 2
+     * (26.3: the {@code Tier} enum is gone).
+     */
+    public int tierOf(ItemStack s) {
+        return McTools.pickaxeTier(s, idOf(s.getItem()));
     }
 
     /** Fills the guard snapshot from the 36 inventory slots and the selected slot. No allocation after warm-up. */
@@ -162,17 +156,16 @@ public final class MinecraftInventoryView implements IInventoryView {
             g.selected = -1;
             return;
         }
-        g.selected = inv.selected;
+        g.selected = inv.getSelectedSlot();
         for (int i = 0; i < 36; i++) {
-            ItemStack s = inv.items.get(i);
+            ItemStack s = inv.getNonEquipmentItems().get(i);
             if (s.isEmpty()) {
                 continue;
             }
-            Item item = s.getItem();
-            if (item instanceof PickaxeItem p) {
+            if (McTools.isPickaxe(s)) {
                 g.kind[i] = ToolDurabilityGuard.PICKAXE;
-                g.tier[i] = tierOf(p, s);
-            } else if (item instanceof net.minecraft.world.item.ShovelItem) {
+                g.tier[i] = tierOf(s);
+            } else if (McTools.isShovel(s)) {
                 g.kind[i] = ToolDurabilityGuard.SHOVEL;
             } else {
                 continue;
@@ -190,13 +183,13 @@ public final class MinecraftInventoryView implements IInventoryView {
         if (inv == null || mc.level == null) {
             return 0;
         }
-        var fortune = mc.level.registryAccess().registryOrThrow(net.minecraft.core.registries.Registries.ENCHANTMENT)
-                .getHolderOrThrow(Enchantments.FORTUNE);
+        var fortune = mc.level.registryAccess().lookupOrThrow(net.minecraft.core.registries.Registries.ENCHANTMENT)
+                .getOrThrow(Enchantments.FORTUNE);
         int bestTier = -1;
         int level = 0;
-        for (ItemStack s : inv.items) {
-            if (s.getItem() instanceof PickaxeItem p) {
-                int t = tierOf(p, s);
+        for (ItemStack s : inv.getNonEquipmentItems()) {
+            if (McTools.isPickaxe(s)) {
+                int t = tierOf(s);
                 if (t > bestTier) {
                     bestTier = t;
                     level = EnchantmentHelper.getItemEnchantmentLevel(fortune, s);
@@ -209,11 +202,11 @@ public final class MinecraftInventoryView implements IInventoryView {
     /** True for a pickaxe with Silk Touch (mines an ender chest back as itself instead of obsidian). */
     public boolean isSilkTouchPickaxe(ItemStack s) {
         Minecraft mc = Minecraft.getInstance();
-        if (mc.level == null || s.isEmpty() || !(s.getItem() instanceof PickaxeItem)) {
+        if (mc.level == null || s.isEmpty() || !McTools.isPickaxe(s)) {
             return false;
         }
-        var silk = mc.level.registryAccess().registryOrThrow(net.minecraft.core.registries.Registries.ENCHANTMENT)
-                .getHolderOrThrow(Enchantments.SILK_TOUCH);
+        var silk = mc.level.registryAccess().lookupOrThrow(net.minecraft.core.registries.Registries.ENCHANTMENT)
+                .getOrThrow(Enchantments.SILK_TOUCH);
         return EnchantmentHelper.getItemEnchantmentLevel(silk, s) > 0;
     }
 
@@ -224,7 +217,7 @@ public final class MinecraftInventoryView implements IInventoryView {
             return -1;
         }
         for (int i = 0; i < 36; i++) {
-            if (isSilkTouchPickaxe(inv.items.get(i))) {
+            if (isSilkTouchPickaxe(inv.getNonEquipmentItems().get(i))) {
                 return i;
             }
         }

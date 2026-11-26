@@ -138,7 +138,7 @@ public final class SeedDiffModule extends WorldModule {
         }
 
         long seed = profile.seed();
-        String dim = level.dimension().location().toString();
+        String dim = level.dimension().identifier().toString();
         if (!lastSeedKnown || seed != lastSeed || !dim.equals(lastDimension)) {
             service.clear();
             lastSeedKnown = true;
@@ -154,8 +154,8 @@ public final class SeedDiffModule extends WorldModule {
             service.evictOutside(playerCx, playerCz, radiusChunks + 2);
         }
 
-        int minSection = level.getMinSection();
-        int maxSection = Math.min(level.getMaxSection() - 1, 8);
+        int minSection = level.getMinSectionY();
+        int maxSection = Math.min(level.getMaxSectionY(), 8); // 26.3 getMaxSectionY is inclusive (old getMaxSection() - 1)
         if (scanSy < minSection || scanSy > maxSection) {
             scanSy = minSection;
         }

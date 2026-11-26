@@ -8,7 +8,7 @@ import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.protocol.game.ClientboundLevelEventPacket;
 import net.minecraft.network.protocol.game.ClientboundSoundPacket;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -31,7 +31,7 @@ public abstract class ClientSoundPacketMixin {
         if (radar == null) {
             return;
         }
-        ResourceLocation loc = packet.getSound().value().getLocation();
+        Identifier loc = packet.getSound().value().location(); // 26.3: SoundEvent is a record
         int category = AcousticRadar.classifySound(loc.getPath());
         radar.recordSound(packet.getX(), packet.getY(), packet.getZ(), System.currentTimeMillis(), category);
     }

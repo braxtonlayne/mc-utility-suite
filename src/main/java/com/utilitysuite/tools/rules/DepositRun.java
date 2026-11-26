@@ -94,7 +94,7 @@ final class DepositRun implements LeaseListener {
             status.accept("Deposit: no waypoint named '" + name + "'");
             return;
         }
-        String dim = mc.level.dimension().location().toString();
+        String dim = mc.level.dimension().identifier().toString();
         target = wps.positionIn(wp.get(), dim);
         waypointName = name;
         resumeAfter = resume;
@@ -182,7 +182,7 @@ final class DepositRun implements LeaseListener {
     }
 
     private void tickOpening(Minecraft mc, LocalPlayer player) {
-        if (mc.screen instanceof AbstractContainerScreen<?> s && SmartInventory.isStorageMenu(s.getMenu())) {
+        if (mc.gui.screen() instanceof AbstractContainerScreen<?> s && SmartInventory.isStorageMenu(s.getMenu())) {
             releaseLease();
             SmartInventory inv = inventory.get();
             String r = inv == null ? "Smart Inventory missing" : inv.depositToOpenContainer(true, true);

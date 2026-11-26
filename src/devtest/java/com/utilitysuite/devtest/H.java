@@ -11,11 +11,13 @@ import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.state.BlockState;
-import org.lwjgl.glfw.GLFW;
+import com.mojang.blaze3d.platform.InputConstants;
+import net.minecraft.client.input.KeyEvent;
+import org.lwjgl.sdl.SDLKeyboard;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -52,7 +54,7 @@ final class H {
     }
 
     static Item item(String id) {
-        return BuiltInRegistries.ITEM.get(ResourceLocation.parse(id));
+        return BuiltInRegistries.ITEM.getValue(Identifier.parse(id));
     }
 
     static int count(String id) {
@@ -102,12 +104,27 @@ final class H {
         m.onProfileLoaded(profile);
     }
 
-    /** Simulates a physical key press+release through the real GLFW callback path (fires InputEvent.Key). */
-    static void physicalKey(int glfwKey, boolean press) {
+    /**
+     * Simulates a physical key press+release through the real input callback path (fires InputEvent.Key).
+     * {@code scancode} is an SDL3 scancode ({@code InputConstants.KEY_*}); the keycode is resolved from the current
+     * keyboard layout, like SDL fills its key events.
+     */
+    static void physicalKey(int scancode, boolean press) {
         Minecraft mc = mc();
-        int scan = GLFW.glfwGetKeyScancode(glfwKey);
-        mc.keyboardHandler.keyPress(mc.getWindow().getWindow(), glfwKey, scan,
-                press ? GLFW.GLFW_PRESS : GLFW.GLFW_RELEASE, 0);
+        int keycode = SDLKeyboard.SDL_GetKeyFromScancode(scancode, (short) 0, true);
+        mc.keyboardHandler.keyPress(mc.getWindow().handle(), press ? InputConstants.PRESS : InputConstants.RELEASE,
+                new KeyEvent(scancode, keycode, 0));
+    }
+
+    /** A left mouse button event at (x, y) in GUI coordinates (26.3 SDL button numbering, no modifiers). */
+    static net.minecraft.client.input.MouseButtonEvent leftClick(double x, double y) {
+        return new net.minecraft.client.input.MouseButtonEvent(x, y,
+                new net.minecraft.client.input.MouseButtonInfo(InputConstants.MOUSE_BUTTON_LEFT, 0));
+    }
+
+    /** Presses a button as a left click at its centre would (26.3 {@code Button.onPress} takes the input event). */
+    static void press(Button b) {
+        b.onPress(leftClick(b.getX() + b.getWidth() / 2.0, b.getY() + b.getHeight() / 2.0));
     }
 
     static List<AbstractWidget> widgets(Screen s) {
@@ -166,7 +183,7 @@ final class H {
                 sb.append("(override)");
             }
         }
-        sb.append(" screen=").append(mc().screen == null ? "-" : mc().screen.getClass().getSimpleName());
+        sb.append(" screen=").append(mc().gui.screen() == null ? "-" : mc().gui.screen().getClass().getSimpleName());
         return sb.toString();
     }
 }

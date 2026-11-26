@@ -5,7 +5,7 @@ import com.utilitysuite.core.api.visual.HoloToken;
 import com.utilitysuite.ui.holo.HoloFrames;
 import com.utilitysuite.ui.holo.HoloTheme;
 import net.minecraft.client.gui.Font;
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 
 /**
  * A content card: rounded surface with a hairline border that lightens on hover, an optional header row (title in
@@ -51,7 +51,7 @@ public final class CardNode extends UiNode {
     }
 
     @Override
-    public void render(GuiGraphics g, Font font, int sx, int sy, int mouseX, int mouseY) {
+    public void render(GuiGraphicsExtractor g, Font font, int sx, int sy, int mouseX, int mouseY) {
         boolean hover = inside(mouseX, mouseY, sx, sy, w, h);
         float hv = hoverAmount(hover);
         HoloFrames.frame(g, sx, sy, w, h, FrameLevel.FRAMED, false, HoloToken.GLASS,

@@ -1,4 +1,4 @@
-// mc-utility-suite: client-side automation, resource-planning and accessibility mod (NeoForge 1.21.1, Java 21, MojMap).
+// mc-utility-suite: client-side automation, resource-planning and accessibility mod (NeoForge 26.3, Java 25).
 plugins {
     id 'java-library'
     id 'idea'
@@ -12,7 +12,7 @@ base {
     archivesName = mod_id
 }
 
-java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+java.toolchain.languageVersion = JavaLanguageVersion.of(25)
 
 // Dev-only scripted in-game playtest harness (separate mod `utilitysuite_devtest`). Loaded only by `runPlaytest`,
 // never part of the jar (the jar task packs sourceSets.main only).
@@ -34,10 +34,6 @@ configurations {
 neoForge {
     version = project.neo_version
 
-    parchment {
-        mappingsVersion = project.parchment_mappings_version
-        minecraftVersion = project.parchment_minecraft_version
-    }
 
     // Unit tests compile against Minecraft classes (BlockPos etc.). Planning logic is kept engine-agnostic so tests
     // never need the registry bootstrap.
@@ -165,7 +161,7 @@ neoForge.ideSyncTask generateModMetadata
 
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
-    options.compilerArgs << '-Xlint:deprecation'
+    options.compilerArgs << '-Xlint:deprecation' << '-Xmaxerrs' << '100000'
 }
 
 idea {

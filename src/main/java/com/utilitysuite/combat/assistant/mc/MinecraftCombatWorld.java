@@ -24,12 +24,12 @@ import net.minecraft.world.item.component.ItemAttributeModifiers;
 import java.util.function.BiConsumer;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.tags.FluidTags;
+import net.minecraft.tags.ItemTags;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.entity.player.Player;
-import net.minecraft.world.item.AxeItem;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
@@ -42,7 +42,7 @@ import net.minecraft.world.phys.Vec3;
 import com.utilitysuite.combat.assistant.TacticsPlanner;
 import com.utilitysuite.combat.assistant.TargetCandidates;
 import net.minecraft.world.entity.Mob;
-import net.minecraft.world.entity.animal.IronGolem;
+import net.minecraft.world.entity.animal.golem.IronGolem;
 import net.minecraft.world.entity.monster.Ravager;
 import net.minecraft.world.entity.monster.Zoglin;
 import net.minecraft.world.entity.monster.hoglin.Hoglin;
@@ -53,7 +53,7 @@ import net.minecraft.world.entity.NeutralMob;
 import net.minecraft.world.entity.decoration.ArmorStand;
 import net.minecraft.world.entity.monster.Blaze;
 import net.minecraft.world.entity.monster.Creeper;
-import net.minecraft.world.entity.monster.EnderMan;
+import net.minecraft.world.entity.monster.Enderman;
 import net.minecraft.world.entity.monster.Enemy;
 import net.minecraft.world.entity.monster.Ghast;
 import net.minecraft.world.entity.monster.RangedAttackMob;
@@ -62,12 +62,12 @@ import net.minecraft.world.level.entity.EntityTypeTest;
 import com.utilitysuite.combat.assistant.FoodObjective;
 import com.utilitysuite.core.api.IStorageIndex;
 import net.minecraft.core.registries.BuiltInRegistries;
-import net.minecraft.resources.ResourceLocation;
-import net.minecraft.world.entity.animal.Chicken;
-import net.minecraft.world.entity.animal.Cow;
-import net.minecraft.world.entity.animal.Pig;
-import net.minecraft.world.entity.animal.Rabbit;
-import net.minecraft.world.entity.animal.Sheep;
+import net.minecraft.resources.Identifier;
+import net.minecraft.world.entity.animal.chicken.Chicken;
+import net.minecraft.world.entity.animal.cow.Cow;
+import net.minecraft.world.entity.animal.pig.Pig;
+import net.minecraft.world.entity.animal.rabbit.Rabbit;
+import net.minecraft.world.entity.animal.sheep.Sheep;
 import net.minecraft.world.entity.item.ItemEntity;
 
 import java.util.ArrayList;
@@ -144,15 +144,15 @@ public final class MinecraftCombatWorld implements CombatWorld, LineOfSight.Soli
     public int totemRefillSlot() {
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer p = mc.player;
-        if (p == null || mc.screen != null || !p.isAlive()) {
+        if (p == null || mc.gui.screen() != null || !p.isAlive()) {
             return -1;
         }
         Inventory inv = p.getInventory();
-        if (inv.offhand.get(0).is(Items.TOTEM_OF_UNDYING)) {
+        if (inv.getItem(Inventory.SLOT_OFFHAND).is(Items.TOTEM_OF_UNDYING)) {
             return -1;
         }
-        for (int i = 0; i < inv.items.size(); i++) {
-            if (inv.items.get(i).is(Items.TOTEM_OF_UNDYING)) {
+        for (int i = 0; i < inv.getNonEquipmentItems().size(); i++) {
+            if (inv.getNonEquipmentItems().get(i).is(Items.TOTEM_OF_UNDYING)) {
                 return i;
             }
         }
@@ -221,8 +221,8 @@ public final class MinecraftCombatWorld implements CombatWorld, LineOfSight.Soli
         out.inWater = p.isInWater();
         out.climbing = p.onClimbable();
         out.usingItem = p.isUsingItem();
-        out.screenOpen = mc.screen != null;
-        out.fallDistance = p.fallDistance;
+        out.screenOpen = mc.gui.screen() != null;
+        out.fallDistance = (float) p.fallDistance;
         out.attackStrength = p.getAttackStrengthScale(0.5f);
         out.reach = p.entityInteractionRange();
         Vec3 pv = p.getDeltaMovement(); // returns the stored vector: no allocation
@@ -293,7 +293,7 @@ public final class MinecraftCombatWorld implements CombatWorld, LineOfSight.Soli
     // ---- movement model for the body sims ------------------------------------------------------------------------
 
     /** {@code LivingEntity.SPEED_MODIFIER_SPRINTING}'s id (private in vanilla): ADD_MULTIPLIED_TOTAL 0.3. */
-    private static final ResourceLocation SPRINT_MODIFIER_ID = ResourceLocation.withDefaultNamespace("sprinting");
+    private static final Identifier SPRINT_MODIFIER_ID = Identifier.withDefaultNamespace("sprinting");
     private static final double SPRINT_FACTOR = 1.0 + 0.3F; // the modifier amount is the float 0.3F, widened
 
     /**
@@ -487,25 +487,24 @@ public final class MinecraftCombatWorld implements CombatWorld, LineOfSight.Soli
 
     private int swingTargetId = -1;
     private long swingSampleTime = Long.MIN_VALUE;
-    private boolean prevSwinging;
-    private int prevSwingTime;
+    /** The target's swing description at the baseline sample (identity only; never dereferenced). */
+    private LivingEntity.SwingDescription prevSwing;
 
     /**
-     * True exactly on the sample where a new arm swing started. The server's animate packet runs
-     * {@code LivingEntity.swing} on the client, which sets {@code swinging} and restarts {@code swingTime} (to -1, then 0
-     * in the entity's own tick); a restart is only allowed once half of the swing is over, so a new swing shows as
-     * swinging turning on or swingTime going down. Previous values are kept per target id; a target switch or a gap of
-     * more than {@value #SWING_BASELINE_MAX_AGE} ticks since the last sample never fakes a swing.
+     * True exactly on the sample where a new arm swing started. The server's swing-animation packet runs
+     * {@code LivingEntity.swing} on the client, and {@code SwingState.start} installs a new {@code SwingDescription}
+     * on every (re)start; a restart is only allowed once half of the swing is over. So a new swing shows as a non-null
+     * current swing that is a different object than at the baseline sample. The baseline is kept per target id; a
+     * target switch or a gap of more than {@value #SWING_BASELINE_MAX_AGE} ticks since the last sample never fakes a
+     * swing.
      */
     private boolean swingStarted(LivingEntity t, long gameTime) {
-        boolean sw = t.swinging;
-        int st = t.swingTime;
+        LivingEntity.SwingDescription sw = t.getCurrentSwing();
         boolean started = swingTargetId == t.getId() && gameTime - swingSampleTime <= SWING_BASELINE_MAX_AGE
-                && gameTime != swingSampleTime && sw && (!prevSwinging || st < prevSwingTime);
+                && gameTime != swingSampleTime && sw != null && sw != prevSwing;
         if (gameTime != swingSampleTime || swingTargetId != t.getId()) {
             // a second sample inside the same tick keeps the baseline of the first
-            prevSwinging = sw;
-            prevSwingTime = st;
+            prevSwing = sw;
         }
         swingTargetId = t.getId();
         swingSampleTime = gameTime;
@@ -693,7 +692,7 @@ public final class MinecraftCombatWorld implements CombatWorld, LineOfSight.Soli
         }
         for (int dy = 1; dy <= DROP_SCAN; dy++) {
             int yy = by - dy;
-            if (yy < level.getMinBuildHeight()) {
+            if (yy < level.getMinY()) {
                 return CombatSnapshot.DEEP;
             }
             mpos.set(bx, yy, bz);
@@ -710,7 +709,7 @@ public final class MinecraftCombatWorld implements CombatWorld, LineOfSight.Soli
 
     private static void sampleInventory(LocalPlayer p, CombatSnapshot out) {
         Inventory inv = p.getInventory();
-        out.selectedSlot = inv.selected; // read only (no getter exists); slot changes go through the smoother
+        out.selectedSlot = inv.getSelectedSlot(); // read only; slot changes go through the smoother
         int totem = -1;
         int gapple = -1;
         int axe = -1;
@@ -720,8 +719,8 @@ public final class MinecraftCombatWorld implements CombatWorld, LineOfSight.Soli
         int invSustain = -1;
         int invSustainKind = SustainExtras.KIND_NONE;
         int empty = -1;
-        for (int i = 0; i < inv.items.size(); i++) {
-            ItemStack st = inv.items.get(i);
+        for (int i = 0; i < inv.getNonEquipmentItems().size(); i++) {
+            ItemStack st = inv.getNonEquipmentItems().get(i);
             if (st.isEmpty()) {
                 if (empty < 0 && i < Inventory.getSelectionSize()) {
                     empty = i;
@@ -745,7 +744,7 @@ public final class MinecraftCombatWorld implements CombatWorld, LineOfSight.Soli
                     invSustainKind = kind;
                 }
             } else if (i < Inventory.getSelectionSize()) {
-                if (it instanceof AxeItem && axe < 0) {
+                if (st.is(ItemTags.AXES) && axe < 0) {
                     axe = i;
                 } else if (it == Items.MACE && mace < 0) {
                     mace = i;
@@ -759,11 +758,25 @@ public final class MinecraftCombatWorld implements CombatWorld, LineOfSight.Soli
         out.axeSlot = axe;
         out.maceSlot = mace;
         out.windChargeSlot = wind;
-        out.offhandTotem = inv.offhand.get(0).is(Items.TOTEM_OF_UNDYING);
-        out.gappleOnCooldown = gapple >= 0 && p.getCooldowns().isOnCooldown(inv.items.get(gapple).getItem());
-        out.windChargeOnCooldown = p.getCooldowns().isOnCooldown(Items.WIND_CHARGE);
+        out.offhandTotem = inv.getItem(Inventory.SLOT_OFFHAND).is(Items.TOTEM_OF_UNDYING);
+        out.gappleOnCooldown = gapple >= 0 && p.getCooldowns().isOnCooldown(inv.getNonEquipmentItems().get(gapple));
+        // cooldowns are keyed by stack (use_cooldown group) now; with no charge held, ask with a plain wind charge
+        out.windChargeOnCooldown = p.getCooldowns().isOnCooldown(wind >= 0 ? inv.getNonEquipmentItems().get(wind)
+                : plainWindCharge());
         out.sustainInvSlot = invSustain;
         out.emptyHotbarSlot = empty;
+    }
+
+    private static ItemStack plainWindCharge;
+
+    /** A plain wind charge stack, made once on first use (cooldown queries are keyed by stack in 26.3). */
+    private static ItemStack plainWindCharge() {
+        ItemStack s = plainWindCharge;
+        if (s == null) {
+            s = new ItemStack(Items.WIND_CHARGE);
+            plainWindCharge = s;
+        }
+        return s;
     }
 
     /** Sustain kind of a stack: golden apples, or a drinkable (not splash) healing/regeneration potion. */
@@ -891,9 +904,9 @@ public final class MinecraftCombatWorld implements CombatWorld, LineOfSight.Soli
 
     private boolean isSafeFoodId(String id) {
         return safeFoodById.computeIfAbsent(id, k -> {
-            ResourceLocation rl = ResourceLocation.tryParse(k);
+            Identifier rl = Identifier.tryParse(k);
             return rl != null && BuiltInRegistries.ITEM.containsKey(rl)
-                    && isSafeFood(new ItemStack(BuiltInRegistries.ITEM.get(rl)));
+                    && isSafeFood(new ItemStack(BuiltInRegistries.ITEM.getValue(rl)));
         });
     }
 
@@ -905,13 +918,13 @@ public final class MinecraftCombatWorld implements CombatWorld, LineOfSight.Soli
         }
         Inventory inv = p.getInventory();
         int n = 0;
-        for (int i = 0; i < inv.items.size(); i++) {
-            ItemStack st = inv.items.get(i);
+        for (int i = 0; i < inv.getNonEquipmentItems().size(); i++) {
+            ItemStack st = inv.getNonEquipmentItems().get(i);
             if (isSafeFood(st)) {
                 n += st.getCount();
             }
         }
-        ItemStack off = inv.offhand.get(0);
+        ItemStack off = inv.getItem(Inventory.SLOT_OFFHAND);
         return isSafeFood(off) ? n + off.getCount() : n;
     }
 
@@ -923,7 +936,7 @@ public final class MinecraftCombatWorld implements CombatWorld, LineOfSight.Soli
         if (p == null || idx == null || mc.level == null) {
             return 0;
         }
-        return FoodObjective.storedNearby(idx.entries(), mc.level.dimension().location().toString(), p.getX(),
+        return FoodObjective.storedNearby(idx.entries(), mc.level.dimension().identifier().toString(), p.getX(),
                 p.getY(), p.getZ(), radius, this::isSafeFoodId);
     }
 
@@ -985,7 +998,7 @@ public final class MinecraftCombatWorld implements CombatWorld, LineOfSight.Soli
             return TargetCandidates.FOOD;
         }
         boolean aggressive = e instanceof Mob m && m.isAggressive()
-                || e instanceof EnderMan em && em.isCreepy();
+                || e instanceof Enderman em && em.isCreepy();
         if (aggressive) {
             f |= TargetCandidates.AGGRESSIVE;
         }

@@ -58,6 +58,22 @@ class BlockAssistPlannerTest {
     }
 
     @Test
+    void anAllowedBlocksListLimitsTheSupportsClickedOn() {
+        Grid g = gap(4);
+        MovementPhysics p = new MovementPhysics().set(0.5, 10, 1.28, 0, -0.0784, 0.153, true);
+        p.tick(1, 0, 0f, true, true, g);
+        BlockAssistPlanner b = new BlockAssistPlanner();
+        b.supportFilter = (x, y, z) -> false; // a map that allows building on none of these blocks
+        assertFalse(b.plan(p, 0f, true, 1, 0, 20f, 0f, 20f, TURN, 0, g), "no allowed support: no block");
+        BlockAssistPlanner free = new BlockAssistPlanner();
+        assertTrue(free.plan(p, 0f, true, 1, 0, 20f, 0f, 20f, TURN, 0, g));
+        long sup = free.support();
+        b.supportFilter = (x, y, z) -> Packed.pack(x, y, z) == sup; // only the block the free plan clicks on
+        assertTrue(b.plan(p, 0f, true, 1, 0, 20f, 0f, 20f, TURN, 0, g));
+        assertEquals(sup, b.support());
+    }
+
+    @Test
     void aClearableJumpNeedsNoBlock() {
         Grid g = gap(2);
         MovementPhysics p = new MovementPhysics().set(0.5, 10, 1.28, 0, -0.0784, 0.153, true);

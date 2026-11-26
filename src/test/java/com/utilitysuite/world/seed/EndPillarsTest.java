@@ -1,6 +1,6 @@
 package com.utilitysuite.world.seed;
 
-import net.minecraft.Util;
+import net.minecraft.util.Util;
 import net.minecraft.util.Mth;
 import net.minecraft.util.RandomSource;
 import org.junit.jupiter.api.Test;

@@ -80,9 +80,9 @@ final class StationJobsScenario {
         enderChest(s);
         s.always("disarm", () -> {
             cancelAll();
-            if (H.mc().screen != null) {
+            if (H.mc().gui.screen() != null) {
                 H.p().closeContainer();
-                H.mc().setScreen(null);
+                H.mc().gui.setScreen(null);
             }
             H.enable(HallSorterModule.ID, false);
             H.enable(SmartInventory.ID, false);
@@ -121,7 +121,7 @@ final class StationJobsScenario {
     }
 
     static String dim() {
-        return H.mc().level.dimension().location().toString();
+        return H.mc().level.dimension().identifier().toString();
     }
 
     static void cancelAll() {
@@ -212,7 +212,7 @@ final class StationJobsScenario {
                 H.mc().gameMode.useItemOn(H.p(), InteractionHand.MAIN_HAND, hit);
                 return false;
             }
-            if (H.mc().screen instanceof AbstractContainerScreen<?>) {
+            if (H.mc().gui.screen() instanceof AbstractContainerScreen<?>) {
                 if (openedAt[0] < 0) {
                     openedAt[0] = t;
                 }
@@ -223,7 +223,7 @@ final class StationJobsScenario {
                 return false;
             }
             if (t > 60) {
-                s.note(name + ": no container screen opened within 3 s (screen " + H.mc().screen + ")");
+                s.note(name + ": no container screen opened within 3 s (screen " + H.mc().gui.screen() + ")");
                 return true;
             }
             return false;
@@ -451,9 +451,9 @@ final class StationJobsScenario {
 
     private static final int[] HALL_X = {-7, -5, -3, -1};
     private static final int HALL_Z = -11;
-    private static final String SHARP = "{levels:{\"minecraft:sharpness\":3}}";
-    private static final String EFF = "{levels:{\"minecraft:efficiency\":2}}";
-    private static final String UNB = "{levels:{\"minecraft:unbreaking\":3}}";
+    private static final String SHARP = "{\"minecraft:sharpness\":3}";
+    private static final String EFF = "{\"minecraft:efficiency\":2}";
+    private static final String UNB = "{\"minecraft:unbreaking\":3}";
 
     private static String book(String ench) {
         return "minecraft:enchanted_book[minecraft:stored_enchantments=" + ench + "]";
@@ -678,7 +678,7 @@ final class StationJobsScenario {
                     "mirror " + snap.contents() + ", placed ender chest remembered " + placed);
         });
         s.cmd("give @s minecraft:ender_chest 1");
-        s.cmd("give @s minecraft:diamond_pickaxe[minecraft:enchantments={levels:{\"minecraft:silk_touch\":1}}]");
+        s.cmd("give @s minecraft:diamond_pickaxe[minecraft:enchantments={\"minecraft:silk_touch\":1}]");
         s.cmd(() -> "tp @s " + (ax(0) + 0.5) + " " + ay() + " " + (az(2) + 0.5) + " 0 0");
         s.waitTicks(5);
         long[] job = {-1};

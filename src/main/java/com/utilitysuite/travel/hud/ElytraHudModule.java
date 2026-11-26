@@ -19,11 +19,11 @@ import com.utilitysuite.travel.movement.ElytraGlideSim;
 import com.utilitysuite.travel.movement.GlideFootprint;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
-import net.minecraft.client.renderer.MultiBufferSource;
-import net.minecraft.client.renderer.RenderType;
+import net.minecraft.client.renderer.SubmitNodeCollector;
+import net.minecraft.client.renderer.rendertype.RenderTypes;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.phys.Vec3;
-import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
+import net.neoforged.neoforge.client.event.SubmitCustomGeometryEvent;
 
 import java.util.List;
 
@@ -36,7 +36,7 @@ import java.util.List;
  * The screen part is a {@link HudElement} in the CROSSHAIR slot, drawn through the HUD kit with theme tokens (the host
  * applies the HUD scale, opacity, Clean-Screen and hidden-GUI gates). Budget: the footprint computes
  * {@link #HEADINGS_PER_TICK} headings per client tick (a full ring every few ticks); the ring draws with one batched
- * line buffer in {@link RenderLevelStageEvent}. Nothing is drawn unless gliding.
+ * line buffer in {@link SubmitCustomGeometryEvent}. Nothing is drawn unless gliding.
  */
 public final class ElytraHudModule implements IModule, IConfigurable, HudElement {
 
@@ -131,7 +131,7 @@ public final class ElytraHudModule implements IModule, IConfigurable, HudElement
     }
 
     private boolean visible(Minecraft mc) {
-        return enabled && gliding && mc.player != null && !mc.options.hideGui && !Services.modState().isCleanScreen();
+        return enabled && gliding && mc.player != null && !mc.gui.hud.isHidden() && !Services.modState().isCleanScreen();
     }
 
     // ---- HUD element ------------------------------------------------------------------------------------------------
@@ -230,31 +230,41 @@ public final class ElytraHudModule implements IModule, IConfigurable, HudElement
     }
 
     /** World pass: the glide footprint as one batched line loop over the landed points. */
-    public void onRenderLevel(RenderLevelStageEvent event) {
-        if (event.getStage() != RenderLevelStageEvent.Stage.AFTER_PARTICLES) {
-            return;
-        }
+    public void onRenderLevel(SubmitCustomGeometryEvent event) {
         Minecraft mc = Minecraft.getInstance();
         if (!showFootprint || !visible(mc) || ringReady < HEADINGS) {
             return;
         }
-        PoseStack pose = event.getPoseStack();
-        if (pose == null) {
-            return;
-        }
-        Vec3 cam = event.getCamera().getPosition();
-        MultiBufferSource.BufferSource buffers = mc.renderBuffers().bufferSource();
-        VertexConsumer lines = buffers.getBuffer(RenderType.lines());
-        PoseStack.Pose last = pose.last();
+        Vec3 cam = event.getLevelRenderState().cameraRenderState.pos;
+        footCamX = cam.x;
+        footCamY = cam.y;
+        footCamZ = cam.z;
+        lineWidth = Math.max(1f, mc.gameRenderer.gameRenderState().windowRenderState.appropriateLineWidth);
+        event.getSubmitNodeCollector().submitCustomGeometry(event.getPoseStack(), RenderTypes.linesTranslucent(),
+                drawFootprint);
+    }
+
+    /** The deferred draw (26.3 submits run later in the same frame): one instance. */
+    private final SubmitNodeCollector.CustomGeometryRenderer drawFootprint = this::drawFootprint;
+    private double footCamX;
+    private double footCamY;
+    private double footCamZ;
+    private float lineWidth = 1f;
+
+    private void drawFootprint(PoseStack.Pose last, VertexConsumer lines) {
+        double camX = footCamX;
+        double camY = footCamY;
+        double camZ = footCamZ;
+        float w = lineWidth;
         for (int i = 0; i < HEADINGS; i++) {
             int j = (i + 1) % HEADINGS;
             if (!footprint.landed[i] || !footprint.landed[j]) {
                 continue;
             }
-            float x0 = (float) (footprint.ringX[i] - cam.x), y0 = (float) (footprint.ringY[i] + 0.1 - cam.y);
-            float z0 = (float) (footprint.ringZ[i] - cam.z);
-            float x1 = (float) (footprint.ringX[j] - cam.x), y1 = (float) (footprint.ringY[j] + 0.1 - cam.y);
-            float z1 = (float) (footprint.ringZ[j] - cam.z);
+            float x0 = (float) (footprint.ringX[i] - camX), y0 = (float) (footprint.ringY[i] + 0.1 - camY);
+            float z0 = (float) (footprint.ringZ[i] - camZ);
+            float x1 = (float) (footprint.ringX[j] - camX), y1 = (float) (footprint.ringY[j] + 0.1 - camY);
+            float z1 = (float) (footprint.ringZ[j] - camZ);
             float nx = x1 - x0, ny = y1 - y0, nz = z1 - z0;
             float len = (float) Math.sqrt(nx * nx + ny * ny + nz * nz);
             if (len < 1e-4f) {
@@ -263,10 +273,11 @@ public final class ElytraHudModule implements IModule, IConfigurable, HudElement
             nx /= len;
             ny /= len;
             nz /= len;
-            lines.addVertex(last, x0, y0, z0).setColor(0.25f, 1f, 0.45f, 0.85f).setNormal(last, nx, ny, nz);
-            lines.addVertex(last, x1, y1, z1).setColor(0.25f, 1f, 0.45f, 0.85f).setNormal(last, nx, ny, nz);
+            lines.addVertex(last, x0, y0, z0).setColor(0.25f, 1f, 0.45f, 0.85f).setNormal(last, nx, ny, nz)
+                    .setLineWidth(w);
+            lines.addVertex(last, x1, y1, z1).setColor(0.25f, 1f, 0.45f, 0.85f).setNormal(last, nx, ny, nz)
+                    .setLineWidth(w);
         }
-        buffers.endBatch(RenderType.lines());
     }
 
     @Override

@@ -29,8 +29,8 @@ import net.minecraft.core.Holder;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.protocol.game.ServerboundSelectTradePacket;
 import net.minecraft.world.entity.Entity;
-import net.minecraft.world.entity.npc.Villager;
-import net.minecraft.world.entity.npc.VillagerProfession;
+import net.minecraft.world.entity.npc.villager.Villager;
+import net.minecraft.world.entity.npc.villager.VillagerProfession;
 import net.minecraft.world.inventory.MerchantMenu;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
@@ -44,7 +44,6 @@ import net.minecraft.world.phys.HitResult;
 import net.neoforged.neoforge.client.event.RegisterKeyMappingsEvent;
 import net.neoforged.neoforge.client.event.ScreenEvent;
 import net.neoforged.neoforge.client.settings.KeyConflictContext;
-import org.lwjgl.glfw.GLFW;
 
 import java.util.EnumSet;
 import java.util.List;
@@ -151,7 +150,7 @@ public final class VillagerHelpers implements IModule, IConfigurable, LeaseListe
 
     /** Mod bus. */
     public void onRegisterKeys(RegisterKeyMappingsEvent event) {
-        bulkKey = new KeyMapping(KEY_BULK_TRADE, KeyConflictContext.GUI, InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_G,
+        bulkKey = new KeyMapping(KEY_BULK_TRADE, KeyConflictContext.GUI, InputConstants.Type.KEYBOARD, InputConstants.KEY_G,
                 com.utilitysuite.core.input.KeybindManager.CATEGORY);
         rollerKey = new KeyMapping(KEY_LIBRARIAN_ROLLER, KeyConflictContext.IN_GAME, InputConstants.UNKNOWN,
                 com.utilitysuite.core.input.KeybindManager.CATEGORY);
@@ -173,7 +172,7 @@ public final class VillagerHelpers implements IModule, IConfigurable, LeaseListe
         if (!enabled || k == null || !(event.getScreen() instanceof MerchantScreen ms)) {
             return;
         }
-        if (!k.matches(event.getKeyCode(), event.getScanCode())) {
+        if (!k.matches(event.getKeyEvent())) {
             return;
         }
         event.setCanceled(true);
@@ -224,8 +223,8 @@ public final class VillagerHelpers implements IModule, IConfigurable, LeaseListe
         if (Services.clicker().pending() > 0) {
             return; // the previous take is still queued
         }
-        boolean open = mc.screen instanceof MerchantScreen;
-        MerchantMenu menu = open ? ((MerchantScreen) mc.screen).getMenu() : null;
+        boolean open = mc.gui.screen() instanceof MerchantScreen;
+        MerchantMenu menu = open ? ((MerchantScreen) mc.gui.screen()).getMenu() : null;
         MerchantOffers offers = menu == null ? null : menu.getOffers();
         int i = bulk.offerIndex();
         if (offers == null || i >= offers.size()) {
@@ -336,7 +335,7 @@ public final class VillagerHelpers implements IModule, IConfigurable, LeaseListe
         for (Entity e : mc.level.entitiesForRendering()) {
             if (e instanceof Villager v && !v.isBaby()) {
                 double d = v.distanceToSqr(lecternPos.getX() + 0.5, lecternPos.getY() + 0.5, lecternPos.getZ() + 0.5);
-                boolean lib = v.getVillagerData().getProfession() == VillagerProfession.LIBRARIAN;
+                boolean lib = v.getVillagerData().profession().is(VillagerProfession.LIBRARIAN);
                 if (lib && d < bestD) {
                     best = v;
                     bestD = d;
@@ -347,7 +346,7 @@ public final class VillagerHelpers implements IModule, IConfigurable, LeaseListe
             say(NoticeKind.WARN, "Librarian roller: no librarian near that lectern");
             return;
         }
-        if (best.getVillagerData().getLevel() > 1) {
+        if (best.getVillagerData().level() > 1) {
             say(NoticeKind.WARN, "Librarian roller: that librarian is past novice (already traded with)");
             return;
         }
@@ -389,7 +388,7 @@ public final class VillagerHelpers implements IModule, IConfigurable, LeaseListe
         switch (a) {
             case INTERACT_VILLAGER -> interact(mc, input, player, v);
             case CLOSE_SCREEN -> {
-                if (mc.screen instanceof MerchantScreen) {
+                if (mc.gui.screen() instanceof MerchantScreen) {
                     player.closeContainer();
                 }
             }
@@ -407,18 +406,18 @@ public final class VillagerHelpers implements IModule, IConfigurable, LeaseListe
         facts.clear();
         facts.villagerPresent = v != null;
         if (v != null) {
-            VillagerProfession p = v.getVillagerData().getProfession();
-            facts.librarian = p == VillagerProfession.LIBRARIAN;
-            facts.unemployed = p == VillagerProfession.NONE;
+            Holder<VillagerProfession> p = v.getVillagerData().profession();
+            facts.librarian = p.is(VillagerProfession.LIBRARIAN);
+            facts.unemployed = p.is(VillagerProfession.NONE);
         }
         facts.lecternAtPos = mc.level.getBlockState(lecternPos).is(Blocks.LECTERN);
         for (int i = 0; i < 9; i++) {
-            if (player.getInventory().items.get(i).is(Items.LECTERN)) {
+            if (player.getInventory().getNonEquipmentItems().get(i).is(Items.LECTERN)) {
                 facts.lecternInHotbar = true;
                 break;
             }
         }
-        if (mc.screen instanceof MerchantScreen ms && !ms.getMenu().getOffers().isEmpty()) {
+        if (mc.gui.screen() instanceof MerchantScreen ms && !ms.getMenu().getOffers().isEmpty()) {
             MerchantMenu menu = ms.getMenu();
             facts.offersShown = true;
             facts.traderXp = menu.getTraderXp();
@@ -456,7 +455,7 @@ public final class VillagerHelpers implements IModule, IConfigurable, LeaseListe
     }
 
     private void interact(Minecraft mc, IInputSmoother input, LocalPlayer player, Villager v) {
-        if (v == null || mc.screen != null) {
+        if (v == null || mc.gui.screen() != null) {
             return;
         }
         aimAt(input, player, v.getX(), v.getY() + v.getBbHeight() * 0.6, v.getZ());
@@ -487,7 +486,7 @@ public final class VillagerHelpers implements IModule, IConfigurable, LeaseListe
         }
         int slot = -1;
         for (int i = 0; i < 9; i++) {
-            if (player.getInventory().items.get(i).is(Items.LECTERN)) {
+            if (player.getInventory().getNonEquipmentItems().get(i).is(Items.LECTERN)) {
                 slot = i;
                 break;
             }
@@ -495,7 +494,7 @@ public final class VillagerHelpers implements IModule, IConfigurable, LeaseListe
         if (slot < 0) {
             return;
         }
-        if (player.getInventory().selected != slot) { // read-only check; the switch goes through the core
+        if (player.getInventory().getSelectedSlot() != slot) { // read-only check; the switch goes through the core
             input.selectHotbarSlot(rollLease, slot);
             return;
         }

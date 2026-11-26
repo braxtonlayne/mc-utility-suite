@@ -1,7 +1,7 @@
 package com.utilitysuite.ui.kit;
 
 import net.minecraft.client.gui.Font;
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 
 /**
  * A plain square surface at the quiet level: fill and an optional hairline (inset blocks, tracks, separators); purely
@@ -23,7 +23,7 @@ public final class BoxNode extends UiNode {
     }
 
     @Override
-    public void render(GuiGraphics g, Font font, int sx, int sy, int mouseX, int mouseY) {
+    public void render(GuiGraphicsExtractor g, Font font, int sx, int sy, int mouseX, int mouseY) {
         UiRenderUtils.roundedRect(g, sx, sy, w, h, radius, fill, corners);
         if (border != 0) {
             UiRenderUtils.roundedOutline(g, sx, sy, w, h, radius, border);

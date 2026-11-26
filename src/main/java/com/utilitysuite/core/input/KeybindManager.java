@@ -4,7 +4,6 @@ import com.mojang.blaze3d.platform.InputConstants;
 import net.minecraft.client.KeyMapping;
 import net.neoforged.neoforge.client.event.RegisterKeyMappingsEvent;
 import net.neoforged.neoforge.client.settings.KeyConflictContext;
-import org.lwjgl.glfw.GLFW;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -20,25 +19,30 @@ import java.util.Arrays;
  */
 public final class KeybindManager {
 
-    public static final String CATEGORY = "key.categories.utilitysuite";
+    /**
+     * The Controls-screen category of every suite mapping (26.3: a {@link KeyMapping.Category} record, label key
+     * {@code key.category.utilitysuite.main}). Registered in {@link #onRegisterKeyMappings}.
+     */
+    public static final KeyMapping.Category CATEGORY = new KeyMapping.Category(
+            net.minecraft.resources.Identifier.fromNamespaceAndPath("utilitysuite", "main"));
 
     /** Suite actions with a key binding. */
     public enum KeyId {
-        OPEN_MENU("open_menu", GLFW.GLFW_KEY_RIGHT_SHIFT),
-        STOP_ALL("stop_all", GLFW.GLFW_KEY_BACKSPACE),
-        CLEAN_SCREEN("clean_screen", GLFW.GLFW_KEY_F10),
+        OPEN_MENU("open_menu", InputConstants.KEY_RSHIFT),
+        STOP_ALL("stop_all", InputConstants.KEY_BACKSPACE),
+        CLEAN_SCREEN("clean_screen", InputConstants.KEY_F10),
         TOGGLE_TERRAIN_SURFACE("toggle_terrain_surface", InputConstants.UNKNOWN.getValue()),
         TOGGLE_WORLD_OVERLAYS("toggle_world_overlays", InputConstants.UNKNOWN.getValue()),
-        TOGGLE_SCOUT_CAMERA("toggle_scout_camera", GLFW.GLFW_KEY_RIGHT_ALT), // freecam (Freelook holds Left Alt)
+        TOGGLE_SCOUT_CAMERA("toggle_scout_camera", InputConstants.KEY_RALT), // freecam (Freelook holds Left Alt)
         TOGGLE_AUTOPILOT("toggle_autopilot", InputConstants.UNKNOWN.getValue()),
         /** Hold to hand the whole body to the autopilot (read with {@link #isHeld}; unbound by default). */
         HAND_OVER("hand_over", InputConstants.UNKNOWN.getValue()),
-        /** Opens the full-screen World Atlas. M is not bound by vanilla 1.21.1. */
-        OPEN_WORLD_ATLAS("open_world_atlas", GLFW.GLFW_KEY_M),
+        /** Opens the full-screen World Atlas. M is not bound by vanilla. */
+        OPEN_WORLD_ATLAS("open_world_atlas", InputConstants.KEY_M),
         /** Hold to open the action wheel (read with {@link #isHeld}; unbound by default: every free key is taken). */
         RADIAL_WHEEL("radial_wheel", InputConstants.UNKNOWN.getValue()),
         /** Ctrl+K: the command palette (vanilla binds nothing to K). */
-        COMMAND_PALETTE("command_palette", GLFW.GLFW_KEY_K, true),
+        COMMAND_PALETTE("command_palette", InputConstants.KEY_K, true),
         UNDO_SETTING("undo_setting", InputConstants.UNKNOWN.getValue());
 
         private static final KeyId[] VALUES = values();
@@ -172,7 +176,7 @@ public final class KeybindManager {
         if (m == null || mc == null || mc.options == null) {
             return;
         }
-        mc.options.setKey(m, key);
+        m.setKey(key); // 1.21.1 Options.setKey(m, key) did this plus the save below
         KeyMapping.resetMapping();
         mc.options.save();
     }
@@ -193,7 +197,8 @@ public final class KeybindManager {
             return false;
         }
         int colon = value.indexOf(':');
-        String keyName = colon < 0 ? value : value.substring(0, colon);
+        // a value written by a 1.21.1 build may carry a GLFW-era name
+        String keyName = LegacyKeyCodes.migrateName(colon < 0 ? value : value.substring(0, colon));
         net.neoforged.neoforge.client.settings.KeyModifier mod = colon < 0
                 ? net.neoforged.neoforge.client.settings.KeyModifier.NONE
                 : net.neoforged.neoforge.client.settings.KeyModifier.valueFromString(value.substring(colon + 1));
@@ -209,13 +214,56 @@ public final class KeybindManager {
         return true;
     }
 
+    /** Core config key (global.json, module "core") recording that saved key names use the 26.3 (SDL3) codes. */
+    public static final String KEY_INPUT_CODES = "input_codes";
+    /** Value of {@link #KEY_INPUT_CODES} once {@link #migrateLegacyBindings} ran. */
+    public static final String INPUT_CODES_SDL3 = "sdl3";
+
+    /**
+     * One-time migration of key bindings saved by the 1.21.1 builds (GLFW era) in options.txt: names whose meaning
+     * changed with SDL3 ({@link LegacyKeyCodes#migrateName}) are rebound, for every mapping (vanilla's included, the
+     * user's own options file). Runs once per installation: afterwards {@code core.input_codes = "sdl3"} is set in
+     * {@code global}. Returns true when the flag was newly set (the caller saves {@code global}). Client thread, after
+     * options.txt has loaded; allocates, runs once.
+     */
+    public static boolean migrateLegacyBindings(com.utilitysuite.core.api.ProfileConfig global) {
+        net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
+        if (global == null || mc == null || mc.options == null) {
+            return false;
+        }
+        if (INPUT_CODES_SDL3.equals(global.getString(com.utilitysuite.core.config.ModState.CORE, KEY_INPUT_CODES, ""))) {
+            return false;
+        }
+        int changed = 0;
+        for (KeyMapping m : mc.options.keyMappings) {
+            String name = m.getKey().getName();
+            String migrated = LegacyKeyCodes.migrateName(name);
+            if (migrated != null && !migrated.equals(name)) {
+                try {
+                    m.setKey(InputConstants.getKey(migrated));
+                    changed++;
+                    LOG.info("Key binding {}: {} -> {} (1.21.1 key code migrated)", m.getName(), name, migrated);
+                } catch (IllegalArgumentException e) {
+                    LOG.warn("Key binding {}: could not migrate {}", m.getName(), name);
+                }
+            }
+        }
+        if (changed > 0) {
+            KeyMapping.resetMapping();
+            mc.options.save();
+        }
+        global.set(com.utilitysuite.core.config.ModState.CORE, KEY_INPUT_CODES, INPUT_CODES_SDL3);
+        return true;
+    }
+
     /** Mod-bus listener. */
     public static void onRegisterKeyMappings(RegisterKeyMappingsEvent event) {
+        event.registerCategory(CATEGORY);
         for (KeyId id : IDS) {
             KeyMapping m = new KeyMapping(id.translationKey(), KeyConflictContext.IN_GAME,
                     id.ctrl ? net.neoforged.neoforge.client.settings.KeyModifier.CONTROL
                             : net.neoforged.neoforge.client.settings.KeyModifier.NONE,
-                    InputConstants.Type.KEYSYM, id.defaultKey(), CATEGORY);
+                    InputConstants.Type.KEYBOARD, id.defaultKey(), CATEGORY);
             MAPPINGS[id.ordinal()] = m;
             event.register(m);
         }

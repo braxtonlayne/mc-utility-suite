@@ -61,7 +61,11 @@ public final class WorldScanner {
     private static volatile ChunkAgeTracker activeChunkAge;
 
     private final Reference2IntOpenHashMap<Block> categoryCache = new Reference2IntOpenHashMap<>();
-    private final LongOpenHashSet loadedChunks = new LongOpenHashSet();
+    private final LoadedChunkRoster loadedChunks = new LoadedChunkRoster();
+    /** Loaded chunks verified against the client chunk cache per tick (see {@link LoadedChunkRoster}). */
+    static final int CHUNK_CHECKS_PER_TICK = 32;
+    private final java.util.function.LongPredicate chunkPresent = this::chunkPresent;
+    private final java.util.function.LongConsumer staleChunk = this::forgetStaleChunk;
     private final LongArrayFIFOQueue queue = new LongArrayFIFOQueue();
     private final LongOpenHashSet queued = new LongOpenHashSet();
     private final LongArrayList matchPos = new LongArrayList();
@@ -253,8 +257,8 @@ public final class WorldScanner {
 
     public void onChunkLoad(Level l, ChunkAccess chunk) {
         ensureLevel(l);
-        int cx = chunk.getPos().x;
-        int cz = chunk.getPos().z;
+        int cx = chunk.getPos().x();
+        int cz = chunk.getPos().z();
         loadedChunks.add(BlockPosPacking.chunk(cx, cz));
         queueChunk(chunk, cx, cz);
         if (trackChunkAge) {
@@ -280,7 +284,7 @@ public final class WorldScanner {
                 for (BlockEntity be : lc.getBlockEntities().values()) {
                     if (be instanceof SpawnerBlockEntity sbe) {
                         BaseSpawner spawner = sbe.getSpawner();
-                        if (spawner.getSpin() != 0.0 || spawner.getoSpin() != 0.0) {
+                        if (spawner.getSpin() != 0.0 || spawner.getOSpin() != 0.0) {
                             spawnerActive = true;
                             break;
                         }
@@ -341,11 +345,28 @@ public final class WorldScanner {
         if (l != level) {
             return;
         }
-        int cx = chunk.getPos().x;
-        int cz = chunk.getPos().z;
+        int cx = chunk.getPos().x();
+        int cz = chunk.getPos().z();
         loadedChunks.remove(BlockPosPacking.chunk(cx, cz));
-        int minS = chunk.getMinSection();
-        int maxS = chunk.getMaxSection();
+        forgetChunk(cx, cz, chunk.getMinSectionY(), chunk.getMaxSectionY() + 1);
+    }
+
+    /** True while the client chunk cache still holds this chunk (it returns null for a dropped or replaced one). */
+    private boolean chunkPresent(long ck) {
+        Level l = level;
+        return l != null && l.getChunkSource().getChunk(BlockPosPacking.chunkX(ck), BlockPosPacking.chunkZ(ck),
+                false) != null;
+    }
+
+    /** A chunk the cache dropped without an unload event (already removed from {@link #loadedChunks}). */
+    private void forgetStaleChunk(long ck) {
+        if (level != null) {
+            forgetChunk(BlockPosPacking.chunkX(ck), BlockPosPacking.chunkZ(ck), level.getMinSectionY(),
+                    level.getMaxSectionY() + 1);
+        }
+    }
+
+    private void forgetChunk(int cx, int cz, int minS, int maxS) {
         for (int sy = minS; sy < maxS; sy++) {
             long key = HighlightIndex.sectionKey(cx, sy, cz);
             observed.removeSection(key);
@@ -357,7 +378,7 @@ public final class WorldScanner {
     }
 
     private void queueChunk(ChunkAccess chunk, int cx, int cz) {
-        for (int sy = chunk.getMinSection(); sy < chunk.getMaxSection(); sy++) {
+        for (int sy = chunk.getMinSectionY(); sy < chunk.getMaxSectionY() + 1; sy++) {
             long key = HighlightIndex.sectionKey(cx, sy, cz);
             if (queued.add(key)) {
                 queue.enqueue(key);
@@ -370,11 +391,11 @@ public final class WorldScanner {
         if (level == null) {
             return;
         }
-        int minS = level.getMinSection();
-        int maxS = level.getMaxSection();
+        int minS = level.getMinSectionY();
+        int maxS = level.getMaxSectionY() + 1;
         queue.clear(); // pending entries are all re-added below, in distance order
         queued.clear();
-        long[] chunks = nearestFirst(loadedChunks, lastChunkX, lastChunkZ);
+        long[] chunks = nearestFirst(loadedChunks.toLongArray(), lastChunkX, lastChunkZ);
         for (long ck : chunks) {
             int cx = BlockPosPacking.chunkX(ck);
             int cz = BlockPosPacking.chunkZ(ck);
@@ -392,7 +413,11 @@ public final class WorldScanner {
      * nearest first (ties by squared distance). Engine-free; allocates the result.
      */
     static long[] nearestFirst(LongOpenHashSet chunks, int cx, int cz) {
-        long[] out = chunks.toLongArray();
+        return nearestFirst(chunks.toLongArray(), cx, cz);
+    }
+
+    /** As above, sorting {@code out} in place and returning it. */
+    static long[] nearestFirst(long[] out, int cx, int cz) {
         it.unimi.dsi.fastutil.longs.LongArrays.quickSort(out, (a, b) -> {
             int c = Long.compare(ringKey(a, cx, cz), ringKey(b, cx, cz));
             return c != 0 ? c : Long.compare(a, b);
@@ -459,6 +484,7 @@ public final class WorldScanner {
         if (trackChunkAge && time % 20 == 0) {
             chunkAge.settle(time); // once a second, as the tracker expects
         }
+        loadedChunks.sweep(CHUNK_CHECKS_PER_TICK, chunkPresent, staleChunk);
         if (mask != 0) {
             int full = 0;
             int skips = 0;
@@ -600,7 +626,7 @@ public final class WorldScanner {
             int dz = (i / side) % side - r;
             int dy = i / (side * side) - r;
             int sy = csy + dy;
-            if (sy < l.getMinSection() || sy >= l.getMaxSection()) {
+            if (sy < l.getMinSectionY() || sy >= l.getMaxSectionY() + 1) {
                 continue;
             }
             scanNear(l, csx + dx, sy, csz + dz);

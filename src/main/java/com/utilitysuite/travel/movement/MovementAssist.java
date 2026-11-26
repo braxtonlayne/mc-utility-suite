@@ -22,17 +22,19 @@ import com.utilitysuite.core.api.SettingSpec;
 import com.utilitysuite.travel.Packed;
 import com.utilitysuite.travel.TravelKeys;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.player.Input;
+import net.minecraft.client.player.ClientInput;
+import com.utilitysuite.core.input.MoveInputs;
+import net.minecraft.world.item.component.UseEffects;
 import net.minecraft.client.player.LocalPlayer;
-import net.minecraft.client.renderer.LevelRenderer;
-import net.minecraft.client.renderer.MultiBufferSource;
-import net.minecraft.client.renderer.RenderType;
+import net.minecraft.client.renderer.SubmitNodeCollector;
+import net.minecraft.client.renderer.rendertype.RenderTypes;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.component.DataComponents;
 import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.phys.Vec3;
 import net.neoforged.neoforge.client.event.MovementInputUpdateEvent;
-import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
+import net.neoforged.neoforge.client.event.SubmitCustomGeometryEvent;
 
 import java.util.List;
 
@@ -101,6 +103,8 @@ public final class MovementAssist implements IModule, IConfigurable, com.utility
     static final String K_REACH = "reach_overlay";
     static final String K_AUTOMATION = "assist_automation";
     static final String K_BLOCKS = "parkour_blocks";
+    static final String K_BLOCKS_ALLOWED_ONLY = "parkour_blocks_allowed_only";
+    static final String K_BLOCKS_ALLOWED = "parkour_blocks_allowed";
     static final String K_LOOK = "look_style";
     static final String K_ESCAPE = "escape_path";
     static final String K_ESCAPE_PLAYERS = "escape_players";
@@ -209,6 +213,8 @@ public final class MovementAssist implements IModule, IConfigurable, com.utility
     private final EscapePlanner escape = new EscapePlanner();
     private final ParkourBlocks blocks = new ParkourBlocks();
     private boolean blocksOn;
+    private boolean blocksAllowedOnly;
+    private final AllowedSupports allowedSupports = new AllowedSupports();
     private final FallClutch clutch = new FallClutch();
     private boolean clutchOn;
     private final MovementPhysics hop = new MovementPhysics();
@@ -302,7 +308,7 @@ public final class MovementAssist implements IModule, IConfigurable, com.utility
             escapeCount = 0;
             return;
         }
-        Input in = event.getInput();
+        ClientInput in = event.getInput();
         fillNow(mc, p);
         if (havePrevPos) {
             double dx = now.x - prevX;
@@ -318,7 +324,7 @@ public final class MovementAssist implements IModule, IConfigurable, com.utility
         prevZ = now.z;
         if (useClutch) {
             // before the skip checks: it runs while sneaking, in water (scooping it back up) and under automation
-            clutch.tick(mc, p, now, sign(in.forwardImpulse), sign(in.leftImpulse), voxels);
+            clutch.tick(mc, p, now, sign(MoveInputs.forward(in)), sign(MoveInputs.left(in)), voxels);
             clutch.compensate();
             if (clutch.active()) {
                 blocks.release();
@@ -336,10 +342,14 @@ public final class MovementAssist implements IModule, IConfigurable, com.utility
             return;
         }
         String skipped = skip(p);
-        if (skipped == null && (mc.screen != null || emergencyMovementLease())) {
+        if (skipped == null && (mc.gui.screen() != null || emergencyMovementLease())) {
             skipped = "control taken";
         }
         if (skipped != null) {
+            if (!skippedBefore) {
+                keepPreSkip(skipped); // .jumpcap opens chat: keep what the assist was doing a tick ago
+            }
+            skippedBefore = true;
             // Stop-All, a screen, a higher lease, not on foot: the commitment and the hold end at once
             brain.abortCommitment();
             climb.reset();
@@ -352,13 +362,23 @@ public final class MovementAssist implements IModule, IConfigurable, com.utility
             escapeCount = 0;
             return;
         }
+        skippedBefore = false;
+        if (intent.pinned() && p.onGround()) {
+            int fx = net.minecraft.util.Mth.floor(p.getX());
+            int fz = net.minecraft.util.Mth.floor(p.getZ());
+            int fy = net.minecraft.util.Mth.floor(p.getY() - 0.01);
+            if (intent.pinnedAt(fx, fy, fz) || intent.pinnedAt(fx, fy - 1, fz)) { // (a fence top stands 1.5 high)
+                intent.clearPinnedTarget();
+                tell("Reached the pinned jump target", false);
+            }
+        }
         if (p.onGround()) {
             jumpAir = false;
         } else if (wasOnGround && p.getDeltaMovement().y > 0.2) {
             jumpAir = true;
         }
         wasOnGround = p.onGround();
-        if (in.shiftKeyDown) {
+        if (in.keyPresses.shift()) {
             // sneak is the documented "let go" key: the commitment and the landing hold hand everything back now
             brain.noteUserSneak();
             climb.reset();
@@ -370,8 +390,8 @@ public final class MovementAssist implements IModule, IConfigurable, com.utility
             return;
         }
         boolean sprinting = p.isSprinting();
-        int userF = sign(in.forwardImpulse);
-        int userS = sign(in.leftImpulse);
+        int userF = sign(MoveInputs.forward(in));
+        int userS = sign(MoveInputs.left(in));
         float health = p.getHealth() + p.getAbsorptionAmount();
         brain.safeOnly = safeWalk.getAsBoolean();
         float yaw = p.getYRot();
@@ -411,7 +431,7 @@ public final class MovementAssist implements IModule, IConfigurable, com.utility
         if (brain.intentAssist && !clutch.active()
                 && (auto || controlMode.mode != JumpCommit.Mode.NUDGE || climbCarry)) {
             climb.decide(now, yaw, userF > 0 ? yaw : moveYaw(yaw, userF, userS), userF, userS,
-                    sprinting || (now.onGround && canStartSprint(p, in)), in.jumping,
+                    sprinting || (now.onGround && canStartSprint(p, in)), in.keyPresses.jump(),
                     climbCarry, voxels);
         } else {
             climb.reset();
@@ -436,7 +456,7 @@ public final class MovementAssist implements IModule, IConfigurable, com.utility
         if (!brain.commit().live()) {
             coSteerOverridden = false; // a new commitment: the co-steer may be asked for again
         }
-        boolean steerOk = coSteerOn && !auto && mc.screen == null && !foreignMovementLease()
+        boolean steerOk = coSteerOn && !auto && mc.gui.screen() == null && !foreignMovementLease()
                 && mode != JumpCommit.Mode.NUDGE && !coSteerOverridden;
         double steerRate = Math.min(mode == JumpCommit.Mode.CARRY ? coSteerCarryRate : coSteerRate,
                 IInputSmoother.MAX_TURN_DEG_PER_SEC);
@@ -469,7 +489,7 @@ public final class MovementAssist implements IModule, IConfigurable, com.utility
             }
             // the autopilot's parkour reflex runs the selected mode, at least Co-pilot (Takeover while the key is held)
             brain.mode = mode;
-            brain.decide(now, p.getYRot(), sprinting, userF, userS, in.jumping, health, voxels);
+            brain.decide(now, p.getYRot(), sprinting, userF, userS, in.keyPresses.jump(), health, voxels);
             brain.edgeJump = e;
             brain.airSteer = s;
             brain.sprintHop = h;
@@ -482,7 +502,7 @@ public final class MovementAssist implements IModule, IConfigurable, com.utility
                 brain.tickPhase = false;
             }
             brain.mode = mode;
-            brain.decide(now, p.getYRot(), sprinting, userF, userS, in.jumping, health, voxels);
+            brain.decide(now, p.getYRot(), sprinting, userF, userS, in.keyPresses.jump(), health, voxels);
             brain.tickPhase = tp;
             status = userF > 0 ? "assisting" : "no forward key";
         }
@@ -557,6 +577,16 @@ public final class MovementAssist implements IModule, IConfigurable, com.utility
                 strW = SharedGrant.KEEP;
             }
             blocks.compensate();
+        }
+        // 26.3: one written axis means both are written, the kept one with the user's own key. The core reads the
+        // kept axis from the event's move vector, which 26.3 normalizes (W+A is 0.707 / 0.707; 1.21.1 kept the raw
+        // +-1 and normalized only in travel). Writing forward 0 over W+A then left a 0.707 strafe (vanilla's square
+        // mapping keeps a lone axis short), so a corner-cut flight steered at 71% of what the replica and the planner
+        // assume and overshot the fence post. Writing the user's sign explicitly gives the 1.21.1 impulse back.
+        if (fwdW == SharedGrant.KEEP && strW != SharedGrant.KEEP) {
+            fwdW = userF;
+        } else if (strW == SharedGrant.KEEP && fwdW != SharedGrant.KEEP) {
+            strW = userS;
         }
         SharedGrant g = applyWrites(jumpW, fwdW, strW, sprintW, withholdW, sneakW, steerW, steerOk, steerRate,
                 steerMax);
@@ -862,10 +892,17 @@ public final class MovementAssist implements IModule, IConfigurable, com.utility
      * {@link VanillaBodyRules#sprintStart}): in the air too, as vanilla and the shared input overlay allow. Passengers
      * never get here ({@link #skip}), so a vehicle is simply refused.
      */
-    private static boolean canStartSprint(LocalPlayer p, Input in) {
-        return VanillaBodyRules.sprintStart(p.isSprinting(), in.forwardImpulse, p.isUnderWater(), p.isInWater(),
-                p.canStartSwimming(), p.getFoodData().getFoodLevel(), p.isPassenger(), p.mayFly(), p.isUsingItem(),
-                p.hasEffect(MobEffects.BLINDNESS), !p.isPassenger(), p.isFallFlying(),
+    private static boolean canStartSprint(LocalPlayer p, ClientInput in) {
+        // 26.3 LocalPlayer.canStartSprinting, mapped onto the shared rule's inputs: any forward impulse starts a sprint
+        // (the move vector is normalized, a diagonal is 0.71), shallow water blocks it unless flying, an item in use
+        // only when its use effects forbid sprinting, sneaking only on land, elytra flight only above water
+        boolean slowUse = p.isUsingItem()
+                && !p.getUseItem().getOrDefault(DataComponents.USE_EFFECTS, UseEffects.DEFAULT).canSprint();
+        boolean shallow = p.isInShallowWater() && !p.getAbilities().flying;
+        boolean slowMove = p.isMovingSlowly() && !p.isUnderWater();
+        return VanillaBodyRules.sprintStart(p.isSprinting(), in.hasForwardImpulse() ? 1f : 0f, p.isUnderWater(),
+                shallow, false, p.getFoodData().getFoodLevel(), p.isPassenger(), p.mayFly(), slowUse,
+                p.isMobilityRestricted(), !p.isPassenger() && !slowMove, p.isFallFlying() && !p.isUnderWater(),
                 p.horizontalCollision && !p.minorHorizontalCollision);
     }
 
@@ -883,41 +920,60 @@ public final class MovementAssist implements IModule, IConfigurable, com.utility
 
     // ---- overlay ----------------------------------------------------------------------------------------------------
 
-    public void onRenderLevel(RenderLevelStageEvent event) {
-        if (!enabled || !overlay || event.getStage() != RenderLevelStageEvent.Stage.AFTER_PARTICLES
+    public void onRenderLevel(SubmitCustomGeometryEvent event) {
+        if (!enabled || !overlay
                 || (!showLanding && reachCount == 0 && escapeCount == 0) || Services.modState().isCleanScreen()) {
             return;
         }
-        PoseStack pose = event.getPoseStack();
-        if (pose == null) {
-            return;
-        }
-        Vec3 cam = event.getCamera().getPosition();
-        MultiBufferSource.BufferSource buffers = Minecraft.getInstance().renderBuffers().bufferSource();
-        VertexConsumer lines = buffers.getBuffer(RenderType.lines());
+        Vec3 cam = event.getLevelRenderState().cameraRenderState.pos;
+        overlayCamX = cam.x;
+        overlayCamY = cam.y;
+        overlayCamZ = cam.z;
+        lineWidth = Math.max(1f,
+                Minecraft.getInstance().gameRenderer.gameRenderState().windowRenderState.appropriateLineWidth);
+        event.getSubmitNodeCollector().submitCustomGeometry(event.getPoseStack(), RenderTypes.linesTranslucent(),
+                drawOverlay);
+    }
+
+    /** The deferred draw (26.3 submits run later in the same frame, same thread): one instance. */
+    private final SubmitNodeCollector.CustomGeometryRenderer drawOverlay = this::drawOverlay;
+    private double overlayCamX;
+    private double overlayCamY;
+    private double overlayCamZ;
+    private float lineWidth = 1f;
+
+    private void drawOverlay(PoseStack.Pose last, VertexConsumer lines) {
+        double camX = overlayCamX;
+        double camY = overlayCamY;
+        double camZ = overlayCamZ;
         for (int i = 0; i < reachCount; i++) {
             long c = reachCells[i];
-            double x = Packed.x(c) - cam.x;
-            double y = Packed.y(c) + 1 - cam.y;
-            double z = Packed.z(c) - cam.z;
+            float x = (float) (Packed.x(c) - camX);
+            float y = (float) (Packed.y(c) + 1 - camY);
+            float z = (float) (Packed.z(c) - camZ);
             float g = reachUp[i] ? 0.95f : 0.75f;
-            LevelRenderer.renderLineBox(pose, lines, x + 0.1, y + 0.01, z + 0.1, x + 0.9, y + 0.03, z + 0.9,
-                    0.25f, g, 1.0f, reachUp[i] ? 0.85f : 0.5f);
+            WorldRenderKit.box(lines, last, x + 0.1f, y + 0.01f, z + 0.1f, x + 0.9f, y + 0.03f, z + 0.9f,
+                    argb(0.25f, g, 1.0f, reachUp[i] ? 0.85f : 0.5f));
         }
         if (showLanding) {
             float r = landingLethal ? 1.0f : (landingDamage > 0 ? 1.0f : 0.2f);
             float g = landingLethal ? 0.15f : (landingDamage > 0 ? 0.8f : 1.0f);
-            double y = landY - cam.y;
+            float y = (float) (landY - camY);
             int argb = 0xFF000000 | ((int) (r * 255) << 16) | ((int) (g * 255) << 8) | (int) (0.15f * 255);
-            brackets(lines, pose.last(), (float) (topX0 - cam.x), (float) (y + 0.02), (float) (topZ0 - cam.z),
-                    (float) (topX1 - cam.x), (float) (topZ1 - cam.z), argb);
-            double px = landX - cam.x;
-            double pz = landZ - cam.z;
-            LevelRenderer.renderLineBox(pose, lines, px - 0.3, y + 0.01, pz - 0.3, px + 0.3, y + 1.8, pz + 0.3,
-                    r, g, 0.15f, 0.6f);
+            brackets(lines, last, (float) (topX0 - camX), y + 0.02f, (float) (topZ0 - camZ),
+                    (float) (topX1 - camX), (float) (topZ1 - camZ), argb);
+            float px = (float) (landX - camX);
+            float pz = (float) (landZ - camZ);
+            WorldRenderKit.box(lines, last, px - 0.3f, y + 0.01f, pz - 0.3f, px + 0.3f, y + 1.8f, pz + 0.3f,
+                    argb(r, g, 0.15f, 0.6f));
         }
-        renderEscape(pose, lines, cam);
-        buffers.endBatch(RenderType.lines());
+        renderEscape(last, lines, camX, camY, camZ);
+    }
+
+    /** Packs 0..1 color channels as ARGB (the replacement for 1.21.1's float-color {@code renderLineBox}). */
+    static int argb(float r, float g, float b, float a) {
+        return ((int) (a * 255f + 0.5f) << 24) | ((int) (r * 255f + 0.5f) << 16) | ((int) (g * 255f + 0.5f) << 8)
+                | (int) (b * 255f + 0.5f);
     }
 
     /**
@@ -1030,20 +1086,19 @@ public final class MovementAssist implements IModule, IConfigurable, com.utility
     }
 
     /** Escape path: orange steps along the ground, magenta for sprint jumps, a taller marker at the end. */
-    private void renderEscape(PoseStack pose, VertexConsumer lines, Vec3 cam) {
+    private void renderEscape(PoseStack.Pose last, VertexConsumer lines, double camX, double camY, double camZ) {
         if (escapeCount < 2) {
             return;
         }
-        PoseStack.Pose last = pose.last();
         for (int i = 1; i < escapeCount; i++) {
             long a = escapeCells[i - 1];
             long b = escapeCells[i];
-            float ax = (float) (Packed.x(a) + 0.5 - cam.x);
-            float ay = (float) (Packed.y(a) + 0.1 - cam.y);
-            float az = (float) (Packed.z(a) + 0.5 - cam.z);
-            float bx = (float) (Packed.x(b) + 0.5 - cam.x);
-            float by = (float) (Packed.y(b) + 0.1 - cam.y);
-            float bz = (float) (Packed.z(b) + 0.5 - cam.z);
+            float ax = (float) (Packed.x(a) + 0.5 - camX);
+            float ay = (float) (Packed.y(a) + 0.1 - camY);
+            float az = (float) (Packed.z(a) + 0.5 - camZ);
+            float bx = (float) (Packed.x(b) + 0.5 - camX);
+            float by = (float) (Packed.y(b) + 0.1 - camY);
+            float bz = (float) (Packed.z(b) + 0.5 - camZ);
             boolean jump = escapeJumps[i];
             float r = jump ? 0.95f : 1.0f;
             float g = jump ? 0.25f : 0.55f;
@@ -1060,14 +1115,14 @@ public final class MovementAssist implements IModule, IConfigurable, com.utility
             }
         }
         long end = escapeCells[escapeCount - 1];
-        double ex = Packed.x(end) - cam.x;
-        double ey = Packed.y(end) - cam.y;
-        double ez = Packed.z(end) - cam.z;
-        LevelRenderer.renderLineBox(pose, lines, ex + 0.2, ey + 0.01, ez + 0.2, ex + 0.8, ey + 1.0, ez + 0.8,
-                1.0f, 0.55f, 0.1f, 1.0f);
+        float ex = (float) (Packed.x(end) - camX);
+        float ey = (float) (Packed.y(end) - camY);
+        float ez = (float) (Packed.z(end) - camZ);
+        WorldRenderKit.box(lines, last, ex + 0.2f, ey + 0.01f, ez + 0.2f, ex + 0.8f, ey + 1.0f, ez + 0.8f,
+                argb(1.0f, 0.55f, 0.1f, 1.0f));
     }
 
-    private static void segment(VertexConsumer c, PoseStack.Pose p, float x0, float y0, float z0, float x1, float y1,
+    private void segment(VertexConsumer c, PoseStack.Pose p, float x0, float y0, float z0, float x1, float y1,
                                 float z1, float r, float g, float b) {
         float nx = x1 - x0;
         float ny = y1 - y0;
@@ -1079,8 +1134,8 @@ public final class MovementAssist implements IModule, IConfigurable, com.utility
         nx /= len;
         ny /= len;
         nz /= len;
-        c.addVertex(p, x0, y0, z0).setColor(r, g, b, 1.0f).setNormal(p, nx, ny, nz);
-        c.addVertex(p, x1, y1, z1).setColor(r, g, b, 1.0f).setNormal(p, nx, ny, nz);
+        c.addVertex(p, x0, y0, z0).setColor(r, g, b, 1.0f).setNormal(p, nx, ny, nz).setLineWidth(lineWidth);
+        c.addVertex(p, x1, y1, z1).setColor(r, g, b, 1.0f).setNormal(p, nx, ny, nz).setLineWidth(lineWidth);
     }
 
     // ---- IModule / IConfigurable -------------------------------------------------------------------------------------
@@ -1221,6 +1276,9 @@ public final class MovementAssist implements IModule, IConfigurable, com.utility
         reachOverlay = p.getBool(ID, K_REACH, true);
         assistAutomation = p.getBool(ID, K_AUTOMATION, false);
         blocksOn = p.getBool(ID, K_BLOCKS, true);
+        blocksAllowedOnly = p.getBool(ID, K_BLOCKS_ALLOWED_ONLY, false);
+        allowedSupports.parse(p.getString(ID, K_BLOCKS_ALLOWED, ""));
+        blocks.planner.supportFilter = blocksAllowedOnly ? allowedSupports : null;
         boolean freeLook = "FREE".equals(p.getString(ID, K_LOOK, LookStyle.NATURAL.name()));
         blocks.setNaturalLook(!freeLook);
         brain.freeLook = freeLook; // lifts the co-steer's along-the-movement clamp (less legit, the user's choice)
@@ -1350,6 +1408,14 @@ public final class MovementAssist implements IModule, IConfigurable, com.utility
                 SettingSpec.bool(K_BLOCKS, "Parkour blocks", true, "",
                         "Mid-jump, if one block keeps you going (a wall you cannot clear, a gap one block too long),"
                                 + " turn your head, place a block from the hotbar and turn back. Uses your blocks."),
+                SettingSpec.bool(K_BLOCKS_ALLOWED_ONLY, "Place only on allowed blocks", false, "",
+                        "For maps that only let you build on some blocks: Parkour blocks places only against the"
+                                + " block types in the list below. Look at a block and press ] (Parkour blocks: allow"
+                                + " placing on this block type) to add its type, again to remove it. Saved per world or"
+                                + " server."),
+                SettingSpec.text(K_BLOCKS_ALLOWED, "Allowed blocks", "", "",
+                        "Block ids Parkour blocks may place against while the setting above is on, separated by"
+                                + " commas (e.g. minecraft:lime_wool). The ] key adds and removes the block you look at."),
                 SettingSpec.choice(K_LOOK, "Look style", LookStyle.NATURAL, "",
                         "NATURAL: automated looks stay along the way you are moving (aim ahead, turn back after)."
                                 + " FREE: look wherever is quickest for the job (less legit)."),
@@ -1521,6 +1587,124 @@ public final class MovementAssist implements IModule, IConfigurable, com.utility
     @Override
     public int ticksToPlannedTakeoff() {
         return plannedTakeoffIn;
+    }
+
+    /**
+     * The [ key: pins the block the crosshair is on as the jump target (the estimator then aims every jump at it while
+     * it is in reach); on the pinned block again, or on nothing, clears the pin. Client thread.
+     */
+    public void pinLookedAtTarget() {
+        Minecraft mc = Minecraft.getInstance();
+        BlockPos hit = lookedAtBlock(mc);
+        if (hit == null || intent.pinnedAt(hit.getX(), hit.getY(), hit.getZ())) {
+            if (intent.pinned()) {
+                intent.clearPinnedTarget();
+                tell("Jump target cleared", false);
+            } else {
+                tell("Look at a block to pin it as the jump target", true);
+            }
+            return;
+        }
+        intent.setPinnedTarget(hit.getX(), hit.getY(), hit.getZ());
+        tell("Jump target pinned at " + hit.getX() + " " + hit.getY() + " " + hit.getZ()
+                + (enabled && brain.intentAssist ? ": hold a movement key toward it"
+                : " (turn on Movement Assist and its intent assist to use it)"), false);
+    }
+
+    /**
+     * The ] key: with "Place only on allowed blocks" on, adds the type of the block the crosshair is on to the blocks
+     * Parkour blocks may place against, or removes it when listed; saved in the world's or server's profile.
+     */
+    public void markLookedAtBlock() {
+        if (!blocksAllowedOnly) {
+            tell("Turn on 'Place only on allowed blocks' (Movement Assist) to mark blocks with this key", true);
+            return;
+        }
+        Minecraft mc = Minecraft.getInstance();
+        BlockPos hit = lookedAtBlock(mc);
+        if (hit == null || mc.level == null) {
+            tell("Look at a block to allow placing on its type", true);
+            return;
+        }
+        net.minecraft.world.level.block.Block b = mc.level.getBlockState(hit).getBlock();
+        boolean now = allowedSupports.toggle(b);
+        Services.modState().profile().set(ID, K_BLOCKS_ALLOWED, allowedSupports.text());
+        Services.modState().markDirty();
+        tell((now ? "Parkour blocks may place on " : "Parkour blocks no longer place on ")
+                + b.getName().getString() + " (" + allowedSupports.size() + " allowed)", false);
+    }
+
+    private static BlockPos lookedAtBlock(Minecraft mc) {
+        return mc.hitResult instanceof net.minecraft.world.phys.BlockHitResult bh
+                && bh.getType() == net.minecraft.world.phys.HitResult.Type.BLOCK ? bh.getBlockPos() : null;
+    }
+
+    private static void tell(String text, boolean error) {
+        LocalPlayer p = Minecraft.getInstance().player;
+        if (p != null) {
+            p.sendSystemMessage(net.minecraft.network.chat.Component.literal("[Suite] ")
+                    .withStyle(net.minecraft.ChatFormatting.DARK_AQUA)
+                    .append(net.minecraft.network.chat.Component.literal(text).withStyle(
+                            error ? net.minecraft.ChatFormatting.RED : net.minecraft.ChatFormatting.GRAY)));
+        }
+    }
+
+    // the state of the last tick before the assist stood down (a screen, Stop-All, a lease): references and numbers only
+    private boolean skippedBefore;
+    private String preSkipCause;
+    private String preSkipStatus;
+    private String preSkipPhase;
+    private String preSkipParkour;
+    private int preSkipTakeoffIn = -1;
+    private boolean preSkipTarget;
+    private int preSkipX, preSkipY, preSkipZ;
+    private boolean preSkipFrozen;
+    private boolean preSkipTechniqueFirst;
+
+    private void keepPreSkip(String cause) {
+        preSkipCause = cause;
+        preSkipStatus = status;
+        preSkipPhase = phase();
+        preSkipParkour = parkourStatus;
+        preSkipTakeoffIn = plannedTakeoffIn;
+        preSkipTarget = brain.targetRegionValid();
+        preSkipX = brain.targetX();
+        preSkipY = brain.targetY();
+        preSkipZ = brain.targetZ();
+        preSkipFrozen = brain.targetFrozen();
+        preSkipTechniqueFirst = brain.techniqueFirst();
+    }
+
+    /**
+     * For {@code .jumpcap}: mode, last status, phase and the target the brain is on (allocates; on request only). Typing
+     * the command opens chat, which stands the assist down, so the state of the tick before that is reported too.
+     */
+    @Override
+    public String diagnostics() {
+        StringBuilder b = new StringBuilder();
+        b.append("enabled=").append(enabled).append(" mode=").append(controlMode)
+                .append(" status=").append(status).append(" phase=").append(phase())
+                .append(" parkour=").append(parkourStatus).append(" plannedTakeoffIn=").append(plannedTakeoffIn);
+        if (brain.targetRegionValid()) {
+            b.append(" target=").append(brain.targetX()).append(',').append(brain.targetY()).append(',')
+                    .append(brain.targetZ()).append(brain.targetFrozen() ? " (frozen)" : "");
+        } else {
+            b.append(" target=none");
+        }
+        b.append(" techniqueFirst=").append(brain.techniqueFirst());
+        if (skippedBefore && preSkipCause != null) {
+            b.append(" | before '").append(preSkipCause).append("': status=").append(preSkipStatus)
+                    .append(" phase=").append(preSkipPhase).append(" parkour=").append(preSkipParkour)
+                    .append(" plannedTakeoffIn=").append(preSkipTakeoffIn);
+            if (preSkipTarget) {
+                b.append(" target=").append(preSkipX).append(',').append(preSkipY).append(',').append(preSkipZ)
+                        .append(preSkipFrozen ? " (frozen)" : "");
+            } else {
+                b.append(" target=none");
+            }
+            b.append(" techniqueFirst=").append(preSkipTechniqueFirst);
+        }
+        return b.toString();
     }
 
     public void setSafeWalk(java.util.function.BooleanSupplier safeWalk) {

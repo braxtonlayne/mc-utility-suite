@@ -1,11 +1,12 @@
 package com.utilitysuite.ui.kit;
 
+import com.mojang.blaze3d.platform.InputConstants;
 import com.utilitysuite.core.api.visual.HoloToken;
 import com.utilitysuite.ui.holo.AnimStore;
 import com.utilitysuite.ui.holo.HoloFrames;
 import com.utilitysuite.ui.holo.HoloTheme;
 import net.minecraft.client.gui.Font;
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 
 import java.util.List;
 import java.util.function.Consumer;
@@ -71,7 +72,7 @@ public final class CycleSelector<E> extends UiNode {
     }
 
     @Override
-    public void render(GuiGraphics g, Font font, int sx, int sy, int mouseX, int mouseY) {
+    public void render(GuiGraphicsExtractor g, Font font, int sx, int sy, int mouseX, int mouseY) {
         if (values.isEmpty()) {
             return;
         }
@@ -135,7 +136,7 @@ public final class CycleSelector<E> extends UiNode {
         if (segmented) {
             int i = (int) ((mouseX - sx) * values.size() / w);
             select(Math.max(0, Math.min(values.size() - 1, i)));
-        } else if (button == 1 || mouseX < sx + w / 3) {
+        } else if (button == InputConstants.MOUSE_BUTTON_RIGHT || mouseX < sx + w / 3) {
             select(index - 1);
         } else {
             select(index + 1);
@@ -148,11 +149,11 @@ public final class CycleSelector<E> extends UiNode {
         if (values.isEmpty()) {
             return false;
         }
-        if (keyCode == 262 || keyCode == 265) {
+        if (keyCode == InputConstants.KEY_RIGHT || keyCode == InputConstants.KEY_UP) {
             select(index + 1);
             return true;
         }
-        if (keyCode == 263 || keyCode == 264) {
+        if (keyCode == InputConstants.KEY_LEFT || keyCode == InputConstants.KEY_DOWN) {
             select(index - 1);
             return true;
         }

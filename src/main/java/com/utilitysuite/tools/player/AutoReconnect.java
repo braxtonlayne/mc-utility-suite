@@ -109,7 +109,7 @@ public final class AutoReconnect implements IModule, IConfigurable {
     /** Game bus. Leaving from the pause menu counts as a manual disconnect. */
     public void onLoggingOut(ClientPlayerNetworkEvent.LoggingOut event) {
         Minecraft mc = Minecraft.getInstance();
-        manualDisconnect = mc.screen instanceof PauseScreen;
+        manualDisconnect = mc.gui.screen() instanceof PauseScreen;
         settle = -1;
         if (!enabled || manualDisconnect) {
             resumeLabel = null;
@@ -148,7 +148,7 @@ public final class AutoReconnect implements IModule, IConfigurable {
         }
         Screen s = event.getScreen();
         int secs = (countdown + 19) / 20;
-        event.getGuiGraphics().drawCenteredString(Minecraft.getInstance().font,
+        event.getGuiGraphics().centeredText(Minecraft.getInstance().font,
                 "Reconnecting in " + secs + " s (attempt " + (attempts + 1) + "/" + policy.maxAttempts() + ")",
                 s.width / 2, 12, 0xFFFFFF55);
     }
@@ -160,7 +160,7 @@ public final class AutoReconnect implements IModule, IConfigurable {
         }
         Minecraft mc = Minecraft.getInstance();
         if (countdown >= 0) {
-            if (mc.screen != countingOn) {
+            if (mc.gui.screen() != countingOn) {
                 cancel(); // the user left the screen
             } else if (--countdown <= 0) {
                 connect(mc);

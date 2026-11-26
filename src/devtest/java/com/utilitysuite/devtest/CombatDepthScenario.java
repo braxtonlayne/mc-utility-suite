@@ -19,9 +19,9 @@ import com.utilitysuite.travel.movement.MovementAssist;
 import net.minecraft.network.protocol.game.ServerboundPlayerCommandPacket;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.Entity;
-import net.minecraft.world.entity.monster.AbstractSkeleton;
-import net.minecraft.world.entity.monster.Zombie;
-import net.minecraft.world.entity.projectile.AbstractArrow;
+import net.minecraft.world.entity.monster.skeleton.AbstractSkeleton;
+import net.minecraft.world.entity.monster.zombie.Zombie;
+import net.minecraft.world.entity.projectile.arrow.AbstractArrow;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.entity.EntityJoinLevelEvent;
 
@@ -86,7 +86,7 @@ final class CombatDepthScenario {
             Harness.command("kill @e[type=!minecraft:player]");
             Harness.command("effect clear @s");
             Harness.command("clear @s");
-            Harness.command("gamerule fallDamage false");
+            Harness.command("gamerule fall_damage false");
             Harness.command(Arena.fill(-12, 0, 2, 12, 0, 3, "stone"));
             Harness.command(Arena.fill(-13, -6, 1, 13, -5, 4, "air"));
             Harness.command(Arena.fill(-12, 1, -12, 12, 9, 12, "air"));
@@ -138,11 +138,15 @@ final class CombatDepthScenario {
         s.cmd(() -> Arena.tp(0.5, 0.5, 0f));
     }
 
-    private static String zombie(double dx, double dz, boolean ai, String extra) {
+    /**
+     * {@code extraEquipment} goes inside the 26.x {@code equipment} compound (e.g. {@code ,offhand:{...}}): 26.3 reads
+     * mob gear only from {@code equipment:{slot:stack}} and silently ignores the 1.21.1 HandItems/ArmorItems lists.
+     */
+    private static String zombie(double dx, double dz, boolean ai, String extraEquipment) {
         return "summon minecraft:zombie " + (Arena.cx + dx) + " " + (Arena.FLOOR + 1) + " " + (Arena.cz + dz)
                 + " {PersistenceRequired:1b,NoAI:" + (ai ? "0b" : "1b") + ",Health:500f,"
-                + "attributes:[{id:\"minecraft:generic.max_health\",base:500d}],"
-                + "ArmorItems:[{},{},{},{id:\"minecraft:leather_helmet\",count:1}]" + extra + "}";
+                + "attributes:[{id:\"minecraft:max_health\",base:500d}],"
+                + "equipment:{head:{id:\"minecraft:leather_helmet\",count:1}" + extraEquipment + "}}";
     }
 
     /** A private field of {@code o} (or a superclass), or null. */
@@ -194,7 +198,7 @@ final class CombatDepthScenario {
             }
             H.p().lookAt(net.minecraft.commands.arguments.EntityAnchorArgument.Anchor.EYES, z.getEyePosition());
             H.mc().gameMode.attack(H.p(), z);
-            H.p().swing(InteractionHand.MAIN_HAND);
+            H.p().swing(InteractionHand.MAIN_HAND, H.p().getMainHandItem().getAttackAnimation(), false);
         });
         s.waitUpTo(tag + ": engaged", 40, () -> ca.state() == CombatState.ENGAGED);
     }
@@ -236,7 +240,7 @@ final class CombatDepthScenario {
             sawDrinking[0] |= p.isUsingItem() && p.getUseItem().is(H.item("minecraft:potion"));
             hp[2] = Math.max(hp[2], p.getHealth());
             return ps.drinks() > before[0] && H.count("minecraft:potion") == 0 && !p.isUsingItem()
-                    && p.getInventory().selected == 0;
+                    && p.getInventory().getSelectedSlot() == 0;
         });
         s.waitTicks(4);
         s.run("drink result", () -> {
@@ -248,7 +252,7 @@ final class CombatDepthScenario {
                     Harness.fmt("drinks %d -> %d, potion left %d, saw drinking %s, health %.1f -> %.1f -> max %.1f,"
                                     + " held %s (slot %d), state %s", before[0], ps.drinks(),
                             H.count("minecraft:potion"), sawDrinking[0], hp[0], hp[1], hp[2], p.getMainHandItem(),
-                            p.getInventory().selected, ca.state()));
+                            p.getInventory().getSelectedSlot(), ca.state()));
         });
         // splash variant: only a splash potion in the hotbar
         float[] look = {Float.NaN, 0f, -90f}; // last pitch, largest per-tick change, highest pitch
@@ -266,7 +270,7 @@ final class CombatDepthScenario {
             look[1] = Math.max(look[1], Math.abs(pitch - look[0]));
             look[2] = Math.max(look[2], pitch);
             look[0] = pitch;
-            return ps.throwsMade() > before[1] && H.p().getInventory().selected == 0;
+            return ps.throwsMade() > before[1] && H.p().getInventory().getSelectedSlot() == 0;
         });
         s.waitTicks(20);
         s.run("splash result", () -> {
@@ -297,7 +301,7 @@ final class CombatDepthScenario {
             H.setting(CA, "pop_pressure", true);
             H.enable(CA, true);
         });
-        s.cmd(() -> zombie(0.5, 2.8, false, ",HandItems:[{},{id:\"minecraft:totem_of_undying\",count:1}]"));
+        s.cmd(() -> zombie(0.5, 2.8, false, ",offhand:{id:\"minecraft:totem_of_undying\",count:1}"));
         engage(s, ca, "pop", 3.5);
         s.run("lethal hit", () -> {
             popAt[0] = (Long) field(ca, "lastOpponentPopAt");
@@ -364,7 +368,7 @@ final class CombatDepthScenario {
             if (!swung[0] && md.swings() > before[1]) {
                 swung[0] = true;
                 slotBeforeSwing[0] = prevSlot[0];
-                fallAtSwing[0] = p.fallDistance;
+                fallAtSwing[0] = (float) p.fallDistance;
                 zhp[1] = zhp[0];
             }
             if (swung[0]) {
@@ -372,7 +376,7 @@ final class CombatDepthScenario {
                 after[0]++;
             }
             zhp[0] = zh;
-            prevSlot[0] = p.getInventory().selected;
+            prevSlot[0] = p.getInventory().getSelectedSlot();
             if (md.launches() > before[0] && trace[1] < 45) {
                 trace[1]++;
                 double gap = z == null ? -1 : Math.sqrt(Math.pow(Math.max(0, Math.abs(z.getX() - p.getX()) - 0.3), 2)
@@ -380,7 +384,7 @@ final class CombatDepthScenario {
                 double eyeToBox = z == null ? -1 : Math.sqrt(gap * gap + Math.pow(Math.max(0, Math.max(
                         z.getY() - p.getEyeY(), p.getEyeY() - (z.getY() + z.getBbHeight()))), 2));
                 log.append(Harness.fmt("%s:%.1f/%.1f/%.1f/s%d ", md.phase().name(), p.getY() - Arena.FLOOR
-                        - 1, p.fallDistance, eyeToBox, p.getInventory().selected));
+                        - 1, p.fallDistance, eyeToBox, p.getInventory().getSelectedSlot()));
             }
             return swung[0] && after[0] > 10;
         });
@@ -424,7 +428,7 @@ final class CombatDepthScenario {
         s.cmd(() -> Arena.fill(-13, -6, 1, 13, -5, 4, "stone"));
         s.cmd(() -> Arena.fill(-12, -5, 2, 12, -5, 3, "water"));
         s.cmd(() -> Arena.fill(-12, 0, 2, 12, 0, 3, "air"));
-        s.cmd("gamerule fallDamage true");
+        s.cmd("gamerule fall_damage true");
         s.cmd(() -> Arena.tp(0.5, -2.5, 0f));
         s.run("gap jumps on", () -> {
             H.setting(CA, "mace_dive", false);
@@ -459,7 +463,7 @@ final class CombatDepthScenario {
                                     + " state %s, note '%s'", before[0], gs.jumps(), H.posStr(), minY[0] - Arena.FLOOR,
                             hp[0], hp[1], reasons[0], ca.state(), ca.lastNote()));
         });
-        s.cmd("gamerule fallDamage false");
+        s.cmd("gamerule fall_damage false");
         disengage(s, ca);
         s.cmd(() -> Arena.fill(-12, 0, 2, 12, 0, 3, "stone"));
         s.cmd(() -> Arena.fill(-13, -6, 1, 13, -5, 4, "air"));
@@ -486,8 +490,8 @@ final class CombatDepthScenario {
             lastCount[0] = arrows;
         });
         s.cmd(() -> "summon minecraft:skeleton " + (Arena.cx + 0.5) + " " + (Arena.FLOOR + 1) + " "
-                + (Arena.cz + 9.5) + " {PersistenceRequired:1b,Rotation:[180f,0f],HandItems:[{id:\"minecraft:bow\",count:1},{}],"
-                + "ArmorItems:[{},{},{},{id:\"minecraft:leather_helmet\",count:1}]}");
+                + (Arena.cz + 9.5) + " {PersistenceRequired:1b,Rotation:[180f,0f],equipment:{mainhand:{id:\"minecraft:bow\",count:1},"
+                + "head:{id:\"minecraft:leather_helmet\",count:1}}}");
         s.waitUpTo("skeleton shoots", 20 * 14, () -> {
             AbstractSkeleton sk = null;
             for (Entity e : H.mc().level.entitiesForRendering()) {
@@ -750,7 +754,7 @@ final class CombatDepthScenario {
         s.cmd(() -> "tp @e[type=minecraft:wither] " + Arena.cx + " -300 " + Arena.cz);
         // dragon breath cloud under the player
         s.cmd(() -> "summon minecraft:area_effect_cloud " + (Arena.cx + 0.5) + " " + (Arena.FLOOR + 1) + " "
-                + (Arena.cz - 6.5) + " {Particle:{type:\"minecraft:dragon_breath\"},Radius:3.0f,Duration:600,"
+                + (Arena.cz - 6.5) + " {custom_particle:{type:\"minecraft:dragon_breath\"},Radius:3.0f,Duration:600,"
                 + "WaitTime:0}");
         s.waitTicks(15);
         Shots.add(s, "boss-breath-ring");
@@ -823,7 +827,7 @@ final class CombatDepthScenario {
         reset(s);
         s.cmd("give @s minecraft:twisting_vines 4");
         s.cmd("give @s minecraft:wind_charge 4");
-        s.cmd("gamerule fallDamage true");
+        s.cmd("gamerule fall_damage true");
         s.waitTicks(10);
         s.run("chain on", () -> {
             H.setting(MovementAssist.ID, "water_clutch", true);
@@ -868,7 +872,7 @@ final class CombatDepthScenario {
             H.setting(MovementAssist.ID, "clutch_fallback_chain", false);
             H.enable(MovementAssist.ID, false);
         });
-        s.cmd("gamerule fallDamage false");
+        s.cmd("gamerule fall_damage false");
         s.cmd(() -> Arena.fill(-11, 1, 8, -8, 3, 11, "air"));
     }
 

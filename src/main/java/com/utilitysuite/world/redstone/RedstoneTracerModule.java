@@ -26,7 +26,7 @@ import net.minecraft.world.level.block.HopperBlock;
 import net.minecraft.world.level.block.NoteBlock;
 import net.minecraft.world.level.block.ObserverBlock;
 import net.minecraft.world.level.block.PoweredRailBlock;
-import net.minecraft.world.level.block.RedStoneWireBlock;
+import net.minecraft.world.level.block.RedstoneWireBlock;
 import net.minecraft.world.level.block.RedstoneLampBlock;
 import net.minecraft.world.level.block.RedstoneTorchBlock;
 import net.minecraft.world.level.block.RedstoneWallTorchBlock;
@@ -163,7 +163,7 @@ public final class RedstoneTracerModule extends WorldModule {
             return RedstoneCell.NONE;
         }
         Block b = s.getBlock();
-        if (b instanceof RedStoneWireBlock) {
+        if (b instanceof RedstoneWireBlock) {
             int power = s.getValue(BlockStateProperties.POWER);
             return RedstoneCell.of(RedstoneCell.DUST, 0, power, power > 0);
         }

@@ -34,7 +34,7 @@ import net.minecraft.client.player.RemotePlayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.Entity;
-import net.minecraft.world.entity.monster.Zombie;
+import net.minecraft.world.entity.monster.zombie.Zombie;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.CropBlock;
 import net.minecraft.world.level.block.state.BlockState;
@@ -140,14 +140,14 @@ final class CombatExtraScenario {
     private static String zombie(double dx, double dz, boolean ai, int health) {
         return "summon minecraft:zombie " + (Arena.cx + dx) + " " + (Arena.FLOOR + 1) + " " + (Arena.cz + dz)
                 + " {PersistenceRequired:1b,NoAI:" + (ai ? "0b" : "1b") + ",Health:" + health + "f,"
-                + "attributes:[{id:\"minecraft:generic.max_health\",base:" + health + "d}],"
-                + "ArmorItems:[{},{},{},{id:\"minecraft:leather_helmet\",count:1}]}";
+                + "attributes:[{id:\"minecraft:max_health\",base:" + health + "d}],"
+                + "equipment:{head:{id:\"minecraft:leather_helmet\",count:1}}}";
     }
 
     /** The user's own melee hit (test scaffolding plays the user). */
     private static void hit(Entity e) {
         H.mc().gameMode.attack(H.p(), e);
-        H.p().swing(InteractionHand.MAIN_HAND);
+        H.p().swing(InteractionHand.MAIN_HAND, H.p().getMainHandItem().getAttackAnimation(), false);
     }
 
     private static ControlLease takeLease(String id, ControlChannel first, ControlChannel... rest) {
@@ -176,7 +176,8 @@ final class CombatExtraScenario {
     private static void spawnPal(double dz) {
         removePal();
         RemotePlayer rp = new RemotePlayer(H.mc().level, new GameProfile(PAL, "PlaytestPal"));
-        rp.moveTo(Arena.cx + 0.5, Arena.FLOOR + 1, Arena.cz + dz, 180f, 0f);
+        rp.setId(-0x9A1); // 26.3: client-made entities need an id before addEntity (negative: never a server id)
+        rp.snapTo(Arena.cx + 0.5, Arena.FLOOR + 1, Arena.cz + dz, 180f, 0f);
         rp.setOldPosAndRot();
         H.mc().level.addEntity(rp);
         pal = rp;
@@ -475,7 +476,7 @@ final class CombatExtraScenario {
         List<?>[] texts = new List<?>[1];
         s.cmd("item replace entity @s weapon.mainhand with minecraft:wind_charge 8");
         s.run("mace in another hotbar slot", () -> Harness.command("item replace entity @s hotbar."
-                + ((H.p().getInventory().selected + 1) % 9) + " with minecraft:mace"));
+                + ((H.p().getInventory().getSelectedSlot() + 1) % 9) + " with minecraft:mace"));
         s.cmd(() -> tpLook(0.5, 1, 0.5, 0f, 90f));
         s.run("kinetic on", () -> H.enable(KineticChainModule.ID, true));
         s.waitTicks(12);
@@ -559,6 +560,16 @@ final class CombatExtraScenario {
         return d1 <= d2 ? new double[] {t1 + 7.5, d1} : new double[] {14 + (6.5 - t2), d2};
     }
 
+    /** Diagnostic: arena-relative x,z of route cells idx-1 .. idx+3. */
+    private static String cellsRel(long[] rb, int rn, int ri) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = Math.max(0, ri - 1); i < Math.min(rn, ri + 4); i++) {
+            sb.append('(').append(BlockPos.getX(rb[i]) - Arena.cx).append(',').append(BlockPos.getZ(rb[i]) - Arena.cz)
+                    .append(')');
+        }
+        return sb.toString();
+    }
+
     private static void ghostLine(Scenario s) {
         GhostLineModule gm = H.module(GhostLineModule.ID);
         GhostLine g = gm.ghost();
@@ -566,6 +577,7 @@ final class CombatExtraScenario {
         int[] r = new int[8];
         // route: max distance off the route, max lead, min lead, player progress at the min lead
         double[] dev = {0, 0, 99, 0};
+        String[] worst = {"-"};
         s.cmd(() -> Arena.tp(-7.5, 6.5, -90f));
         s.waitTicks(10);
         s.run("ghost line on, route run starts", () -> {
@@ -596,6 +608,15 @@ final class CombatExtraScenario {
                     if (gp[1] <= 0.6) {
                         r[2]++;
                     }
+                    if (gp[1] > dev[0]) {
+                        long[] rb = new long[256];
+                        int rn = rr.copyRoute(rb);
+                        int ri = rr.routeIndex();
+                        worst[0] = Harness.fmt("ghost (%.2f, %.2f) rel, player (%.2f, %.2f) rel, route %d cells idx %d"
+                                        + " next %s",
+                                g.ghostX() - Arena.cx, g.ghostZ() - Arena.cz, H.p().getX() - Arena.cx,
+                                H.p().getZ() - Arena.cz, rn, ri, cellsRel(rb, rn, ri));
+                    }
                     dev[0] = Math.max(dev[0], gp[1]);
                     dev[1] = Math.max(dev[1], gp[0] - pp[0]);
                     if (gp[0] - pp[0] < dev[2]) {
@@ -619,7 +640,7 @@ final class CombatExtraScenario {
                     Harness.fmt("%d route samples, %d ahead >= 2.0 along the L (lead %.2f..%.2f, min at progress %.1f),"
                                     + " %d on the route (max off %.2f); runner %s, player at progress %.1f/22 %s; kit %s",
                             r[0], r[1], dev[2], dev[1], dev[3], r[2], dev[0], Services.routeRunnerOrNull().state(),
-                            pp[0], H.posStr(), WorldProbe.summary()));
+                            pp[0], H.posStr(), WorldProbe.summary()) + "; worst off: " + worst[0]);
             s.check("ghost line: cleared once the route run ends", g.mode() == GhostLine.NONE,
                     "mode=" + g.mode());
             closeLease();
@@ -804,7 +825,7 @@ final class CombatExtraScenario {
         s.cmd(() -> Arena.tp(-4.5, 0.5, 180f));
         s.waitTicks(10);
         s.run("crop work on", () -> {
-            hoeSlot[0] = H.p().getInventory().selected;
+            hoeSlot[0] = H.p().getInventory().getSelectedSlot();
             wheatBefore[0] = H.count("minecraft:wheat");
             s.check("crop farm planted, hoe in hand, seeds only in the main inventory",
                     age(-7) == 7 && age(-5) == 2 && H.p().getMainHandItem().is(Items.IRON_HOE)
@@ -842,7 +863,7 @@ final class CombatExtraScenario {
             s.check("crop work: young wheat and an unreplantable crop left standing",
                     age(-5) >= 2 && age(-5) < 7 && "minecraft:carrots".equals(H.blockId(Arena.cx - 4,
                             Arena.FLOOR + 1, Arena.cz - 1)) && age(-4) == 7, "row " + row());
-            boolean holdsHoe = H.p().getInventory().selected == hoeSlot[0]
+            boolean holdsHoe = H.p().getInventory().getSelectedSlot() == hoeSlot[0]
                     && H.p().getMainHandItem().is(Items.IRON_HOE);
             boolean released = true;
             for (ControlChannel c : ControlChannel.all()) {
@@ -850,7 +871,7 @@ final class CombatExtraScenario {
             }
             s.check("crop work: worked through its leases, hoe back in hand, leases released",
                     leased[0] && holdsHoe && released, "leased=" + leased[0] + " selected=" + H.p().getInventory()
-                            .selected + " (hoe slot " + hoeSlot[0] + ") hand=" + H.p().getMainHandItem()
+                            .getSelectedSlot() + " (hoe slot " + hoeSlot[0] + ") hand=" + H.p().getMainHandItem()
                             + " released=" + released + " seeds left " + H.count("minecraft:wheat_seeds") + "; "
                             + H.arbiterState());
             H.enable(CropWorkModule.ID, false);

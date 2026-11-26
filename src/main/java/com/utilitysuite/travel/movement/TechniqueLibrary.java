@@ -136,6 +136,7 @@ public final class TechniqueLibrary implements TechniqueSource {
                         SupportRegion target, boolean yawAllowed, float maxYawDegPerTick, boolean safeOnly,
                         float health, MovementPhysics.Voxels w) {
         lastSimTicks = 0;
+        planCalls++;
         if (userForward <= 0 || target == null || target.count() == 0) {
             return false;
         }
@@ -188,7 +189,8 @@ public final class TechniqueLibrary implements TechniqueSource {
                 int i = cursorIndex;
                 boolean yawPhase = stageYaw[cursorStage] && yawAllowed;
                 advanceCursor(yawAllowed);
-                int e = t == TechniqueTemplates.NEO && yawPhase ? aimEdge : edge;
+                boolean neoView = t == TechniqueTemplates.NEO && yawPhase;
+                int e = neoView ? aimEdge : edge;
                 if (!TechniqueTemplates.decode(t, i, yawPhase, e, yaw, aim, maxTurn, cand)) {
                     continue;
                 }
@@ -200,6 +202,21 @@ public final class TechniqueLibrary implements TechniqueSource {
                     ok = roller.roll(now, yaw, sprinting, userS, cand, 0, target, yawAllowed, maxYawDegPerTick,
                             safeOnly, health, w, scratch);
                     ticks += roller.ticks;
+                }
+                if (!ok && neoView && !pillarInLine && cand.groundStrafe != 0
+                        && ticks + ROLL_COST + MAX_GROUND <= MAX_SIM_TICKS_PER_CALL) {
+                    // a run-up strafing out can stay on the support longer than the straight run along the line
+                    // (slab-stair capture, 2026-11-26: round a floating slab off a 1x1 plank, 1..2 ticks later): the
+                    // same candidate once more, timed from that run's own edge when it comes later (not when the straight
+                    // run ends at a wall: the pillar of J36 times the neo itself)
+                    int se = strafedEdge(now, yaw, cand.takeoffYaw, maxYawDegPerTick, sprinting, cand.groundStrafe, w);
+                    ticks += lastEdgeProbeTicks;
+                    if (se > e && ticks + ROLL_COST <= MAX_SIM_TICKS_PER_CALL
+                            && TechniqueTemplates.decode(t, i, yawPhase, se, yaw, aim, maxTurn, cand)) {
+                        ok = roller.roll(now, yaw, sprinting, userS, cand, 0, target, yawAllowed, maxYawDegPerTick,
+                                safeOnly, health, w, scratch);
+                        ticks += roller.ticks;
+                    }
                 }
                 if (ok && (!fresh || roller.score > bestScore)) {
                     best.copyFrom(cand);
@@ -285,6 +302,55 @@ public final class TechniqueLibrary implements TechniqueSource {
             probe.copyFrom(probeNext);
         }
         lastEdgeTick = edge;
+        return edge;
+    }
+
+    /** Strafed-run edges already probed this call: (view, strafe) -> edge tick. */
+    private static final int STRAFED_EDGE_CACHE = 16;
+    private final float[] strafedYaw = new float[STRAFED_EDGE_CACHE];
+    private final int[] strafedSide = new int[STRAFED_EDGE_CACHE];
+    private final int[] strafedTick = new int[STRAFED_EDGE_CACHE];
+    private int strafedCount;
+    private long strafedFor = Long.MIN_VALUE;
+    private long planCalls;
+
+    /**
+     * The last supported tick of a run-up with {@code strafe} held from now and the view turning from {@code view} to
+     * {@code yaw} at {@code rate} degrees per tick (as the co-steer brings it round), cached per plan call
+     * ({@link #lastEdgeProbeTicks} is 0 for a cached answer). Unlike {@link #edgeTick} it leaves the straight run's
+     * edge and wall flag alone.
+     */
+    private int strafedEdge(MovementPhysics now, float view, float yaw, float rate, boolean sprinting, int strafe,
+                            MovementPhysics.Voxels w) {
+        lastEdgeProbeTicks = 0;
+        if (strafedFor != planCalls) {
+            strafedFor = planCalls;
+            strafedCount = 0;
+        }
+        for (int k = 0; k < strafedCount; k++) {
+            if (strafedSide[k] == strafe && strafedYaw[k] == yaw) {
+                return strafedTick[k];
+            }
+        }
+        probe.copyFrom(now);
+        int edge = -1;
+        float v = view;
+        for (int i = 0; i < MAX_GROUND; i++) {
+            v += Math.max(-rate, Math.min(rate, yaw - v));
+            probeNext.copyFrom(probe).tick(1, strafe, v, sprinting, false, false, w);
+            lastEdgeProbeTicks++;
+            if (!probeNext.supported(w) || probeNext.horizontalCollision) {
+                edge = i;
+                break;
+            }
+            probe.copyFrom(probeNext);
+        }
+        if (strafedCount < STRAFED_EDGE_CACHE) {
+            strafedYaw[strafedCount] = yaw;
+            strafedSide[strafedCount] = strafe;
+            strafedTick[strafedCount] = edge;
+            strafedCount++;
+        }
         return edge;
     }
 

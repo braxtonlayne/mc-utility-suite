@@ -18,14 +18,14 @@ import net.minecraft.core.Direction;
 import net.minecraft.tags.FluidTags;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Entity;
-import net.minecraft.world.entity.vehicle.Boat;
+import net.minecraft.world.entity.vehicle.boat.Boat;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.BubbleColumnBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.phys.shapes.VoxelShape;
-import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
+import net.neoforged.neoforge.client.event.SubmitCustomGeometryEvent;
 
 import java.util.List;
 
@@ -110,10 +110,10 @@ public final class BoatLineModule implements IModule, IConfigurable {
         }
         Vec3 m = boat.getDeltaMovement();
         double turnRate = Mth.wrapDegrees(boat.getYRot() - boat.yRotO);
-        boolean fwd = p.input.up;
-        boolean back = p.input.down;
-        boolean left = p.input.left;
-        boolean right = p.input.right;
+        boolean fwd = p.input.keyPresses.forward();
+        boolean back = p.input.keyPresses.backward();
+        boolean left = p.input.keyPresses.left();
+        boolean right = p.input.keyPresses.right();
         sim.run(surface, x, z, m.x, m.z, boat.getYRot(), turnRate, fwd, back, left, right, horizon);
         baseY = boat.getY();
         active = sim.count() > 1;
@@ -186,8 +186,8 @@ public final class BoatLineModule implements IModule, IConfigurable {
         return f.is(FluidTags.WATER) ? f.getAmount() : 0;
     }
 
-    public void onRenderLevel(RenderLevelStageEvent event) {
-        if (!enabled || !active || event.getStage() != RenderLevelStageEvent.Stage.AFTER_PARTICLES) {
+    public void onRenderLevel(SubmitCustomGeometryEvent event) {
+        if (!enabled || !active) {
             return;
         }
         IVisuals visuals = Services.visualsOrNull();
@@ -196,8 +196,8 @@ public final class BoatLineModule implements IModule, IConfigurable {
         if (world == null || mc.player == null || !(mc.player.getVehicle() instanceof Boat boat)) {
             return;
         }
-        float pt = event.getPartialTick().getGameTimeDeltaPartialTick(false);
-        Vec3 cam = event.getCamera().getPosition();
+        float pt = event.getLevelRenderState().worldPartialTicks;
+        Vec3 cam = event.getLevelRenderState().cameraRenderState.pos;
         // shift the tick-rate samples so the line starts at the rendered boat
         double ox = Mth.lerp(pt, boat.xo, boat.getX()) - boat.getX();
         double oz = Mth.lerp(pt, boat.zo, boat.getZ()) - boat.getZ();

@@ -12,7 +12,6 @@ import net.minecraft.network.chat.Component;
 import net.neoforged.neoforge.client.event.RegisterKeyMappingsEvent;
 import net.neoforged.neoforge.client.event.ScreenEvent;
 import net.neoforged.neoforge.client.settings.KeyConflictContext;
-import org.lwjgl.glfw.GLFW;
 
 import java.util.function.Supplier;
 
@@ -33,8 +32,8 @@ public final class ContainerButtons {
 
     /** Mod bus. Default R, active only inside GUIs, so it never conflicts with in-game bindings. */
     public void onRegisterKeys(RegisterKeyMappingsEvent event) {
-        quickDeposit = new KeyMapping(KEY_QUICK_DEPOSIT, KeyConflictContext.GUI, InputConstants.Type.KEYSYM,
-                GLFW.GLFW_KEY_R, com.utilitysuite.core.input.KeybindManager.CATEGORY);
+        quickDeposit = new KeyMapping(KEY_QUICK_DEPOSIT, KeyConflictContext.GUI, InputConstants.Type.KEYBOARD,
+                InputConstants.KEY_R, com.utilitysuite.core.input.KeybindManager.CATEGORY);
         event.register(quickDeposit);
     }
 
@@ -54,12 +53,12 @@ public final class ContainerButtons {
         }
         int w = 46;
         int h = 16;
-        int x = screen.getGuiLeft() + screen.getXSize() + 3;
-        int y = screen.getGuiTop() + 4;
+        int x = screen.getLeftPos() + screen.getImageWidth() + 3;
+        int y = screen.getTopPos() + 4;
         boolean below = x + w > screen.width;
         if (below) {
-            x = screen.getGuiLeft() + screen.getXSize() - 2 * w - 2;
-            y = screen.getGuiTop() - h - 2;
+            x = screen.getLeftPos() + screen.getImageWidth() - 2 * w - 2;
+            y = screen.getTopPos() - h - 2;
         }
         Button deposit = Button.builder(Component.translatable("button.utilitysuite.deposit"), b -> run(false))
                 .bounds(x, y, w, h)
@@ -78,7 +77,7 @@ public final class ContainerButtons {
         KeyMapping key = quickDeposit;
         SmartInventory m = module.get();
         if (key == null || m == null || !m.isEnabled() || key.isUnbound()
-                || !key.matches(event.getKeyCode(), event.getScanCode())) { // modifiers ignored: Shift = Dump
+                || !key.matches(event.getKeyEvent())) { // modifiers ignored: Shift = Dump
             return;
         }
         Screen s = event.getScreen();
@@ -86,7 +85,7 @@ public final class ContainerButtons {
                 || ScreenTextEntry.isActive(s)) {
             return;
         }
-        run(Screen.hasShiftDown());
+        run(event.getKeyEvent().hasShiftDown());
         event.setCanceled(true);
     }
 

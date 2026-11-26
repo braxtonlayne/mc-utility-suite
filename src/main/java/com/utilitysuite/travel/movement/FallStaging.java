@@ -46,8 +46,8 @@ final class FallStaging {
     boolean enabled = true;
 
     void tick(Minecraft mc, LocalPlayer p, Item[] clutchItems) {
-        if (!enabled || !p.onGround() || mc.screen != null) {
-            if (!enabled || mc.screen != null) {
+        if (!enabled || !p.onGround() || mc.gui.screen() != null) {
+            if (!enabled || mc.gui.screen() != null) {
                 unstage(p);
             }
             return;
@@ -114,7 +114,7 @@ final class FallStaging {
                 continue;
             }
             int deep = 1;
-            int min = level.getMinBuildHeight();
+            int min = level.getMinY();
             while (deep < MAX_DEPTH && fy - 1 - deep >= min
                     && level.getBlockState(pos.set(x, fy - 1 - deep, z)).getCollisionShape(level, pos).isEmpty()
                     && level.getFluidState(pos).isEmpty()) {
@@ -176,9 +176,9 @@ final class FallStaging {
         if (hot < 0) {
             return;
         }
-        previousSlot = inv.selected;
+        previousSlot = inv.getSelectedSlot();
         stagedSlot = hot;
-        if (inv.selected != hot) {
+        if (inv.getSelectedSlot() != hot) {
             Services.input().selectHotbarSlot(l, hot);
         }
     }
@@ -191,7 +191,7 @@ final class FallStaging {
             return;
         }
         ControlLease l = slot.active();
-        if (l != null && p.getInventory().selected == stagedSlot && previousSlot >= 0
+        if (l != null && p.getInventory().getSelectedSlot() == stagedSlot && previousSlot >= 0
                 && previousSlot != stagedSlot) {
             Services.input().selectHotbarSlot(l, previousSlot);
         }

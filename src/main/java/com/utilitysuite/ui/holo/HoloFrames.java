@@ -3,7 +3,7 @@ package com.utilitysuite.ui.holo;
 import com.utilitysuite.core.api.visual.EffectLevel;
 import com.utilitysuite.core.api.visual.FrameLevel;
 import com.utilitysuite.core.api.visual.HoloToken;
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 
 /**
  * The bracket frame, the single surface shape of the suite, in plain axis-aligned fills (batched by the game into the
@@ -17,20 +17,20 @@ public final class HoloFrames {
     private HoloFrames() {
     }
 
-    public static void plate(GuiGraphics g, int x, int y, int w, int h, HoloToken fill, float alpha) {
+    public static void plate(GuiGraphicsExtractor g, int x, int y, int w, int h, HoloToken fill, float alpha) {
         g.fill(x, y, x + w, y + h, HoloTheme.argb(fill, alpha));
     }
 
-    public static void hLine(GuiGraphics g, int x0, int x1, int y, int argb) {
+    public static void hLine(GuiGraphicsExtractor g, int x0, int x1, int y, int argb) {
         g.fill(x0, y, x1, y + 1, argb);
     }
 
-    public static void vLine(GuiGraphics g, int x, int y0, int y1, int argb) {
+    public static void vLine(GuiGraphicsExtractor g, int x, int y0, int y1, int argb) {
         g.fill(x, y0, x + 1, y1, argb);
     }
 
     /** A 1 px rectangular outline. */
-    public static void edge(GuiGraphics g, int x, int y, int w, int h, int argb) {
+    public static void edge(GuiGraphicsExtractor g, int x, int y, int w, int h, int argb) {
         g.fill(x, y, x + w, y + 1, argb);
         g.fill(x, y + h - 1, x + w, y + h, argb);
         g.fill(x, y + 1, x + 1, y + h - 1, argb);
@@ -38,7 +38,7 @@ public final class HoloFrames {
     }
 
     /** Four L-shaped corner brackets sitting on the edge of the rectangle. */
-    public static void brackets(GuiGraphics g, int x, int y, int w, int h, int arm, int argb) {
+    public static void brackets(GuiGraphicsExtractor g, int x, int y, int w, int h, int arm, int argb) {
         int x1 = x + w;
         int y1 = y + h;
         g.fill(x, y, x + arm, y + 1, argb);
@@ -52,7 +52,7 @@ public final class HoloFrames {
     }
 
     /** A bracket frame on {@link HoloToken#GLASS}. */
-    public static void frame(GuiGraphics g, int x, int y, int w, int h, FrameLevel level, boolean chamfer,
+    public static void frame(GuiGraphicsExtractor g, int x, int y, int w, int h, FrameLevel level, boolean chamfer,
                              float alpha) {
         frame(g, x, y, w, h, level, chamfer, HoloToken.GLASS, HoloToken.LINE_STRONG, alpha);
     }
@@ -61,7 +61,7 @@ public final class HoloFrames {
      * A bracket frame with a chosen fill and bracket colour (a danger notice uses the danger token for its brackets).
      * QUIET draws fill and faint edge; FRAMED adds dim brackets; HERO a stronger edge, bright brackets and the glow.
      */
-    public static void frame(GuiGraphics g, int x, int y, int w, int h, FrameLevel level, boolean chamfer,
+    public static void frame(GuiGraphicsExtractor g, int x, int y, int w, int h, FrameLevel level, boolean chamfer,
                              HoloToken fill, HoloToken bracket, float alpha) {
         if (w <= 0 || h <= 0 || alpha <= 0f) {
             return;
@@ -118,7 +118,7 @@ public final class HoloFrames {
     }
 
     /** Scanlines inside a hero surface: 1 px every 3 px at 4 % accent. Only at {@link EffectLevel#FULL}; menu only. */
-    public static void scanlines(GuiGraphics g, int x, int y, int w, int h, float alpha) {
+    public static void scanlines(GuiGraphicsExtractor g, int x, int y, int w, int h, float alpha) {
         if (HoloTheme.effects != EffectLevel.FULL) {
             return;
         }
@@ -129,12 +129,12 @@ public final class HoloFrames {
     }
 
     /** A selection or category bar {@link HoloTheme#BAR} px wide on the left edge of a row. */
-    public static void sideBar(GuiGraphics g, int x, int y, int h, HoloToken token, float alpha) {
+    public static void sideBar(GuiGraphicsExtractor g, int x, int y, int h, HoloToken token, float alpha) {
         g.fill(x, y, x + HoloTheme.BAR, y + h, HoloTheme.argb(token, alpha));
     }
 
     /** A horizontal progress bar: track and fill, {@code fraction} 0..1. */
-    public static void progress(GuiGraphics g, int x, int y, int w, int h, float fraction, HoloToken fill,
+    public static void progress(GuiGraphicsExtractor g, int x, int y, int w, int h, float fraction, HoloToken fill,
                                 float alpha) {
         g.fill(x, y, x + w, y + h, HoloTheme.argb(HoloToken.LINE_FAINT, alpha));
         int fw = fraction <= 0f ? 0 : fraction >= 1f ? w : (int) (w * fraction);

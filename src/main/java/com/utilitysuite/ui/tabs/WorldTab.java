@@ -127,7 +127,7 @@ public final class WorldTab {
             p.toast("Waypoints are not available");
             return;
         }
-        wps.add(name, "Locator", x, mc.player.getBlockY(), z, mc.level.dimension().location().toString());
+        wps.add(name, "Locator", x, mc.player.getBlockY(), z, mc.level.dimension().identifier().toString());
         p.toast("Waypoint '" + name + "' added");
         p.rebuild();
     }
@@ -456,7 +456,7 @@ public final class WorldTab {
                 return "Going to " + wp.name() + " through the Nether";
             }
         }
-        long pos = wps.positionIn(wp, mc.level.dimension().location().toString());
+        long pos = wps.positionIn(wp, mc.level.dimension().identifier().toString());
         if (nav.goToLeased(NAV_OWNER, ControlPriority.TRAVEL, BlockPos.getX(pos), BlockPos.getY(pos),
                 BlockPos.getZ(pos), 2).isEmpty()) {
             return "Movement is busy or automation is stopped";
@@ -477,7 +477,7 @@ public final class WorldTab {
             name = "Waypoint " + (wps.all().size() + 1);
         }
         BlockPos pos = pl.blockPosition();
-        wps.add(name, "Bases", pos.getX(), pos.getY(), pos.getZ(), mc.level.dimension().location().toString());
+        wps.add(name, "Bases", pos.getX(), pos.getY(), pos.getZ(), mc.level.dimension().identifier().toString());
         p.setState(K_WP_NAME, "");
         p.toast("Waypoint '" + name + "' added");
         p.rebuild();

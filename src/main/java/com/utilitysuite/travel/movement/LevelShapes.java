@@ -126,43 +126,51 @@ public final class LevelShapes implements MovementPhysics.Voxels {
 
     @Override
     public boolean solid(int x, int y, int z) {
-        return entryShape[entry(x, y, z)] != SHAPE_NONE;
+        int e = entry(x, y, z); // first: a first-sight state may grow the tables
+        return entryShape[e] != SHAPE_NONE;
     }
 
     @Override
     public boolean fullBlock(int x, int y, int z) {
-        return entryShape[entry(x, y, z)] == SHAPE_CUBE;
+        int e = entry(x, y, z); // first: a first-sight state may grow the tables
+        return entryShape[e] == SHAPE_CUBE;
     }
 
     @Override
     public boolean replaceable(int x, int y, int z) {
-        return entryRepl[entry(x, y, z)];
+        int e = entry(x, y, z); // first: a first-sight state may grow the tables
+        return entryRepl[e];
     }
 
     @Override
     public int boxCount(int x, int y, int z) {
-        return shapes[entryShape[entry(x, y, z)]].length / 6;
+        int e = entry(x, y, z); // first: a first-sight state may grow the tables
+        return shapes[entryShape[e]].length / 6;
     }
 
     @Override
     public void box(int x, int y, int z, int i, float[] out, int off) {
-        float[] b = shapes[entryShape[entry(x, y, z)]];
+        int e = entry(x, y, z); // first: a first-sight state may grow the tables
+        float[] b = shapes[entryShape[e]];
         System.arraycopy(b, i * 6, out, off, 6);
     }
 
     @Override
     public byte surface(int x, int y, int z) {
-        return entrySurface[entry(x, y, z)];
+        int e = entry(x, y, z); // first: a first-sight state may grow the tables
+        return entrySurface[e];
     }
 
     @Override
     public float slipperiness(int x, int y, int z) {
-        return entrySlip[entry(x, y, z)];
+        int e = entry(x, y, z); // first: a first-sight state may grow the tables
+        return entrySlip[e];
     }
 
     /** Shape id of the cell (0 none, 1 full cube, others a session box list). */
     public short shapeId(int x, int y, int z) {
-        return entryShape[entry(x, y, z)];
+        int e = entry(x, y, z); // first: a first-sight state may grow the tables
+        return entryShape[e];
     }
 
     /** Distinct block states seen this session (for diagnostics and tests). */

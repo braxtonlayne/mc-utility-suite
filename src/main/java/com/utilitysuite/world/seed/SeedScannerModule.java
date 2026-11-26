@@ -174,7 +174,7 @@ public final class SeedScannerModule extends WorldModule {
         if (prof.seedKnown()) {
             return;
         }
-        long key = BlockPosPacking.chunk(chunk.getPos().x, chunk.getPos().z);
+        long key = BlockPosPacking.chunk(chunk.getPos().x(), chunk.getPos().z());
         if (!scannedChunks.contains(key) && queuedChunks.add(key)) {
             pendingChunks.enqueue(key);
         }

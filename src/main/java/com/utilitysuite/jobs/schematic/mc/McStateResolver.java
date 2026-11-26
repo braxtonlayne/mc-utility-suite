@@ -5,7 +5,7 @@ import com.utilitysuite.jobs.schematic.model.BlockStateString;
 import com.utilitysuite.jobs.schematic.model.SchematicVolume;
 import net.minecraft.commands.arguments.blocks.BlockStateParser;
 import net.minecraft.core.registries.BuiltInRegistries;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.Block;
@@ -34,10 +34,10 @@ public final class McStateResolver {
 
     public static BlockState resolve(String state) {
         try {
-            return BlockStateParser.parseForBlock(BuiltInRegistries.BLOCK.asLookup(), state, false).blockState();
+            return BlockStateParser.parseForBlock(BuiltInRegistries.BLOCK, state, false).blockState();
         } catch (Exception e) {
             // Unknown property value or a newer property: fall back to the block's default state.
-            ResourceLocation id = ResourceLocation.tryParse(BlockStateString.blockId(state));
+            Identifier id = Identifier.tryParse(BlockStateString.blockId(state));
             if (id == null) {
                 return null;
             }
@@ -50,7 +50,7 @@ public final class McStateResolver {
         if (itemId == null) {
             return null;
         }
-        ResourceLocation id = ResourceLocation.tryParse(itemId);
+        Identifier id = Identifier.tryParse(itemId);
         if (id == null) {
             return null;
         }

@@ -1,14 +1,14 @@
 # mc-utility-suite
 
-Client-side automation, resource-planning and accessibility mod for **Minecraft 1.21.1** on **NeoForge 21.1.265**,
-**Java 21**, **Mojang mappings** (Parchment 2024.11.17 for parameter names). Intended for the user's single-player
+Client-side automation, resource-planning and accessibility mod for **Minecraft 26.3** on **NeoForge 26.3.0.118**,
+**Java 25**, **Mojang names** (26.x ships unobfuscated, so no Parchment). Input is SDL3: key codes are SDL scancodes (`InputConstants.KEY_*`), never GLFW. Intended for the user's single-player
 worlds and their own whitelisted server. Mod id `utilitysuite`, root package `com.utilitysuite`.
 
 ## Build
 
 - `./gradlew compileJava` / `./gradlew test` / `./gradlew build`. Unit tests are plain JUnit 5 (no game bootstrap):
   keep planning logic engine-agnostic (string registry ids, packed `long` positions, `IInventoryView`) so it is testable.
-- Baritone **1.11.3** (cabaletta, LGPL-3.0, NeoForge build for MC 1.21–1.21.1) is in `libs/` because it has no Maven
+- Baritone **1.20.0** (cabaletta, LGPL-3.0, NeoForge build for MC 26.3) is in `libs/` because it has no Maven
   artifact. It is `compileOnly` + dev runtime (`localRuntime`) and **optional** for players. Baritone's mod id is
   `baritoe` (sic). Only `com.utilitysuite.jobs.baritone` may import `baritone.*`, and only after checking
   `ModList.get().isLoaded("baritoe")`.
@@ -18,7 +18,7 @@ worlds and their own whitelisted server. Mod id `utilitysuite`, root package `co
   there: the audit is the mixin check.
 - Acceptance scenarios (spec Step 8): 1 and 2 in `jobs/goal/AcceptanceScenario{1,2}Test`, 3 in
   `core/AcceptanceScenario3Test`, 4 in `combat/AcceptanceScenario4Test`, 5 under `jobs/schematic/`.
-- Static input-rule check: `grep -rnE 'options\.key|setYRot|setXRot|\.setDown\(|\.selected *=|handleInventoryMouseClick|handlePlaceRecipe' src/main/java`
+- Static input-rule check: `grep -rnE 'options\.key|setYRot|setXRot|\.setDown\(|\.selected *=|handleInventoryMouseClick|handleContainerInput|setSelectedSlot|handlePlaceRecipe' src/main/java`
   must only hit `core/input/` and `mixin/` (read-only `inv.selected` reads are allowed). Direct `gameMode.useItemOn`
   (silent-mode placement) must re-check the WORLD_INTERACT lease right before the call.
 
@@ -27,7 +27,7 @@ worlds and their own whitelisted server. Mod id `utilitysuite`, root package `co
 1. **Contracts first.** Modules talk only through `com.utilitysuite.core.api` (interfaces, enums, records) and
    `Services` (service locator). Never reach into another module's internals.
 2. **Input goes through the core.** No module touches `Minecraft.getInstance().options.key*`, `KeyMapping.setDown`,
-   `LocalPlayer.setYRot/setXRot`, `Inventory.selected` or `MultiPlayerGameMode.handleInventoryMouseClick` directly.
+   `LocalPlayer.setYRot/setXRot`, `Inventory.setSelectedSlot` or `MultiPlayerGameMode.handleContainerInput` directly.
    Request a `ControlLease` from `IActionArbiter`, then drive keys/camera/hotbar via `IInputSmoother` and container
    clicks via `IContainerClicker`. Only `com.utilitysuite.core.input` (and its mixins) may touch those APIs.
 3. **Manual input wins.** The user's own keys/mouse preempt any non-emergency automation. Stop-All revokes everything.

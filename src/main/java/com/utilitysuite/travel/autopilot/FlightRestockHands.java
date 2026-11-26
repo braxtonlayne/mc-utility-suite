@@ -3,6 +3,7 @@ package com.utilitysuite.travel.autopilot;
 import com.utilitysuite.core.api.ControlLease;
 import com.utilitysuite.core.api.IContainerClicker;
 import com.utilitysuite.core.api.Services;
+import net.minecraft.core.component.DataComponents;
 import net.minecraft.client.Minecraft;
 import com.utilitysuite.travel.mobility.ElytraSwapPlanner;
 import net.minecraft.client.player.LocalPlayer;
@@ -13,7 +14,6 @@ import net.minecraft.world.item.enchantment.EnchantmentHelper;
 import net.minecraft.world.item.enchantment.Enchantments;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.entity.player.Inventory;
-import net.minecraft.world.item.ElytraItem;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.levelgen.Heightmap;
@@ -76,7 +76,7 @@ final class FlightRestockHands {
             }
         }
         IContainerClicker clicker = Services.clicker();
-        boolean busy = Minecraft.getInstance().screen != null || clicker.pending() > 0;
+        boolean busy = Minecraft.getInstance().gui.screen() != null || clicker.pending() > 0;
         FlightRestock.Action a = plan.decide(FlightRestock.sumMain(rocketCounts), safelyHigh(player), busy);
         switch (a) {
             case ABORT:
@@ -87,7 +87,7 @@ final class FlightRestockHands {
                 break;
         }
         int src = FlightRestock.pickSource(rocketCounts);
-        int dst = FlightRestock.pickTarget(hotbarKinds, inv.selected);
+        int dst = FlightRestock.pickTarget(hotbarKinds, inv.getSelectedSlot());
         if (src < 0 || dst < 0 || !clicker.queueClick(lease, src, dst, IContainerClicker.Click.SWAP)) {
             return d; // no usable hotbar slot or the lease lost HOTBAR: land
         }
@@ -99,7 +99,7 @@ final class FlightRestockHands {
         Inventory inv = player.getInventory();
         for (int i = 0; i < 36; i++) {
             ItemStack s = inv.getItem(i);
-            elytraLeft[i] = s.getItem() instanceof ElytraItem && ElytraItem.isFlyEnabled(s)
+            elytraLeft[i] = s.has(DataComponents.GLIDER) && !s.nextDamageWillBreak()
                     ? s.getMaxDamage() - s.getDamageValue() - 1 : -1;
         }
         return FlightRestock.spareElytraSlot(elytraLeft, wornUsesLeft, MIN_ELYTRA_GAIN) >= 0;
@@ -113,7 +113,7 @@ final class FlightRestockHands {
         Inventory inv = player.getInventory();
         for (int i = 0; i < 36; i++) {
             ItemStack s = inv.getItem(i);
-            boolean usable = s.getItem() instanceof ElytraItem && ElytraItem.isFlyEnabled(s);
+            boolean usable = s.has(DataComponents.GLIDER) && !s.nextDamageWillBreak();
             elytraLeft[i] = usable ? s.getMaxDamage() - s.getDamageValue() - 1 : -1;
             elytraMax[i] = usable ? s.getMaxDamage() : 0;
             elytraMending[i] = usable && hasMending(player, s);
@@ -123,7 +123,7 @@ final class FlightRestockHands {
 
     /** Queues the chest-slot swap with inventory index {@code inventoryIndex} (the clicks a player makes by hand). */
     boolean queueElytraSwap(ControlLease lease, int inventoryIndex) {
-        if (Minecraft.getInstance().screen != null) {
+        if (Minecraft.getInstance().gui.screen() != null) {
             return false;
         }
         int n = swapPlan.planSwap(inventoryIndex);
@@ -142,7 +142,7 @@ final class FlightRestockHands {
 
     /** A screen is open or clicks are still queued. */
     boolean busy() {
-        return Minecraft.getInstance().screen != null || Services.clicker().pending() > 0;
+        return Minecraft.getInstance().gui.screen() != null || Services.clicker().pending() > 0;
     }
 
     /** The item carries Mending (the registry holder is looked up once per level). */
@@ -150,8 +150,8 @@ final class FlightRestockHands {
         Level level = player.level();
         if (mendingLevel != level) {
             mendingLevel = level;
-            mending = level.registryAccess().registryOrThrow(Registries.ENCHANTMENT)
-                    .getHolderOrThrow(Enchantments.MENDING);
+            mending = level.registryAccess().lookupOrThrow(Registries.ENCHANTMENT)
+                    .getOrThrow(Enchantments.MENDING);
         }
         return EnchantmentHelper.getItemEnchantmentLevel(mending, s) > 0;
     }

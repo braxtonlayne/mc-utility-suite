@@ -27,7 +27,9 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.monster.piglin.AbstractPiglin;
-import net.minecraft.world.item.ArmorItem;
+import com.utilitysuite.tools.inventory.GearFacts;
+import net.minecraft.tags.ItemTags;
+import net.minecraft.world.attribute.EnvironmentAttributes;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
@@ -196,7 +198,9 @@ public final class PiglinGuard implements IModule, IConfigurable, LeaseListener 
         }
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer p = mc.player;
-        if (p == null || mc.level == null || !mc.level.dimensionType().piglinSafe()) {
+        // piglins are safe (no zombifying) where PIGLINS_ZOMBIFY is false at the player (positional): the old piglinSafe()
+        if (p == null || mc.level == null
+                || mc.level.environmentAttributes().getValue(EnvironmentAttributes.PIGLINS_ZOMBIFY, p.position())) {
             line = null;
             return;
         }
@@ -234,7 +238,7 @@ public final class PiglinGuard implements IModule, IConfigurable, LeaseListener 
      */
     private void barterStep(Minecraft mc, LocalPlayer p) {
         sinceGive += PERIOD;
-        if (mc.screen != null || giveTarget != null) {
+        if (mc.gui.screen() != null || giveTarget != null) {
             return;
         }
         if (collectRun != null) {
@@ -308,7 +312,7 @@ public final class PiglinGuard implements IModule, IConfigurable, LeaseListener 
             }
         }
         // InventoryMenu hotbar slots are 36..44; THROW with button 0 drops one item
-        Services.clicker().queueClick(lease, 36 + p.getInventory().selected, 0, IContainerClicker.Click.THROW);
+        Services.clicker().queueClick(lease, 36 + p.getInventory().getSelectedSlot(), 0, IContainerClicker.Click.THROW);
         sinceGive = 0;
     }
 
@@ -333,7 +337,7 @@ public final class PiglinGuard implements IModule, IConfigurable, LeaseListener 
         LocalPlayer p = mc.player;
         AbstractPiglin g = giveTarget;
         if (p == null || g == null || !g.isAlive() || g.isAggressive() || !g.getOffhandItem().isEmpty()
-                || !p.getMainHandItem().is(Items.GOLD_INGOT) || mc.screen != null
+                || !p.getMainHandItem().is(Items.GOLD_INGOT) || mc.gui.screen() != null
                 || g.distanceToSqr(p) > PiglinAdvisor.GIVE_RANGE * PiglinAdvisor.GIVE_RANGE
                 || ++giveTicks > GIVE_TIMEOUT_TICKS) {
             endGive();
@@ -387,9 +391,8 @@ public final class PiglinGuard implements IModule, IConfigurable, LeaseListener 
     }
 
     private static boolean wearsGold(LocalPlayer p) {
-        var armor = p.getInventory().armor;
-        for (int i = 0; i < armor.size(); i++) {
-            ItemStack s = armor.get(i);
+        for (int i = 0; i < 4; i++) {
+            ItemStack s = p.getInventory().getItem(36 + i); // armour slots 36..39
             if (isGold(s)) {
                 return true;
             }
@@ -398,17 +401,18 @@ public final class PiglinGuard implements IModule, IConfigurable, LeaseListener 
     }
 
     private static boolean isGold(ItemStack s) {
-        return s.is(Items.GOLDEN_HELMET) || s.is(Items.GOLDEN_CHESTPLATE) || s.is(Items.GOLDEN_LEGGINGS)
+        return s.is(ItemTags.PIGLIN_SAFE_ARMOR) || s.is(Items.GOLDEN_HELMET) || s.is(Items.GOLDEN_CHESTPLATE)
+                || s.is(Items.GOLDEN_LEGGINGS)
                 || s.is(Items.GOLDEN_BOOTS);
     }
 
     /** Inventory index (0..35) of a gold armour piece whose armour slot is empty, or -1 (never replaces armour). */
     private static int goldToEquip(LocalPlayer p) {
-        var items = p.getInventory().items;
+        var items = p.getInventory().getNonEquipmentItems();
         for (int i = 0; i < items.size(); i++) {
             ItemStack s = items.get(i);
-            if (isGold(s) && s.getItem() instanceof ArmorItem a) {
-                EquipmentSlot slot = a.getEquipmentSlot();
+            EquipmentSlot slot = isGold(s) ? GearFacts.armorSlot(s) : null;
+            if (slot != null) {
                 if (p.getItemBySlot(slot).isEmpty()) {
                     return i;
                 }
@@ -418,7 +422,7 @@ public final class PiglinGuard implements IModule, IConfigurable, LeaseListener 
     }
 
     private void equip(Minecraft mc, int invIndex) {
-        if (mc.screen != null || (lease != null && lease.isActive())) {
+        if (mc.gui.screen() != null || (lease != null && lease.isActive())) {
             return; // only from the plain inventory menu, one click at a time
         }
         if (request == null) {

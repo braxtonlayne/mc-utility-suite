@@ -159,9 +159,9 @@ public final class CombatTab {
                 p.toast(name.isEmpty() ? "Type a player name" : "No online player named '" + name + "'");
                 return;
             }
-            roster.add(info.getProfile().getId(), info.getProfile().getName(), false);
+            roster.add(info.getProfile().id(), info.getProfile().name(), false);
             p.setState(K_ALLY, "");
-            p.toast("Ally added: " + info.getProfile().getName());
+            p.toast("Ally added: " + info.getProfile().name());
             p.rebuild();
         });
         p.nextRow();
@@ -177,7 +177,7 @@ public final class CombatTab {
         }
         String lower = name.toLowerCase(Locale.ROOT);
         for (PlayerInfo info : c.getOnlinePlayers()) {
-            if (info.getProfile().getName().toLowerCase(Locale.ROOT).equals(lower)) {
+            if (info.getProfile().name().toLowerCase(Locale.ROOT).equals(lower)) {
                 return info;
             }
         }

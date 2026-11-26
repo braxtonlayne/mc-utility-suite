@@ -106,7 +106,7 @@ public final class WorldgenRng {
         int i = next(26);
         int j = next(27);
         long k = ((long) i << 27) + (long) j;
-        return (double) k * (double) 1.110223E-16F;
+        return (float) k * 1.110223E-16F; // 26.3: long * float, so float precision (1.21.1 multiplied in double)
     }
 
     /** {@code Mth.randomBetweenInclusive}. */

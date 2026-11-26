@@ -2,7 +2,6 @@ package com.utilitysuite.jobs.schematic.format;
 
 import com.utilitysuite.jobs.schematic.model.SchematicVolume;
 import net.minecraft.nbt.CompoundTag;
-import net.minecraft.nbt.Tag;
 
 /**
  * Sponge {@code .schem} versions 1-3 (WorldEdit, FAWE). v1/v2 keep {@code Palette} (state string to index) and
@@ -11,6 +10,8 @@ import net.minecraft.nbt.Tag;
  * {@code x + z * Width + y * Width * Length}.
  */
 public final class SpongeFormat implements SchematicFormatAdapter {
+
+    private static final byte[] EMPTY = new byte[0];
 
     @Override
     public String id() {
@@ -29,40 +30,41 @@ public final class SpongeFormat implements SchematicFormatAdapter {
     }
 
     private static CompoundTag unwrap(CompoundTag root) {
-        return root.contains("Schematic", Tag.TAG_COMPOUND) ? root.getCompound("Schematic") : root;
+        return root.get("Schematic") instanceof CompoundTag inner ? inner : root;
     }
 
     @Override
     public SchematicVolume read(CompoundTag root, String name) throws SchematicParseException {
         CompoundTag s = unwrap(root);
-        int version = s.contains("Version") ? s.getInt("Version") : 1;
-        int width = s.getShort("Width") & 0xFFFF;
-        int height = s.getShort("Height") & 0xFFFF;
-        int length = s.getShort("Length") & 0xFFFF;
+        int version = s.getIntOr("Version", 1);
+        int dataVersion = SchematicFormatAdapter.dataVersion(s, "DataVersion");
+        int width = s.getShortOr("Width", (short) 0) & 0xFFFF;
+        int height = s.getShortOr("Height", (short) 0) & 0xFFFF;
+        int length = s.getShortOr("Length", (short) 0) & 0xFFFF;
         if (width == 0 || height == 0 || length == 0) {
             throw new SchematicParseException("Sponge schematic has an empty size");
         }
         CompoundTag paletteTag;
         byte[] blockData;
         if (version >= 3) {
-            CompoundTag blocks = s.getCompound("Blocks");
-            paletteTag = blocks.getCompound("Palette");
-            blockData = blocks.getByteArray("Data");
+            CompoundTag blocks = s.getCompoundOrEmpty("Blocks");
+            paletteTag = blocks.getCompoundOrEmpty("Palette");
+            blockData = blocks.getByteArray("Data").orElse(EMPTY);
         } else {
-            paletteTag = s.getCompound("Palette");
-            blockData = s.getByteArray("BlockData");
+            paletteTag = s.getCompoundOrEmpty("Palette");
+            blockData = s.getByteArray("BlockData").orElse(EMPTY);
         }
         if (paletteTag.isEmpty()) {
             throw new SchematicParseException("Sponge schematic has no palette");
         }
         SchematicVolume.Builder b = SchematicVolume.builder(name, id() + "_v" + version, width, height, length);
         int maxIndex = 0;
-        for (String key : paletteTag.getAllKeys()) {
-            maxIndex = Math.max(maxIndex, paletteTag.getInt(key));
+        for (String key : paletteTag.keySet()) {
+            maxIndex = Math.max(maxIndex, paletteTag.getIntOr(key, 0));
         }
         int[] remap = new int[maxIndex + 1];
-        for (String key : paletteTag.getAllKeys()) {
-            remap[paletteTag.getInt(key)] = b.paletteId(key);
+        for (String key : paletteTag.keySet()) {
+            remap[paletteTag.getIntOr(key, 0)] = b.paletteId(SchematicFormats.upgrade(key, dataVersion));
         }
         int cells = width * height * length;
         int[] values = VarInts.decode(blockData, cells);

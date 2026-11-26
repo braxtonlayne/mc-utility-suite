@@ -33,7 +33,7 @@ public final class McLoadouts {
         ItemEnchantments e = st.getEnchantments();
         for (var entry : e.entrySet()) {
             Holder<Enchantment> h = entry.getKey();
-            h.unwrapKey().ifPresent(k -> ench.put(k.location().toString(), entry.getIntValue()));
+            h.unwrapKey().ifPresent(k -> ench.put(k.identifier().toString(), entry.getIntValue()));
         }
         Component name = st.get(DataComponents.CUSTOM_NAME);
         return new GearItem(id, ench, name == null ? "" : name.getString());
@@ -43,11 +43,11 @@ public final class McLoadouts {
     public static Loadout capture(String name, Inventory inv) {
         GearItem[] s = new GearItem[Loadout.TARGETS];
         for (int a = 0; a < 4; a++) {
-            s[a] = gear(inv.armor.get(a));
+            s[a] = gear(inv.getItem(36 + a));
         }
-        s[Loadout.OFFHAND_TARGET] = gear(inv.offhand.get(0));
+        s[Loadout.OFFHAND_TARGET] = gear(inv.getItem(Inventory.SLOT_OFFHAND));
         for (int h = 0; h < 9; h++) {
-            s[Loadout.HOTBAR_TARGET + h] = gear(inv.items.get(h));
+            s[Loadout.HOTBAR_TARGET + h] = gear(inv.getNonEquipmentItems().get(h));
         }
         return new Loadout(name, s);
     }
@@ -59,12 +59,12 @@ public final class McLoadouts {
     public static GearItem[] positions(Inventory inv, AbstractContainerMenu menu, int containerSlots) {
         GearItem[] pos = new GearItem[LoadoutPlanner.CONTAINER + containerSlots];
         for (int i = 0; i < 36; i++) {
-            pos[i] = gear(inv.items.get(i));
+            pos[i] = gear(inv.getNonEquipmentItems().get(i));
         }
         for (int a = 0; a < 4; a++) {
-            pos[LoadoutPlanner.ARMOR + a] = gear(inv.armor.get(a));
+            pos[LoadoutPlanner.ARMOR + a] = gear(inv.getItem(36 + a));
         }
-        pos[LoadoutPlanner.OFFHAND] = gear(inv.offhand.get(0));
+        pos[LoadoutPlanner.OFFHAND] = gear(inv.getItem(Inventory.SLOT_OFFHAND));
         for (int c = 0; c < containerSlots; c++) {
             pos[LoadoutPlanner.CONTAINER + c] = gear(menu.slots.get(c).getItem());
         }
@@ -75,7 +75,7 @@ public final class McLoadouts {
     public static int lockedArmor(Inventory inv) {
         int mask = 0;
         for (int a = 0; a < 4; a++) {
-            ItemStack st = inv.armor.get(a);
+            ItemStack st = inv.getItem(36 + a);
             if (!st.isEmpty() && EnchantmentHelper.has(st, EnchantmentEffectComponents.PREVENT_ARMOR_CHANGE)) {
                 mask |= 1 << a;
             }

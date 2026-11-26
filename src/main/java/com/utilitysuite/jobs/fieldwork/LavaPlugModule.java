@@ -141,7 +141,7 @@ public final class LavaPlugModule extends FieldModule {
         }
         plug = inventory.itemOf(plugId);
         lavaCell = bestCell;
-        previousSlot = player.getInventory().selected; // read only, restored through the core
+        previousSlot = player.getInventory().getSelectedSlot(); // read only, restored through the core
         phase = 0;
         runTicks = 0;
         return true;
@@ -185,7 +185,7 @@ public final class LavaPlugModule extends FieldModule {
             warnedNoBlocks = false;
             plug = inventory.itemOf(plugId);
             lavaCell = side.asLong();
-            previousSlot = player.getInventory().selected; // read only, restored through the core
+            previousSlot = player.getInventory().getSelectedSlot(); // read only, restored through the core
             phase = 0;
             runTicks = 0;
             return;

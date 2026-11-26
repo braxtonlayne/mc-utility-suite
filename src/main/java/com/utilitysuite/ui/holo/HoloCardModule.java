@@ -16,7 +16,7 @@ import net.minecraft.client.gui.screens.inventory.MerchantScreen;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.entity.Entity;
-import net.minecraft.world.entity.npc.Villager;
+import net.minecraft.world.entity.npc.villager.Villager;
 import net.minecraft.world.inventory.AbstractFurnaceMenu;
 import net.minecraft.world.inventory.BlastFurnaceMenu;
 import net.minecraft.world.inventory.SmokerMenu;
@@ -97,7 +97,7 @@ public final class HoloCardModule implements IModule, IConfigurable {
             return;
         }
         Minecraft mc = Minecraft.getInstance();
-        if (mc.level == null || mc.player == null || mc.screen != null) {
+        if (mc.level == null || mc.player == null || mc.gui.screen() != null) {
             book.dwell(HoloCardBook.NO_TARGET);
             return;
         }
@@ -121,11 +121,12 @@ public final class HoloCardModule implements IModule, IConfigurable {
         }
         // a new target: build its card once (allocation on change only) and anchor the projection
         if (entity instanceof Villager v) {
-            String prof = v.getVillagerData().getProfession().name();
-            book.fillVillager(v.getId(), title(prof), v.getVillagerData().getLevel());
+            String prof = v.getVillagerData().profession().unwrapKey().map(k -> k.identifier().getPath())
+                    .orElse("none");
+            book.fillVillager(v.getId(), title(prof), v.getVillagerData().level());
             projector.anchorEntity(v.getId());
         } else if (pos != null) {
-            String dim = mc.level.dimension().location().toString();
+            String dim = mc.level.dimension().identifier().toString();
             String name = block.getName().getString();
             if (block instanceof AbstractFurnaceBlock || block instanceof BrewingStandBlock) {
                 book.fillProgress(name, dim, pos.asLong());
@@ -212,12 +213,12 @@ public final class HoloCardModule implements IModule, IConfigurable {
             AbstractFurnaceMenu menu = fs.getMenu();
             int cycle = menu instanceof BlastFurnaceMenu || menu instanceof SmokerMenu ? 100 : 200;
             boolean running = menu.isLit() && menu.getBurnProgress() > 0f;
-            book.recordProgress(mc.level.dimension().location().toString(), lastPos, menu.getBurnProgress(), cycle,
+            book.recordProgress(mc.level.dimension().identifier().toString(), lastPos, menu.getBurnProgress(), cycle,
                     running, now);
         } else if (s instanceof BrewingStandScreen bs && lastPos != HoloCardBook.NO_TARGET) {
             int left = bs.getMenu().getBrewingTicks();
             float p = left > 0 ? 1f - left / (float) HoloCardBook.BREW_TICKS : 0f;
-            book.recordProgress(mc.level.dimension().location().toString(), lastPos, p, HoloCardBook.BREW_TICKS,
+            book.recordProgress(mc.level.dimension().identifier().toString(), lastPos, p, HoloCardBook.BREW_TICKS,
                     left > 0, now);
         }
     }

@@ -11,7 +11,7 @@ import com.utilitysuite.world.render.RenderContext;
 import com.utilitysuite.world.render.WorldRenderKit;
 import it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap;
 import net.minecraft.core.registries.BuiltInRegistries;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import net.minecraft.world.level.block.Block;
 
 import java.util.HashSet;
@@ -141,7 +141,7 @@ public final class WorldOverlaysModule extends WorldModule {
         int mask = preset.mask();
         Set<Block> visible = new HashSet<>();
         for (Block b : BuiltInRegistries.BLOCK) {
-            ResourceLocation key = BuiltInRegistries.BLOCK.getKey(b);
+            Identifier key = BuiltInRegistries.BLOCK.getKey(b);
             if ((BlockCategories.classify(key.toString(), customIds) & mask) != 0) {
                 visible.add(b);
             }

@@ -46,18 +46,18 @@ import net.neoforged.neoforge.client.event.MovementInputUpdateEvent;
 import net.neoforged.neoforge.client.event.RegisterGuiLayersEvent;
 import net.neoforged.neoforge.client.event.RegisterKeyMappingsEvent;
 import net.neoforged.neoforge.client.gui.VanillaGuiLayers;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import com.utilitysuite.UtilitySuiteMod;
-import net.neoforged.neoforge.client.event.RenderBlockScreenEffectEvent;
+import net.neoforged.neoforge.client.event.ExtractBlockScreenEffectEvent;
+import net.neoforged.neoforge.client.event.RegisterRenderPipelinesEvent;
+import net.neoforged.neoforge.client.event.SubmitCustomGeometryEvent;
 import net.neoforged.neoforge.client.event.RenderGuiLayerEvent;
 import net.neoforged.neoforge.client.event.RenderHandEvent;
-import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
 import net.neoforged.neoforge.client.event.ViewportEvent;
 import net.neoforged.neoforge.client.settings.KeyConflictContext;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.entity.EntityJoinLevelEvent;
 import net.neoforged.neoforge.event.level.ChunkEvent;
-import org.lwjgl.glfw.GLFW;
 
 /**
  * Wires the world modules (Sub-Agent D): World Knowledge, X-Ray Filters, Seed Workbench &amp; OreSim, World Radar,
@@ -119,16 +119,17 @@ public final class WorldBootstrap {
         RenderGovernorModule governor = new RenderGovernorModule();
         ReplayTheatreModule replay = new ReplayTheatreModule();
         PipCameraModule pip = new PipCameraModule();
+        modBus.addListener(RegisterRenderPipelinesEvent.class, com.utilitysuite.world.render.WorldRenderKit::registerPipelines);
         modBus.addListener(RegisterGuiLayersEvent.class, e -> {
             e.registerBelow(VanillaGuiLayers.CHAT,
-                    ResourceLocation.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID, "pip_camera"), pip);
+                    Identifier.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID, "pip_camera"), pip);
             e.registerBelow(VanillaGuiLayers.CHAT,
-                    ResourceLocation.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID, "replay_splits"), replay);
+                    Identifier.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID, "replay_splits"), replay);
         });
         modBus.addListener(RegisterGuiLayersEvent.class, e -> e.registerBelow(VanillaGuiLayers.CHAT,
-                ResourceLocation.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID, "minimap"), minimap.hud()));
+                Identifier.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID, "minimap"), minimap.hud()));
         modBus.addListener(RegisterGuiLayersEvent.class, e -> e.registerBelow(VanillaGuiLayers.CHAT,
-                ResourceLocation.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID, "acoustic_edge_cues"),
+                Identifier.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID, "acoustic_edge_cues"),
                 new com.utilitysuite.world.overlays.AcousticEdgeHud(radar)));
         Services.registerWaypoints(waypoints.store());
         waypoints.subscribe(events);
@@ -171,14 +172,14 @@ public final class WorldBootstrap {
         }
         // Created in the registration event (not during parallel mod construction: KeyMapping keeps a global map).
         modBus.addListener((RegisterKeyMappingsEvent e) -> {
-            KeyMapping zoomKey = key("zoom", GLFW.GLFW_KEY_Z);
+            KeyMapping zoomKey = key("zoom", InputConstants.KEY_Z);
             KeyMapping addWaypointKey = key("add_waypoint", InputConstants.UNKNOWN.getValue());
             KeyMapping takeMeBackKey = key("take_me_back", InputConstants.UNKNOWN.getValue());
             e.register(zoomKey);
             e.register(addWaypointKey);
             e.register(takeMeBackKey);
             camera.setZoomKey(zoomKey);
-            KeyMapping freelookKey = key("freelook", GLFW.GLFW_KEY_LEFT_ALT);
+            KeyMapping freelookKey = key("freelook", InputConstants.KEY_LALT);
             e.register(freelookKey);
             freelook.setKey(freelookKey);
             waypoints.setKeys(addWaypointKey, takeMeBackKey);
@@ -219,12 +220,12 @@ public final class WorldBootstrap {
         bus.addListener(runtime::onTick);
         bus.addListener((net.neoforged.neoforge.client.event.ClientTickEvent.Post e) -> freelook.pollKey());
         bus.addListener((net.neoforged.neoforge.client.event.ClientTickEvent.Post e) -> replay.pollKeys());
-        bus.addListener(runtime::onRender);
-        bus.addListener(projectileRibbon::onRenderLevel);
+        bus.addListener(SubmitCustomGeometryEvent.class, runtime::onSubmit);
+        bus.addListener(SubmitCustomGeometryEvent.class, projectileRibbon::onRenderLevel); // normal priority: inside the Shell world kit pass
         bus.addListener((ChunkEvent.Load e) -> {
             runtime.onChunkLoad(e);
             if (e.getLevel().isClientSide()) {
-                lightOverlay.onChunkLoaded(e.getChunk().getPos().x, e.getChunk().getPos().z);
+                lightOverlay.onChunkLoaded(e.getChunk().getPos().x(), e.getChunk().getPos().z());
                 if (e.getLevel() instanceof net.minecraft.client.multiplayer.ClientLevel cl) {
                     seedScanner.onChunkLoaded(cl, e.getChunk());
                 }
@@ -244,10 +245,10 @@ public final class WorldBootstrap {
         bus.addListener((ViewportEvent.RenderFog e) -> atmosphere.onFog(e));
         bus.addListener((ViewportEvent.ComputeFogColor e) -> atmosphere.onFogColor(e));
         bus.addListener((RenderFrameEvent.Pre e) -> governor.onFrame(e));
-        bus.addListener((RenderFrameEvent.Pre e) -> pip.onRenderFrame(e)); // PiP full render: the second level pass
+        bus.addListener((RenderFrameEvent.Post e) -> pip.onRenderFrame(e)); // PiP full render: second level pass after the main frame
         bus.addListener(RenderLivingEvent.Pre.class, e -> governor.onRenderLiving(e));
         bus.addListener((CalculatePlayerTurnEvent e) -> camera.onTurnSensitivity(e));
-        bus.addListener((RenderBlockScreenEffectEvent e) -> camera.onScreenEffect(e));
+        bus.addListener((ExtractBlockScreenEffectEvent e) -> camera.onScreenEffect(e));
         bus.addListener((RenderGuiLayerEvent.Pre e) -> camera.onGuiLayer(e));
     }
 
@@ -259,7 +260,7 @@ public final class WorldBootstrap {
     }
 
     private static KeyMapping key(String name, int defaultKey) {
-        return new KeyMapping("key.utilitysuite." + name, KeyConflictContext.IN_GAME, InputConstants.Type.KEYSYM,
+        return new KeyMapping("key.utilitysuite." + name, KeyConflictContext.IN_GAME, InputConstants.Type.KEYBOARD,
                 defaultKey, KeybindManager.CATEGORY);
     }
 

@@ -152,11 +152,11 @@ final class FieldHands implements LeaseListener, com.utilitysuite.core.api.IBloc
      */
     int holdItem(LocalPlayer player, Item item) {
         Inventory inv = player.getInventory();
-        if (inv.getSelected().is(item)) {
+        if (inv.getSelectedItem().is(item)) {
             return DONE;
         }
         for (int i = 0; i < 9; i++) {
-            if (inv.items.get(i).is(item)) {
+            if (inv.getNonEquipmentItems().get(i).is(item)) {
                 Services.input().selectHotbarSlot(lease, i);
                 return RUNNING;
             }
@@ -166,8 +166,8 @@ final class FieldHands implements LeaseListener, com.utilitysuite.core.api.IBloc
             return RUNNING;
         }
         for (int i = 9; i < 36; i++) {
-            if (inv.items.get(i).is(item)) {
-                if (Minecraft.getInstance().screen != null) {
+            if (inv.getNonEquipmentItems().get(i).is(item)) {
+                if (Minecraft.getInstance().gui.screen() != null) {
                     return FAILED; // never click into a container the user has open
                 }
                 // inventory menu slot index of main-inventory slot i is i (9..35)
@@ -184,10 +184,10 @@ final class FieldHands implements LeaseListener, com.utilitysuite.core.api.IBloc
      */
     int holdBestTool(LocalPlayer player, net.minecraft.world.level.block.state.BlockState state) {
         Inventory inv = player.getInventory();
-        float best = inv.getSelected().getDestroySpeed(state);
+        float best = inv.getSelectedItem().getDestroySpeed(state);
         int slot = -1;
         for (int i = 0; i < 9; i++) {
-            float s = inv.items.get(i).getDestroySpeed(state);
+            float s = inv.getNonEquipmentItems().get(i).getDestroySpeed(state);
             if (s > best) {
                 best = s;
                 slot = i;
@@ -213,6 +213,12 @@ final class FieldHands implements LeaseListener, com.utilitysuite.core.api.IBloc
         LocalPlayer player = mc.player;
         if (player == null || mc.level == null || !hasLease()) {
             return FAILED;
+        }
+        if (BlockPos.asLong(x, y, z) != actionCell) {
+            // Like a player: take the fastest hotbar tool for the block once per action (the highway builder's tunnel
+            // dig relied on whatever slot happened to be selected; by hand a stone cell takes ~107 ticks with Haste II).
+            // The field modules call holdBestTool themselves; this is the IBlockWork entry. Hotbar scan, no allocation.
+            holdBestTool(player, mc.level.getBlockState(cursor.set(x, y, z)));
         }
         return tickBreak(mc, player, x, y, z, relaxed, requireLos);
     }
@@ -246,7 +252,7 @@ final class FieldHands implements LeaseListener, com.utilitysuite.core.api.IBloc
             if (!lease.isActive() || !lease.covers(ControlChannel.WORLD_INTERACT)) {
                 return FAILED;
             }
-            Direction face = Direction.getNearest(player.getX() - (x + 0.5), player.getEyeY() - (y + 0.5),
+            Direction face = Direction.getApproximateNearest(player.getX() - (x + 0.5), player.getEyeY() - (y + 0.5),
                     player.getZ() - (z + 0.5));
             if (ticks == 1) {
                 actionPos = cursor.immutable(); // the game keeps a reference: one position per action, not per tick
@@ -254,7 +260,7 @@ final class FieldHands implements LeaseListener, com.utilitysuite.core.api.IBloc
             } else if (actionPos != null) {
                 mc.gameMode.continueDestroyBlock(actionPos, face);
             }
-            player.swing(InteractionHand.MAIN_HAND);
+            com.utilitysuite.jobs.goal.McHands.swingBreak(player);
             return RUNNING;
         }
         if (!input.isRotationSettled(3.0f)) {
@@ -329,7 +335,7 @@ final class FieldHands implements LeaseListener, com.utilitysuite.core.api.IBloc
             }
             mc.gameMode.useItemOn(player, InteractionHand.MAIN_HAND,
                     new BlockHitResult(new Vec3(hx, hy, hz), face, new BlockPos(sx, sy, sz), false));
-            player.swing(InteractionHand.MAIN_HAND);
+            com.utilitysuite.jobs.goal.McHands.swingUse(player, InteractionHand.MAIN_HAND);
             input.clearRotation(lease);
             resetAction();
             return DONE;

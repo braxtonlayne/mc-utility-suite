@@ -31,6 +31,7 @@ final class ModulesScenario {
         s.cmd("effect clear @s"); // earlier scenarios leave Resistance on, which would block the damage step
         s.cmd(() -> Arena.tp(0.5, 0.5, 0f));
         dotCommands(s);
+        parkourKeys(s);
         offhand(s);
         respawn(s);
         smoke(s);
@@ -65,6 +66,80 @@ final class ModulesScenario {
                             + ChatCapture.drain());
             H.enable("light_overlay", false);
         });
+        // .jumpcap: the blocks around the player, with collision boxes, land in a file a test can be built from
+        java.nio.file.Path dir = H.mc().gameDirectory.toPath().resolve("utilitysuite").resolve("jumpcap");
+        long[] since = new long[1];
+        s.cmd("setblock ~2 ~ ~ minecraft:oak_slab");
+        s.waitTicks(5);
+        s.run("jumpcap", () -> {
+            since[0] = System.currentTimeMillis();
+            out[0] = net.neoforged.neoforge.client.ClientHooks.onClientSendMessage(".jumpcap playtest");
+        });
+        s.waitTicks(20);
+        s.run("jumpcap result", () -> {
+            String text = "";
+            try (var files = java.nio.file.Files.list(dir)) {
+                java.nio.file.Path newest = files.filter(f -> f.toFile().lastModified() >= since[0] - 1000)
+                        .max(java.util.Comparator.comparingLong(f -> f.toFile().lastModified())).orElse(null);
+                text = newest == null ? "" : java.nio.file.Files.readString(newest);
+            } catch (java.io.IOException e) {
+                text = "io: " + e;
+            }
+            s.check("'.jumpcap' saves the nearby blocks with collision boxes and is not sent",
+                    (out[0] == null || out[0].isEmpty()) && text.contains("\"note\": \"playtest\"")
+                            && text.contains("minecraft:oak_slab[type=bottom") && text.contains("0.50000")
+                            && text.contains("\"assist\": ") && text.contains("\"cells\": [["),
+                    "message after the event '" + out[0] + "', file " + text.length() + " chars"
+                            + (text.length() < 400 ? ": " + text : ""));
+        });
+        s.cmd("setblock ~2 ~ ~ minecraft:air");
+    }
+
+    /** The parkour [ and ] keys (real key presses): pin the looked-at block; mark its type for Parkour blocks. */
+    private static void parkourKeys(Scenario s) {
+        String ma = com.utilitysuite.travel.movement.MovementAssist.ID;
+        String allowedOnly = "parkour_blocks_allowed_only";
+        String allowed = "parkour_blocks_allowed";
+        s.cmd(() -> "tp @s " + (Arena.cx + 0.5) + " " + (Arena.FLOOR + 1) + " " + (Arena.cz + 0.5) + " 0 90");
+        s.waitTicks(5);
+        String[] chat = new String[3];
+        s.run("] with the setting off", () -> {
+            H.setting(ma, allowed, "");
+            H.setting(ma, allowedOnly, false);
+            ChatCapture.drain();
+            H.physicalKey(com.mojang.blaze3d.platform.InputConstants.KEY_RBRACKET, true);
+            H.physicalKey(com.mojang.blaze3d.platform.InputConstants.KEY_RBRACKET, false);
+        });
+        s.waitTicks(3);
+        s.run("] with the setting on", () -> {
+            chat[0] = String.valueOf(ChatCapture.drain());
+            H.setting(ma, allowedOnly, true);
+            H.physicalKey(com.mojang.blaze3d.platform.InputConstants.KEY_RBRACKET, true);
+            H.physicalKey(com.mojang.blaze3d.platform.InputConstants.KEY_RBRACKET, false);
+        });
+        s.waitTicks(3);
+        s.run("[ pins the looked-at block", () -> {
+            chat[1] = String.valueOf(ChatCapture.drain());
+            H.physicalKey(com.mojang.blaze3d.platform.InputConstants.KEY_LBRACKET, true);
+            H.physicalKey(com.mojang.blaze3d.platform.InputConstants.KEY_LBRACKET, false);
+        });
+        s.waitTicks(3);
+        s.run("parkour keys result", () -> {
+            chat[2] = String.valueOf(ChatCapture.drain());
+            String list = Services.modState().profile().getString(ma, allowed, "");
+            net.minecraft.core.BlockPos below = H.p().blockPosition().below();
+            String floor = net.minecraft.core.registries.BuiltInRegistries.BLOCK
+                    .getKey(H.mc().level.getBlockState(below).getBlock()).toString();
+            s.check("] marks the looked-at block type only with 'Place only on allowed blocks' on; [ pins a target",
+                    chat[0].contains("Turn on") && list.equals(floor) && chat[1].contains("may place on")
+                            && chat[2].contains("Jump target pinned"),
+                    "off: " + chat[0] + "; on: " + chat[1] + "; list '" + list + "' floor " + floor + "; pin: " + chat[2]);
+            H.setting(ma, allowedOnly, false);
+            H.setting(ma, allowed, "");
+            H.physicalKey(com.mojang.blaze3d.platform.InputConstants.KEY_LBRACKET, true); // (on the same block: clears)
+            H.physicalKey(com.mojang.blaze3d.platform.InputConstants.KEY_LBRACKET, false);
+        });
+        s.waitTicks(3);
     }
 
     private static void offhand(Scenario s) {
@@ -91,15 +166,15 @@ final class ModulesScenario {
         });
         s.cmd("kill @s");
         s.waitUpTo("death screen", 60, () -> {
-            sawDeath[0] |= H.mc().screen instanceof DeathScreen;
+            sawDeath[0] |= H.mc().gui.screen() instanceof DeathScreen;
             return sawDeath[0];
         });
         s.waitUpTo("respawned", 20 * 6, () -> H.p() != null && H.p().isAlive()
-                && !(H.mc().screen instanceof DeathScreen));
+                && !(H.mc().gui.screen() instanceof DeathScreen));
         s.run("respawn result", () -> s.deathExpected = false);
         s.run("respawn check", () -> s.check("Auto-Respawn presses respawn after the death screen",
-                sawDeath[0] && H.p().isAlive() && !(H.mc().screen instanceof DeathScreen),
-                "saw death screen " + sawDeath[0] + " (harness respawn off), alive " + H.p().isAlive() + ", screen " + H.mc().screen));
+                sawDeath[0] && H.p().isAlive() && !(H.mc().gui.screen() instanceof DeathScreen),
+                "saw death screen " + sawDeath[0] + " (harness respawn off), alive " + H.p().isAlive() + ", screen " + H.mc().gui.screen()));
         s.cmd(() -> Arena.tp(0.5, 0.5, 0f));
     }
 

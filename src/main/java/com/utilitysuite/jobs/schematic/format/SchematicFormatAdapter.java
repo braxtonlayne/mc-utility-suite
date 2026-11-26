@@ -2,6 +2,7 @@ package com.utilitysuite.jobs.schematic.format;
 
 import com.utilitysuite.jobs.schematic.model.SchematicVolume;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.IntArrayTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.Tag;
 
@@ -23,37 +24,68 @@ public interface SchematicFormatAdapter {
 
     /** {@code {Name: "minecraft:x", Properties: {k: "v"}}} to a canonical state string (Litematica and structures). */
     static String stateFromCompound(CompoundTag entry) {
-        String id = entry.getString("Name");
+        String id = entry.getStringOr("Name", "");
         if (id.isEmpty()) {
             id = "minecraft:air";
         }
-        if (!entry.contains("Properties", Tag.TAG_COMPOUND)) {
+        if (!(entry.get("Properties") instanceof CompoundTag props)) {
             return com.utilitysuite.jobs.schematic.model.BlockStateString.normalizeId(id);
         }
-        CompoundTag props = entry.getCompound("Properties");
         TreeMap<String, String> map = new TreeMap<>();
-        for (String key : props.getAllKeys()) {
-            map.put(key, props.getString(key));
+        for (String key : props.keySet()) {
+            map.put(key, props.getStringOr(key, ""));
         }
         return com.utilitysuite.jobs.schematic.model.BlockStateString.of(id, map);
     }
 
+    /** {@link #stateFromCompound(CompoundTag)} upgraded from the file's data version ({@code -1} unknown). */
+    static String stateFromCompound(CompoundTag entry, int dataVersion) {
+        return SchematicFormats.upgrade(stateFromCompound(entry), dataVersion);
+    }
+
+    /** The {@code key} data version, or {@code -1} when the file has none. */
+    static int dataVersion(CompoundTag tag, String key) {
+        return tag.getIntOr(key, -1);
+    }
+
     /** Reads an {x, y, z} int compound (Litematica). */
     static int[] xyz(CompoundTag tag) {
-        return new int[]{tag.getInt("x"), tag.getInt("y"), tag.getInt("z")};
+        return new int[]{tag.getIntOr("x", 0), tag.getIntOr("y", 0), tag.getIntOr("z", 0)};
+    }
+
+    /**
+     * The list under {@code key} when it holds only elements of {@code elementType}, else an empty list (the 1.21.1
+     * {@code getList(key, type)} contract; 26.3 lists no longer carry a declared element type).
+     */
+    static ListTag listOf(CompoundTag parent, String key, byte elementType) {
+        if (parent.get(key) instanceof ListTag list) {
+            for (int i = 0, n = list.size(); i < n; i++) {
+                if (list.get(i).getId() != elementType) {
+                    return new ListTag();
+                }
+            }
+            return list;
+        }
+        return new ListTag();
+    }
+
+    /** True when {@code key} holds a tag of the given type (the 1.21.1 {@code contains(key, type)}). */
+    static boolean has(CompoundTag parent, String key, byte type) {
+        Tag t = parent.get(key);
+        return t != null && t.getId() == type;
     }
 
     static int[] intList(CompoundTag parent, String key) throws SchematicParseException {
-        if (parent.contains(key, Tag.TAG_INT_ARRAY)) {
-            return parent.getIntArray(key);
+        if (parent.get(key) instanceof IntArrayTag arr) {
+            return arr.getAsIntArray();
         }
-        ListTag list = parent.getList(key, Tag.TAG_INT);
+        ListTag list = listOf(parent, key, Tag.TAG_INT);
         if (list.isEmpty()) {
             throw new SchematicParseException("Missing int list '" + key + "'");
         }
         int[] out = new int[list.size()];
         for (int i = 0; i < out.length; i++) {
-            out[i] = list.getInt(i);
+            out[i] = list.getIntOr(i, 0);
         }
         return out;
     }

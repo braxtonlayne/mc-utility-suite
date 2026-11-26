@@ -99,7 +99,7 @@ public final class StorageMemoryModule implements IModule, IConfigurable {
         String id = blockId(event.getLevel().getBlockState(event.getPos()).getBlock());
         if (isStationBlock(id)) {
             // furnaces / brewing stands / crafters: remembered by position for station jobs, contents not indexed
-            memory.rememberStation(event.getLevel().dimension().location().toString(), event.getPos().asLong(), id);
+            memory.rememberStation(event.getLevel().dimension().identifier().toString(), event.getPos().asLong(), id);
             scheduleSave();
             return;
         }
@@ -107,7 +107,7 @@ public final class StorageMemoryModule implements IModule, IConfigurable {
             return;
         }
         pendingPos = event.getPos().asLong();
-        pendingDim = event.getLevel().dimension().location().toString();
+        pendingDim = event.getLevel().dimension().identifier().toString();
         pendingType = id;
         pendingTick = tickCounter;
         screenBound = false;
@@ -174,7 +174,7 @@ public final class StorageMemoryModule implements IModule, IConfigurable {
         }
         Map<String, Integer> e = new java.util.TreeMap<>();
         for (var entry : stored.entrySet()) {
-            entry.getKey().unwrapKey().ifPresent(k -> e.put(k.location().toString(), entry.getIntValue()));
+            entry.getKey().unwrapKey().ifPresent(k -> e.put(k.identifier().toString(), entry.getIntValue()));
         }
         return ChestSlots.enchantKey(e);
     }
@@ -208,7 +208,7 @@ public final class StorageMemoryModule implements IModule, IConfigurable {
         if (n == 0) {
             return;
         }
-        String dim = level.dimension().location().toString();
+        String dim = level.dimension().identifier().toString();
         for (int i = 0; i < VERIFY_PER_TICK && i < n; i++) {
             verifyCursor = (verifyCursor + 1) % n;
             com.utilitysuite.core.api.StorageEntry e = entries.get(verifyCursor);

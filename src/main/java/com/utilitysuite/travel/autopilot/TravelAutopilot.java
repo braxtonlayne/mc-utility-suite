@@ -19,6 +19,7 @@ import com.utilitysuite.travel.TravelMessages;
 import com.utilitysuite.world.overlays.ChunkAgeTracker;
 import com.utilitysuite.world.overlays.TrailVector;
 import com.utilitysuite.world.overlays.WorldScanner;
+import net.minecraft.core.component.DataComponents;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
@@ -26,8 +27,7 @@ import net.minecraft.resources.ResourceKey;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.entity.EquipmentSlot;
-import net.minecraft.world.entity.vehicle.Boat;
-import net.minecraft.world.item.ElytraItem;
+import net.minecraft.world.entity.vehicle.boat.Boat;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -264,7 +264,7 @@ public final class TravelAutopilot implements IModule, IConfigurable, com.utilit
         if (modeOverride == null && mode == AutopilotMode.TRAIL) {
             return startTrailFollow();
         }
-        String dimension = mc.level.dimension().location().toString();
+        String dimension = mc.level.dimension().identifier().toString();
         RouteParser.Result parsed = RouteParser.parse(spec, name -> resolveWaypoint(name, dimension));
         if (!parsed.ok()) {
             TravelMessages.status("message.utilitysuite.autopilot.bad_route", parsed.error());
@@ -364,7 +364,7 @@ public final class TravelAutopilot implements IModule, IConfigurable, com.utilit
             TravelMessages.status("message.utilitysuite.autopilot.no_trail");
             return false;
         }
-        boolean canFly = player.getItemBySlot(EquipmentSlot.CHEST).getItem() instanceof ElytraItem
+        boolean canFly = player.getItemBySlot(EquipmentSlot.CHEST).has(DataComponents.GLIDER)
                 && !mc.level.dimensionType().hasCeiling();
         if (!canFly) {
             INavigator nav = Services.navigatorOrNull();
@@ -403,7 +403,7 @@ public final class TravelAutopilot implements IModule, IConfigurable, com.utilit
         if (m == AutopilotMode.AUTO) {
             if (player.getVehicle() instanceof Boat) {
                 m = AutopilotMode.BOAT;
-            } else if (player.getItemBySlot(EquipmentSlot.CHEST).getItem() instanceof ElytraItem) {
+            } else if (player.getItemBySlot(EquipmentSlot.CHEST).has(DataComponents.GLIDER)) {
                 m = mc.level.dimensionType().hasCeiling() ? AutopilotMode.NETHER_BOUNCE : AutopilotMode.ELYTRA;
             } else {
                 m = AutopilotMode.OVERLAND;
@@ -418,7 +418,7 @@ public final class TravelAutopilot implements IModule, IConfigurable, com.utilit
                 return Run.BOAT;
             }
             case ELYTRA -> {
-                if (!(player.getItemBySlot(EquipmentSlot.CHEST).getItem() instanceof ElytraItem)) {
+                if (!(player.getItemBySlot(EquipmentSlot.CHEST).has(DataComponents.GLIDER))) {
                     TravelMessages.status("message.utilitysuite.autopilot.no_elytra");
                     return null;
                 }
@@ -429,7 +429,7 @@ public final class TravelAutopilot implements IModule, IConfigurable, com.utilit
                 return Run.ELYTRA;
             }
             case NETHER_BOUNCE -> {
-                if (!(player.getItemBySlot(EquipmentSlot.CHEST).getItem() instanceof ElytraItem)) {
+                if (!(player.getItemBySlot(EquipmentSlot.CHEST).has(DataComponents.GLIDER))) {
                     TravelMessages.status("message.utilitysuite.autopilot.no_elytra");
                     return null;
                 }

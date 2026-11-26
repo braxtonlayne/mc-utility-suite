@@ -45,8 +45,8 @@ final class GridCapture {
      */
     void begin(ClientLevel lvl, int centerChunkX, int centerChunkZ, int chunkRadius, int minSectionY,
                int maxSectionY) {
-        int lo = Math.max(lvl.getMinSection(), minSectionY);
-        int hi = Math.min(lvl.getMaxSection() - 1, maxSectionY);
+        int lo = Math.max(lvl.getMinSectionY(), minSectionY);
+        int hi = Math.min(lvl.getMaxSectionY(), maxSectionY); // inclusive in 26.3
         if (hi < lo) {
             hi = lo;
         }
@@ -119,7 +119,7 @@ final class GridCapture {
         if (b == Blocks.SPAWNER || b == Blocks.TRIAL_SPAWNER) {
             return VoxelGrid.SPAWNER;
         }
-        if (s.blocksMotion()) {
+        if (b != Blocks.COBWEB && b != Blocks.BAMBOO_SAPLING && s.isSolid()) { // 1.21.1 blocksMotion()
             return VoxelGrid.SOLID;
         }
         if (!s.getFluidState().isEmpty()) {

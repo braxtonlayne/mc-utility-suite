@@ -71,12 +71,12 @@ public final class AutoRespawn implements IModule, IConfigurable {
             return;
         }
         BlockPos p = player.blockPosition();
-        String dim = mc.level.dimension().location().toString();
+        String dim = mc.level.dimension().identifier().toString();
         String where = p.getX() + " " + p.getY() + " " + p.getZ() + " (" + dim + ")";
         Services.visuals().notices().post(com.utilitysuite.core.api.visual.NoticeKind.ERROR, "Died", where);
         // the coordinates stay in chat as well: a toast is gone in 4 s and the user copies these from the chat line
-        player.displayClientMessage(Component.literal("[Suite] ").withStyle(ChatFormatting.DARK_AQUA)
-                .append(Component.literal("Died at " + where).withStyle(ChatFormatting.GRAY)), false);
+        player.sendSystemMessage(Component.literal("[Suite] ").withStyle(ChatFormatting.DARK_AQUA)
+                .append(Component.literal("Died at " + where).withStyle(ChatFormatting.GRAY)));
         if (!otherReporterActive()) {
             ISuiteEventBus events = Services.eventsOrNull();
             if (events != null) {
@@ -107,7 +107,7 @@ public final class AutoRespawn implements IModule, IConfigurable {
             return;
         }
         Minecraft mc = Minecraft.getInstance();
-        if (!(mc.screen instanceof DeathScreen) || mc.player == null) {
+        if (!(mc.gui.screen() instanceof DeathScreen) || mc.player == null) {
             countdown = -1; // respawned by hand, or left the world
             return;
         }

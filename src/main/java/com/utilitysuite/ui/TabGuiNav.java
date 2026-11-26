@@ -18,16 +18,17 @@ final class TabGuiNav {
     /** Display names, indexed like {@link #CATEGORIES}. */
     static final String[] CATEGORY_NAMES = {"Jobs", "World", "Travel", "Combat", "Tools"};
 
-    // GLFW key and action codes, copied so this class stays engine free (values are part of the GLFW ABI).
-    static final int KEY_ENTER = 257;
-    static final int KEY_RIGHT = 262;
-    static final int KEY_LEFT = 263;
-    static final int KEY_DOWN = 264;
-    static final int KEY_UP = 265;
-    static final int KEY_KP_ENTER = 335;
+    // SDL3 scancodes and key actions (26.3 {@code InputConstants.KEY_*} / {@code PRESS, RELEASE, REPEAT}), copied so
+    // this class stays engine free.
+    static final int KEY_ENTER = 40;
+    static final int KEY_RIGHT = 79;
+    static final int KEY_LEFT = 80;
+    static final int KEY_DOWN = 81;
+    static final int KEY_UP = 82;
+    static final int KEY_KP_ENTER = 88;
     static final int ACTION_RELEASE = 0;
     static final int ACTION_PRESS = 1;
-    static final int ACTION_REPEAT = 2;
+    static final int ACTION_REPEAT = -1;
 
     /** Key decision: the key is not ours, let vanilla have it. */
     static final int PASS = 0;

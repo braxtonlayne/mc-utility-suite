@@ -5,7 +5,7 @@ import com.utilitysuite.UtilitySuiteMod;
 import com.utilitysuite.core.api.visual.Glyph;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.texture.DynamicTexture;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 
 /**
  * The kit atlas, drawn from code at first use (own art only, no PNG and no generator script): white texels whose
@@ -21,7 +21,7 @@ import net.minecraft.resources.ResourceLocation;
  */
 public final class HoloAtlas {
 
-    public static final ResourceLocation ID = ResourceLocation.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID,
+    public static final Identifier ID = Identifier.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID,
             "holo/atlas");
 
     private static boolean uploaded;
@@ -41,12 +41,11 @@ public final class HoloAtlas {
         NativeImage img = new NativeImage(w, h, true);
         for (int y = 0; y < h; y++) {
             for (int x = 0; x < w; x++) {
-                int c = argb[y * w + x];
-                // NativeImage is ABGR; the colour is white, so only alpha needs care
-                img.setPixelRGBA(x, y, (c & 0xFF000000) | ((c & 0xFF) << 16) | (c & 0xFF00) | ((c >> 16) & 0xFF));
+                img.setPixel(x, y, argb[y * w + x]); // ARGB in; the image converts to its ABGR layout
             }
         }
-        Minecraft.getInstance().getTextureManager().register(ID, new DynamicTexture(img));
+        Minecraft.getInstance().getTextureManager().register(ID,
+                new DynamicTexture(() -> "utilitysuite holo atlas", img));
     }
 
     /** The atlas as ARGB (row-major, {@code ATLAS_W x ATLAS_H}). */

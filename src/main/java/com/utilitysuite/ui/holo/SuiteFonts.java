@@ -5,12 +5,13 @@ import com.utilitysuite.UtilitySuiteMod;
 import com.utilitysuite.core.api.visual.TextRole;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.FontDescription;
 import net.minecraft.network.chat.Style;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import net.minecraft.server.packs.PackLocationInfo;
 import net.minecraft.server.packs.PackResources;
 import net.minecraft.server.packs.PackType;
-import net.minecraft.server.packs.metadata.MetadataSectionSerializer;
+import net.minecraft.server.packs.metadata.MetadataSectionType;
 import net.minecraft.server.packs.metadata.pack.PackMetadataSection;
 import net.minecraft.server.packs.repository.Pack;
 import net.minecraft.server.packs.repository.PackCompatibility;
@@ -19,12 +20,13 @@ import net.minecraft.server.packs.resources.IoSupplier;
 import net.minecraft.server.packs.resources.ResourceManager;
 import net.minecraft.server.packs.resources.ResourceManagerReloadListener;
 import net.minecraft.util.FormattedCharSequence;
+import net.minecraft.util.InclusiveRange;
 import net.minecraft.util.FormattedCharSink;
 import net.minecraft.util.StringDecomposer;
 import net.minecraft.world.flag.FeatureFlagSet;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.ModList;
-import net.neoforged.neoforge.client.event.RegisterClientReloadListenersEvent;
+import net.neoforged.neoforge.client.event.AddClientReloadListenersEvent;
 import net.neoforged.neoforge.event.AddPackFindersEvent;
 import net.neoforged.neoforgespi.language.IModFileInfo;
 import org.slf4j.Logger;
@@ -32,18 +34,18 @@ import org.slf4j.Logger;
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Stream;
 
 /**
  * The suite font pipeline: which face each {@link TextRole} is drawn in. The TTF files are not shipped yet (the owner
  * approves the download), so everything here is built to switch itself on by presence and to stay exactly vanilla
  * otherwise.
  * <p>
- * How it works in 1.21.1 (checked against the mapped NeoForge 21.1.265 sources of {@code FontManager},
+ * How it works (ported to 26.3: font ids are {@code FontDescription.Resource}s, the reload check registers through
+ * {@code AddClientReloadListenersEvent}; originally checked against the NeoForge 21.1.265 sources of {@code FontManager},
  * {@code TrueTypeGlyphProviderDefinition}, {@code FontSet}, {@code Font} and {@code AddPackFindersEvent}):
  * <ol>
  *     <li>A font definition JSON whose {@code ttf} provider names a missing file makes {@code FontManager.safeLoad}
@@ -275,8 +277,9 @@ public final class SuiteFonts {
         /** Registers the pack finder and the reload check on the mod bus (start-up, once). */
         public static void init(IEventBus modBus) {
             modBus.addListener(AddPackFindersEvent.class, Client::onAddPackFinders);
-            modBus.addListener(RegisterClientReloadListenersEvent.class,
-                    e -> e.registerReloadListener((ResourceManagerReloadListener) Client::onReload));
+            modBus.addListener(AddClientReloadListenersEvent.class,
+                    e -> e.addListener(Identifier.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID, "suite_fonts"),
+                            (ResourceManagerReloadListener) Client::onReload));
         }
 
         private static void onAddPackFinders(AddPackFindersEvent event) {
@@ -294,13 +297,13 @@ public final class SuiteFonts {
                     PackCompatibility.COMPATIBLE, FeatureFlagSet.of(), List.of(), true);
             Pack.ResourcesSupplier supplier = new Pack.ResourcesSupplier() {
                 @Override
-                public PackResources openPrimary(PackLocationInfo location) {
+                public PackResources openMetadata(PackLocationInfo location) {
                     return new DefinitionPack(location);
                 }
 
                 @Override
-                public PackResources openFull(PackLocationInfo location, Pack.Metadata metadata) {
-                    return new DefinitionPack(location);
+                public Stream<PackResources> openResources(PackLocationInfo location, Pack.Metadata metadata) {
+                    return Stream.of(new DefinitionPack(location));
                 }
             };
             Pack pack = new Pack(info, supplier, meta,
@@ -316,8 +319,7 @@ public final class SuiteFonts {
                     return false;
                 }
                 for (String name : FILES) {
-                    Path p = file.getFile().findResource("assets", UtilitySuiteMod.MOD_ID, "font", name);
-                    if (p == null || !Files.isRegularFile(p)) {
+                    if (!file.getFile().getContents().containsFile("assets/" + UtilitySuiteMod.MOD_ID + "/font/" + name)) {
                         return false;
                     }
                 }
@@ -331,7 +333,7 @@ public final class SuiteFonts {
             boolean present = filesPresent;
             if (present) {
                 for (String name : FILES) {
-                    if (manager.getResource(ResourceLocation.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID,
+                    if (manager.getResource(Identifier.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID,
                             "font/" + name)).isEmpty()) {
                         present = false;
                         break;
@@ -366,7 +368,7 @@ public final class SuiteFonts {
          */
         private static boolean probe(Minecraft mc) {
             Run run = new Run(); // once per reload
-            run.set("W", Style.EMPTY.withFont(ResourceLocation.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID,
+            run.set("W", Style.EMPTY.withFont(fontOf(UtilitySuiteMod.MOD_ID,
                     "probe_missing")));
             int missing = mc.font.width(run);
             for (int f = 0; f < FONT_IDS.length; f++) {
@@ -386,6 +388,11 @@ public final class SuiteFonts {
             return true;
         }
 
+        /** The font description of a suite font id (26.3 styles name fonts through a {@link FontDescription}). */
+        private static FontDescription fontOf(String namespace, String path) {
+            return new FontDescription.Resource(Identifier.fromNamespaceAndPath(namespace, path));
+        }
+
         /** The style for a face index, or null for {@link #VANILLA}. Created once per face. */
         public static Style styleOf(int face) {
             if (face < 0) {
@@ -393,7 +400,7 @@ public final class SuiteFonts {
             }
             Style s = STYLES[face];
             if (s == null) {
-                s = Style.EMPTY.withFont(ResourceLocation.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID,
+                s = Style.EMPTY.withFont(fontOf(UtilitySuiteMod.MOD_ID,
                         FONT_IDS[face]));
                 STYLES[face] = s;
             }
@@ -413,7 +420,7 @@ public final class SuiteFonts {
             int k = variant();
             Style s = VARIANT_STYLES[face][k];
             if (s == null) {
-                s = Style.EMPTY.withFont(ResourceLocation.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID,
+                s = Style.EMPTY.withFont(fontOf(UtilitySuiteMod.MOD_ID,
                         variantId(face, k)));
                 VARIANT_STYLES[face][k] = s;
             }
@@ -450,7 +457,7 @@ public final class SuiteFonts {
             }
 
             /** Encoded as face * (MAX_VARIANT + 1) + scale, where scale 0 is the base definition; -1 when unknown. */
-            private static int faceOf(ResourceLocation id) {
+            private static int faceOf(Identifier id) {
                 if (!UtilitySuiteMod.MOD_ID.equals(id.getNamespace())) {
                     return -1;
                 }
@@ -482,7 +489,7 @@ public final class SuiteFonts {
             }
 
             @Override
-            public IoSupplier<InputStream> getResource(PackType type, ResourceLocation id) {
+            public IoSupplier<InputStream> getResource(PackType type, Identifier id) {
                 if (type != PackType.CLIENT_RESOURCES) {
                     return null;
                 }
@@ -500,7 +507,7 @@ public final class SuiteFonts {
                 }
                 for (int f = 0; f < FONT_IDS.length; f++) {
                     for (int k = 0; k <= MAX_VARIANT; k++) {
-                        output.accept(ResourceLocation.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID, path(f, k)),
+                        output.accept(Identifier.fromNamespaceAndPath(UtilitySuiteMod.MOD_ID, path(f, k)),
                                 json(f * (MAX_VARIANT + 1) + k));
                     }
                 }
@@ -513,10 +520,11 @@ public final class SuiteFonts {
 
             @Override
             @SuppressWarnings("unchecked")
-            public <T> T getMetadataSection(MetadataSectionSerializer<T> serializer) {
-                if (serializer == PackMetadataSection.TYPE) {
+            public <T> T getMetadataSection(MetadataSectionType<T> type) {
+                if (type == PackMetadataSection.CLIENT_TYPE || type == PackMetadataSection.FALLBACK_TYPE) {
                     return (T) new PackMetadataSection(Component.literal("Utility Suite font definitions"),
-                            net.minecraft.SharedConstants.getCurrentVersion().getPackVersion(PackType.CLIENT_RESOURCES));
+                            new InclusiveRange<>(net.minecraft.SharedConstants.getCurrentVersion()
+                                    .packVersion(PackType.CLIENT_RESOURCES)));
                 }
                 return null;
             }

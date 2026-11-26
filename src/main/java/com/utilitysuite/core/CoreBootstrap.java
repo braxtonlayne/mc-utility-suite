@@ -65,6 +65,8 @@ public final class CoreBootstrap {
     private static Humanizer humanizer;
     private static SharedInputOverlay sharedControl;
     private static long lastFrameNanos;
+    /** The one-time 1.21.1 key-code migration ran (first client tick, options.txt loaded by then). */
+    private static boolean legacyKeysChecked;
 
     private CoreBootstrap() {
     }
@@ -106,7 +108,7 @@ public final class CoreBootstrap {
         manualInput.setManualFacts(facts);
         manualInput.setYawCoSteer(coSteer);
         sharedControl = new SharedInputOverlay(arbiter, facts, coSteer,
-                () -> Minecraft.getInstance().screen != null, CoreBootstrap::legitLevelIsLegit);
+                () -> Minecraft.getInstance().gui.screen() != null, CoreBootstrap::legitLevelIsLegit);
         Services.registerSharedControl(sharedControl);
 
         configStore = new ConfigStore(FMLPaths.CONFIGDIR.get().resolve(UtilitySuiteMod.MOD_ID));
@@ -190,8 +192,8 @@ public final class CoreBootstrap {
         }
         Minecraft mc = Minecraft.getInstance();
         if (mc.player != null && !modState.isCleanScreen()) {
-            mc.player.displayClientMessage(Component.translatable(on ? "message.utilitysuite.autopilot_on"
-                    : "message.utilitysuite.autopilot_off"), true);
+            mc.player.sendOverlayMessage(Component.translatable(on ? "message.utilitysuite.autopilot_on"
+                    : "message.utilitysuite.autopilot_off"));
         }
     }
 
@@ -217,7 +219,7 @@ public final class CoreBootstrap {
         arbiter.stopAll("Stop-All key");
         Minecraft mc = Minecraft.getInstance();
         if (mc.player != null && !modState.isCleanScreen()) {
-            mc.player.displayClientMessage(Component.translatable("message.utilitysuite.stop_all"), true);
+            mc.player.sendOverlayMessage(Component.translatable("message.utilitysuite.stop_all"));
         }
     }
 
@@ -228,7 +230,7 @@ public final class CoreBootstrap {
         if (mc.player == null || mc.level == null) {
             return;
         }
-        boolean screenOpen = mc.screen != null;
+        boolean screenOpen = mc.gui.screen() != null;
         manualInput.beginTick(screenOpen);
         ScreenTextEntry.tick(screenOpen);
         sharedControl.beginTick(screenOpen);
@@ -237,6 +239,12 @@ public final class CoreBootstrap {
 
     private static void onTickPost(ClientTickEvent.Post event) {
         Minecraft mc = Minecraft.getInstance();
+        if (!legacyKeysChecked) {
+            legacyKeysChecked = true;
+            if (KeybindManager.migrateLegacyBindings(modState.global())) {
+                modState.markDirty();
+            }
+        }
         if (mc.player != null && mc.level != null) {
             KeybindManager.tick();
             arbiter.tick();

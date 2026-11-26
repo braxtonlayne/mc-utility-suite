@@ -8,8 +8,8 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.monster.Monster;
 import net.minecraft.world.entity.player.Player;
-import net.minecraft.world.entity.projectile.AbstractArrow;
-import net.minecraft.world.entity.projectile.AbstractHurtingProjectile;
+import net.minecraft.world.entity.projectile.arrow.AbstractArrow;
+import net.minecraft.world.entity.projectile.hurtingprojectile.AbstractHurtingProjectile;
 import net.minecraft.world.entity.item.PrimedTnt;
 import net.minecraft.world.entity.monster.Creeper;
 import net.minecraft.world.entity.projectile.Projectile;
@@ -23,6 +23,8 @@ import net.neoforged.neoforge.event.entity.EntityLeaveLevelEvent;
  */
 public final class ThreatTracker implements ThreatSource {
 
+    /** AbstractArrow default base damage (the field is server-side state, never synced). */
+    private static final double ARROW_BASE_DAMAGE = 2.0;
     private static final int CAPACITY = 128;
     private static final double CREEPER_RANGE_SQ = 5.0 * 5.0;
     private static final double TNT_RANGE_SQ = 7.0 * 7.0;
@@ -273,7 +275,8 @@ public final class ThreatTracker implements ThreatSource {
 
     private static float projectileDamage(Projectile pr, double speed) {
         if (pr instanceof AbstractArrow a) {
-            return (float) Math.ceil(speed * a.getBaseDamage());
+            // base damage is not synced (and private in 26.3): every client-side arrow reads the default 2.0
+            return (float) Math.ceil(speed * ARROW_BASE_DAMAGE);
         }
         if (pr instanceof AbstractHurtingProjectile) {
             return 6f; // fireballs, wither skulls, wind charges (knockback)

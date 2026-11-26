@@ -21,7 +21,7 @@ import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
-import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
+import net.neoforged.neoforge.client.event.SubmitCustomGeometryEvent;
 
 import java.util.List;
 import java.util.function.IntSupplier;
@@ -110,8 +110,8 @@ public final class ChoreographyModule implements IModule, IConfigurable {
         trail.clear();
     }
 
-    public void onRenderLevel(RenderLevelStageEvent event) {
-        if (!enabled || targetId < 0 || event.getStage() != RenderLevelStageEvent.Stage.AFTER_PARTICLES) {
+    public void onRenderLevel(SubmitCustomGeometryEvent event) {
+        if (!enabled || targetId < 0) {
             return;
         }
         Minecraft mc = Minecraft.getInstance();
@@ -121,8 +121,8 @@ public final class ChoreographyModule implements IModule, IConfigurable {
         if (e == null || world == null) {
             return;
         }
-        float pt = event.getPartialTick().getGameTimeDeltaPartialTick(false);
-        Vec3 cam = event.getCamera().getPosition();
+        float pt = event.getLevelRenderState().worldPartialTicks;
+        Vec3 cam = event.getLevelRenderState().cameraRenderState.pos;
         float x = (float) (Mth.lerp(pt, e.xo, e.getX()) - cam.x);
         float y = (float) (Mth.lerp(pt, e.yo, e.getY()) - cam.y);
         float z = (float) (Mth.lerp(pt, e.zo, e.getZ()) - cam.z);

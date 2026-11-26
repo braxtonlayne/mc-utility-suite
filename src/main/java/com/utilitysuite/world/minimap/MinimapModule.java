@@ -144,7 +144,7 @@ public final class MinimapModule extends WorldModule {
     /** Opens the HUD edit screen; returns to the current screen afterwards. */
     public void openLayoutEditor() {
         Minecraft mc = Minecraft.getInstance();
-        mc.setScreen(new MinimapLayoutScreen(this, hud, mc.screen));
+        mc.gui.setScreen(new MinimapLayoutScreen(this, hud, mc.gui.screen()));
     }
 
     /** Writes the layout chosen in the HUD edit screen to the profile. */
@@ -204,7 +204,7 @@ public final class MinimapModule extends WorldModule {
     }
 
     private void setPixel(int x, int y, int argb) {
-        image.setPixelRGBA(x, y, MinimapPalette.toAbgr(argb));
+        image.setPixelABGR(x, y, MinimapPalette.toAbgr(argb));
     }
 
     /** Samples one world texel (client thread, level loaded). Zero allocation. */
@@ -218,7 +218,7 @@ public final class MinimapModule extends WorldModule {
         }
         int h = level.getHeight(Heightmap.Types.WORLD_SURFACE, bx, bz);
         int y = h - 1;
-        int minY = level.getMinBuildHeight();
+        int minY = level.getMinY();
         MapColor color = MapColor.NONE;
         BlockState state = null;
         for (int i = 0; i < 8 && y >= minY; i++, y--) {

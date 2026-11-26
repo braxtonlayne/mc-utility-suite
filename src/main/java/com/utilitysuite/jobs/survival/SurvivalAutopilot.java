@@ -37,12 +37,8 @@ import net.minecraft.tags.FluidTags;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.food.FoodProperties;
 import net.minecraft.world.inventory.InventoryMenu;
-import net.minecraft.world.item.ArmorItem;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.Tier;
-import net.minecraft.world.item.TieredItem;
-import net.minecraft.world.item.Tiers;
 import net.minecraft.world.item.enchantment.Enchantment;
 import net.minecraft.world.item.enchantment.EnchantmentHelper;
 import net.minecraft.world.item.enchantment.Enchantments;
@@ -200,7 +196,7 @@ public final class SurvivalAutopilot implements IModule, IConfigurable, LeaseLis
                 closeLease(pressureLease);
                 pressureLease = null;
             }
-        } else if (pressure && tick % 100 == 50 && mc.screen == null) {
+        } else if (pressure && tick % 100 == 50 && mc.gui.screen() == null) {
             checkPressure(player);
         }
     }
@@ -226,7 +222,7 @@ public final class SurvivalAutopilot implements IModule, IConfigurable, LeaseLis
         Inventory inv = player.getInventory();
         int current = selectedSlot(inv);
         for (int i = 0; i < 9; i++) {
-            ItemStack s = inv.items.get(i);
+            ItemStack s = inv.getNonEquipmentItems().get(i);
             float durability = s.isDamageableItem() && s.getMaxDamage() > 0
                     ? 1f - (float) s.getDamageValue() / s.getMaxDamage() : 1f;
             candidates[i].set(i, s.getDestroySpeed(state), s.isCorrectToolForDrops(state),
@@ -244,8 +240,8 @@ public final class SurvivalAutopilot implements IModule, IConfigurable, LeaseLis
                 warnedDurability = true;
                 IWaypointService wp = Services.waypointsOrNull();
                 String where = wp != null && wp.byName("Repair").isPresent() ? " (waypoint 'Repair' is set)" : "";
-                player.displayClientMessage(Component.translatable("message.utilitysuite.tool_low_durability",
-                        Math.round(protectBelow * 100), where), true);
+                player.sendOverlayMessage(Component.translatable("message.utilitysuite.tool_low_durability",
+                        Math.round(protectBelow * 100), where));
             }
             return;
         }
@@ -265,9 +261,9 @@ public final class SurvivalAutopilot implements IModule, IConfigurable, LeaseLis
         Object src = mc.level.registryAccess();
         if (src != holderSource) {
             holderSource = src;
-            var reg = mc.level.registryAccess().registryOrThrow(Registries.ENCHANTMENT);
-            silkHolder = reg.getHolderOrThrow(Enchantments.SILK_TOUCH);
-            fortuneHolder = reg.getHolderOrThrow(Enchantments.FORTUNE);
+            var reg = mc.level.registryAccess().lookupOrThrow(Registries.ENCHANTMENT);
+            silkHolder = reg.getOrThrow(Enchantments.SILK_TOUCH);
+            fortuneHolder = reg.getOrThrow(Enchantments.FORTUNE);
         }
     }
 
@@ -275,18 +271,25 @@ public final class SurvivalAutopilot implements IModule, IConfigurable, LeaseLis
         if (s.isEnchanted()) {
             return true;
         }
-        if (s.getItem() instanceof TieredItem t) {
-            Tier tier = t.getTier();
-            return tier == Tiers.DIAMOND || tier == Tiers.NETHERITE;
+        // 26.3: no Tier enum; a diamond or netherite tool is one repaired with those materials
+        return com.utilitysuite.jobs.goal.McTools.materialAttackBonus(s) >= 3f;
+    }
+
+    /** Tool, weapon or armour (the removed TieredItem / ArmorItem checks), by data component. */
+    private static boolean isToolOrArmor(ItemStack s) {
+        if (s.has(net.minecraft.core.component.DataComponents.TOOL)
+                || s.has(net.minecraft.core.component.DataComponents.WEAPON)) {
+            return true;
         }
-        return false;
+        net.minecraft.world.item.equipment.Equippable eq = s.get(net.minecraft.core.component.DataComponents.EQUIPPABLE);
+        return eq != null && eq.slot().isArmor();
     }
 
     /** Index of the selected hotbar slot, found by comparing the held stack with the hotbar (no direct field access). */
     private static int selectedSlot(Inventory inv) {
-        ItemStack held = inv.getSelected();
+        ItemStack held = inv.getSelectedItem();
         for (int i = 0; i < 9; i++) {
-            if (inv.items.get(i) == held) {
+            if (inv.getNonEquipmentItems().get(i) == held) {
                 return i;
             }
         }
@@ -304,7 +307,7 @@ public final class SurvivalAutopilot implements IModule, IConfigurable, LeaseLis
         boolean wantGolden = goldenInDanger && lowHealth;
         boolean hungry = FoodSelector.shouldEat(food, health, player.getMaxHealth(), hungerThreshold, healthThreshold,
                 longLeg);
-        if (!(hungry || wantGolden) || player.isUsingItem() || mc.screen != null || player.isCreative()
+        if (!(hungry || wantGolden) || player.isUsingItem() || mc.gui.screen() != null || player.isCreative()
                 || player.containerMenu != player.inventoryMenu) {
             return;
         }
@@ -321,7 +324,7 @@ public final class SurvivalAutopilot implements IModule, IConfigurable, LeaseLis
         Inventory inv = player.getInventory();
         int scan = useInventoryFood ? 36 : 9;
         for (int i = 0; i < 36; i++) {
-            ItemStack s = i < scan ? inv.items.get(i) : ItemStack.EMPTY;
+            ItemStack s = i < scan ? inv.getNonEquipmentItems().get(i) : ItemStack.EMPTY;
             FoodProperties fp = s.isEmpty() ? null : s.get(DataComponents.FOOD);
             foodIds[i] = fp == null ? null : invView.idOf(s.getItem());
             foodNutrition[i] = fp == null ? 0 : fp.nutrition();
@@ -333,7 +336,7 @@ public final class SurvivalAutopilot implements IModule, IConfigurable, LeaseLis
             return; // not hungry: only a golden apple (low health, setting on) is worth eating
         }
         boolean pull = slot >= FoodSelector.HOTBAR;
-        if (pull && !FoodSelector.canPull(mc.screen != null, mc.gameMode != null && mc.gameMode.isDestroying())) {
+        if (pull && !FoodSelector.canPull(mc.gui.screen() != null, mc.gameMode != null && mc.gameMode.isDestroying())) {
             return;
         }
         ControlLease l = Services.arbiter().request(new LeaseRequest(ID, ControlPriority.SURVIVAL,
@@ -348,11 +351,11 @@ public final class SurvivalAutopilot implements IModule, IConfigurable, LeaseLis
         eatPulled = false;
         if (pull) {
             for (int i = 0; i < FoodSelector.HOTBAR; i++) {
-                foodOccupied[i] = !inv.items.get(i).isEmpty();
+                foodOccupied[i] = !inv.getNonEquipmentItems().get(i).isEmpty();
             }
             eatSource = slot;
             eatSlot = FoodSelector.chooseSwapTarget(foodOccupied, eatPrevSlot);
-            eatDisplacedKey = itemKey(inv.items.get(eatSlot));
+            eatDisplacedKey = itemKey(inv.getNonEquipmentItems().get(eatSlot));
             // SWAP: the menu slot of a main-inventory index equals the index; button = hotbar index.
             if (!Services.clicker().queueClick(l, slot, eatSlot, IContainerClicker.Click.SWAP)) {
                 closeLease(l);
@@ -438,7 +441,7 @@ public final class SurvivalAutopilot implements IModule, IConfigurable, LeaseLis
      */
     private boolean notePullOutcome(LocalPlayer player) {
         Inventory inv = player.getInventory();
-        ItemStack landed = inv.items.get(eatSlot);
+        ItemStack landed = inv.getNonEquipmentItems().get(eatSlot);
         if (!landed.has(DataComponents.FOOD)) {
             return false;
         }
@@ -459,15 +462,15 @@ public final class SurvivalAutopilot implements IModule, IConfigurable, LeaseLis
             return;
         }
         var arbiter = Services.arbiter();
-        boolean screenOpen = mc.screen != null || player.containerMenu != player.inventoryMenu;
+        boolean screenOpen = mc.gui.screen() != null || player.containerMenu != player.inventoryMenu;
         boolean busy = Services.clicker().pending() > 0 || arbiter.isAutomationStopped()
                 || arbiter.isManualOverrideActive(ControlChannel.HOTBAR)
                 || arbiter.holder(ControlChannel.HOTBAR).isPresent();
         Inventory inv = player.getInventory();
         int hb = swapBack.hotbar();
         int src = swapBack.source();
-        FoodSelector.SwapBack.Step step = swapBack.decide(screenOpen, busy, itemKey(inv.items.get(hb)),
-                itemKey(inv.items.get(src)));
+        FoodSelector.SwapBack.Step step = swapBack.decide(screenOpen, busy, itemKey(inv.getNonEquipmentItems().get(hb)),
+                itemKey(inv.getNonEquipmentItems().get(src)));
         if (step == FoodSelector.SwapBack.Step.DROP) {
             swapBack.forget();
             return;
@@ -570,7 +573,7 @@ public final class SurvivalAutopilot implements IModule, IConfigurable, LeaseLis
         Inventory inv = player.getInventory();
         int free = 0;
         for (int i = 0; i < 36; i++) {
-            if (inv.items.get(i).isEmpty()) {
+            if (inv.getNonEquipmentItems().get(i).isEmpty()) {
                 free++;
             }
         }
@@ -579,12 +582,11 @@ public final class SurvivalAutopilot implements IModule, IConfigurable, LeaseLis
         }
         List<InventoryPressurePolicy.Stack> stacks = new ArrayList<>();
         for (int i = 0; i < 36; i++) {
-            ItemStack s = inv.items.get(i);
+            ItemStack s = inv.getNonEquipmentItems().get(i);
             if (s.isEmpty()) {
                 continue;
             }
-            boolean tool = s.getItem() instanceof TieredItem || s.getItem() instanceof ArmorItem
-                    || s.isDamageableItem();
+            boolean tool = isToolOrArmor(s) || s.isDamageableItem();
             int menuSlot = i < 9 ? InventoryMenu.USE_ROW_SLOT_START + i : i;
             stacks.add(new InventoryPressurePolicy.Stack(menuSlot, invView.idOf(s.getItem()), s.getCount(), tool,
                     s.isEnchanted()));
@@ -711,7 +713,7 @@ public final class SurvivalAutopilot implements IModule, IConfigurable, LeaseLis
     private String dimension(Level level) {
         if (level.dimension() != dimKey) {
             dimKey = level.dimension();
-            dimId = dimKey.location().toString();
+            dimId = dimKey.identifier().toString();
         }
         return dimId;
     }

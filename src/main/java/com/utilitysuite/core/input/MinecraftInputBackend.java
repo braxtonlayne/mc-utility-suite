@@ -1,20 +1,18 @@
 package com.utilitysuite.core.input;
 
-import com.mojang.blaze3d.platform.InputConstants;
 import com.utilitysuite.core.api.IContainerClicker;
 import com.utilitysuite.core.api.SimKey;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.Options;
-import net.minecraft.client.player.Input;
+import net.minecraft.client.player.ClientInput;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.world.inventory.AbstractContainerMenu;
-import net.minecraft.world.inventory.ClickType;
-import org.lwjgl.glfw.GLFW;
+import net.minecraft.world.inventory.ContainerInput;
 
 /**
  * Minecraft side of the smoother. The one place (besides the mixins and {@link ManualInputHooks}) that touches vanilla
- * {@link KeyMapping}s, the player's rotation, the selected hotbar slot and {@code handleInventoryMouseClick}.
+ * {@link KeyMapping}s, the player's rotation, the selected hotbar slot and {@code handleContainerInput} (1.21.1 {@code handleInventoryMouseClick}).
  * <p>
  * Sneak and sprint are {@code ToggleKeyMapping}s: with "toggle crouch/sprint" enabled, {@code setDown(true)} flips the
  * state instead of setting it. For those keys the backend only flips when the logical state differs, and on release
@@ -23,8 +21,8 @@ import org.lwjgl.glfw.GLFW;
 public final class MinecraftInputBackend implements InputBackend {
 
     private static final SimKey[] KEYS = SimKey.all();
-    private static final ClickType[] CLICK_TYPES = {ClickType.PICKUP, ClickType.QUICK_MOVE, ClickType.SWAP,
-            ClickType.THROW};
+    private static final ContainerInput[] CLICK_TYPES = {ContainerInput.PICKUP, ContainerInput.QUICK_MOVE,
+            ContainerInput.SWAP, ContainerInput.THROW};
 
     private final boolean[] priorToggleState = new boolean[KEYS.length];
 
@@ -54,7 +52,7 @@ public final class MinecraftInputBackend implements InputBackend {
 
     @Override
     public boolean invertMouseY() {
-        return Minecraft.getInstance().options.invertYMouse().get();
+        return Minecraft.getInstance().options.invertMouseY().get();
     }
 
     @Override
@@ -100,7 +98,7 @@ public final class MinecraftInputBackend implements InputBackend {
             }
         } else {
             // Never clobber a key the user is physically holding.
-            m.setDown(isPhysicallyDown(mc, m));
+            m.setDown(KeyInputs.isPhysicallyDown(m));
         }
     }
 
@@ -112,21 +110,6 @@ public final class MinecraftInputBackend implements InputBackend {
         }
     }
 
-    private static boolean isPhysicallyDown(Minecraft mc, KeyMapping m) {
-        if (m.isUnbound()) {
-            return false;
-        }
-        InputConstants.Key k = m.getKey();
-        long window = mc.getWindow().getWindow();
-        if (k.getType() == InputConstants.Type.KEYSYM) {
-            return InputConstants.isKeyDown(window, k.getValue());
-        }
-        if (k.getType() == InputConstants.Type.MOUSE) {
-            return GLFW.glfwGetMouseButton(window, k.getValue()) == GLFW.GLFW_PRESS;
-        }
-        return false;
-    }
-
     @Override
     public boolean readMoveAxes(SharedInputOverlay.MoveFields f) {
         LocalPlayer p = Minecraft.getInstance().player;
@@ -134,8 +117,8 @@ public final class MinecraftInputBackend implements InputBackend {
             return false;
         }
         // the object MovementInputUpdateEvent carries: aiStep ticks player.input and fires the event with it
-        f.forwardImpulse = p.input.forwardImpulse;
-        f.leftImpulse = p.input.leftImpulse;
+        f.forwardImpulse = MoveInputs.forward(p.input);
+        f.leftImpulse = MoveInputs.left(p.input);
         return true;
     }
 
@@ -145,13 +128,10 @@ public final class MinecraftInputBackend implements InputBackend {
         if (p == null || p.input == null) {
             return;
         }
-        Input in = p.input;
-        in.forwardImpulse = f.forwardImpulse;
-        in.leftImpulse = f.leftImpulse;
-        in.up = f.up;
-        in.down = f.down;
-        in.left = f.left;
-        in.right = f.right;
+        ClientInput in = p.input;
+        MoveInputs.setMove(in, f.forwardImpulse, f.leftImpulse);
+        net.minecraft.world.entity.player.Input k = in.keyPresses;
+        MoveInputs.setKeys(in, f.up, f.down, f.left, f.right, k.jump(), k.shift());
     }
 
     @Override
@@ -185,7 +165,7 @@ public final class MinecraftInputBackend implements InputBackend {
         LocalPlayer p = Minecraft.getInstance().player;
         if (p != null && slot >= 0 && slot < 9) {
             // The carried-item packet is sent by MultiPlayerGameMode.ensureHasSentCarriedItem() on the next tick.
-            p.getInventory().selected = slot;
+            p.getInventory().setSelectedSlot(slot);
         }
     }
 
@@ -200,7 +180,7 @@ public final class MinecraftInputBackend implements InputBackend {
         if (slot != AbstractContainerMenu.SLOT_CLICKED_OUTSIDE && (slot < 0 || slot >= menu.slots.size())) {
             return false;
         }
-        mc.gameMode.handleInventoryMouseClick(menu.containerId, slot, button, CLICK_TYPES[click.ordinal()], p);
+        mc.gameMode.handleContainerInput(menu.containerId, slot, button, CLICK_TYPES[click.ordinal()], p);
         return true;
     }
 
@@ -208,16 +188,29 @@ public final class MinecraftInputBackend implements InputBackend {
     public boolean placeRecipe(String recipeId, boolean craftAll) {
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer p = mc.player;
-        net.minecraft.resources.ResourceLocation id = net.minecraft.resources.ResourceLocation.tryParse(recipeId);
-        if (p == null || mc.gameMode == null || mc.level == null || id == null) {
+        int index = recipeDisplayIndex(recipeId);
+        if (p == null || mc.gameMode == null || index < 0) {
             return false;
         }
-        var recipe = mc.level.getRecipeManager().byKey(id);
-        if (recipe.isEmpty()) {
-            return false;
-        }
-        mc.gameMode.handlePlaceRecipe(p.containerMenu.containerId, recipe.get(), craftAll);
+        // 26.3: the client recipe book only knows display ids; the server resolves the recipe from it
+        net.minecraft.world.item.crafting.display.RecipeDisplayId id =
+                new net.minecraft.world.item.crafting.display.RecipeDisplayId(index);
+        mc.gameMode.handlePlaceRecipe(p.containerMenu.containerId, id, craftAll);
         return true;
+    }
+
+    /** Parses {@code "123"} or {@code "#123"}; -1 for anything else (a 1.21.1 namespaced id included). */
+    static int recipeDisplayIndex(String recipeId) {
+        if (recipeId == null || recipeId.isEmpty()) {
+            return -1;
+        }
+        String s = recipeId.charAt(0) == '#' ? recipeId.substring(1) : recipeId;
+        try {
+            int i = Integer.parseInt(s);
+            return i < 0 ? -1 : i;
+        } catch (NumberFormatException e) {
+            return -1;
+        }
     }
 
     /**

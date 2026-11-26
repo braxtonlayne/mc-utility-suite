@@ -14,7 +14,7 @@ import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.client.server.IntegratedServer;
 import net.minecraft.core.BlockPos;
-import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.LightLayer;
 import net.minecraft.world.level.block.state.BlockState;
@@ -282,7 +282,7 @@ public final class SpawnGeometryModule extends WorldModule {
         heatCenterX = cx;
         heatCenterY = cy;
         heatCenterZ = cz;
-        heatGrid.reset(cx, cz, level.getMinSection(), level.getSectionsCount());
+        heatGrid.reset(cx, cz, level.getMinSectionY(), level.getSectionsCount());
         // Scheduler units are HEAT_STEP blocks, centred on the anchor (x() - centre is the step index).
         heatScheduler.clear();
         heatScheduler.restart(cx, cz, (int) CaveHeatGrid.INSTANT_DESPAWN / HEAT_STEP);
@@ -299,8 +299,8 @@ public final class SpawnGeometryModule extends WorldModule {
         if (h2 > CaveHeatGrid.INSTANT_DESPAWN * CaveHeatGrid.INSTANT_DESPAWN) {
             return;
         }
-        int minY = Math.max(level.getMinBuildHeight(), heatCenterY - (int) CaveHeatGrid.INSTANT_DESPAWN);
-        int maxY = Math.min(level.getMaxBuildHeight() - 3, heatCenterY + (int) CaveHeatGrid.INSTANT_DESPAWN);
+        int minY = Math.max(level.getMinY(), heatCenterY - (int) CaveHeatGrid.INSTANT_DESPAWN);
+        int maxY = Math.min(level.getMaxY() - 2, heatCenterY + (int) CaveHeatGrid.INSTANT_DESPAWN);
         // Walk down; 'air' counts consecutive empty blocks above the current one.
         int air = 0;
         for (int y = maxY + 2; y >= minY; y--) {
@@ -311,7 +311,7 @@ public final class SpawnGeometryModule extends WorldModule {
             }
             if (air >= 2 && y <= maxY) {
                 double dy = y + 1 - heatCenterY;
-                if (CaveHeatGrid.countsForCap(h2 + dy * dy) && s.isValidSpawn(level, heatPos, EntityType.ZOMBIE)) {
+                if (CaveHeatGrid.countsForCap(h2 + dy * dy) && s.isValidSpawn(level, heatPos, EntityTypes.ZOMBIE)) {
                     heatPos.set(x, y + 1, z);
                     if (level.getBrightness(LightLayer.BLOCK, heatPos) == 0
                             && level.getBrightness(LightLayer.SKY, heatPos) == 0) {
@@ -347,7 +347,7 @@ public final class SpawnGeometryModule extends WorldModule {
         IntegratedServer sp = mc.getSingleplayerServer();
         if (sp != null) {
             resolvedKnown = true;
-            resolvedSeed = sp.getWorldData().worldGenOptions().seed();
+            resolvedSeed = sp.getWorldGenSettings().options().seed();
             return;
         }
         GeneratorProfile p = seedSource == null ? null : seedSource.get();

@@ -1,5 +1,5 @@
 {
-  "key.categories.utilitysuite": "Utility Suite",
+  "key.category.utilitysuite.main": "Utility Suite",
   "key.utilitysuite.open_menu": "Open Menu",
   "key.utilitysuite.stop_all": "Stop All Automation",
   "key.utilitysuite.clean_screen": "Toggle Clean Screen",
@@ -258,6 +258,8 @@
   "menu.utilitysuite.boot.modules": "MODULES",
   "menu.utilitysuite.boot.link_ok": "LINK OK",
   "key.utilitysuite.parkour_takeover": "Parkour: hold to take over",
+  "key.utilitysuite.parkour_pin_target": "Parkour: pin the jump target (look at a block)",
+  "key.utilitysuite.parkour_mark_block": "Parkour blocks: allow placing on this block type",
   "setting.utilitysuite.movement_assist.co_steer": "Co-steer",
   "setting.utilitysuite.movement_assist.co_steer.tooltip": "During a committed jump on Balanced and above, the camera eases toward the jump line (smoothed, a few degrees per jump, never faster than the camera cap). Your mouse always comes through; turning against it hands the view back for that jump. Never on Legit or in Corrections.",
   "setting.utilitysuite.appearance.font": "Font",

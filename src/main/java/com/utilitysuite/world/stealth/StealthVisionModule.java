@@ -18,7 +18,7 @@ import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.LivingEntity;
-import net.minecraft.world.entity.monster.EnderMan;
+import net.minecraft.world.entity.monster.Enderman;
 import net.minecraft.world.entity.monster.piglin.PiglinBrute;
 import net.minecraft.world.entity.monster.warden.Warden;
 import net.minecraft.world.entity.player.Player;
@@ -163,7 +163,7 @@ public final class StealthVisionModule extends WorldModule {
     }
 
     private static boolean isSource(LivingEntity e) {
-        return e instanceof Warden || e instanceof EnderMan || e instanceof PiglinBrute || e instanceof Player;
+        return e instanceof Warden || e instanceof Enderman || e instanceof PiglinBrute || e instanceof Player;
     }
 
     private static boolean isSculk(BlockState s) {
@@ -206,7 +206,7 @@ public final class StealthVisionModule extends WorldModule {
         if (e instanceof Warden) {
             return wardens;
         }
-        if (e instanceof EnderMan) {
+        if (e instanceof Enderman) {
             return endermen;
         }
         if (e instanceof PiglinBrute) {
@@ -253,7 +253,7 @@ public final class StealthVisionModule extends WorldModule {
                 alert[i] = dist2[i] <= StealthMath.WARDEN_LISTEN_RADIUS * StealthMath.WARDEN_LISTEN_RADIUS
                         && !StealthMath.vibrationOccluded(me.getBlockX(), me.getBlockY(), me.getBlockZ(),
                         e.getBlockX(), Mth.floor(e.getEyeY()), e.getBlockZ(), wool);
-            } else if (e instanceof EnderMan) {
+            } else if (e instanceof Enderman) {
                 kind[i] = KIND_ENDERMAN;
                 double d = Math.sqrt(dx * dx + dy * dy + dz * dz);
                 gaze[i] = (float) StealthMath.endermanGazeRadius(d);

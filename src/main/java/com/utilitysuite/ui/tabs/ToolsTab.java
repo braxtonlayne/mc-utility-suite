@@ -178,8 +178,8 @@ public final class ToolsTab {
                         + (lab.bursts().bursts() > 0 ? "  |  repeated corrections: " + lab.bursts().bursts() : "");
             }, Panel.WHITE);
             p.gap(2);
-            p.button("Open timeline", null, 0, 100, PillButton.Style.PRIMARY, b -> Minecraft.getInstance().setScreen(
-                    new TimelineScreen(Minecraft.getInstance().screen, lab)));
+            p.button("Open timeline", null, 0, 100, PillButton.Style.PRIMARY, b -> Minecraft.getInstance().gui.setScreen(
+                    new TimelineScreen(Minecraft.getInstance().gui.screen(), lab)));
             p.button("Clear", null, 106, 60, PillButton.Style.SECONDARY, b -> {
                 lab.clearTimeline();
                 p.toast("Timeline cleared");

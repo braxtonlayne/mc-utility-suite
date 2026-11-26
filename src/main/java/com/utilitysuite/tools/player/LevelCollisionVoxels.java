@@ -23,7 +23,7 @@ final class LevelCollisionVoxels implements CombatVoxels {
         if (level == null || !level.getChunkSource().hasChunk(x >> 4, z >> 4)) {
             return UNKNOWN;
         }
-        if (y < level.getMinBuildHeight() || y >= level.getMaxBuildHeight()) {
+        if (y < level.getMinY() || y > level.getMaxY()) { // getMaxY is inclusive
             return AIR;
         }
         pos.set(x, y, z);

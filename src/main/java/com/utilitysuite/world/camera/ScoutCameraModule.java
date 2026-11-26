@@ -9,11 +9,14 @@ import com.utilitysuite.world.WorldModule;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
-import net.minecraft.client.player.Input;
+import net.minecraft.client.player.ClientInput;
+import net.minecraft.world.entity.player.Input;
+import com.utilitysuite.core.input.KeyInputs;
+import com.utilitysuite.core.input.MoveInputs;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.util.Mth;
 import net.minecraft.world.effect.MobEffects;
-import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.Marker;
 import net.minecraft.world.level.block.Blocks;
@@ -21,12 +24,11 @@ import net.minecraft.world.level.material.FogType;
 import net.neoforged.neoforge.client.event.CalculatePlayerTurnEvent;
 import net.neoforged.neoforge.client.event.InputEvent;
 import net.neoforged.neoforge.client.event.MovementInputUpdateEvent;
-import net.neoforged.neoforge.client.event.RenderBlockScreenEffectEvent;
+import net.neoforged.neoforge.client.event.ExtractBlockScreenEffectEvent;
 import net.neoforged.neoforge.client.event.RenderGuiLayerEvent;
 import net.neoforged.neoforge.client.event.RenderHandEvent;
 import net.neoforged.neoforge.client.event.ViewportEvent;
 import net.neoforged.neoforge.client.gui.VanillaGuiLayers;
-import org.lwjgl.glfw.GLFW;
 
 import java.util.List;
 
@@ -45,6 +47,9 @@ import java.util.List;
  * </ul>
  */
 public final class ScoutCameraModule extends WorldModule {
+
+    /** Client-only id of the scout camera entity (negative, so it never collides with a server-assigned id). */
+    private static final int CAMERA_ENTITY_ID = -0x5C0A7;
 
     public static final String ID = "scout_camera";
 
@@ -168,12 +173,15 @@ public final class ScoutCameraModule extends WorldModule {
             return;
         }
         if (camera == null || camera.level() != level) {
-            camera = new Marker(EntityType.MARKER, level);
+            camera = new Marker(EntityTypes.MARKER, level);
+            // 26.3 assigns entity ids only through the server; a client-only camera needs its own (negative: never a
+            // server id) or getId() throws when vanilla or another mod reads the camera entity
+            camera.setId(CAMERA_ENTITY_ID);
         }
         double x = player.getX();
         double y = player.getEyeY();
         double z = player.getZ();
-        camera.moveTo(x, y, z, player.getYRot(), player.getXRot());
+        camera.snapTo(x, y, z, player.getYRot(), player.getXRot());
         camera.yRotO = player.getYRot();
         camera.xRotO = player.getXRot();
         motion.reset(x, y, z);
@@ -208,19 +216,14 @@ public final class ScoutCameraModule extends WorldModule {
         if (!freecam) {
             return;
         }
-        Input in = event.getInput();
-        inForward = in.forwardImpulse;
-        inLeft = in.leftImpulse;
-        inUp = in.jumping;
-        inDown = in.shiftKeyDown;
-        in.forwardImpulse = 0f;
-        in.leftImpulse = 0f;
-        in.jumping = false;
-        in.shiftKeyDown = false;
-        in.up = false;
-        in.down = false;
-        in.left = false;
-        in.right = false;
+        ClientInput in = event.getInput();
+        Input keys = in.keyPresses;
+        inForward = MoveInputs.forward(in);
+        inLeft = MoveInputs.left(in);
+        inUp = keys.jump();
+        inDown = keys.shift();
+        MoveInputs.setMove(in, 0f, 0f);
+        MoveInputs.setKeys(in, false, false, false, false, false, false);
     }
 
     @Override
@@ -235,7 +238,7 @@ public final class ScoutCameraModule extends WorldModule {
             stopFreecam();
             return;
         }
-        boolean boost = InputConstants.isKeyDown(mc.getWindow().getWindow(), GLFW.GLFW_KEY_LEFT_CONTROL);
+        boolean boost = KeyInputs.isKeyDown(InputConstants.KEY_LCONTROL);
         motion.tick(inForward, inLeft, inUp, inDown, boost, camera.getYRot());
         camera.xo = camera.xOld = motion.prevX();
         camera.yo = camera.yOld = motion.prevY();
@@ -272,10 +275,10 @@ public final class ScoutCameraModule extends WorldModule {
             return;
         }
         Minecraft mc = Minecraft.getInstance();
-        zoom.setActive(zoomKey != null && zoomKey.isDown() && mc.screen == null);
+        zoom.setActive(zoomKey != null && zoomKey.isDown() && mc.gui.screen() == null);
         zoom.update(Math.min(dt, 0.25));
-        if (zoom.affectsView() && event.usedConfiguredFov()) {
-            event.setFOV(zoom.apply(event.getFOV()));
+        if (zoom.affectsView()) { // 26.3 ComputeFov has no usedConfiguredFov(); it fires for the world view only
+            event.setFOV((float) zoom.apply(event.getFOV()));
         }
     }
 
@@ -294,8 +297,8 @@ public final class ScoutCameraModule extends WorldModule {
 
     // ---- declutter ----------------------------------------------------------------------------------------------
 
-    public void onScreenEffect(RenderBlockScreenEffectEvent event) {
-        if (isEnabled() && noFire && event.getOverlayType() == RenderBlockScreenEffectEvent.OverlayType.FIRE) {
+    public void onScreenEffect(ExtractBlockScreenEffectEvent event) {
+        if (isEnabled() && noFire && event.getOverlayType() == ExtractBlockScreenEffectEvent.OverlayType.FIRE) {
             event.setCanceled(true);
         }
     }
@@ -315,9 +318,9 @@ public final class ScoutCameraModule extends WorldModule {
             return;
         }
         boolean pumpkin = noPumpkin && p.getItemBySlot(EquipmentSlot.HEAD).is(Blocks.CARVED_PUMPKIN.asItem());
-        float spin = Mth.lerp(event.getPartialTick().getGameTimeDeltaPartialTick(false), p.oSpinningEffectIntensity,
-                p.spinningEffectIntensity);
-        boolean portal = noPortal && spin > 0f && !p.hasEffect(MobEffects.CONFUSION);
+        float spin = Mth.lerp(event.getPartialTick().getGameTimeDeltaPartialTick(false), p.oPortalEffectIntensity,
+                p.portalEffectIntensity);
+        boolean portal = noPortal && spin > 0f && !p.hasEffect(MobEffects.NAUSEA);
         if (pumpkin || portal) {
             event.setCanceled(true);
         }
@@ -331,13 +334,13 @@ public final class ScoutCameraModule extends WorldModule {
         if (p == null || !(p.hasEffect(MobEffects.BLINDNESS) || p.hasEffect(MobEffects.DARKNESS))) {
             return;
         }
-        float far = Minecraft.getInstance().gameRenderer.getRenderDistance();
-        if (event.getMode() == net.minecraft.client.renderer.FogRenderer.FogMode.FOG_SKY) {
-            event.setNearPlaneDistance(0f);
-        } else {
-            event.setNearPlaneDistance(far - Mth.clamp(far / 10f, 4f, 64f));
-        }
+        // 26.3: the effect fog is the environmental fog; the render-distance fog is separate, so push the
+        // environmental fog out to the render-distance fog (as if no effect applied).
+        net.minecraft.client.renderer.fog.FogData fog = event.getFogData();
+        float far = fog.renderDistanceEnd;
+        event.setNearPlaneDistance(fog.renderDistanceStart);
         event.setFarPlaneDistance(far);
-        event.setCanceled(true);
+        fog.skyEnd = far;
+        fog.cloudEnd = far;
     }
 }

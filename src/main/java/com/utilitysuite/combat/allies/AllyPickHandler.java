@@ -28,7 +28,7 @@ public final class AllyPickHandler {
                 || !(ehr.getEntity() instanceof Player target) || target == mc.player) {
             return;
         }
-        String name = target.getGameProfile().getName();
+        String name = target.getGameProfile().name();
         boolean added = module.togglePlayer(target.getUUID(), name);
         event.setCanceled(true);
         event.setSwingHand(false);

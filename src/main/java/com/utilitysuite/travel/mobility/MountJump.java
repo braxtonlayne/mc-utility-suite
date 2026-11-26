@@ -79,7 +79,7 @@ public final class MountJump implements IModule, IConfigurable {
         PlayerRideableJumping mount = p.jumpableVehicle();
         Entity vehicle = p.getVehicle();
         boolean jumpable = mount != null && mount.canJump() && vehicle != null && vehicle.onGround()
-                && mc.screen == null;
+                && mc.gui.screen() == null;
         if (holding && slot.active() == null) {
             // the lease ended (the user's own key press, a higher priority, Stop-All): the charge is not ours
             holding = false;
@@ -88,7 +88,7 @@ public final class MountJump implements IModule, IConfigurable {
             return;
         }
         // while the automation holds the key the input reports its hold, not the user's
-        boolean realDown = !holding && event.getInput().jumping;
+        boolean realDown = !holding && event.getInput().keyPresses.jump();
         switch (release.tick(jumpable, realDown, p.getJumpRidingScale(), target)) {
             case HOLD -> {
                 ControlLease l = slot.ensure(request);

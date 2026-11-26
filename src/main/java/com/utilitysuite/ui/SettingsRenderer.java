@@ -190,8 +190,7 @@ public final class SettingsRenderer {
             case NUMBER_FIELD -> {
                 StyledTextField f = p.field(focusKey, "", dx, w);
                 f.box().setValue(SettingWidgetMapper.format(spec, access.getNumber(spec)));
-                f.box().setFilter(t -> t.isEmpty() || t.matches("-?[0-9]*[.,]?[0-9]*"));
-                f.box().setResponder(t -> {
+                f.filteredResponder(t -> t.isEmpty() || t.matches("-?[0-9]*[.,]?[0-9]*"), t -> {
                     Double v = SettingWidgetMapper.parseNumber(spec, t);
                     if (v != null) {
                         access.setNumber(spec, v);

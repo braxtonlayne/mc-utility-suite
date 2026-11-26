@@ -90,6 +90,14 @@ public interface WorldActions {
         return ToolDurabilityGuard.Decision.OK;
     }
 
+    /**
+     * True when the held item mines at least one of {@code blockIds} faster than a bare hand (so its durability
+     * matters for this step: a pickaxe in hand while chopping logs does not). Called every few ticks, not per tick.
+     */
+    default boolean heldToolHelpsWith(java.util.List<String> blockIds) {
+        return true;
+    }
+
     /** Station items placed within reach of the player ("minecraft:crafting_table"). */
     java.util.Set<String> nearbyStations();
 }

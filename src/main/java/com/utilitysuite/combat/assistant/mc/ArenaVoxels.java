@@ -35,10 +35,10 @@ public final class ArenaVoxels implements CombatVoxels {
         if (level == null) {
             return UNKNOWN;
         }
-        if (y < level.getMinBuildHeight()) {
+        if (y < level.getMinY()) {
             return LAVA;
         }
-        if (y >= level.getMaxBuildHeight()) {
+        if (y > level.getMaxY()) {
             return AIR;
         }
         // getChunk(x, z, FULL, false) on the client chunk cache: null when not loaded, no allocation.

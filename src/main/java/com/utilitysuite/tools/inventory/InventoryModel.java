@@ -7,7 +7,7 @@ import java.util.Arrays;
  * refilled in place by the Minecraft adapter, so scanning allocates nothing.
  * <p>
  * Slot indices follow vanilla {@code Inventory}: 0-8 hotbar, 9-35 main inventory. Armor indices follow
- * {@code Inventory.armor} / {@code EquipmentSlot.getIndex()}: 0 feet, 1 legs, 2 chest, 3 head.
+ * {@code Inventory.getItem(36 + i)} / {@code EquipmentSlot.getIndex()}: 0 feet, 1 legs, 2 chest, 3 head.
  * <ul>
  *   <li>{@link #item}: raw item id (same item, any components)</li>
  *   <li>{@link #key}: item + components identity (stacks with equal keys merge)</li>

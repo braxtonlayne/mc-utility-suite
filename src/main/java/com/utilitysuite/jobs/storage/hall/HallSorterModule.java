@@ -27,7 +27,7 @@ import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 import net.neoforged.neoforge.client.event.RegisterKeyMappingsEvent;
-import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
+import net.neoforged.neoforge.client.event.SubmitCustomGeometryEvent;
 import net.neoforged.neoforge.client.settings.KeyConflictContext;
 
 import java.util.List;
@@ -120,7 +120,7 @@ public final class HallSorterModule implements IModule, IConfigurable, HallJobSo
         if (mc.level == null || !(mc.hitResult instanceof BlockHitResult hit) || hit.getType() != HitResult.Type.BLOCK) {
             return lastResult = "Look at a chest first";
         }
-        String dim = mc.level.dimension().location().toString();
+        String dim = mc.level.dimension().identifier().toString();
         long pos = hit.getBlockPos().asLong();
         if (!memory.contains(dim, pos)) {
             return lastResult = "Open this chest once first";
@@ -183,9 +183,9 @@ public final class HallSorterModule implements IModule, IConfigurable, HallJobSo
     }
 
     /** Outlines the nearly-full chests found by the last scan. Nothing when idle, off or in Clean-Screen. */
-    public void onRenderLevel(RenderLevelStageEvent event) {
+    /** 26.3: the Shell world pass brackets {@link SubmitCustomGeometryEvent}, so the outlines are drawn there. */
+    public void onRenderLevel(SubmitCustomGeometryEvent event) {
         if (fullCount == 0 || !enabled || !fullOverlay
-                || event.getStage() != RenderLevelStageEvent.Stage.AFTER_PARTICLES
                 || Services.modState().isCleanScreen()) {
             return;
         }
@@ -194,7 +194,7 @@ public final class HallSorterModule implements IModule, IConfigurable, HallJobSo
         if (world == null) {
             return; // no world pass (no Shell)
         }
-        Vec3 cam = event.getCamera().getPosition();
+        Vec3 cam = event.getLevelRenderState().cameraRenderState.pos;
         outline(world, fullPos, fullCount, cam.x, cam.y, cam.z);
     }
 

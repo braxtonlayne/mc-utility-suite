@@ -21,7 +21,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
@@ -304,12 +304,12 @@ public final class LocalRules implements IModule, IConfigurable, RuleContext {
         }
         Inventory inv = p.getInventory();
         int used = 0;
-        for (int i = 0; i < inv.items.size(); i++) {
-            if (!inv.items.get(i).isEmpty()) {
+        for (int i = 0; i < inv.getNonEquipmentItems().size(); i++) {
+            if (!inv.getNonEquipmentItems().get(i).isEmpty()) {
                 used++;
             }
         }
-        return used * 100.0 / inv.items.size();
+        return used * 100.0 / inv.getNonEquipmentItems().size();
     }
 
     @Override
@@ -327,7 +327,7 @@ public final class LocalRules implements IModule, IConfigurable, RuleContext {
     @Override
     public long timeOfDay() {
         Minecraft mc = Minecraft.getInstance();
-        return mc.level == null ? 0 : Math.floorMod(mc.level.getDayTime(), 24000L);
+        return mc.level == null ? 0 : Math.floorMod(mc.level.getOverworldClockTime(), 24000L); // was getDayTime()
     }
 
     @Override
@@ -438,8 +438,8 @@ public final class LocalRules implements IModule, IConfigurable, RuleContext {
             EquipmentSlot.FEET};
 
     private static Item resolve(String id) {
-        ResourceLocation rl = ResourceLocation.tryParse(id.contains(":") ? id : "minecraft:" + id);
-        return rl == null ? Items.AIR : BuiltInRegistries.ITEM.get(rl);
+        Identifier rl = Identifier.tryParse(id.contains(":") ? id : "minecraft:" + id);
+        return rl == null ? Items.AIR : BuiltInRegistries.ITEM.getValue(rl);
     }
 
     // ---- settings ---------------------------------------------------------------------------------------------------

@@ -8,7 +8,7 @@ import com.utilitysuite.world.seed.SeedDiffService;
 import com.utilitysuite.world.seed.SeedScannerModule;
 import com.utilitysuite.world.seed.Sha256Long;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
-import net.minecraft.client.GuiMessage;
+import net.minecraft.client.multiplayer.chat.GuiMessage;
 import net.minecraft.client.gui.components.ChatComponent;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.world.level.chunk.LevelChunk;
@@ -151,7 +151,7 @@ final class ReconSeedTests {
             s.check("BedrockPatternVerifier verifies live chunk bedrock samples",
                     enough && matchesReal && !matchesWrong,
                     "samples=" + samples.size() + " from " + scannedChunks + " chunk(s) around (" + pcx + "," + pcz
-                            + "), dim=" + level.dimension().location()
+                            + "), dim=" + level.dimension().identifier()
                             + ", matchesReal=" + matchesReal + ", matchesWrong=" + matchesWrong);
         });
     }
@@ -242,7 +242,7 @@ final class ReconSeedTests {
     private static List<String> guiChatMessages() {
         List<String> out = new ArrayList<>();
         try {
-            ChatComponent chat = H.mc().gui.getChat();
+            ChatComponent chat = H.mc().gui.hud.getChat();
             Field f = ChatComponent.class.getDeclaredField("allMessages");
             f.setAccessible(true);
             Object raw = f.get(chat);

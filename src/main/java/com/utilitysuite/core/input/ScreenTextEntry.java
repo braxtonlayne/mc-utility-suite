@@ -1,13 +1,11 @@
 package com.utilitysuite.core.input;
 
-import com.utilitysuite.mixin.input.RecipeBookComponentAccessor;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.components.MultiLineEditBox;
 import net.minecraft.client.gui.components.events.ContainerEventHandler;
 import net.minecraft.client.gui.components.events.GuiEventListener;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.gui.screens.recipebook.RecipeBookComponent;
-import net.minecraft.client.gui.screens.recipebook.RecipeUpdateListener;
 import net.neoforged.neoforge.client.event.ScreenEvent;
 
 import java.util.List;
@@ -21,8 +19,8 @@ import java.util.List;
  *   <li>{@link #textFieldFocused}: a text field has keyboard focus. Covers a focused field anywhere down the screen's
  *       focus chain (nested {@link ContainerEventHandler}s), a focused field among the screen's direct children
  *       (creative search, anvil rename) and the recipe book search box. The recipe book is a plain
- *       {@link GuiEventListener}: it reports itself as never focused and keeps its search box in a private field that
- *       is not a child of the screen, so neither {@code screen.getFocused()} nor {@code screen.children()} shows it.</li>
+ *       {@link GuiEventListener} child that reports itself as never focused and keeps its search box private; its
+ *       public {@code capturesInput()} tells whether that box takes keys.</li>
  *   <li>{@link TextEntryGuard}: something consumed a typed character recently. Covers text fields this class cannot
  *       reach, such as another mod's overlay search bar.</li>
  * </ol>
@@ -62,8 +60,12 @@ public final class ScreenTextEntry {
             if (isTextField(child) && child.isFocused()) {
                 return true;
             }
+            // 26.3: AbstractRecipeBookScreen adds its recipe book as a widget, so it is one of the children
+            if (child instanceof RecipeBookComponent<?> book && recipeSearchFocused(book)) {
+                return true;
+            }
         }
-        return screen instanceof RecipeUpdateListener holder && recipeSearchFocused(holder.getRecipeBookComponent());
+        return false;
     }
 
     private static boolean isTextField(GuiEventListener listener) {
@@ -71,12 +73,9 @@ public final class ScreenTextEntry {
     }
 
     /** The book only takes keys while visible; its search box can stay "focused" after the book is closed. */
-    private static boolean recipeSearchFocused(RecipeBookComponent book) {
-        if (book == null || !book.isVisible()) {
-            return false;
-        }
-        EditBox search = ((RecipeBookComponentAccessor) book).utilitysuite$searchBox();
-        return search != null && search.isVisible() && search.isFocused();
+    private static boolean recipeSearchFocused(RecipeBookComponent<?> book) {
+        // capturesInput(): the search box exists and can take keys (visible, focused, editable)
+        return book.isVisible() && book.capturesInput();
     }
 
     // ---- wiring (CoreBootstrap) -------------------------------------------------------------------------------------

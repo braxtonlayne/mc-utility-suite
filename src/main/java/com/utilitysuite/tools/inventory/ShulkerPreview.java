@@ -2,7 +2,7 @@ package com.utilitysuite.tools.inventory;
 
 import com.mojang.datafixers.util.Either;
 import net.minecraft.client.gui.Font;
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.screens.inventory.tooltip.ClientTooltipComponent;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.chat.Component;
@@ -11,6 +11,7 @@ import net.minecraft.network.chat.contents.TranslatableContents;
 import net.minecraft.world.inventory.tooltip.TooltipComponent;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.ItemStackTemplate;
 import net.minecraft.world.item.component.ItemContainerContents;
 import net.minecraft.world.level.block.ShulkerBoxBlock;
 import net.neoforged.neoforge.client.event.RegisterClientTooltipComponentFactoriesEvent;
@@ -97,8 +98,8 @@ public final class ShulkerPreview {
      */
     static int countInShulkers(net.minecraft.world.entity.player.Inventory inv, int itemId) {
         int total = 0;
-        for (int s = 0; s < inv.items.size(); s++) {
-            ItemStack box = inv.items.get(s);
+        for (int s = 0; s < inv.getNonEquipmentItems().size(); s++) {
+            ItemStack box = inv.getNonEquipmentItems().get(s);
             if (!(box.getItem() instanceof BlockItem bi) || !(bi.getBlock() instanceof ShulkerBoxBlock)) {
                 continue;
             }
@@ -106,9 +107,9 @@ public final class ShulkerPreview {
             if (contents == null) {
                 continue;
             }
-            for (ItemStack in : contents.nonEmptyItems()) {
-                if (McInventory.itemId(in.getItem()) == itemId) {
-                    total += in.getCount();
+            for (ItemStackTemplate in : contents.nonEmptyItems()) {
+                if (McInventory.itemId(in.item().value()) == itemId) {
+                    total += in.count();
                 }
             }
         }
@@ -119,7 +120,8 @@ public final class ShulkerPreview {
         FormattedText text = e.left().orElse(null);
         if (text instanceof Component c && c.getContents() instanceof TranslatableContents tc) {
             String key = tc.getKey();
-            return key.equals("container.shulkerBox.itemCount") || key.equals("container.shulkerBox.more");
+            return key.equals("item.container.item_count") || key.equals("item.container.more_items")
+                    || key.equals("container.shulkerBox.itemCount") || key.equals("container.shulkerBox.more");
         }
         return false;
     }
@@ -134,13 +136,13 @@ public final class ShulkerPreview {
             int n = contents.getSlots();
             this.items = new ItemStack[n];
             for (int i = 0; i < n; i++) {
-                items[i] = contents.getStackInSlot(i); // copied once per box, not per frame
+                items[i] = contents.getTemplateInSlot(i).map(ItemStackTemplate::create).orElse(ItemStack.EMPTY); // once per box
             }
             this.rows = Math.max(1, (n + COLUMNS - 1) / COLUMNS);
         }
 
         @Override
-        public int getHeight() {
+        public int getHeight(Font font) {
             return rows * CELL + 4;
         }
 
@@ -150,7 +152,7 @@ public final class ShulkerPreview {
         }
 
         @Override
-        public void renderImage(Font font, int x, int y, GuiGraphics g) {
+        public void extractImage(Font font, int x, int y, int w, int h, GuiGraphicsExtractor g) {
             for (int i = 0; i < rows * COLUMNS; i++) {
                 int sx = x + 1 + (i % COLUMNS) * CELL;
                 int sy = y + 1 + (i / COLUMNS) * CELL;
@@ -160,8 +162,8 @@ public final class ShulkerPreview {
                 if (i < items.length) {
                     ItemStack st = items[i];
                     if (!st.isEmpty()) {
-                        g.renderItem(st, sx + 1, sy + 1);
-                        g.renderItemDecorations(font, st, sx + 1, sy + 1);
+                        g.item(st, sx + 1, sy + 1);
+                        g.itemDecorations(font, st, sx + 1, sy + 1);
                     }
                 }
             }

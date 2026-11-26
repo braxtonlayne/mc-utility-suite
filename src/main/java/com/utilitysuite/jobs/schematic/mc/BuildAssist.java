@@ -449,7 +449,7 @@ public final class BuildAssist implements LeaseListener {
     public void tick(Minecraft mc) {
         tick++;
         LocalPlayer player = mc.player;
-        if (plan == null || player == null || mc.level == null || mc.gameMode == null || mc.screen != null) {
+        if (plan == null || player == null || mc.level == null || mc.gameMode == null || mc.gui.screen() != null) {
             return;
         }
         if (Services.arbiter().isAutomationStopped()) {
@@ -658,7 +658,7 @@ public final class BuildAssist implements LeaseListener {
         }
         RestockHook hook = restockHook;
         boolean queued = hook != null && hook.requestRestock(wanted, player.blockPosition().asLong(),
-                player.level().dimension().location().toString());
+                player.level().dimension().identifier().toString());
         if (queued) {
             restockQueued = true;
             restockNotice = "Out of materials: fetching " + wanted.size() + " item type(s) from storage";
@@ -751,7 +751,7 @@ public final class BuildAssist implements LeaseListener {
             return;
         }
         if (hook.requestSupply(shortfall, player.blockPosition().asLong(),
-                player.level().dimension().location().toString())) {
+                player.level().dimension().identifier().toString())) {
             restockQueued = true;
             restockNotice = "Next layer short of " + shortfall.size() + " item type(s): supply trip queued";
         }
@@ -1171,7 +1171,7 @@ public final class BuildAssist implements LeaseListener {
                     targetZ + 0.5 + toSupport.getStepZ() * 0.5);
             mc.gameMode.useItemOn(player, InteractionHand.MAIN_HAND,
                     new BlockHitResult(hit, clickedFace, new BlockPos(nx, ny, nz), false));
-            player.swing(InteractionHand.MAIN_HAND);
+            com.utilitysuite.jobs.goal.McHands.swingUse(player, InteractionHand.MAIN_HAND);
             placed = true;
         }
         if (placed) {

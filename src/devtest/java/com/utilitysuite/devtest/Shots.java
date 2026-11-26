@@ -14,19 +14,32 @@ final class Shots {
 
     /** Clears chat so the next frames are uncluttered (call a couple of ticks before {@link #take}). */
     static void clearChat() {
-        H.mc().gui.getChat().clearMessages(false);
-        H.mc().getToasts().clear();
+        H.mc().gui.hud.getChat().clearMessages(false);
+        H.mc().gui.toastManager().clear();
         H.mc().getTutorial().setStep(net.minecraft.client.tutorial.TutorialSteps.NONE);
+    }
+
+    /**
+     * Captures the last rendered frame of the main target into {@code png}. 26.3 screenshots are an async GPU
+     * read-back: the file is written by the callback a frame or so later (the callback owns the image); write
+     * errors there are logged. Client thread.
+     */
+    static void capture(Path png) throws java.io.IOException {
+        Files.createDirectories(png.getParent());
+        Screenshot.takeScreenshot(H.mc().gameRenderer.mainRenderTarget(), img -> {
+            try (NativeImage owned = img) {
+                owned.writeToFile(png);
+            } catch (Exception e) {
+                PlaytestMod.LOG.warn("[playtest] screenshot {} failed: {}", png, e.toString());
+            }
+        });
     }
 
     /** Captures the last rendered frame. Client thread. */
     static void take(Scenario s, String name) {
         try {
             Path png = Harness.dir().resolve("shots").resolve(name + ".png");
-            Files.createDirectories(png.getParent());
-            try (NativeImage img = Screenshot.takeScreenshot(H.mc().getMainRenderTarget())) {
-                img.writeToFile(png);
-            }
+            capture(png);
             s.note("screenshot " + png.getFileName());
         } catch (Exception e) {
             s.note("screenshot " + name + " failed: " + e);
@@ -79,10 +92,7 @@ final class Shots {
 
     private static boolean write(Path png) {
         try {
-            Files.createDirectories(png.getParent());
-            try (NativeImage img = Screenshot.takeScreenshot(H.mc().getMainRenderTarget())) {
-                img.writeToFile(png);
-            }
+            capture(png);
             return true;
         } catch (Exception e) {
             PlaytestMod.LOG.warn("[playtest] screenshot {} failed: {}", png, e.toString());

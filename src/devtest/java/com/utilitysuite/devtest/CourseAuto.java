@@ -8,7 +8,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.MouseHandler;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.util.Mth;
-import org.lwjgl.glfw.GLFW;
+import com.mojang.blaze3d.platform.InputConstants;
 
 import java.io.IOException;
 import java.lang.reflect.Field;
@@ -247,13 +247,13 @@ final class CourseAuto {
             if (++still >= 4) {
                 still = 0;
                 retap = 2;
-                H.physicalKey(GLFW.GLFW_KEY_W, false);
+                H.physicalKey(InputConstants.KEY_W, false);
             }
         } else {
             still = 0;
         }
         if (jumpHeld > 0 && --jumpHeld == 0) {
-            H.physicalKey(GLFW.GLFW_KEY_SPACE, false);
+            H.physicalKey(InputConstants.KEY_SPACE, false);
         }
         if (idx >= line.size()) {
             return; // past the last point: forward into the finish volume
@@ -336,7 +336,7 @@ final class CourseAuto {
 
     private void press() {
         pressed = true;
-        H.physicalKey(GLFW.GLFW_KEY_SPACE, true);
+        H.physicalKey(InputConstants.KEY_SPACE, true);
         jumpHeld = PRESS_TICKS;
     }
 
@@ -357,7 +357,7 @@ final class CourseAuto {
         sinceAdvance = 0;
         if (jumpHeld > 0) {
             jumpHeld = 0;
-            H.physicalKey(GLFW.GLFW_KEY_SPACE, false);
+            H.physicalKey(InputConstants.KEY_SPACE, false);
         }
     }
 
@@ -572,7 +572,7 @@ final class CourseAuto {
             double s = mc.options.sensitivity().get() * 0.6 + 0.2;
             double unitsPerPx = s * s * s * 8.0; // turnPlayer, no spyglass, no smooth camera
             double pxX = yawDeg / 0.15 / unitsPerPx;
-            double pxY = pitchDeg / 0.15 / unitsPerPx * (mc.options.invertYMouse().get() ? -1 : 1);
+            double pxY = pitchDeg / 0.15 / unitsPerPx * (mc.options.invertMouseY().get() ? -1 : 1);
             MouseHandler m = mc.mouseHandler;
             fDX.setDouble(m, pxX);
             fDY.setDouble(m, pxY);
@@ -596,11 +596,11 @@ final class CourseAuto {
         if (on == mc.options.keyUp.isDown() && on == mc.options.keySprint.isDown()) {
             return;
         }
-        H.physicalKey(GLFW.GLFW_KEY_W, on);
-        H.physicalKey(GLFW.GLFW_KEY_LEFT_CONTROL, on);
+        H.physicalKey(InputConstants.KEY_W, on);
+        H.physicalKey(InputConstants.KEY_LCONTROL, on);
         if (!on && jumpHeld > 0) {
             jumpHeld = 0;
-            H.physicalKey(GLFW.GLFW_KEY_SPACE, false);
+            H.physicalKey(InputConstants.KEY_SPACE, false);
         }
     }
 

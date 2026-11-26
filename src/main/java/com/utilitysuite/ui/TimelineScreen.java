@@ -13,8 +13,9 @@ import com.utilitysuite.ui.kit.UiNode;
 import com.utilitysuite.ui.kit.UiRenderUtils;
 import com.utilitysuite.ui.kit.UiTheme;
 import it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap;
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.client.resources.sounds.SimpleSoundInstance;
 import net.minecraft.network.chat.Component;
 import net.minecraft.sounds.SoundEvents;
@@ -261,10 +262,11 @@ public final class TimelineScreen extends Screen {
     // ---- input ------------------------------------------------------------------------------------------------------
 
     @Override
-    public boolean mouseClicked(double guiX, double guiY, int button) {
+    public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
         double gs = guiScale();
-        double mx = toVirtual(guiX, gs);
-        double my = toVirtual(guiY, gs);
+        double mx = toVirtual(event.x(), gs);
+        double my = toVirtual(event.y(), gs);
+        int button = event.button();
         for (int i = chrome.size() - 1; i >= 0; i--) {
             UiNode n = chrome.get(i);
             if (n.contains(mx, my, n.x, n.y) && n.interactive() && n.onClick(mx, my, button, n.x, n.y)) {
@@ -272,40 +274,45 @@ public final class TimelineScreen extends Screen {
                 return true;
             }
         }
-        return super.mouseClicked(guiX, guiY, button);
+        return super.mouseClicked(event, doubleClick);
     }
 
     // ---- rendering --------------------------------------------------------------------------------------------------
 
+    /** 26.3: extracted first by the screen framework; the timeline draws its own backdrop (no vanilla blur), as before. */
     @Override
-    public void renderBackground(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
+    public void extractBackground(GuiGraphicsExtractor g, int mouseX, int mouseY, float partialTick) {
+        minecraft.gui.hud.extractDeferredSubtitles();
+    }
+
+    private void drawBackdrop(GuiGraphicsExtractor g) {
         HoloFrames.plate(g, 0, 0, width, height, HoloToken.VOID, 0.55f);
     }
 
     @Override
-    public void render(GuiGraphics g, int guiMouseX, int guiMouseY, float partialTick) {
+    public void extractRenderState(GuiGraphicsExtractor g, int guiMouseX, int guiMouseY, float partialTick) {
         double gs = guiScale();
         float f = (float) MenuScale.factor(gs);
         if (f == 1f) {
             renderScaled(g, guiMouseX, guiMouseY, partialTick);
             return;
         }
-        g.pose().pushPose();
-        g.pose().scale(f, f, 1f);
+        g.pose().pushMatrix();
+        g.pose().scale(f, f);
         MenuScale.setActive(f);
         try {
             renderScaled(g, (int) toVirtual(guiMouseX, gs), (int) toVirtual(guiMouseY, gs), partialTick);
         } finally {
             MenuScale.reset();
-            g.pose().popPose();
+            g.pose().popMatrix();
         }
     }
 
     /** Horizontal offset of the spine from the card's left edge. */
     private static final int SPINE_X = 20;
 
-    private void renderScaled(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
-        renderBackground(g, mouseX, mouseY, partialTick);
+    private void renderScaled(GuiGraphicsExtractor g, int mouseX, int mouseY, float partialTick) {
+        drawBackdrop(g);
         // the menu's window chrome: dark base, hero bracket frame on glass, scanlines, hairline under the title bar
         HoloFrames.frame(g, wx, wy, ww, wh, FrameLevel.QUIET, true, HoloToken.VOID, HoloToken.LINE, 0.62f);
         HoloFrames.frame(g, wx, wy, ww, wh, FrameLevel.HERO, true, 1f);
@@ -378,17 +385,17 @@ public final class TimelineScreen extends Screen {
     }
 
     /** A quiet glass card: translucent raised glass with a faint hairline edge and no brackets. */
-    private static void card(GuiGraphics g, int x, int y, int w, int h) {
+    private static void card(GuiGraphicsExtractor g, int x, int y, int w, int h) {
         HoloFrames.frame(g, x, y, w, h, FrameLevel.QUIET, false, HoloToken.GLASS_RAISED, HoloToken.LINE, 0.5f);
     }
 
-    private void smallCaption(GuiGraphics g, String s, int x, int y) {
+    private void smallCaption(GuiGraphicsExtractor g, String s, int x, int y) {
         UiRenderUtils.text(g, font, s, x, y, HoloTheme.argb(HoloToken.ACCENT, 0.85f));
         HoloFrames.hLine(g, x + font.width(s) + 6, x + 200, y + 4, HoloTheme.argb(HoloToken.LINE_FAINT));
     }
 
     /** Square brackets around a readout, as hairlines (no fill). */
-    private static void readoutBrackets(GuiGraphics g, int x, int y, int w, int h, int argb) {
+    private static void readoutBrackets(GuiGraphicsExtractor g, int x, int y, int w, int h, int argb) {
         HoloFrames.vLine(g, x, y, y + h, argb);
         HoloFrames.hLine(g, x + 1, x + 3, y, argb);
         HoloFrames.hLine(g, x + 1, x + 3, y + h - 1, argb);
@@ -398,7 +405,7 @@ public final class TimelineScreen extends Screen {
     }
 
     /** The glyph node of an event, centred on (cx, cy), 5 px: a diamond for leases, a cross for corrections ... */
-    private static void node(GuiGraphics g, int cx, int cy, TimelineEvents.Kind kind, HoloToken token) {
+    private static void node(GuiGraphicsExtractor g, int cx, int cy, TimelineEvents.Kind kind, HoloToken token) {
         switch (kind) {
             case LEASE_GRANTED, LEASE_ENDED -> {
                 float a = kind == TimelineEvents.Kind.LEASE_ENDED ? 0.6f : 1f;
@@ -426,7 +433,7 @@ public final class TimelineScreen extends Screen {
         }
     }
 
-    private void drawGraph(GuiGraphics g, int left, int right, int top, int h, int lanesTop, int laneH) {
+    private void drawGraph(GuiGraphicsExtractor g, int left, int right, int top, int h, int lanesTop, int laneH) {
         RateRing pr = lab.packetRates();
         RateRing er = lab.eventRates();
         long end = endSecond();
@@ -466,14 +473,14 @@ public final class TimelineScreen extends Screen {
         UiRenderUtils.text(g, font, maxLabel, left + 2, top + 2, HoloTheme.argb(HoloToken.TEXT_MUTED));
     }
 
-    private static void lane(GuiGraphics g, int x0, int x1, int y, int h, int count, HoloToken token) {
+    private static void lane(GuiGraphicsExtractor g, int x0, int x1, int y, int h, int count, HoloToken token) {
         HoloFrames.plate(g, x0, y, x1 - x0, h, HoloToken.LINE_FAINT, 0.35f);
         if (count > 0) {
             HoloFrames.plate(g, x0, y, x1 - x0, h, token, Math.min(1f, (110 + count * 30) / 255f));
         }
     }
 
-    private void legend(GuiGraphics g, int x, int y) {
+    private void legend(GuiGraphicsExtractor g, int x, int y) {
         for (int i = 0; i < LEGEND.length; i++) {
             HoloFrames.plate(g, x, y + 2, 5, 5, LEGEND_TOKENS[i], 1f);
             UiRenderUtils.text(g, font, LEGEND[i], x + 11, y, HoloTheme.argb(HoloToken.TEXT_SECONDARY));
@@ -483,7 +490,7 @@ public final class TimelineScreen extends Screen {
 
     @Override
     public void onClose() {
-        minecraft.setScreen(parent);
+        minecraft.gui.setScreen(parent);
     }
 
     @Override

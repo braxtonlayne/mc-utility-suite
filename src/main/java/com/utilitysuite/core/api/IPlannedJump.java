@@ -37,6 +37,14 @@ public interface IPlannedJump {
      */
     int ticksToPlannedTakeoff();
 
+    /**
+     * One line of what the movement layer is doing and why (mode, status, phase, target), for a jump capture the user
+     * takes by hand ({@code .jumpcap}). Not for per-tick use: it may allocate.
+     */
+    default String diagnostics() {
+        return "";
+    }
+
     /** Running up to a planned jump: its takeoff is at most {@link #RUN_UP_TICKS} ticks away. */
     default boolean runningUpToPlannedJump() {
         int t = ticksToPlannedTakeoff();

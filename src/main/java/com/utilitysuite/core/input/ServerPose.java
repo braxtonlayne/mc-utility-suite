@@ -5,7 +5,8 @@ import com.utilitysuite.core.api.ControlLease;
 /**
  * Sneak and sprint states that outgoing packets should report instead of the real ones (packet layer only: the local
  * player keeps moving as it really is). Written by {@link InputSmoother#setServerPose}, read by
- * {@code LocalPlayerServerPoseMixin} inside {@code LocalPlayer.sendPosition()}. Each override belongs to a lease and
+ * {@code LocalPlayerServerPoseMixin} inside {@code LocalPlayer.sendChanges()} (26.3: sneak travels in the
+ * player-input packet, sprint in the player-command packet). Each override belongs to a lease and
  * lapses the moment that lease ends, even if its owner never clears it. Client thread only; plain static fields so the
  * per-tick packet path costs nothing.
  */

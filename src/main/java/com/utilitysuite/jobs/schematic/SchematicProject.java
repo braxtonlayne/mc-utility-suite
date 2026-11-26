@@ -165,8 +165,8 @@ final class SchematicProject {
         Map<String, Integer> inventory = McInventoryView.snapshot(mc.player).counts();
         IStorageIndex storage = Services.storageOrNull();
         ClientLevel level = mc.level;
-        int minY = level == null ? -64 : level.getMinBuildHeight();
-        int maxY = level == null ? 320 : level.getMaxBuildHeight();
+        int minY = level == null ? -64 : level.getMinY();
+        int maxY = level == null ? 320 : level.getMaxY() + 1;
         byte[] status = scan.snapshot();
         java.util.BitSet below = scan.unsupportedBelowSnapshot();
         PlacementScan s = scan;

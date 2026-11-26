@@ -109,7 +109,7 @@ final class ParkourBlocks {
                 IInputSmoother input = Services.input();
                 float yaw = p.getYRot();
                 if (!planner.plan(now, yaw, sprinting, userF, userS, health, yaw, p.getXRot(), PLAN_DEG_PER_TICK,
-                        p.getInventory().selected == s ? 0 : 1, w)) {
+                        p.getInventory().getSelectedSlot() == s ? 0 : 1, w)) {
                     return;
                 }
                 var granted = Services.arbiter().request(LeaseRequest.of("movement_blocks", ControlPriority.TRAVEL,
@@ -128,7 +128,7 @@ final class ParkourBlocks {
                 returnPitch = p.getXRot();
                 ticks = 0;
                 aim.reset();
-                if (p.getInventory().selected != slot) {
+                if (p.getInventory().getSelectedSlot() != slot) {
                     input.selectHotbarSlot(lease, slot);
                 }
                 phase = Phase.AIM;
@@ -161,7 +161,7 @@ final class ParkourBlocks {
         IInputSmoother input = Services.input();
         float speed = 10f; // as fast as allowed: the smoother clamps every turn to the no-snap cap
         aim.aim(input, lease, yaw, pitch, RotationMode.VISIBLE, speed);
-        if (p.getInventory().selected != slot || occupied) {
+        if (p.getInventory().getSelectedSlot() != slot || occupied) {
             return;
         }
         HitResult hr = mc.hitResult;
@@ -178,7 +178,7 @@ final class ParkourBlocks {
         }
         InteractionResult r = mc.gameMode.useItemOn(p, InteractionHand.MAIN_HAND, bhr);
         if (r.consumesAction()) {
-            p.swing(InteractionHand.MAIN_HAND);
+            p.swing(InteractionHand.MAIN_HAND, p.getMainHandItem().getInteractAnimation(), false);
             placed++;
         }
         lastResult = r;
@@ -243,8 +243,8 @@ final class ParkourBlocks {
 
     /** Hotbar slot with a plain full block (no falling blocks), the selected one first; -1 if none. */
     static int blockSlot(Inventory inv, Level level) {
-        if (isPlainBlock(inv.getItem(inv.selected), level)) {
-            return inv.selected;
+        if (isPlainBlock(inv.getItem(inv.getSelectedSlot()), level)) {
+            return inv.getSelectedSlot();
         }
         for (int i = 0; i < 9; i++) {
             if (isPlainBlock(inv.getItem(i), level)) {

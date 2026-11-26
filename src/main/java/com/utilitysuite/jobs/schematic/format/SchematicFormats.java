@@ -27,7 +27,27 @@ public final class SchematicFormats {
     private static final List<SchematicFormatAdapter> ADAPTERS = List.of(new LitematicaFormat(), new SpongeFormat(),
             new StructureNbtFormat());
 
+    private static volatile StateUpgrader upgrader = StateUpgrader.IDENTITY;
+
     private SchematicFormats() {
+    }
+
+    /** Installs the block-state upgrader for files saved by older game versions (game side; identity by default). */
+    public static void setStateUpgrader(StateUpgrader u) {
+        upgrader = u == null ? StateUpgrader.IDENTITY : u;
+    }
+
+    /** A palette state from a file saved at {@code dataVersion} ({@code -1} unknown), upgraded to the running version. */
+    static String upgrade(String state, int dataVersion) {
+        if (dataVersion <= 0) {
+            return state;
+        }
+        try {
+            String s = upgrader.upgrade(state, dataVersion);
+            return s == null || s.isEmpty() ? state : s;
+        } catch (RuntimeException e) {
+            return state; // a fixer failure keeps the saved state (it may still resolve)
+        }
     }
 
     public static List<SchematicFormatAdapter> adapters() {

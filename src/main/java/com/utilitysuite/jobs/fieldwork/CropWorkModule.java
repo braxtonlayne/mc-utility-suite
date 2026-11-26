@@ -107,7 +107,7 @@ public final class CropWorkModule extends FieldModule {
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer player = mc.player;
         ClientLevel level = mc.level;
-        if (player == null || level == null || mc.screen != null) {
+        if (player == null || level == null || mc.gui.screen() != null) {
             return;
         }
         if (target >= 0) {
@@ -157,7 +157,7 @@ public final class CropWorkModule extends FieldModule {
         aimFx = aimOut[0];
         aimFz = aimOut[1];
         phase = 0;
-        previousSlot = player.getInventory().selected; // read only, restored through the core
+        previousSlot = player.getInventory().getSelectedSlot(); // read only, restored through the core
     }
 
     /** Budgeted scan of the reach box: {@link #SCAN_PER_TICK} cells per tick. */

@@ -68,8 +68,8 @@ final class ControlsScenario {
         moduleTicks(s, saved, report);
         menuClicks(s, saved, report);
         s.always("restore + write report", () -> {
-            if (H.mc().screen != null) {
-                H.mc().setScreen(null);
+            if (H.mc().gui.screen() != null) {
+                H.mc().gui.setScreen(null);
             }
             saved.finish();
             Path out = Harness.dir().resolve("controls-report.txt");
@@ -185,8 +185,8 @@ final class ControlsScenario {
             }
             H.enable(id, false);
             cleanStop();
-            if (H.mc().screen != null && !(H.mc().screen instanceof net.minecraft.client.gui.screens.DeathScreen)) {
-                H.mc().setScreen(null); // e.g. a module that opened a container
+            if (H.mc().gui.screen() != null && !(H.mc().gui.screen() instanceof net.minecraft.client.gui.screens.DeathScreen)) {
+                H.mc().gui.setScreen(null); // e.g. a module that opened a container
             }
             onAt[0] = -1;
             index[0]++;
@@ -257,11 +257,11 @@ final class ControlsScenario {
                 }
                 // phase 2: compare (the click may have opened another screen: compare before reopening the menu),
                 // retry a slider or selector at its ends, then restore
-                List<UiNode> nodes = H.mc().screen instanceof SuiteMenuScreen cur ? cur.contentNodes() : List.of();
-                String after = signature(H.mc().screen instanceof SuiteMenuScreen sm ? sm : null, null);
+                List<UiNode> nodes = H.mc().gui.screen() instanceof SuiteMenuScreen cur ? cur.contentNodes() : List.of();
+                String after = signature(H.mc().gui.screen() instanceof SuiteMenuScreen sm ? sm : null, null);
                 boolean effect = !after.equals(before[0]);
                 // A slider or segmented selector clicked in the middle may land on its current value: try both ends.
-                if (!effect && phase[0] < 4 && H.mc().screen instanceof SuiteMenuScreen sm2
+                if (!effect && phase[0] < 4 && H.mc().gui.screen() instanceof SuiteMenuScreen sm2
                         && index[0] < nodes.size() && (nodes.get(index[0]) instanceof ModernSlider
                         || nodes.get(index[0]) instanceof com.utilitysuite.ui.kit.CycleSelector<?>)) {
                     click(sm2, nodes.get(index[0]), phase[0] == 2 ? 0.03 : 0.97);
@@ -279,8 +279,8 @@ final class ControlsScenario {
             });
         }
         s.run("menu click result", () -> {
-            if (H.mc().screen != null) {
-                H.mc().setScreen(null);
+            if (H.mc().gui.screen() != null) {
+                H.mc().gui.setScreen(null);
             }
             saved.restore();
             report.add("Menu widgets clicked: " + clicked.size());
@@ -303,11 +303,11 @@ final class ControlsScenario {
     }
 
     private static SuiteMenuScreen ensureMenu(SuiteMenuScreen.Tab tab) {
-        if (!(H.mc().screen instanceof SuiteMenuScreen)) {
-            H.mc().setScreen(new SuiteMenuScreen(null));
+        if (!(H.mc().gui.screen() instanceof SuiteMenuScreen)) {
+            H.mc().gui.setScreen(new SuiteMenuScreen(null));
             return null;
         }
-        SuiteMenuScreen m = (SuiteMenuScreen) H.mc().screen;
+        SuiteMenuScreen m = (SuiteMenuScreen) H.mc().gui.screen();
         if (m.tab() != tab || m.autopilotPageOpen()) {
             m.selectTab(tab);
             return null;
@@ -336,7 +336,7 @@ final class ControlsScenario {
         if (at == null) {
             return false;
         }
-        boolean consumed = m.mouseClicked(at[0], at[1], 0);
+        boolean consumed = m.mouseClicked(H.leftClick(at[0], at[1]), false);
         Object hit = null;
         try {
             Field f = SuiteMenuScreen.class.getDeclaredField("dragNode");
@@ -347,16 +347,16 @@ final class ControlsScenario {
         }
         lastClick = "consumed=" + consumed + ", target=" + (hit == null ? "-" : hit == n ? "same"
                 : describe((UiNode) hit)) + String.format(", at %.0f,%.0f", at[0], at[1]);
-        if (H.mc().screen == m) {
-            m.mouseReleased(at[0], at[1], 0);
+        if (H.mc().gui.screen() == m) {
+            m.mouseReleased(H.leftClick(at[0], at[1]));
         }
         return true;
     }
 
     private static void restoreAfterClick(Saved saved, SuiteMenuScreen.Tab tab) {
         cleanStop();
-        if (!(H.mc().screen instanceof SuiteMenuScreen)) {
-            H.mc().setScreen(null);
+        if (!(H.mc().gui.screen() instanceof SuiteMenuScreen)) {
+            H.mc().gui.setScreen(null);
         }
         saved.restoreIfChanged();
     }
@@ -364,7 +364,7 @@ final class ControlsScenario {
     /** What a click can visibly change: the screen, tab, page, profiles, module switches and widget labels. */
     private static String signature(SuiteMenuScreen m, UiNode skipValueOf) {
         StringBuilder sb = new StringBuilder();
-        sb.append(H.mc().screen == null ? "none" : H.mc().screen.getClass().getName()).append('|');
+        sb.append(H.mc().gui.screen() == null ? "none" : H.mc().gui.screen().getClass().getName()).append('|');
         if (m != null) {
             sb.append(m.tab()).append('|').append(m.autopilotPageOpen()).append('|');
             for (UiNode n : m.contentNodes()) {

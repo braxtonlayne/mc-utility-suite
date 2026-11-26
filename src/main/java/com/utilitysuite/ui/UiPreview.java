@@ -14,8 +14,8 @@ import com.mojang.blaze3d.platform.Window;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.Screenshot;
 import net.neoforged.neoforge.client.event.RenderFrameEvent;
-import org.lwjgl.glfw.GLFW;
-import net.minecraft.client.gui.GuiGraphics;
+import org.lwjgl.sdl.SDLVideo;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
@@ -118,7 +118,7 @@ public final class UiPreview {
     private static void onTick(ClientTickEvent.Post event) {
         Minecraft mc = Minecraft.getInstance();
         if (!started) {
-            if (mc.getOverlay() == null && mc.screen != null) {
+            if (mc.gui.overlay() == null && mc.gui.screen() != null) {
                 if (++stableTicks >= 40) {
                     started = true;
                     sizing = true;
@@ -157,7 +157,7 @@ public final class UiPreview {
         add("scale2", () -> setScale(mc, 2));
         add("open", () -> {
             menu = new SuiteMenuScreen(null);
-            mc.setScreen(menu);
+            mc.gui.setScreen(menu);
         });
         for (SuiteMenuScreen.Tab t : SuiteMenuScreen.Tab.values()) {
             add("tab " + t, () -> menu.selectTab(t));
@@ -220,13 +220,13 @@ public final class UiPreview {
         });
         add("scroll tools", () -> menu.scrollForPreview(10_000));
         add("shot tools-bottom", () -> shot(mc, "tools-bottom"));
-        add("hud", () -> mc.setScreen(new HudPreviewScreen()));
+        add("hud", () -> mc.gui.setScreen(new HudPreviewScreen()));
         add("shot hud", () -> shot(mc, "hud"));
         add("scale4", () -> {
             setScale(mc, 4);
             demo = true;
             menu = new SuiteMenuScreen(null);
-            mc.setScreen(menu);
+            mc.gui.setScreen(menu);
             menu.selectTab(SuiteMenuScreen.Tab.JOBS);
         });
         add("shot jobs-scale4", () -> shot(mc, "jobs-scale4"));
@@ -236,7 +236,7 @@ public final class UiPreview {
         });
         add("shot combat-scale4", () -> shot(mc, "combat-scale4"));
         add("quit", () -> {
-            mc.setScreen(null);
+            mc.gui.setScreen(null);
             setScale(mc, originalScale);
             UtilitySuiteMod.LOGGER.info("UI preview finished");
             mc.stop();
@@ -249,50 +249,52 @@ public final class UiPreview {
 
     private static void setScale(Minecraft mc, int scale) {
         mc.options.guiScale().set(scale);
-        mc.resizeDisplay();
+        mc.resizeGui();
     }
 
     /** True when the main render target and the window agree on a real (more than 1 px) size. */
     private static boolean sizeUsable(Minecraft mc) {
-        RenderTarget t = mc.getMainRenderTarget();
+        RenderTarget t = mc.gameRenderer.mainRenderTarget();
         Window w = mc.getWindow();
         return t.width > MIN_SIDE && t.height > MIN_SIDE && w.getWidth() > MIN_SIDE && w.getHeight() > MIN_SIDE
                 && t.width == w.getWidth() && t.height == w.getHeight();
     }
 
     /**
-     * Before the first step: the captures came out 1x1 because {@code Window} caches the GLFW framebuffer size once,
-     * at creation, and substitutes 1 when GLFW reports 0 (window hidden, minimised or not yet laid out); it is only
+     * Before the first step: the captures came out 1x1 because {@code Window} caches the framebuffer size once,
+     * at creation, and substitutes 1 when the windowing layer (SDL3 since 26.3) reports 0 (window hidden, minimised or not yet laid out); it is only
      * corrected by a framebuffer-size callback with a non-zero size. When that never arrives the main render
      * target stays 1x1 and {@code Screenshot.takeScreenshot} (which reads {@code RenderTarget.width/height}) writes a
-     * 1x1 image. So: restore and show the window, ask GLFW for a real size (the callback then resizes the display)
+     * 1x1 image. So: restore and show the window, ask for a real size (the callback then resizes the display)
      * and wait until target and window agree before taking any step.
      */
     private static void awaitWindowSize(Minecraft mc) {
         if (sizeUsable(mc)) {
             UtilitySuiteMod.LOGGER.info("UI preview window {}x{}, target {}x{}", mc.getWindow().getWidth(),
-                    mc.getWindow().getHeight(), mc.getMainRenderTarget().width, mc.getMainRenderTarget().height);
+                    mc.getWindow().getHeight(), mc.gameRenderer.mainRenderTarget().width,
+                    mc.gameRenderer.mainRenderTarget().height);
             sizing = false;
             frameMark = frames;
             plan(mc);
             return;
         }
         if (sizeTicks == 0) {
-            long handle = mc.getWindow().getWindow();
+            long handle = mc.getWindow().handle();
             UtilitySuiteMod.LOGGER.warn("UI preview: window {}x{}, target {}x{}: restoring and resizing to {}x{}",
-                    mc.getWindow().getWidth(), mc.getWindow().getHeight(), mc.getMainRenderTarget().width,
-                    mc.getMainRenderTarget().height, FALLBACK_W, FALLBACK_H);
-            GLFW.glfwRestoreWindow(handle);
-            GLFW.glfwShowWindow(handle);
-            GLFW.glfwSetWindowSize(handle, FALLBACK_W, FALLBACK_H);
+                    mc.getWindow().getWidth(), mc.getWindow().getHeight(), mc.gameRenderer.mainRenderTarget().width,
+                    mc.gameRenderer.mainRenderTarget().height, FALLBACK_W, FALLBACK_H);
+            SDLVideo.SDL_RestoreWindow(handle);
+            SDLVideo.SDL_ShowWindow(handle);
+            // 26.3: an SDL3 window; the size goes through the Window's own mode code
+            mc.getWindow().setWindowed(FALLBACK_W, FALLBACK_H);
         } else if (sizeTicks % 20 == 0) {
             // the callback may have been swallowed: re-apply the display size from the (possibly updated) window
-            mc.resizeDisplay();
+            mc.framebufferSizeChanged();
         }
         if (++sizeTicks > SIZE_TIMEOUT_TICKS) {
             UtilitySuiteMod.LOGGER.error("UI preview aborted: the window never reached a usable size (window {}x{}, "
                     + "target {}x{}); nothing captured", mc.getWindow().getWidth(), mc.getWindow().getHeight(),
-                    mc.getMainRenderTarget().width, mc.getMainRenderTarget().height);
+                    mc.gameRenderer.mainRenderTarget().width, mc.gameRenderer.mainRenderTarget().height);
             sizing = false;
             mc.stop();
         }
@@ -311,19 +313,28 @@ public final class UiPreview {
         }
         String name = pendingShot;
         pendingShot = null;
-        RenderTarget target = mc.getMainRenderTarget();
+        RenderTarget target = mc.gameRenderer.mainRenderTarget();
         if (target.width <= MIN_SIDE || target.height <= MIN_SIDE) {
             UtilitySuiteMod.LOGGER.error("UI preview screenshot {} skipped: render target is {}x{} (window {}x{})",
                     name, target.width, target.height, mc.getWindow().getWidth(), mc.getWindow().getHeight());
             return;
         }
         Path dir = mc.gameDirectory.toPath().resolve("ui-preview");
-        try (NativeImage img = Screenshot.takeScreenshot(target)) {
-            Files.createDirectories(dir);
-            img.writeToFile(dir.resolve(name + ".png"));
-            UtilitySuiteMod.LOGGER.info("UI preview saved {} ({}x{}, window {}x{}, gui scale {}, {} frames rendered)",
-                    dir.resolve(name + ".png"), img.getWidth(), img.getHeight(), mc.getWindow().getWidth(),
-                    mc.getWindow().getHeight(), mc.getWindow().getGuiScale(), frames - frameMark);
+        int shotFrames = frames - frameMark;
+        try {
+            // 26.3: the read-back is asynchronous; the image arrives once the GPU copy finished (we own it)
+            Screenshot.takeScreenshot(target, image -> {
+                try (NativeImage img = image) {
+                    Files.createDirectories(dir);
+                    img.writeToFile(dir.resolve(name + ".png"));
+                    UtilitySuiteMod.LOGGER.info(
+                            "UI preview saved {} ({}x{}, window {}x{}, gui scale {}, {} frames rendered)",
+                            dir.resolve(name + ".png"), img.getWidth(), img.getHeight(), mc.getWindow().getWidth(),
+                            mc.getWindow().getHeight(), mc.getWindow().getGuiScale(), shotFrames);
+                } catch (Exception e) {
+                    UtilitySuiteMod.LOGGER.error("UI preview screenshot {} failed", name, e);
+                }
+            });
         } catch (Exception e) {
             UtilitySuiteMod.LOGGER.error("UI preview screenshot {} failed", name, e);
         }
@@ -339,15 +350,14 @@ public final class UiPreview {
         }
 
         @Override
-        public void renderBackground(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
+        public void extractBackground(GuiGraphicsExtractor g, int mouseX, int mouseY, float partialTick) {
             g.fillGradient(0, 0, width, height * 2 / 3, 0xFF79A6D9, 0xFFB5D3EE);
             g.fill(0, height * 2 / 3, width, height * 2 / 3 + 6, 0xFF5D8C3A);
             g.fill(0, height * 2 / 3 + 6, width, height, 0xFF7A5A3A);
         }
 
         @Override
-        public void render(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
-            renderBackground(g, mouseX, mouseY, partialTick);
+        public void extractRenderState(GuiGraphicsExtractor g, int mouseX, int mouseY, float partialTick) {
             hud.renderOverlay(g, font, width, false, true);
         }
 

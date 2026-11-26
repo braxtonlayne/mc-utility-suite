@@ -1,12 +1,14 @@
 package com.utilitysuite.world.minimap;
 
+import com.mojang.blaze3d.platform.InputConstants;
 import com.utilitysuite.core.api.visual.HoloToken;
 import com.utilitysuite.ui.holo.HoloFrames;
 import com.utilitysuite.ui.holo.HoloTheme;
 import com.utilitysuite.ui.kit.PillButton;
 import com.utilitysuite.ui.kit.UiRenderUtils;
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
 
 /**
@@ -51,14 +53,14 @@ public final class MinimapLayoutScreen extends Screen {
     }
 
     @Override
-    public void renderBackground(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
+    public void extractBackground(GuiGraphicsExtractor g, int mouseX, int mouseY, float partialTick) {
         // No blur: the point is to see the HUD in place.
         HoloFrames.plate(g, 0, 0, width, height, HoloToken.VOID, 0.19f);
     }
 
     @Override
-    public void render(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
-        renderBackground(g, mouseX, mouseY, partialTick);
+    public void extractRenderState(GuiGraphicsExtractor g, int mouseX, int mouseY, float partialTick) {
+        // (the background is extracted by Screen itself in its own stratum before this)
         hud.draw(g, mapX, mapY, mapSize, partialTick);
         int b = MinimapLayout.BEZEL;
         dashedRect(g, mapX - b - 1, mapY - b - 1, mapX + mapSize + b + 1, mapY + mapSize + b + 1);
@@ -74,11 +76,11 @@ public final class MinimapLayoutScreen extends Screen {
         done.render(g, font, done.x, done.y, mouseX, mouseY);
     }
 
-    private void centered(GuiGraphics g, String s, int y, HoloToken token) {
+    private void centered(GuiGraphicsExtractor g, String s, int y, HoloToken token) {
         UiRenderUtils.text(g, font, s, (width - font.width(s)) / 2, y, HoloTheme.argb(token));
     }
 
-    private static void dashedRect(GuiGraphics g, int x0, int y0, int x1, int y1) {
+    private static void dashedRect(GuiGraphicsExtractor g, int x0, int y0, int x1, int y1) {
         int line = HoloTheme.argb(HoloToken.LINE_STRONG);
         for (int x = x0; x < x1; x += 6) {
             HoloFrames.hLine(g, x, Math.min(x + 3, x1), y0, line);
@@ -91,14 +93,17 @@ public final class MinimapLayoutScreen extends Screen {
     }
 
     @Override
-    public boolean mouseClicked(double mx, double my, int button) {
+    public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
+        double mx = event.x();
+        double my = event.y();
+        int button = event.button();
         if (done.contains(mx, my, done.x, done.y) && done.onClick(mx, my, button, done.x, done.y)) {
             return true;
         }
-        if (super.mouseClicked(mx, my, button)) {
+        if (super.mouseClicked(event, doubleClick)) {
             return true;
         }
-        if (button != 0) {
+        if (button != InputConstants.MOUSE_BUTTON_LEFT) {
             return false;
         }
         int b = MinimapLayout.BEZEL;
@@ -118,7 +123,9 @@ public final class MinimapLayoutScreen extends Screen {
     }
 
     @Override
-    public boolean mouseDragged(double mx, double my, int button, double dx, double dy) {
+    public boolean mouseDragged(MouseButtonEvent event, double dx, double dy) {
+        double mx = event.x();
+        double my = event.y();
         if (resizing) {
             mapSize = MinimapLayout.resize(mapX, mapY, (int) mx - MinimapLayout.BEZEL, (int) my - MinimapLayout.BEZEL,
                     width, height);
@@ -129,21 +136,21 @@ public final class MinimapLayoutScreen extends Screen {
             mapY = MinimapLayout.clampY((int) my - grabDy, height, mapSize);
             return true;
         }
-        return super.mouseDragged(mx, my, button, dx, dy);
+        return super.mouseDragged(event, dx, dy);
     }
 
     @Override
-    public boolean mouseReleased(double mx, double my, int button) {
+    public boolean mouseReleased(MouseButtonEvent event) {
         moving = false;
         resizing = false;
-        return super.mouseReleased(mx, my, button);
+        return super.mouseReleased(event);
     }
 
     @Override
     public void onClose() {
         module.saveLayout(MinimapLayout.toFracX(mapX, width, mapSize), MinimapLayout.toFracY(mapY, height, mapSize),
                 mapSize);
-        minecraft.setScreen(parent);
+        minecraft.gui.setScreen(parent);
     }
 
     @Override

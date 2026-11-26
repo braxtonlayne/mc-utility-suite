@@ -1,41 +1,33 @@
 package com.utilitysuite.world.replay;
 
-import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.vertex.BufferBuilder;
-import com.mojang.blaze3d.vertex.BufferUploader;
-import com.mojang.blaze3d.vertex.DefaultVertexFormat;
-import com.mojang.blaze3d.vertex.Tesselator;
-import com.mojang.blaze3d.vertex.VertexFormat;
-import net.minecraft.client.renderer.GameRenderer;
-import org.joml.Matrix4f;
+import com.utilitysuite.world.minimap.GuiMesh;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.gui.render.TextureSetup;
+import net.minecraft.client.renderer.RenderPipelines;
 
 /**
  * Thick 2D line batches for GUI panels (replay orbit view, picture-in-picture panel): segments in ndc (-1..1, y up)
- * mapped into a screen rectangle, drawn as thin quads in one buffer (the same immediate GUI path the minimap uses, so
- * Sodium and shader packs are not involved). {@link #begin} / {@link #segment} / {@link #end}; allocation is only the
- * GUI's own vertex builder.
+ * mapped into a screen rectangle, drawn as thin quads in one GUI element ({@link GuiMesh}, the same path the minimap
+ * uses, so Sodium and shader packs are not involved). {@link #begin} / {@link #segment} / {@link #end}, at most one
+ * batch per frame per instance (the element is recycled on the next frame); no allocation in steady state beyond the
+ * element's bounds record.
  */
 final class GuiLines {
 
-    private BufferBuilder buf;
-    private Matrix4f m;
+    private final GuiMesh mesh = new GuiMesh();
+    private GuiGraphicsExtractor g;
     private float x0;
     private float y0;
     private float w;
     private float h;
-    private int quads;
 
-    void begin(Matrix4f matrix, float left, float top, float width, float height) {
-        m = matrix;
+    void begin(GuiGraphicsExtractor graphics, float left, float top, float width, float height) {
+        g = graphics;
         x0 = left;
         y0 = top;
         w = width;
         h = height;
-        quads = 0;
-        RenderSystem.enableBlend();
-        RenderSystem.defaultBlendFunc();
-        RenderSystem.setShader(GameRenderer::getPositionColorShader);
-        buf = Tesselator.getInstance().begin(VertexFormat.Mode.TRIANGLES, DefaultVertexFormat.POSITION_COLOR);
+        mesh.begin(graphics, RenderPipelines.GUI, TextureSetup.noTexture(), false);
     }
 
     float sx(float ndcX) {
@@ -61,33 +53,11 @@ final class GuiLines {
 
     /** One segment in screen pixels. */
     void pixelSegment(float ax, float ay, float bx, float by, float thickness, int argb) {
-        float dx = bx - ax;
-        float dy = by - ay;
-        float len = (float) Math.sqrt(dx * dx + dy * dy);
-        if (len < 1e-3f) {
-            return;
-        }
-        float px = -dy / len * thickness * 0.5f;
-        float py = dx / len * thickness * 0.5f;
-        buf.addVertex(m, ax - px, ay - py, 0).setColor(argb);
-        buf.addVertex(m, bx - px, by - py, 0).setColor(argb);
-        buf.addVertex(m, bx + px, by + py, 0).setColor(argb);
-        buf.addVertex(m, ax - px, ay - py, 0).setColor(argb);
-        buf.addVertex(m, bx + px, by + py, 0).setColor(argb);
-        buf.addVertex(m, ax + px, ay + py, 0).setColor(argb);
-        quads++;
+        mesh.segment(ax, ay, bx, by, thickness, argb);
     }
 
     void end() {
-        if (quads > 0) {
-            BufferUploader.drawWithShader(buf.buildOrThrow());
-        } else {
-            var mesh = buf.build();
-            if (mesh != null) {
-                mesh.close();
-            }
-        }
-        buf = null;
-        RenderSystem.disableBlend();
+        mesh.submit(g);
+        g = null;
     }
 }

@@ -1,18 +1,20 @@
 package com.utilitysuite.world;
 
 import com.mojang.blaze3d.vertex.PoseStack;
+import com.mojang.blaze3d.vertex.VertexConsumer;
+import com.utilitysuite.core.api.SecondaryView;
 import com.utilitysuite.core.api.IModState;
 import com.utilitysuite.core.api.Services;
 import com.utilitysuite.world.overlays.WorldScanner;
 import com.utilitysuite.world.render.RenderContext;
 import com.utilitysuite.world.render.WorldRenderKit;
-import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.client.renderer.SubmitNodeCollector;
 import net.minecraft.world.phys.Vec3;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
-import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
+import net.neoforged.neoforge.client.event.SubmitCustomGeometryEvent;
 import net.neoforged.neoforge.event.level.ChunkEvent;
 
 /**
@@ -28,6 +30,10 @@ public final class WorldRuntime {
 
     private final WorldScanner scanner = new WorldScanner();
     private final RenderContext ctx = new RenderContext();
+    /** Modules of the frame whose line batch is pending (set in {@link #onSubmit}). */
+    private WorldModule[] linesModules = new WorldModule[0];
+    /** The one reused custom-geometry callback (no lambda per frame). */
+    private final SubmitNodeCollector.CustomGeometryRenderer lineRenderer = this::buildLines;
     private WorldModule[] modules = new WorldModule[0];
     private boolean nearCaves;
     private boolean nearFluids;
@@ -112,12 +118,15 @@ public final class WorldRuntime {
         scanner.reset();
     }
 
-    public void onRender(RenderLevelStageEvent event) {
-        if (event.getStage() != RenderLevelStageEvent.Stage.AFTER_WEATHER) {
-            return;
-        }
+    /**
+     * 26.3 world pass: one custom-geometry submit per frame carries every module's lines (written by
+     * {@link #lineRenderer} when the feature dispatcher builds the batch, later in the same frame on the render
+     * thread), and the label phase submits see-through text nodes straight away. Skipped in the picture-in-picture
+     * second level pass.
+     */
+    public void onSubmit(SubmitCustomGeometryEvent event) {
         Minecraft mc = Minecraft.getInstance();
-        if (mc.player == null || mc.level == null) {
+        if (mc.player == null || mc.level == null || SecondaryView.active()) {
             return;
         }
         IModState state = Services.modState();
@@ -132,31 +141,40 @@ public final class WorldRuntime {
         if (!any) {
             return;
         }
-        Camera camera = event.getCamera();
-        Vec3 cam = camera.getPosition();
+        Vec3 cam = event.getLevelRenderState().cameraRenderState.pos;
         PoseStack poseStack = event.getPoseStack();
         ctx.pose = poseStack.last();
         ctx.camX = cam.x;
         ctx.camY = cam.y;
         ctx.camZ = cam.z;
-        ctx.partialTick = event.getPartialTick().getGameTimeDeltaPartialTick(false);
+        ctx.partialTick = mc.getDeltaTracker().getGameTimeDeltaPartialTick(false);
         ctx.font = mc.font;
         ctx.dimension = WorldIds.dimension(mc.level);
-        ctx.buffers = ctx.kit.buffers();
-        ctx.lines = ctx.kit.lines(ctx.buffers);
-        for (WorldModule m : ms) {
-            if (m.isEnabled()) {
-                m.renderLines(ctx);
-            }
-        }
-        ctx.kit.endLines(ctx.buffers);
+        SubmitNodeCollector collector = event.getSubmitNodeCollector();
+        linesModules = ms;
+        collector.submitCustomGeometry(poseStack, WorldRenderKit.linesNoDepth(), lineRenderer);
         ctx.lines = null;
+        ctx.buffers.bind(collector);
         for (WorldModule m : ms) {
             if (m.isEnabled()) {
                 m.renderLabels(ctx);
             }
         }
-        ctx.buffers.endBatch();
+        ctx.buffers.unbind();
+    }
+
+    /** Line phase: runs when the feature dispatcher builds our batch (render thread, same frame). */
+    private void buildLines(PoseStack.Pose pose, VertexConsumer buffer) {
+        PoseStack.Pose labelPose = ctx.pose;
+        ctx.pose = pose;
+        ctx.lines = buffer;
+        for (WorldModule m : linesModules) {
+            if (m.isEnabled()) {
+                m.renderLines(ctx);
+            }
+        }
+        ctx.lines = null;
+        ctx.pose = labelPose;
     }
 
     /** Distance cap helper shared by the renderers: squared radius as double. */

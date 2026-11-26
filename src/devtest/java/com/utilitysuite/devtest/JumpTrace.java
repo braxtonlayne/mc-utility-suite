@@ -91,8 +91,8 @@ final class JumpTrace {
                 .append(" v ").append(fmt(p.getDeltaMovement().x)).append(' ').append(fmt(p.getDeltaMovement().z))
                 .append(p.onGround() ? " G" : " A").append(p.isSprinting() ? " spr" : "")
                 .append(" yaw ").append(fmt(p.getYRot())).append(" pitch ").append(fmt(p.getXRot()))
-                .append(" keys f").append(fmt(p.input.forwardImpulse)).append(" s").append(fmt(p.input.leftImpulse))
-                .append(p.input.jumping ? " J" : "").append(p.input.shiftKeyDown ? " SH" : "");
+                .append(" keys f").append(fmt(com.utilitysuite.core.input.MoveInputs.forward(p.input))).append(" s").append(fmt(com.utilitysuite.core.input.MoveInputs.left(p.input)))
+                .append(p.input.keyPresses.jump() ? " J" : "").append(p.input.keyPresses.shift() ? " SH" : "");
         if (b.rawTarget(raw)) {
             s.append(" raw ").append((int) raw[0]).append(',').append((int) raw[1]).append(',').append((int) raw[2])
                     .append(" c").append(fmt(raw[3])).append(" look").append(fmt(raw[4]));

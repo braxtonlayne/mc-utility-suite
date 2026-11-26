@@ -5,6 +5,7 @@ import com.utilitysuite.jobs.planner.ShulkerContents;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.ItemStackTemplate;
 import net.minecraft.world.item.component.ItemContainerContents;
 
 import java.util.LinkedHashMap;
@@ -32,8 +33,8 @@ public final class ShulkerItems {
         Map<String, Integer> contents = new LinkedHashMap<>();
         ItemContainerContents c = stack.get(DataComponents.CONTAINER);
         if (c != null) {
-            for (ItemStack in : c.nonEmptyItems()) {
-                contents.merge(BuiltInRegistries.ITEM.getKey(in.getItem()).toString(), in.getCount(), Integer::sum);
+            for (ItemStackTemplate in : c.nonEmptyItems()) {
+                contents.merge(BuiltInRegistries.ITEM.getKey(in.item().value()).toString(), in.count(), Integer::sum);
             }
         }
         return new NestedContainer(id, contents);

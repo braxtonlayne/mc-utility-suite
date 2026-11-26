@@ -14,10 +14,12 @@ import com.utilitysuite.ui.holo.FrameClock;
 import java.util.function.BooleanSupplier;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.client.gui.LayeredDraw;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.core.component.DataComponents;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.neoforged.neoforge.client.gui.GuiLayer;
 
 /**
  * The coach's cues around the crosshair. Two halves:
@@ -38,7 +40,7 @@ import net.minecraft.world.item.Items;
  * cleared then); Clean-Screen is handled by the HUD host. Allocation free (constant strings; the shield text is rebuilt
  * only when its tick count changes).
  */
-public final class FightCoachHud implements LayeredDraw.Layer, HudElement {
+public final class FightCoachHud implements GuiLayer, HudElement {
 
     public static final String ID = "fight_coach";
     static final String PROJECTILE_MARK = "fight_coach.projectile";
@@ -98,7 +100,30 @@ public final class FightCoachHud implements LayeredDraw.Layer, HudElement {
 
     private static boolean screenOrGuiHidden() {
         Minecraft mc = Minecraft.getInstance();
-        return mc.options.hideGui || mc.screen != null;
+        return mc.gui.hud.isHidden() || mc.gui.screen() != null;
+    }
+
+    private static ItemStack plainShield;
+
+    /**
+     * The stack whose cooldown is the shield disable: the held blocker (offhand first), else a plain shield made once
+     * (cooldowns are keyed by stack / use-cooldown group in 26.3, not by item).
+     */
+    private static ItemStack shieldStack(LocalPlayer p) {
+        ItemStack off = p.getOffhandItem();
+        if (off.has(DataComponents.BLOCKS_ATTACKS)) {
+            return off;
+        }
+        ItemStack main = p.getMainHandItem();
+        if (main.has(DataComponents.BLOCKS_ATTACKS)) {
+            return main;
+        }
+        ItemStack s = plainShield;
+        if (s == null) {
+            s = new ItemStack(Items.SHIELD);
+            plainShield = s;
+        }
+        return s;
     }
 
     /** Gives the HUD the tracker's positions so danger is published as world marks (combat wiring, once). */
@@ -109,7 +134,7 @@ public final class FightCoachHud implements LayeredDraw.Layer, HudElement {
     // ---- logic half (GUI layer) -------------------------------------------------------------------------------------
 
     @Override
-    public void render(GuiGraphics g, DeltaTracker deltaTracker) {
+    public void render(GuiGraphicsExtractor g, DeltaTracker deltaTracker) {
         if (!hosted) {
             IVisuals v = Services.visualsOrNull();
             if (v != null && v.hud() != IHudHost.NONE) {
@@ -124,7 +149,7 @@ public final class FightCoachHud implements LayeredDraw.Layer, HudElement {
         LocalPlayer p = Minecraft.getInstance().player;
         if (p != null) {
             readout.charge01 = clamp01(p.getAttackStrengthScale(0f));
-            float shield = p.getCooldowns().getCooldownPercent(Items.SHIELD, 0f);
+            float shield = p.getCooldowns().getCooldownPercent(shieldStack(p), 0f);
             readout.shieldDisabledTicks = shield > 0f ? (int) Math.ceil(shield * SHIELD_DISABLE_TICKS - 1.0e-3f) : 0;
         }
         ThreatTracker t = tracker;

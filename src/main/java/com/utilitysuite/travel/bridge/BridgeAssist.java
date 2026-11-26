@@ -259,7 +259,7 @@ public final class BridgeAssist implements IModule, IConfigurable {
 
         // Select a placeable hotbar slot (the selection lands next tick).
         int wanted = placeableSlot(inv, level);
-        if (inv.selected != wanted) {
+        if (inv.getSelectedSlot() != wanted) {
             input.selectHotbarSlot(lease, wanted);
             return;
         }
@@ -336,7 +336,7 @@ public final class BridgeAssist implements IModule, IConfigurable {
                     false);
             InteractionResult r = mc.gameMode.useItemOn(player, InteractionHand.MAIN_HAND, hit);
             if (r.consumesAction()) {
-                player.swing(InteractionHand.MAIN_HAND);
+                player.swing(InteractionHand.MAIN_HAND, player.getMainHandItem().getInteractAnimation(), false);
             }
         } else {
             HitResult hr = mc.hitResult;
@@ -528,15 +528,15 @@ public final class BridgeAssist implements IModule, IConfigurable {
 
     /** The selected slot if it holds placeable blocks, else the first hotbar slot that does. */
     private static int placeableSlot(Inventory inv, Level level) {
-        if (placeable(inv.getItem(inv.selected), level)) {
-            return inv.selected;
+        if (placeable(inv.getItem(inv.getSelectedSlot()), level)) {
+            return inv.getSelectedSlot();
         }
         for (int i = 0; i < Inventory.getSelectionSize(); i++) {
             if (placeable(inv.getItem(i), level)) {
                 return i;
             }
         }
-        return inv.selected;
+        return inv.getSelectedSlot();
     }
 
     // ---- settings -----------------------------------------------------------------------------------------------------

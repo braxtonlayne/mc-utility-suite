@@ -60,7 +60,7 @@ final class ToolsScenario {
             }
             s.check("shulker preview tooltip component builds", found != null, found == null
                     ? "components: " + comps : "component " + found.getClass().getSimpleName() + " "
-                    + found.getWidth(H.mc().font) + "x" + found.getHeight());
+                    + found.getWidth(H.mc().font) + "x" + found.getHeight(H.mc().font));
         });
         s.cmd("tp @s ~ ~ ~ 90 0");
         s.waitTicks(100);

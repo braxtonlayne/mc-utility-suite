@@ -38,7 +38,17 @@ class CourseNeoIntentTest {
     static String loop(JumpCommit.Mode mode, double startX, double startZ, float pitch, float viewOff, boolean sprintKey,
                        int[] agree, StringBuilder trace) {
         ShapeGrid g = TechniqueLibraryTest.courseNeoScene();
-        SupportRegion top = TechniqueLibraryTest.top(g, 0, 19, 5);
+        return loopIn(g, TechniqueLibraryTest.top(g, 0, 19, 5), mode, startX, startZ, pitch, viewOff, sprintKey, agree,
+                trace, p -> p.z >= 2.75);
+    }
+
+    /**
+     * The same loop on any scene: {@code userJumps} says on which ground tick the user presses jump (once). The body
+     * starts at y 20 with the view at {@code yaw0}.
+     */
+    static String loopIn(ShapeGrid g, SupportRegion top, JumpCommit.Mode mode, double startX, double startZ, float pitch,
+                         float yaw0, boolean sprintKey, int[] agree, StringBuilder trace,
+                         java.util.function.Predicate<MovementPhysics> userJumps) {
         MovementAssistBrain b = new MovementAssistBrain();
         b.mode = mode;
         b.landingHold = true;
@@ -51,11 +61,11 @@ class CourseNeoIntentTest {
         float steerMax = carry ? 90f : 25f;
         com.utilitysuite.core.input.YawCoSteer steer = new com.utilitysuite.core.input.YawCoSteer();
         MovementPhysics p = new MovementPhysics().set(startX, 20, startZ, 0, -0.0784, 0, true);
-        float yaw = viewOff;
+        float yaw = yaw0;
         boolean sprint = sprintKey;
         boolean pressed = false;
         for (int t = 0; t < 80; t++) {
-            boolean uj = !pressed && p.onGround && p.z >= 2.75;
+            boolean uj = !pressed && p.onGround && userJumps.test(p);
             pressed |= uj;
             intent.setCommitThreshold(carry ? IntentEstimator.CARRY_THRESHOLD : IntentEstimator.GUIDE_THRESHOLD);
             b.intentThreshold = intent.commitThreshold();

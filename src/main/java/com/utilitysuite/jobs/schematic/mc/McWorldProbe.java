@@ -31,7 +31,7 @@ public final class McWorldProbe implements WorldProbe {
     @Override
     public int probe(int x, int y, int z, int paletteIndex) {
         ClientLevel l = level;
-        if (l == null || y < l.getMinBuildHeight() || y >= l.getMaxBuildHeight() || !l.hasChunk(x >> 4, z >> 4)) {
+        if (l == null || y < l.getMinY() || y >= l.getMaxY() + 1 || !l.hasChunk(x >> 4, z >> 4)) {
             return PlacementStatus.W_UNLOADED;
         }
         BlockState state = l.getBlockState(pos.set(x, y, z));

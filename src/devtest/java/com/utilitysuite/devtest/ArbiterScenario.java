@@ -9,7 +9,7 @@ import com.utilitysuite.core.api.LeaseListener;
 import com.utilitysuite.core.api.LeaseRequest;
 import com.utilitysuite.core.api.Services;
 import com.utilitysuite.core.api.SimKey;
-import org.lwjgl.glfw.GLFW;
+import com.mojang.blaze3d.platform.InputConstants;
 
 import java.util.Optional;
 
@@ -58,8 +58,8 @@ final class ArbiterScenario {
                     H.posStr()));
         });
         s.run("Stop-All via Backspace key", () -> {
-            H.physicalKey(GLFW.GLFW_KEY_BACKSPACE, true);
-            H.physicalKey(GLFW.GLFW_KEY_BACKSPACE, false);
+            H.physicalKey(InputConstants.KEY_BACKSPACE, true);
+            H.physicalKey(InputConstants.KEY_BACKSPACE, false);
         });
         s.waitUpTo("stopped", 5, arb::isAutomationStopped);
         s.run("after Stop-All", () -> {
@@ -111,10 +111,10 @@ final class ArbiterScenario {
             s.check("Resume: moves again", d > 0.5 && H.mc().options.keyUp.isDown(), Harness.fmt("moved %.2f", d));
         });
         s.run("simulate physical W press", () -> {
-            H.physicalKey(GLFW.GLFW_KEY_W, true);
+            H.physicalKey(InputConstants.KEY_W, true);
         });
         s.waitTicks(2);
-        s.run("release physical W", () -> H.physicalKey(GLFW.GLFW_KEY_W, false));
+        s.run("release physical W", () -> H.physicalKey(InputConstants.KEY_W, false));
         s.waitTicks(1);
         s.run("manual override", () -> {
             s.check("physical W press ends the lease (MANUAL_OVERRIDE)",

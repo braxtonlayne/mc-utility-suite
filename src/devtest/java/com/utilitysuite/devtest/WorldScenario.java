@@ -82,7 +82,11 @@ final class WorldScenario {
                 if (real.equals(id)) {
                     ok++;
                 } else if (firstBad.isEmpty()) {
-                    firstBad = "first mismatch: index says " + id + ", world has " + real;
+                    int bx = BlockPosPacking.x(p), by = BlockPosPacking.y(p), bz = BlockPosPacking.z(p);
+                    var lvl = net.minecraft.client.Minecraft.getInstance().level;
+                    firstBad = "first mismatch: index says " + id + ", world has " + real + " at " + bx + " " + by
+                            + " " + bz + " (chunk loaded " + lvl.hasChunk(bx >> 4, bz >> 4) + ", build y "
+                            + lvl.getMinY() + ".." + lvl.getMaxY() + ")";
                 }
             }
             s.check("X-Ray index holds ores and matches the world", n > 0 && ok == checked,
@@ -119,7 +123,7 @@ final class WorldScenario {
         s.waitTicks(30);
         s.run("freecam moved", () -> {
             H.mc().options.keyUp.setDown(false);
-            Vec3 c = H.mc().gameRenderer.getMainCamera().getPosition();
+            Vec3 c = H.mc().gameRenderer.mainCamera().position();
             double moved = Math.sqrt(c.distanceToSqr(saved[0][0], saved[0][1] + H.p().getEyeHeight(), saved[0][2]));
             double player = H.dist(saved[0], H.pos());
             s.check("camera flies, player stays", moved > 2 && player < 0.3,
@@ -130,7 +134,7 @@ final class WorldScenario {
         Shots.add(s, "world-freecam");
         s.run("freecam off", () -> {
             ScoutCameraModule cam = H.module(ScoutCameraModule.ID);
-            Vec3 c = H.mc().gameRenderer.getMainCamera().getPosition();
+            Vec3 c = H.mc().gameRenderer.mainCamera().position();
             Vec3 eye = H.p().getEyePosition();
             s.check("freecam off: camera back on the player", !cam.isFreecamActive()
                             && H.mc().getCameraEntity() == H.p() && c.distanceTo(eye) < 0.5,
