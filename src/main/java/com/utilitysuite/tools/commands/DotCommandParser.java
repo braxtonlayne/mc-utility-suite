@@ -109,7 +109,7 @@ public final class DotCommandParser {
     public static String helpText(String prefix) {
         String p = normalizePrefix(prefix);
         return p + "t <module>  toggle | " + p + "goal <text>  start a goal | " + p + "stop  Stop-All | " + p
-                + "list  modules | " + p + "help";
+                + "list  modules | " + p + "jumpcap [note]  save this jump for a test | " + p + "help";
     }
 
     private static String squash(String s) {

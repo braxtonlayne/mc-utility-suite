@@ -65,6 +65,33 @@ final class ModulesScenario {
                             + ChatCapture.drain());
             H.enable("light_overlay", false);
         });
+        // .jumpcap: the blocks around the player, with collision boxes, land in a file a test can be built from
+        java.nio.file.Path dir = H.mc().gameDirectory.toPath().resolve("utilitysuite").resolve("jumpcap");
+        long[] since = new long[1];
+        s.cmd("setblock ~2 ~ ~ minecraft:oak_slab");
+        s.waitTicks(5);
+        s.run("jumpcap", () -> {
+            since[0] = System.currentTimeMillis();
+            out[0] = net.neoforged.neoforge.client.ClientHooks.onClientSendMessage(".jumpcap playtest");
+        });
+        s.waitTicks(20);
+        s.run("jumpcap result", () -> {
+            String text = "";
+            try (var files = java.nio.file.Files.list(dir)) {
+                java.nio.file.Path newest = files.filter(f -> f.toFile().lastModified() >= since[0] - 1000)
+                        .max(java.util.Comparator.comparingLong(f -> f.toFile().lastModified())).orElse(null);
+                text = newest == null ? "" : java.nio.file.Files.readString(newest);
+            } catch (java.io.IOException e) {
+                text = "io: " + e;
+            }
+            s.check("'.jumpcap' saves the nearby blocks with collision boxes and is not sent",
+                    (out[0] == null || out[0].isEmpty()) && text.contains("\"note\": \"playtest\"")
+                            && text.contains("minecraft:oak_slab[type=bottom") && text.contains("0.50000")
+                            && text.contains("\"assist\": ") && text.contains("\"cells\": [["),
+                    "message after the event '" + out[0] + "', file " + text.length() + " chars"
+                            + (text.length() < 400 ? ": " + text : ""));
+        });
+        s.cmd("setblock ~2 ~ ~ minecraft:air");
     }
 
     private static void offhand(Scenario s) {

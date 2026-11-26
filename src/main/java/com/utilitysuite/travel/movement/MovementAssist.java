@@ -1560,6 +1560,23 @@ public final class MovementAssist implements IModule, IConfigurable, com.utility
         return plannedTakeoffIn;
     }
 
+    /** For {@code .jumpcap}: mode, last status, phase and the target the brain is on (allocates; on request only). */
+    @Override
+    public String diagnostics() {
+        StringBuilder b = new StringBuilder();
+        b.append("enabled=").append(enabled).append(" mode=").append(controlMode)
+                .append(" status=").append(status).append(" phase=").append(phase())
+                .append(" parkour=").append(parkourStatus).append(" plannedTakeoffIn=").append(plannedTakeoffIn);
+        if (brain.targetRegionValid()) {
+            b.append(" target=").append(brain.targetX()).append(',').append(brain.targetY()).append(',')
+                    .append(brain.targetZ()).append(brain.targetFrozen() ? " (frozen)" : "");
+        } else {
+            b.append(" target=none");
+        }
+        b.append(" techniqueFirst=").append(brain.techniqueFirst());
+        return b.toString();
+    }
+
     public void setSafeWalk(java.util.function.BooleanSupplier safeWalk) {
         this.safeWalk = safeWalk;
     }

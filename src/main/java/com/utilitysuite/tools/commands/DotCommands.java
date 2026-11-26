@@ -110,6 +110,12 @@ public final class DotCommands implements IModule, IConfigurable {
                     seed(cmd.arg());
                     return;
                 }
+                if ("jumpcap".equals(cmd.name())) {
+                    java.nio.file.Path file = JumpCapture.capture(cmd.arg());
+                    reply(file == null ? "No world to capture" : "Jump captured: " + file.getFileName()
+                            + " (in utilitysuite/jumpcap)", file == null);
+                    return;
+                }
                 notice("Unknown command '" + cmd.name() + "' (not sent)", NoticeKind.ERROR);
                 reply(DotCommandParser.helpText(prefix), false); // the list of commands is output the user reads
             }
