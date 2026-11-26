@@ -560,6 +560,16 @@ final class CombatExtraScenario {
         return d1 <= d2 ? new double[] {t1 + 7.5, d1} : new double[] {14 + (6.5 - t2), d2};
     }
 
+    /** Diagnostic: arena-relative x,z of route cells idx-1 .. idx+3. */
+    private static String cellsRel(long[] rb, int rn, int ri) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = Math.max(0, ri - 1); i < Math.min(rn, ri + 4); i++) {
+            sb.append('(').append(BlockPos.getX(rb[i]) - Arena.cx).append(',').append(BlockPos.getZ(rb[i]) - Arena.cz)
+                    .append(')');
+        }
+        return sb.toString();
+    }
+
     private static void ghostLine(Scenario s) {
         GhostLineModule gm = H.module(GhostLineModule.ID);
         GhostLine g = gm.ghost();
@@ -567,6 +577,7 @@ final class CombatExtraScenario {
         int[] r = new int[8];
         // route: max distance off the route, max lead, min lead, player progress at the min lead
         double[] dev = {0, 0, 99, 0};
+        String[] worst = {"-"};
         s.cmd(() -> Arena.tp(-7.5, 6.5, -90f));
         s.waitTicks(10);
         s.run("ghost line on, route run starts", () -> {
@@ -597,6 +608,15 @@ final class CombatExtraScenario {
                     if (gp[1] <= 0.6) {
                         r[2]++;
                     }
+                    if (gp[1] > dev[0]) {
+                        long[] rb = new long[256];
+                        int rn = rr.copyRoute(rb);
+                        int ri = rr.routeIndex();
+                        worst[0] = Harness.fmt("ghost (%.2f, %.2f) rel, player (%.2f, %.2f) rel, route %d cells idx %d"
+                                        + " next %s",
+                                g.ghostX() - Arena.cx, g.ghostZ() - Arena.cz, H.p().getX() - Arena.cx,
+                                H.p().getZ() - Arena.cz, rn, ri, cellsRel(rb, rn, ri));
+                    }
                     dev[0] = Math.max(dev[0], gp[1]);
                     dev[1] = Math.max(dev[1], gp[0] - pp[0]);
                     if (gp[0] - pp[0] < dev[2]) {
@@ -620,7 +640,7 @@ final class CombatExtraScenario {
                     Harness.fmt("%d route samples, %d ahead >= 2.0 along the L (lead %.2f..%.2f, min at progress %.1f),"
                                     + " %d on the route (max off %.2f); runner %s, player at progress %.1f/22 %s; kit %s",
                             r[0], r[1], dev[2], dev[1], dev[3], r[2], dev[0], Services.routeRunnerOrNull().state(),
-                            pp[0], H.posStr(), WorldProbe.summary()));
+                            pp[0], H.posStr(), WorldProbe.summary()) + "; worst off: " + worst[0]);
             s.check("ghost line: cleared once the route run ends", g.mode() == GhostLine.NONE,
                     "mode=" + g.mode());
             closeLease();

@@ -62,6 +62,47 @@ class GhostLineTest {
         assertEquals(2.5f, g.ghostZ(), 1e-4);
     }
 
+    /** 26.3 playtest find: a body cutting the corner of an L walked the ghost diagonally, up to a block off the route. */
+    @Test
+    void bodyCuttingACornerKeepsTheGhostOnTheRoute() {
+        GhostLine g = new GhostLine();
+        long[] cells = new long[11];
+        for (int i = 0; i <= 5; i++) {
+            cells[i] = Packed.pack(i, 64, 0);
+        }
+        for (int i = 1; i <= 5; i++) {
+            cells[5 + i] = Packed.pack(5, 64, i);
+        }
+        // body inside the corner, on the diagonal (past (5, 0) toward (5, 1)); runner index still on the corner cell
+        for (double lead = 0.0; lead <= 0.35; lead += 0.05) {
+            g.updateRoute(cells, cells.length, 5, 5.1, 64, 0.9, lead, 20);
+            assertEquals(5.5f, g.ghostX(), 1e-4, "ghost on the z leg, lead " + lead);
+            assertTrue(g.ghostZ() > 0.9f, "ghost ahead of the body, lead " + lead);
+        }
+        // and on the x leg, beside it, before the corner
+        g.updateRoute(cells, cells.length, 3, 2.5, 64, 1.1, 0.0, 20);
+        assertEquals(0.5f, g.ghostZ(), 1e-4);
+        assertTrue(g.ghostX() > 2.5f);
+    }
+
+    /** 26.3 playtest find: on open floor the body cut the L's corner by over two blocks; the ghost stays on the route. */
+    @Test
+    void bodyFarInsideTheCornerStillPutsTheGhostOnTheRoute() {
+        GhostLine g = new GhostLine();
+        long[] cells = new long[23];
+        int k = 0;
+        for (int x = -8; x <= 6; x++) {
+            cells[k++] = Packed.pack(x, 64, 6);
+        }
+        for (int z = 5; z >= -2; z--) {
+            cells[k++] = Packed.pack(6, 64, z);
+        }
+        // the logged worst sample: body (2.15, 4.21), runner index 14 (the corner cell (6, 6))
+        g.updateRoute(cells, k, 14, 2.15, 64, 4.21, 0.25, 20);
+        assertEquals(6.5f, g.ghostX(), 1e-4, "ghost on the second leg");
+        assertTrue(g.ghostZ() < 4.21f, "ghost ahead of the body along the leg");
+    }
+
     /** Playtest find: with the runner's index a few cells behind the body, the ghost walked back and sat behind it. */
     @Test
     void laggingRouteIndexStillPutsTheGhostAhead() {
@@ -81,8 +122,13 @@ class GhostLineTest {
             l[3 + i] = Packed.pack(3, 64, i);
         }
         g.updateRoute(l, 8, 3, 2.0, 64, 0.7, 0.0, 20); // corner cell (3, 0) ahead, body slightly toward the next leg
-        assertEquals(3.5f, g.trailX(1), 1e-4);
-        assertEquals(0.5f, g.trailZ(1), 1e-4);
+        boolean corner = false;
+        for (int i = 1; i < g.trailCount(); i++) {
+            corner |= Math.abs(g.trailX(i) - 3.5f) < 1e-4 && Math.abs(g.trailZ(i) - 0.5f) < 1e-4;
+        }
+        assertTrue(corner, "trail passes through the corner cell");
+        assertEquals(3.5f, g.ghostX(), 1e-4); // on the second leg
+        assertTrue(g.ghostZ() > 1.0f);
     }
 
     @Test

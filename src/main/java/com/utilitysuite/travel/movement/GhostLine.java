@@ -24,6 +24,8 @@ public final class GhostLine {
     public static final int JUMP = 2;
     public static final int MAX_TRAIL = 64;
     public static final double MIN_LEAD = 3.0;
+    /** Route steps searched past the runner's cell for the point nearest the body (bounded work per tick). */
+    static final int SEARCH_STEPS = 12;
     public static final double MIN_SHOW = 1.5;
     public static final int ARC_SEGMENTS = 16;
     public static final double ARC_RISE = 1.0;
@@ -110,24 +112,38 @@ public final class GhostLine {
         double oy = py;
         double oz = pz;
         boolean placed = false;
-        // The runner's index can lag the body by a cell or more (it cuts corners, sprint-jumps flats): skip the cells
-        // the body is already past, or the ghost walks back to them first and ends up beside or behind the player
-        // (playtest find). "Past" = beyond the midpoint of the step to the next cell.
-        int start = Math.max(0, index);
-        while (start + 1 < count) {
-            long a = cells[start];
-            long b = cells[start + 1];
-            double ax = Packed.x(a) + 0.5;
-            double az = Packed.z(a) + 0.5;
-            double sx = Packed.x(b) + 0.5 - ax;
-            double sz = Packed.z(b) + 0.5 - az;
-            double len2 = sx * sx + sz * sz;
-            if (len2 < 1.0e-6 || (px - ax) * sx + (pz - az) * sz <= 0.5 * len2) {
-                break;
+        // Start from the nearest point on the route, searched from the step into the runner's cell onward: the
+        // runner's index can lag the body (it cuts corners, sprint-jumps flats), and on open floor the body can cut
+        // a corner by two blocks or more. Measuring the lead from the body itself put the ghost beside or behind
+        // it and up to a block off the route (playtest finds, 1.21.1 and 26.3). The lead is measured along the
+        // route from that point, so the ghost always stands on the route; the trail joins it from the body.
+        int first = Math.max(0, index);
+        if (first + 1 < count) {
+            int lo = Math.max(0, first - 1);
+            int hi = Math.min(count - 1, first + SEARCH_STEPS);
+            double best = Double.POSITIVE_INFINITY;
+            double bx = px;
+            double bz = pz;
+            int bestEnd = first;
+            for (int i = lo; i < hi; i++) {
+                double d2 = project(cells[i], cells[i + 1], px, pz);
+                if (d2 < best) {
+                    best = d2;
+                    bx = projX;
+                    bz = projZ;
+                    bestEnd = i + 1;
+                }
             }
-            start++;
+            cx = bx;
+            cz = bz;
+            first = bestEnd;
+            if (best > 0.09) { // a visible gap: the trail runs from the body to the route
+                addTrail((float) cx, (float) cy, (float) cz);
+            }
+            ox = cx;
+            oz = cz;
         }
-        for (int i = start; i < count && trailCount < MAX_TRAIL - 1; i++) {
+        for (int i = first; i < count && trailCount < MAX_TRAIL - 1; i++) {
             long c = cells[i];
             double nx = Packed.x(c) + 0.5;
             double ny = Packed.y(c);
@@ -157,6 +173,28 @@ public final class GhostLine {
             oz = cz;
         }
         publish(ROUTE, (float) ox, (float) oy, (float) oz, px, py, pz);
+    }
+
+    /** Scratch result of {@link #project} (no allocation per tick). */
+    private double projX;
+    private double projZ;
+
+    /**
+     * Projects (px, pz) onto the horizontal step between the centres of cells {@code a} and {@code b}, clamped to the
+     * step; the point lands in {@link #projX}/{@link #projZ} and the squared distance to it is returned.
+     */
+    private double project(long a, long b, double px, double pz) {
+        double ax = Packed.x(a) + 0.5;
+        double az = Packed.z(a) + 0.5;
+        double sx = Packed.x(b) + 0.5 - ax;
+        double sz = Packed.z(b) + 0.5 - az;
+        double len2 = sx * sx + sz * sz;
+        double t = len2 < 1.0e-6 ? 0.0 : Math.max(0.0, Math.min(1.0, ((px - ax) * sx + (pz - az) * sz) / len2));
+        projX = ax + sx * t;
+        projZ = az + sz * t;
+        double dx = px - projX;
+        double dz = pz - projZ;
+        return dx * dx + dz * dz;
     }
 
     /** Places the ghost at the predicted landing with a parabolic arc from the player. */
