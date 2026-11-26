@@ -190,6 +190,38 @@ public final class ReachWalker {
         }
     }
 
+    /**
+     * Walks off a block the player stands on so it can be taken down: the walk's own scaffold that ended up in a
+     * schematic cell (Baritone pillared onto it to reach a high layer) would otherwise block that cell for good, since
+     * scaffold under the player is never broken. {@code spots} are standing spots that reach {@code target} (best
+     * first); one in the target's own column (on top of it) is skipped. Same lease handover as a reach walk.
+     *
+     * @return true when a walk started
+     */
+    public boolean stepOff(long target, long[] spots, int count, Host host) {
+        if (phase == Phase.WALKING || count <= 0) {
+            return false;
+        }
+        int tx = BlockPos.getX(target), tz = BlockPos.getZ(target);
+        for (int i = 0; i < count; i++) {
+            long spot = spots[i];
+            if (BlockPos.getX(spot) == tx && BlockPos.getZ(spot) == tz) {
+                continue; // standing on (or above) it again
+            }
+            host.releaseOwnLease();
+            Optional<NavigationRun> started = host.startWalk(BlockPos.getX(spot), BlockPos.getY(spot),
+                    BlockPos.getZ(spot));
+            if (started.isEmpty()) {
+                return false;
+            }
+            run = started.get();
+            walkCell = -1;
+            phase = Phase.WALKING;
+            return true;
+        }
+        return false;
+    }
+
     /** Cancels a running walk and forgets all state (stop, resume, new plan, setting turned off). */
     public void reset() {
         NavigationRun r = run;

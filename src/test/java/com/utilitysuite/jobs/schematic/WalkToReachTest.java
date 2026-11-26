@@ -199,6 +199,31 @@ class WalkToReachTest {
     }
 
     @Test
+    void stepOffSkipsTheScaffoldColumnAndWalksToTheNextSpot() {
+        ReachWalker walker = new ReachWalker(40, 1200);
+        FakeHost host = new FakeHost();
+        long scaffold = BlockPos.asLong(2, 66, 2);
+        long[] spots = {BlockPos.asLong(2, 67, 2), BlockPos.asLong(5, 64, 2)}; // on top of it, then beside the build
+        assertTrue(walker.stepOff(scaffold, spots, 2, host));
+        assertEquals(List.of("release", "walk 5"), host.calls, "never back onto the scaffold column");
+        assertTrue(walker.isWalking());
+        assertFalse(walker.stepOff(scaffold, spots, 2, host), "one walk at a time");
+        host.lastRun.end(NavigationStatus.ARRIVED, null);
+        assertFalse(walker.tick(false, ELSEWHERE, host), "arrived: cleanup takes it down from here");
+        assertEquals(ReachWalker.Phase.IDLE, walker.phase());
+    }
+
+    @Test
+    void stepOffDoesNothingWhenOnlyTheScaffoldColumnReaches() {
+        ReachWalker walker = new ReachWalker(40, 1200);
+        FakeHost host = new FakeHost();
+        long scaffold = BlockPos.asLong(2, 66, 2);
+        long[] spots = {BlockPos.asLong(2, 67, 2)};
+        assertFalse(walker.stepOff(scaffold, spots, 1, host));
+        assertTrue(host.calls.isEmpty(), "keeps its lease when there is nowhere to go");
+    }
+
+    @Test
     void stallReleasesLeaseThenWalksAndResumesOnArrival() {
         ReachWalker walker = new ReachWalker(40, 1200);
         FakeHost host = new FakeHost();

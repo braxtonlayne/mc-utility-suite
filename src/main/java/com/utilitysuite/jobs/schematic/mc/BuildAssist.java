@@ -173,6 +173,7 @@ public final class BuildAssist implements LeaseListener {
     private String cleanupNotice;
     /** A recorded scaffold block sits in a schematic cell: clean up before the build finishes, not after. */
     private boolean scaffoldInCells;
+    private final long[] stepOffSpots = new long[4];
 
     /**
      * Called once when the build has run out of materials: nothing in the look-ahead window is placeable with what the
@@ -766,6 +767,8 @@ public final class BuildAssist implements LeaseListener {
         int n = ledger.size();
         cleanupOrder = ledger.removalOrder(feet, cleanupOrder);
         int under = 0, far = 0;
+        boolean inCells = false;
+        long inCellUnder = Long.MIN_VALUE;
         for (int i = 0; i < n; i++) {
             long p = cleanupOrder[i];
             targetX = BlockPos.getX(p);
@@ -776,12 +779,17 @@ public final class BuildAssist implements LeaseListener {
                 ledger.forget(p);
                 continue;
             }
+            boolean inCell = inSchematicCell(targetX, targetY, targetZ);
+            inCells |= inCell;
             if (w == PlacementStatus.W_UNLOADED || !withinReach(player, reach)) {
                 far++;
                 continue;
             }
             if (ScaffoldLedger.underPlayer(p, feet)) {
                 under++;
+                if (inCell && inCellUnder == Long.MIN_VALUE) {
+                    inCellUnder = p;
+                }
                 continue;
             }
             cleanupPos = p;
@@ -789,13 +797,38 @@ public final class BuildAssist implements LeaseListener {
             aimSet = false;
             aimTicks = 0;
             breakTicks = 0;
+            scaffoldInCells = inCells || scaffoldInCells;
             return true;
+        }
+        scaffoldInCells = inCells;
+        if (inCellUnder != Long.MIN_VALUE && walkToReach && plan != null && firstOpen < plan.size()
+                && stepOffScaffold(player, inCellUnder)) {
+            return false; // walking off it; cleanup stays pending and takes it down from the new spot
         }
         // Nothing breakable from here: leave the rest (the card says where) and let the job complete.
         cleanupPending = false;
         cleanupRequested = false;
         setCleanupNotice(under, far);
         return false;
+    }
+
+    /** The position is a block cell of the schematic (not air/void in it). */
+    private boolean inSchematicCell(int x, int y, int z) {
+        SchematicVolume v = scan.volume();
+        int lx = x - scan.originX(), ly = y - scan.originY(), lz = z - scan.originZ();
+        return v.contains(lx, ly, lz) && v.isBlock(v.paletteIndex(lx, ly, lz));
+    }
+
+    /**
+     * The player stands on the walk's own scaffold that sits in a build cell: walk to a spot off it that still reaches
+     * it (playtest 14-fieldjobs: the dome waited at 24/33 on a dirt pillar top inside a dome cell).
+     */
+    private boolean stepOffScaffold(LocalPlayer player, long scaffold) {
+        int n = spotFinder.find(probe, scan.volume(), scan.originX(), scan.originY(), scan.originZ(),
+                BlockPos.getX(scaffold), BlockPos.getY(scaffold), BlockPos.getZ(scaffold),
+                player.getX(), player.getY(), player.getZ(), player.blockInteractionRange(), stepOffSpots);
+        clearTarget();
+        return walker.stepOff(scaffold, stepOffSpots, n, walkHost);
     }
 
     private void setCleanupNotice(int under, int far) {

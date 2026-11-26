@@ -594,6 +594,17 @@ final class FieldJobsScenario {
                             + "x" + vol[0].sizeZ() + ", " + blocks + " blocks") + "; cobblestone in the world "
                             + cobble + "; card " + c.map(x -> x.phase() + " " + x.placedBlocks() + "/"
                             + x.totalBlocks() + " notes " + x.notes()).orElse("no job") + "; " + H.arbiterState());
+            try {
+                java.lang.reflect.Field f = SchematicToolkit.class.getDeclaredField("assist");
+                f.setAccessible(true);
+                com.utilitysuite.jobs.schematic.mc.BuildAssist ba =
+                        (com.utilitysuite.jobs.schematic.mc.BuildAssist) f.get(tk);
+                s.note("dome scaffold: recorded " + ba.scaffoldCount() + ", cleanup pending " + ba.cleanupPending()
+                        + ", notice " + ba.cleanupNotice() + ", walker " + ba.walkPhase() + ", player "
+                        + H.posStr());
+            } catch (ReflectiveOperationException e) {
+                s.note("dome scaffold: " + e);
+            }
             tk.cancel();
             var goals = Services.goalsOrNull();
             if (goals != null) {
