@@ -144,6 +144,38 @@ public final class HighlightIndex implements ObservationSource {
         return blocks.size();
     }
 
+    /**
+     * Drops the category bits outside {@code keep} from every entry (entries left with none are removed). Used when a
+     * module stops asking for a category: the other modules' matches stay, so nothing has to be rescanned. Rare (a
+     * mask change), O(entries).
+     */
+    public synchronized void retainCategories(int keep) {
+        var it = bySection.long2ObjectEntrySet().fastIterator();
+        while (it.hasNext()) {
+            LongArrayList members = it.next().getValue();
+            int w = 0;
+            for (int i = 0, n = members.size(); i < n; i++) {
+                long p = members.getLong(i);
+                int v = blocks.get(p);
+                int cats = categories(v) & keep;
+                if (cats == 0) {
+                    blocks.remove(p);
+                    renderDirty = true;
+                    continue;
+                }
+                if (cats != categories(v)) {
+                    blocks.put(p, (v & ~0xFF) | cats);
+                    renderDirty = true;
+                }
+                members.set(w++, p);
+            }
+            members.size(w);
+            if (w == 0) {
+                it.remove();
+            }
+        }
+    }
+
     public synchronized void clear() {
         blocks.clear();
         bySection.clear();

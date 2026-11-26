@@ -37,8 +37,10 @@ import java.util.List;
 public final class TrialChamberModule extends WorldModule {
 
     public static final String ID = "trial_chambers";
-    /** Render-list entries examined per tick. */
+    /** Vault / trial spawner block states read per tick. */
     private static final int ENTRIES_PER_TICK = 512;
+    /** Render-list entries whose category is tested per tick (a mask test each, no world access). */
+    private static final int SKIPS_PER_TICK = 16384;
     /** Ticks the "inactive while I stand next to it" condition must hold before a vault counts as looted. */
     private static final int LOOT_CONFIRM_TICKS = 60;
     private static final double OTHER_PLAYER_RANGE_SQ = 6.0 * 6.0;
@@ -146,8 +148,12 @@ public final class TrialChamberModule extends WorldModule {
         double px = player.getX();
         double py = player.getY();
         double pz = player.getZ();
-        int end = Math.min(n, listCursor + ENTRIES_PER_TICK);
-        for (int i = listCursor; i < end; i++) {
+        // The shared list also holds other modules' matches (World Knowledge's ores: tens of thousands), so the
+        // cheap category test gets a much larger budget than the block-state reads.
+        int end = Math.min(n, listCursor + SKIPS_PER_TICK);
+        int classified = 0;
+        int i = listCursor;
+        for (; i < end && classified < ENTRIES_PER_TICK; i++) {
             if ((HighlightIndex.categories(observed.renderValue(i)) & BlockCategories.SPAWNER) == 0) {
                 continue;
             }
@@ -161,12 +167,13 @@ public final class TrialChamberModule extends WorldModule {
             if (dx * dx + dy * dy + dz * dz > rangeSq) {
                 continue;
             }
+            classified++;
             int c = classifyAt(level, cursor.set(x, y, z), p);
             if (c != 0) {
                 pushBack(p, c);
             }
         }
-        listCursor = end;
+        listCursor = i;
         if (listCursor >= n) {
             swap();
             listCursor = 0;

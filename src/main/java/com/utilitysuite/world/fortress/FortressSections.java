@@ -259,6 +259,25 @@ public final class FortressSections {
         return (sectionZ(i) << 4) + maxZ(summaries[i]) + 1;
     }
 
+    // ---- piece height band ----------------------------------------------------------------------------------------
+
+    /**
+     * Lowest Y of any vanilla fortress piece: {@code NetherFortressStructure} moves the whole piece set inside
+     * y 48..70 ({@code moveInsideHeights(random, 48, 70)}), so the piece boxes, where fortress mobs spawn, never reach
+     * lower. Nether bricks below it are the support pillars ({@code fillColumnDown}) that run down to the lava sea or
+     * bedrock outside every piece box: no fortress spawns there, and counting them drew tall false spawn boxes.
+     */
+    public static final int FORTRESS_MIN_Y = 48;
+
+    /**
+     * First local y (0..16) of the section at {@code sectionY} that can belong to a fortress piece; 16 when the whole
+     * section lies below {@link #FORTRESS_MIN_Y} (pillars only).
+     */
+    public static int firstPieceLocalY(int sectionY) {
+        int base = sectionY << 4;
+        return Math.max(0, Math.min(16, FORTRESS_MIN_Y - base));
+    }
+
     // ---- spawn rule ------------------------------------------------------------------------------------------------
 
     public static final int SPAWN_NONE = 0;

@@ -32,7 +32,8 @@ import java.util.function.Supplier;
 /**
  * Nether Fortress spawn boxes. Vanilla spawns blazes, wither skeletons, skeletons and magma cubes anywhere inside the
  * bounding boxes of a fortress's pieces. The client cannot see the pieces, so a budgeted sweep of the loaded Nether
- * sections records where fortress blocks (nether bricks, fences, stairs) are; touching sections with enough bricks
+ * sections records where fortress blocks (nether bricks, fences, stairs) are, from y {@value
+ * FortressSections#FORTRESS_MIN_Y} up (the support pillars below are outside every piece); touching sections with enough bricks
  * form a fortress and their brick bounding boxes are drawn as the approximate spawn volumes ("approx"). Inside the
  * boxes near you, valid spawn floors are marked: purple where wither skeletons can spawn (3 blocks of room, block light
  * at or below 7, the Nether's monster light level), orange where only blazes fit or the light is too high. With a known
@@ -196,7 +197,8 @@ public final class FortressSpawnModule extends WorldModule {
             return; // keep what we knew while the chunk is unloaded
         }
         LevelChunkSection section = chunk.getSection(idx);
-        if (section.hasOnlyAir() || !section.maybeHas(brick)) {
+        int firstY = FortressSections.firstPieceLocalY(sy); // support pillars below the piece band never spawn
+        if (firstY >= 16 || section.hasOnlyAir() || !section.maybeHas(brick)) {
             sections.put(sx, sy, sz, 0L);
             return;
         }
@@ -207,7 +209,7 @@ public final class FortressSpawnModule extends WorldModule {
         int x1 = -1;
         int y1 = -1;
         int z1 = -1;
-        for (int ly = 0; ly < 16; ly++) {
+        for (int ly = firstY; ly < 16; ly++) {
             for (int lz = 0; lz < 16; lz++) {
                 for (int lx = 0; lx < 16; lx++) {
                     if (isFortressBlock(section.getBlockState(lx, ly, lz))) {

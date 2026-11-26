@@ -93,6 +93,25 @@ class FortressSectionsTest {
     }
 
     @Test
+    void supportPillarsBelowThePieceBandAreSkipped() {
+        // Vanilla moves every fortress piece inside y 48..70; the bricks below are fillColumnDown pillars.
+        assertEquals(48, FortressSections.FORTRESS_MIN_Y);
+        assertEquals(16, FortressSections.firstPieceLocalY(0)); // y 0..15: pillars only
+        assertEquals(16, FortressSections.firstPieceLocalY(1)); // y 16..31
+        assertEquals(16, FortressSections.firstPieceLocalY(2)); // y 32..47
+        assertEquals(0, FortressSections.firstPieceLocalY(3)); // y 48..63: pieces start at its bottom
+        assertEquals(0, FortressSections.firstPieceLocalY(4));
+        assertEquals(16, FortressSections.firstPieceLocalY(-1));
+        for (int sy = -4; sy <= 8; sy++) {
+            int first = FortressSections.firstPieceLocalY(sy);
+            for (int ly = 0; ly < 16; ly++) {
+                boolean scanned = ly >= first;
+                assertEquals((sy << 4) + ly >= FortressSections.FORTRESS_MIN_Y, scanned, "sy " + sy + " ly " + ly);
+            }
+        }
+    }
+
+    @Test
     void steadyStateClusteringDoesNotAllocate() {
         if (!AllocationProbe.supported()) {
             return;

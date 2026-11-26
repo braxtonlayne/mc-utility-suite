@@ -6,7 +6,6 @@ import com.utilitysuite.world.WorldIds;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
 import it.unimi.dsi.fastutil.longs.LongArrayFIFOQueue;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
-import it.unimi.dsi.fastutil.longs.LongIterator;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import it.unimi.dsi.fastutil.objects.Reference2IntOpenHashMap;
 import net.minecraft.core.BlockPos;
@@ -86,6 +85,9 @@ public final class WorldScanner {
     private long nearCenter = Long.MIN_VALUE;
     private boolean trackChunkAge;
     private long gameTime;
+    /** Player chunk at the last tick (requeues start there). */
+    private int lastChunkX;
+    private int lastChunkZ;
     /** Game time of the last render-list rebuild (see {@link #RENDER_REBUILD_TICKS}). */
     private long lastRenderRebuild = -RENDER_REBUILD_TICKS;
     /**
@@ -107,7 +109,12 @@ public final class WorldScanner {
 
     // ---- configuration ------------------------------------------------------------------------------------------
 
-    /** What the match scan looks for. A change requeues every loaded section. */
+    /**
+     * What the match scan looks for. Categories nobody asks for any more are stripped from the index in place (the
+     * rest stay, no rescan); a newly asked-for category requeues every loaded section, nearest chunks first. Clearing
+     * the index and rescanning in load order instead made a module switched on next to an always-on ore scan (World
+     * Knowledge) wait minutes for its first match nearby, and switching it off again dropped every ore match too.
+     */
     public void setMask(int newMask, Set<String> newCustomIds) {
         int m = newMask & ~BlockCategories.FLUIDS;
         if (m == mask && newCustomIds == lastCustomIdsRef) {
@@ -119,13 +126,19 @@ public final class WorldScanner {
             return;
         }
         boolean idsChanged = !ids.equals(customIds);
+        int old = mask;
         mask = m;
         customIds = ids;
         if (idsChanged) {
             categoryCache.clear();
         }
-        observed.clear();
-        requeueAll();
+        int keep = idsChanged ? m & ~BlockCategories.CUSTOM : m; // a new custom list makes old custom matches stale
+        if ((old & ~keep) != 0) {
+            observed.retainCategories(keep);
+        }
+        if ((m & ~keep) != 0 || (m & ~old) != 0) {
+            requeueAll();
+        }
     }
 
     public int mask() {
@@ -352,15 +365,17 @@ public final class WorldScanner {
         }
     }
 
+    /** Requeues every loaded section, the chunks nearest the player first (rare: a mask change). */
     private void requeueAll() {
         if (level == null) {
             return;
         }
         int minS = level.getMinSection();
         int maxS = level.getMaxSection();
-        LongIterator it = loadedChunks.iterator();
-        while (it.hasNext()) {
-            long ck = it.nextLong();
+        queue.clear(); // pending entries are all re-added below, in distance order
+        queued.clear();
+        long[] chunks = nearestFirst(loadedChunks, lastChunkX, lastChunkZ);
+        for (long ck : chunks) {
             int cx = BlockPosPacking.chunkX(ck);
             int cz = BlockPosPacking.chunkZ(ck);
             for (int sy = minS; sy < maxS; sy++) {
@@ -370,6 +385,25 @@ public final class WorldScanner {
                 }
             }
         }
+    }
+
+    /**
+     * The packed chunk keys ({@link BlockPosPacking#chunk}) sorted by Chebyshev distance from {@code (cx, cz)},
+     * nearest first (ties by squared distance). Engine-free; allocates the result.
+     */
+    static long[] nearestFirst(LongOpenHashSet chunks, int cx, int cz) {
+        long[] out = chunks.toLongArray();
+        it.unimi.dsi.fastutil.longs.LongArrays.quickSort(out, (a, b) -> {
+            int c = Long.compare(ringKey(a, cx, cz), ringKey(b, cx, cz));
+            return c != 0 ? c : Long.compare(a, b);
+        });
+        return out;
+    }
+
+    private static long ringKey(long chunk, int cx, int cz) {
+        long dx = Math.abs((long) BlockPosPacking.chunkX(chunk) - cx);
+        long dz = Math.abs((long) BlockPosPacking.chunkZ(chunk) - cz);
+        return (Math.max(dx, dz) << 32) | (dx * dx + dz * dz);
     }
 
     /** Incremental update for one block (client block update packets, own edits). */
@@ -420,6 +454,8 @@ public final class WorldScanner {
     public void tick(Level l, int px, int py, int pz, long time, int fullScans, int nearScans) {
         ensureLevel(l);
         gameTime = time;
+        lastChunkX = px >> 4;
+        lastChunkZ = pz >> 4;
         if (trackChunkAge && time % 20 == 0) {
             chunkAge.settle(time); // once a second, as the tracker expects
         }
