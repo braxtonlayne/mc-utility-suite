@@ -49,6 +49,14 @@ final class WorldExtraOverlayTests {
         renderGovernor(s);
     }
 
+    /** "(dx,dy,dz)=block" relative to the arena centre, for diff diagnostics. */
+    private static String rel(long p, net.minecraft.client.multiplayer.ClientLevel lvl) {
+        int x = BlockPosPacking.x(p), y = BlockPosPacking.y(p), z = BlockPosPacking.z(p);
+        String block = lvl == null ? "?" : lvl.getBlockState(new net.minecraft.core.BlockPos(x, y, z)).getBlock()
+                .builtInRegistryHolder().key().location().getPath();
+        return "(" + (x - Arena.cx) + "," + (y - Arena.FLOOR) + "," + (z - Arena.cz) + ")=" + block;
+    }
+
     private static int ax(int dx) {
         return Arena.cx + dx;
     }
@@ -170,6 +178,7 @@ final class WorldExtraOverlayTests {
         s.run("changes: small radii, module on", () -> {
             H.setting(ChangeTrackerModule.ID, "mark_radius", 1);
             H.setting(ChangeTrackerModule.ID, "coarse_radius", 1);
+            H.setting(ChangeTrackerModule.ID, "waypoint_radius", 0); // saved waypoints nearby would add their chunks
             H.enable(ChangeTrackerModule.ID, true);
         });
         s.waitUpTo("changes: files open", 60, () -> {
@@ -219,6 +228,17 @@ final class WorldExtraOverlayTests {
                     r == null ? "no diff" : "status '" + m.status() + "', placed listed " + hasAdded
                             + ", removed listed " + hasRemoved + ", added " + r.added().length + " removed "
                             + r.removed().length + " in " + r.comparedChunks() + " chunks");
+            if (r != null) {
+                StringBuilder sb = new StringBuilder("change diff positions (relative to the arena centre):");
+                net.minecraft.client.multiplayer.ClientLevel lvl = H.mc().level;
+                for (long p : r.added()) {
+                    sb.append(" +").append(rel(p, lvl));
+                }
+                for (long p : r.removed()) {
+                    sb.append(" -").append(rel(p, lvl));
+                }
+                s.note(sb.toString());
+            }
         });
         s.waitUpTo("changes: snapshot saved to disk", 260, () -> {
             Path f = changeFile();
@@ -239,6 +259,7 @@ final class WorldExtraOverlayTests {
             }
             H.setting(ChangeTrackerModule.ID, "mark_radius", 2);
             H.setting(ChangeTrackerModule.ID, "coarse_radius", 6);
+            H.setting(ChangeTrackerModule.ID, "waypoint_radius", 1);
             H.enable(ChangeTrackerModule.ID, false);
             Harness.command("setblock " + at(3, 1, 3) + " minecraft:air");
             Harness.command("setblock " + at(-3, 1, 3) + " minecraft:air");
