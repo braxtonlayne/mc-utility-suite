@@ -199,8 +199,8 @@ public final class ReachWalker {
      * @return true when a walk started
      */
     public boolean stepOff(long target, long[] spots, int count, Host host) {
-        if (phase == Phase.WALKING || count <= 0) {
-            return false;
+        if (phase == Phase.WALKING || count <= 0 || !host.navigatorAvailable()) {
+            return false; // keep Build Assist's lease unless a walk can actually start
         }
         int tx = BlockPos.getX(target), tz = BlockPos.getZ(target);
         for (int i = 0; i < count; i++) {

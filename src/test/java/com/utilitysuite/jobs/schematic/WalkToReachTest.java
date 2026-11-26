@@ -214,6 +214,16 @@ class WalkToReachTest {
     }
 
     @Test
+    void stepOffKeepsTheLeaseWithoutANavigator() {
+        ReachWalker walker = new ReachWalker(40, 1200);
+        FakeHost host = new FakeHost();
+        host.available = false;
+        long[] spots = {BlockPos.asLong(5, 64, 2)};
+        assertFalse(walker.stepOff(BlockPos.asLong(2, 66, 2), spots, 1, host));
+        assertTrue(host.calls.isEmpty(), "no release when no walk can start");
+    }
+
+    @Test
     void stepOffDoesNothingWhenOnlyTheScaffoldColumnReaches() {
         ReachWalker walker = new ReachWalker(40, 1200);
         FakeHost host = new FakeHost();

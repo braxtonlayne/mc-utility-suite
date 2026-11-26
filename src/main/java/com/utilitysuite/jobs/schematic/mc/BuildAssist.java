@@ -174,6 +174,10 @@ public final class BuildAssist implements LeaseListener {
     /** A recorded scaffold block sits in a schematic cell: clean up before the build finishes, not after. */
     private boolean scaffoldInCells;
     private final long[] stepOffSpots = new long[4];
+    /** Walks off the same in-cell scaffold block before giving up on it (no endless doomed walks). */
+    private static final int MAX_STEP_OFF_TRIES = 2;
+    private long stepOffTarget = Long.MIN_VALUE;
+    private int stepOffTries;
 
     /**
      * Called once when the build has run out of materials: nothing in the look-ahead window is placeable with what the
@@ -380,6 +384,7 @@ public final class BuildAssist implements LeaseListener {
         ledger.clear();
         cleanupPending = false;
         scaffoldInCells = false;
+        stepOffTarget = Long.MIN_VALUE;
     }
 
     /** {@link IBlockChangeFeed} listener: cheap and allocation free, only buffers positions while a walk runs. */
@@ -760,6 +765,8 @@ public final class BuildAssist implements LeaseListener {
         if (ledger.isEmpty()) {
             cleanupPending = false;
             cleanupRequested = false;
+            scaffoldInCells = false;
+            stepOffTarget = Long.MIN_VALUE;
             setCleanupNotice(0, 0);
             return false;
         }
@@ -824,6 +831,14 @@ public final class BuildAssist implements LeaseListener {
      * it (playtest 14-fieldjobs: the dome waited at 24/33 on a dirt pillar top inside a dome cell).
      */
     private boolean stepOffScaffold(LocalPlayer player, long scaffold) {
+        if (scaffold != stepOffTarget) {
+            stepOffTarget = scaffold;
+            stepOffTries = 0;
+        }
+        if (stepOffTries >= MAX_STEP_OFF_TRIES) {
+            return false; // walks off it failed: leave it, the card says it is under you
+        }
+        stepOffTries++;
         int n = spotFinder.find(probe, scan.volume(), scan.originX(), scan.originY(), scan.originZ(),
                 BlockPos.getX(scaffold), BlockPos.getY(scaffold), BlockPos.getZ(scaffold),
                 player.getX(), player.getY(), player.getZ(), player.blockInteractionRange(), stepOffSpots);
