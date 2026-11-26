@@ -121,4 +121,57 @@ class CropPlannerTest {
         });
         assertTrue(bytes < 64 * 1024, "allocated " + bytes + " bytes over 5000 runs");
     }
+
+    // ---- replant aim (playtest find: soil hidden behind a taller crop was harvested and never replanted) -----------
+
+    @Test
+    void replantAimUsesTheCentreWhenVisible() {
+        double[] out = new double[2];
+        assertTrue(CropPlanner.replantAim(0.5, 3.5, 2, 0, (fx, fz) -> true, out));
+        assertEquals(0.5, out[0], 1e-9);
+        assertEquals(0.5, out[1], 1e-9);
+    }
+
+    @Test
+    void replantAimFallsBackToTheNearestVisibleCorner() {
+        // eye at (0.5, 3.5), soil cell (2, 0): the nearest corner is (2.2, 0.8); only far-x corners are visible
+        double[] out = new double[2];
+        int[] tries = new int[1];
+        assertTrue(CropPlanner.replantAim(0.5, 3.5, 2, 0, (fx, fz) -> {
+            tries[0]++;
+            return fx > 0.7;
+        }, out));
+        // centre, then (0.2, 0.8) [nearest], then (0.8, 0.8): the first visible
+        assertEquals(3, tries[0]);
+        assertEquals(0.8, out[0], 1e-9);
+        assertEquals(0.8, out[1], 1e-9);
+    }
+
+    @Test
+    void replantAimTriesEdgeMidpointsAfterCorners() {
+        double[] out = new double[2];
+        assertTrue(CropPlanner.replantAim(0.5, 3.5, 2, 0,
+                (fx, fz) -> Math.abs(fx - 0.5) < 1e-9 && fz > 0.7, out));
+        assertEquals(0.5, out[0], 1e-9);
+        assertEquals(0.8, out[1], 1e-9);
+    }
+
+    @Test
+    void replantAimFailsWhenTheSoilIsHidden() {
+        int[] tries = new int[1];
+        assertFalse(CropPlanner.replantAim(0.5, 3.5, 2, 0, (fx, fz) -> {
+            tries[0]++;
+            return false;
+        }, new double[2]));
+        assertEquals(CropPlanner.AIM_POINTS, tries[0]);
+    }
+
+    @Test
+    void replantAimDoesNotAllocate() {
+        Assumptions.assumeTrue(AllocationProbe.supported());
+        double[] out = new double[2];
+        CropPlanner.AimTest hidden = (fx, fz) -> fx > 0.7 && fz < 0.3;
+        long bytes = AllocationProbe.measure(5_000, () -> CropPlanner.replantAim(0.5, 3.5, 2, 0, hidden, out));
+        assertTrue(bytes < 64 * 1024, "allocated " + bytes + " bytes over 5000 runs");
+    }
 }

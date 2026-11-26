@@ -147,6 +147,16 @@ public final class RunnersVisionModule implements IModule, IConfigurable {
         clear();
     }
 
+    /** The published line (read-only use: playtests, diagnostics). Client thread. */
+    public RunnersVision vision() {
+        return vision;
+    }
+
+    /** First point of {@link #vision()} still ahead of the player (the line is drawn from there). */
+    public int drawFrom() {
+        return drawFrom;
+    }
+
     @Override
     public void onProfileLoaded(ProfileConfig p) {
         opacity = (float) Mth.clamp(p.getDouble(ID, K_OPACITY, 0.6), 0.1, 1.0);

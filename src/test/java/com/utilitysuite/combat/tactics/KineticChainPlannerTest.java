@@ -9,8 +9,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class KineticChainPlannerTest {
 
     @Test
-    void referenceFeetThrowMatchesMaceDiveEstimate() {
-        assertEquals(MaceDivePlanner.WIND_LAUNCH_VY, KineticChainPlanner.strength(KineticChainPlanner.REF_DIST), 1e-9);
+    void strengthIsVanillaExplosionKnockback() {
+        assertEquals(1.22, KineticChainPlanner.strength(0), 1e-9);
+        assertEquals(1.22 * (1 - 0.25 / 2.4), KineticChainPlanner.strength(0.25), 1e-9);
         assertEquals(0, KineticChainPlanner.strength(2.4), 1e-9);
         assertTrue(KineticChainPlanner.strength(0) > KineticChainPlanner.strength(1));
     }
@@ -21,9 +22,23 @@ class KineticChainPlannerTest {
                 0, 64.42, 0, 0, 0.42 - 0.08, 0, 0, 64, 0);
         assertTrue(l.inRange);
         assertEquals(0, l.kx, 1e-9);
-        assertEquals(MaceDivePlanner.WIND_LAUNCH_VY, l.ky, 1e-9);
+        assertEquals(KineticChainPlanner.strength(0.42), l.ky, 1e-9);
         assertTrue(l.apex > 4 && l.apex < 12, "apex " + l.apex);
         assertEquals(0, l.apexTravel, 1e-9);
+    }
+
+    /**
+     * In-game calibration (playtest 19-combatextra): standing on the floor (vy -0.0784 while grounded) and throwing a
+     * wind charge straight down at the block under the feet rose the player 6.08 blocks. The old scaling to
+     * {@code MaceDivePlanner.WIND_LAUNCH_VY} predicted 3.6.
+     */
+    @Test
+    void standingFloorThrowMatchesTheMeasuredLaunch() {
+        double burstY = KineticChainPlanner.faceCoord(63, 1); // top face of the floor block at y 63
+        KineticChainPlanner.Launch l = KineticChainPlanner.evaluate(new KineticChainPlanner.Launch(),
+                0.5, 64, 0.5, 0, -0.0784, 0, 0.5, burstY, 0.5);
+        assertEquals(64.25, burstY, 1e-9);
+        assertEquals(6.08, l.apex, 0.15);
     }
 
     @Test
@@ -53,7 +68,7 @@ class KineticChainPlannerTest {
 
     @Test
     void faceCoordinates() {
-        assertEquals(10.5 + 0.55, KineticChainPlanner.faceCoord(10, 1), 1e-9);
+        assertEquals(10.5 + 0.75, KineticChainPlanner.faceCoord(10, 1), 1e-9);
         assertEquals(10.5, KineticChainPlanner.faceCoord(10, 0), 1e-9);
     }
 }

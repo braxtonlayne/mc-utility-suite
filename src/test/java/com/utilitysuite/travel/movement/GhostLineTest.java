@@ -36,6 +36,17 @@ class GhostLineTest {
         assertEquals(g.ghostX(), g.trailX(g.trailCount() - 1), 1e-4);
     }
 
+    /** Playtest find: a lethal jump (no landing) never got its MISS mark because the arc needed a landing. */
+    @Test
+    void lethalJumpIsShownWhileAirborne() {
+        assertTrue(GhostLine.showsJump(true, true, false, false), "airborne, nothing survivable: shown (MISS)");
+        assertEquals(GhostLine.MISS, GhostLine.quality(true, 0f, 0.0));
+        assertTrue(GhostLine.showsJump(true, true, true, true), "on the ground, a jump that lands");
+        assertFalse(GhostLine.showsJump(true, true, false, true), "on the ground, no landing: hidden");
+        assertFalse(GhostLine.showsJump(false, true, true, false), "Movement Assist off");
+        assertFalse(GhostLine.showsJump(true, false, true, true), "standing still");
+    }
+
     @Test
     void lShapedRouteTurnsTheCorner() {
         GhostLine g = new GhostLine();
@@ -49,6 +60,29 @@ class GhostLineTest {
         g.updateRoute(cells, cells.length, 1, 0.5, 64, 0.5, 0.35, 20); // 7 blocks: 5 along x, 2 along z
         assertEquals(5.5f, g.ghostX(), 1e-4);
         assertEquals(2.5f, g.ghostZ(), 1e-4);
+    }
+
+    /** Playtest find: with the runner's index a few cells behind the body, the ghost walked back and sat behind it. */
+    @Test
+    void laggingRouteIndexStillPutsTheGhostAhead() {
+        GhostLine g = new GhostLine();
+        long[] cells = straight(20);
+        g.updateRoute(cells, cells.length, 0, 3.2, 64, 0.5, 0.0, 20); // index 0, body already at x 3.2
+        assertEquals(3.2 + GhostLine.MIN_LEAD, g.ghostX(), 1e-4);
+        for (int i = 1; i < g.trailCount(); i++) {
+            assertTrue(g.trailX(i) >= g.trailX(i - 1), "trail never steps back");
+        }
+        // a corner still ahead of the body is kept (only cells past the midpoint to the next are skipped)
+        long[] l = new long[8];
+        for (int i = 0; i <= 3; i++) {
+            l[i] = Packed.pack(i, 64, 0);
+        }
+        for (int i = 1; i <= 4; i++) {
+            l[3 + i] = Packed.pack(3, 64, i);
+        }
+        g.updateRoute(l, 8, 3, 2.0, 64, 0.7, 0.0, 20); // corner cell (3, 0) ahead, body slightly toward the next leg
+        assertEquals(3.5f, g.trailX(1), 1e-4);
+        assertEquals(0.5f, g.trailZ(1), 1e-4);
     }
 
     @Test

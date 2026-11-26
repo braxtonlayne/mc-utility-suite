@@ -41,6 +41,7 @@ final class Scenarios {
         add(q, "ReconScenario", ReconScenario::build);
         add(q, "WorldExtraScenario", WorldExtraScenario::build);
         add(q, "ToolsExtraScenario", ToolsExtraScenario::build);
+        add(q, "CombatExtraScenario", CombatExtraScenario::build);
         add(q, "PerfScenario", PerfScenario::build);
     }
 

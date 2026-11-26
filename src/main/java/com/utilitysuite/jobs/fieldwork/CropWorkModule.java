@@ -60,10 +60,45 @@ public final class CropWorkModule extends FieldModule {
     private int targetKind;
     private int phase;
     private int previousSlot = -1;
+    // replant aim: a visible point on the soil's top face, chosen before the crop is broken
+    private final double[] aimOut = new double[2];
+    private final CropPlanner.AimTest aimTest = this::aimVisible;
+    private LocalPlayer aimPlayer;
+    private int aimX, aimZ;
+    private double soilTop;
+    private long aimCrop, aimSoil;
+    private double aimFx = 0.5, aimFz = 0.5;
+    private int hiddenSkips;
 
     public CropWorkModule(MinecraftInventoryView inventory) {
         super(ID, ControlPriority.GOAL);
         this.inventory = inventory;
+    }
+
+    /** Ripe crops left standing because their soil could not be seen for the replant (diagnostics, playtests). */
+    public int hiddenSkips() {
+        return hiddenSkips;
+    }
+
+    /** Finds a visible aim point on the soil under the crop at {@code cell} (into {@link #aimOut}); per target. */
+    private boolean replantVisible(LocalPlayer player, ClientLevel level, long cell) {
+        int x = BlockPos.getX(cell), y = BlockPos.getY(cell), z = BlockPos.getZ(cell);
+        cursor.set(x, y - 1, z);
+        net.minecraft.world.phys.shapes.VoxelShape shape = level.getBlockState(cursor).getShape(level, cursor);
+        soilTop = y - 1 + (shape.isEmpty() ? 1.0 : shape.max(net.minecraft.core.Direction.Axis.Y));
+        aimPlayer = player;
+        aimX = x;
+        aimZ = z;
+        aimCrop = cell;
+        aimSoil = BlockPos.asLong(x, y - 1, z);
+        boolean ok = CropPlanner.replantAim(player.getX(), player.getZ(), x, z, aimTest, aimOut);
+        aimPlayer = null;
+        return ok;
+    }
+
+    private boolean aimVisible(double fx, double fz) {
+        return FieldHands.visiblePoint(Minecraft.getInstance(), aimPlayer, aimX + fx, soilTop, aimZ + fz, aimCrop,
+                aimSoil);
     }
 
     @Override
@@ -105,9 +140,22 @@ public final class CropWorkModule extends FieldModule {
         if (i < 0) {
             return;
         }
+        long cell = planner.cell(i);
+        int kind = planner.kind(i);
+        aimOut[0] = 0.5;
+        aimOut[1] = 0.5;
+        if (!relaxed && replant && kind != CropPlanner.COCOA && hasSeed[kind] && !replantVisible(player, level, cell)) {
+            // from here the seed could not be put back (a taller crop hides the soil): leave it standing for now,
+            // a later scan (or another spot) tries again; harvesting it would leave bare soil (playtest find)
+            planner.remove(cell);
+            hiddenSkips++;
+            return;
+        }
         target = i;
-        targetCell = planner.cell(i);
-        targetKind = planner.kind(i);
+        targetCell = cell;
+        targetKind = kind;
+        aimFx = aimOut[0];
+        aimFz = aimOut[1];
         phase = 0;
         previousSlot = player.getInventory().selected; // read only, restored through the core
     }
@@ -204,7 +252,7 @@ public final class CropWorkModule extends FieldModule {
                     phase = 3; // already replanted (or something else is there)
                     return;
                 }
-                int r = hands.tickPlace(mc, player, x, y - 1, z, Direction.UP, relaxed);
+                int r = hands.tickPlace(mc, player, x, y - 1, z, Direction.UP, relaxed, aimFx, aimFz);
                 if (r != FieldHands.RUNNING) {
                     hands.pauseHuman(3);
                     phase = 3;
