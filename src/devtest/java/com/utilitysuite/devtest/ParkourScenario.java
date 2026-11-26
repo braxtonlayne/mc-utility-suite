@@ -53,7 +53,7 @@ final class ParkourScenario {
         int[] correctionsBefore = new int[1];
         boolean[] shot = new boolean[3];
         Arena.ensure(s);
-        s.cmd("gamerule fallDamage false");
+        s.cmd("gamerule fall_damage false");
         s.cmd(() -> "forceload add " + (Arena.cx + OX + b[0] - 4) + " " + (Arena.cz + OZ + b[2] - 4) + " "
                 + (Arena.cx + OX + b[3] + 4) + " " + (Arena.cz + OZ + b[5] + 4));
         s.waitTicks(40);
@@ -161,7 +161,7 @@ final class ParkourScenario {
         Shots.add(s, "movement-escape-path");
         s.always("clean up", () -> {
             Harness.command("kill @e[type=minecraft:zombie]");
-            Harness.command("gamerule fallDamage true");
+            Harness.command("gamerule fall_damage true");
             H.setting(MovementAssist.ID, "assist_automation", false);
             H.enable(MovementAssist.ID, false);
             if (lease[0] != null && lease[0].isActive()) {
@@ -295,7 +295,7 @@ final class ParkourScenario {
         s.cmd("clear @s");
         s.cmd("give @s minecraft:water_bucket");
         s.cmd("effect give @s minecraft:instant_health 1 10 true");
-        s.cmd("gamerule fallDamage true");
+        s.cmd("gamerule fall_damage true");
         s.waitTicks(10);
         s.run("clutch: drop", () -> {
             H.setting(MovementAssist.ID, "water_clutch", !viaAutopilot);
@@ -337,7 +337,7 @@ final class ParkourScenario {
                     Harness.fmt("clutches %d, pickups %d, health %.1f -> %.1f, water bucket back %s, water left %d,"
                                     + " pitch now %.1f", ma.fallClutches() - before[0], ma.clutchPickups(), hp[0],
                             p.getHealth(), bucket, water, p.getXRot()));
-            Harness.command("gamerule fallDamage false");
+            Harness.command("gamerule fall_damage false");
         });
     }
 
@@ -359,7 +359,7 @@ final class ParkourScenario {
         s.cmd("clear @s");
         s.cmd("give @s minecraft:" + item + " 4");
         s.cmd("effect give @s minecraft:instant_health 1 10 true");
-        s.cmd("gamerule fallDamage true");
+        s.cmd("gamerule fall_damage true");
         s.waitTicks(10);
         s.run(kind + " clutch: drop", () -> {
             H.setting(MovementAssist.ID, "water_clutch", true);
@@ -394,7 +394,7 @@ final class ParkourScenario {
                                     + " pitch now %.1f", kind, used, ma.clutchPlans() - before[2], ma.clutchNote(),
                             hp[0],
                             p.getHealth(), maxLoss, p.getY() - Arena.FLOOR, p.getXRot()));
-            Harness.command("gamerule fallDamage false");
+            Harness.command("gamerule fall_damage false");
         });
         s.cmd(() -> fillWorld(dx - 3, 1, -3, dx + 3, drop + 4, 3, "air"));
     }
@@ -548,7 +548,7 @@ final class ParkourScenario {
             H.setting(MovementAssist.ID, "landing_hold", true);
             H.setting(MovementAssist.ID, "hold_release", "FRESH_INPUT");
             H.enable(MovementAssist.ID, true);
-            Harness.command("gamerule fallDamage false");
+            Harness.command("gamerule fall_damage false");
         });
         int idx = 0;
         for (Mode mode : Mode.values()) {
@@ -597,7 +597,7 @@ final class ParkourScenario {
                 H.enable(TerrainAssist.ID, terrainWas[0]);
                 H.enable(MovementAssist.ID, moduleWas[0]);
             }
-            Harness.command("gamerule fallDamage true");
+            Harness.command("gamerule fall_damage true");
         });
     }
 

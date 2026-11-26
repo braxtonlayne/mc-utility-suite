@@ -64,7 +64,7 @@ final class FeaturesScenario {
                 H.enable(id, false);
             }
             Harness.command("ride @s dismount");
-            Harness.command("kill @e[type=minecraft:boat]");
+            Harness.command("kill @e[type=minecraft:oak_boat]");
             Harness.command(Arena.fill(-8, 1, 2, 4, 2, 7, "minecraft:air"));
             Harness.command(Arena.fill(8, 1, -12, 14, 1, -2, "minecraft:air"));
         });
@@ -192,9 +192,9 @@ final class FeaturesScenario {
 
     private static void boat(Scenario s) {
         s.cmd(() -> Arena.fill(8, 1, -12, 14, 1, -2, "minecraft:packed_ice"));
-        s.cmd(() -> "summon minecraft:boat " + (Arena.cx + 11.5) + " " + (Arena.FLOOR + 2) + " " + (Arena.cz - 7.5));
+        s.cmd(() -> "summon minecraft:oak_boat " + (Arena.cx + 11.5) + " " + (Arena.FLOOR + 2) + " " + (Arena.cz - 7.5));
         s.cmd(() -> "tp @s " + (Arena.cx + 11.5) + " " + (Arena.FLOOR + 2) + " " + (Arena.cz - 7.5));
-        s.cmd("ride @s mount @e[type=minecraft:boat,limit=1,sort=nearest]");
+        s.cmd("ride @s mount @e[type=minecraft:oak_boat,limit=1,sort=nearest]");
         s.run("boat line on", () -> H.enable("boat_line", true));
         s.waitUpTo("in the boat", 40, () -> H.p().getVehicle() != null);
         s.waitTicks(20);
@@ -206,7 +206,7 @@ final class FeaturesScenario {
                     "riding " + riding + ", " + (m == null ? "no module" : H.fields(m, "active", "hasCorner")));
         });
         s.cmd("ride @s dismount");
-        s.cmd("kill @e[type=minecraft:boat]");
+        s.cmd("kill @e[type=minecraft:oak_boat]");
         s.cmd(() -> Arena.tp(0.5, 0.5, 0f));
     }
 
@@ -326,8 +326,8 @@ final class FeaturesScenario {
         s.cmd(() -> "setblock " + (Arena.cx + 3) + " " + (Arena.FLOOR + 1) + " " + (Arena.cz + 3) + " minecraft:anvil");
         s.cmd("clear @s");
         s.cmd("item replace entity @s weapon.mainhand with minecraft:diamond_sword");
-        s.cmd("give @s minecraft:enchanted_book[minecraft:stored_enchantments={levels:{\"minecraft:sharpness\":3}}]");
-        s.cmd("give @s minecraft:enchanted_book[minecraft:stored_enchantments={levels:{\"minecraft:unbreaking\":2}}]");
+        s.cmd("give @s minecraft:enchanted_book[minecraft:stored_enchantments={\"minecraft:sharpness\":3}]");
+        s.cmd("give @s minecraft:enchanted_book[minecraft:stored_enchantments={\"minecraft:unbreaking\":2}]");
         s.run("anvil planner", () -> {
             H.enable("anvil_planner", true);
             com.utilitysuite.tools.enchant.AnvilPlanModule m = H.module("anvil_planner");

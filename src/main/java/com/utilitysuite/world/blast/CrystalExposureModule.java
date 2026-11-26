@@ -171,7 +171,9 @@ public final class CrystalExposureModule extends WorldModule {
             return;
         }
         ticks++;
-        if (anchorsOn && !level.environmentAttributes().getDimensionValue(net.minecraft.world.attribute.EnvironmentAttributes.RESPAWN_ANCHOR_WORKS)) {
+        // positional attribute: sampled at the player (anchors nearby share the biome in practice)
+        if (anchorsOn && !level.environmentAttributes().getValue(
+                net.minecraft.world.attribute.EnvironmentAttributes.RESPAWN_ANCHOR_WORKS, self.position())) {
             sweepAnchors(level, self);
         } else {
             anchorCount = 0;

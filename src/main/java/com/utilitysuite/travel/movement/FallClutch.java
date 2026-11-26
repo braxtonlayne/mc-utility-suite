@@ -404,7 +404,8 @@ final class FallClutch {
 
     /** 1.21.1 {@code DimensionType.ultraWarm()}: 26.3 moved it to the WATER_EVAPORATES environment attribute. */
     private static boolean waterEvaporates(Minecraft mc) {
-        return mc.level.environmentAttributes().getDimensionValue(EnvironmentAttributes.WATER_EVAPORATES);
+        // positional attribute (biomes can override it): sample where the player is, not the dimension default
+        return mc.level.environmentAttributes().getValue(EnvironmentAttributes.WATER_EVAPORATES, mc.player.position());
     }
 
     /** Bit set of the clutch kinds in the hotbar that work here; fills {@link #kindSlot}. */

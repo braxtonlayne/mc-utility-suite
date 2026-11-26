@@ -198,9 +198,9 @@ public final class PiglinGuard implements IModule, IConfigurable, LeaseListener 
         }
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer p = mc.player;
-        // piglins are safe (no zombifying) where PIGLINS_ZOMBIFY is false: the old dimensionType().piglinSafe()
+        // piglins are safe (no zombifying) where PIGLINS_ZOMBIFY is false at the player (positional): the old piglinSafe()
         if (p == null || mc.level == null
-                || mc.level.environmentAttributes().getDimensionValue(EnvironmentAttributes.PIGLINS_ZOMBIFY)) {
+                || mc.level.environmentAttributes().getValue(EnvironmentAttributes.PIGLINS_ZOMBIFY, p.position())) {
             line = null;
             return;
         }

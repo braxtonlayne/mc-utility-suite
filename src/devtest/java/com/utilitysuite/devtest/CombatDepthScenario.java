@@ -86,7 +86,7 @@ final class CombatDepthScenario {
             Harness.command("kill @e[type=!minecraft:player]");
             Harness.command("effect clear @s");
             Harness.command("clear @s");
-            Harness.command("gamerule fallDamage false");
+            Harness.command("gamerule fall_damage false");
             Harness.command(Arena.fill(-12, 0, 2, 12, 0, 3, "stone"));
             Harness.command(Arena.fill(-13, -6, 1, 13, -5, 4, "air"));
             Harness.command(Arena.fill(-12, 1, -12, 12, 9, 12, "air"));
@@ -141,7 +141,7 @@ final class CombatDepthScenario {
     private static String zombie(double dx, double dz, boolean ai, String extra) {
         return "summon minecraft:zombie " + (Arena.cx + dx) + " " + (Arena.FLOOR + 1) + " " + (Arena.cz + dz)
                 + " {PersistenceRequired:1b,NoAI:" + (ai ? "0b" : "1b") + ",Health:500f,"
-                + "attributes:[{id:\"minecraft:generic.max_health\",base:500d}],"
+                + "attributes:[{id:\"minecraft:max_health\",base:500d}],"
                 + "ArmorItems:[{},{},{},{id:\"minecraft:leather_helmet\",count:1}]" + extra + "}";
     }
 
@@ -424,7 +424,7 @@ final class CombatDepthScenario {
         s.cmd(() -> Arena.fill(-13, -6, 1, 13, -5, 4, "stone"));
         s.cmd(() -> Arena.fill(-12, -5, 2, 12, -5, 3, "water"));
         s.cmd(() -> Arena.fill(-12, 0, 2, 12, 0, 3, "air"));
-        s.cmd("gamerule fallDamage true");
+        s.cmd("gamerule fall_damage true");
         s.cmd(() -> Arena.tp(0.5, -2.5, 0f));
         s.run("gap jumps on", () -> {
             H.setting(CA, "mace_dive", false);
@@ -459,7 +459,7 @@ final class CombatDepthScenario {
                                     + " state %s, note '%s'", before[0], gs.jumps(), H.posStr(), minY[0] - Arena.FLOOR,
                             hp[0], hp[1], reasons[0], ca.state(), ca.lastNote()));
         });
-        s.cmd("gamerule fallDamage false");
+        s.cmd("gamerule fall_damage false");
         disengage(s, ca);
         s.cmd(() -> Arena.fill(-12, 0, 2, 12, 0, 3, "stone"));
         s.cmd(() -> Arena.fill(-13, -6, 1, 13, -5, 4, "air"));
@@ -823,7 +823,7 @@ final class CombatDepthScenario {
         reset(s);
         s.cmd("give @s minecraft:twisting_vines 4");
         s.cmd("give @s minecraft:wind_charge 4");
-        s.cmd("gamerule fallDamage true");
+        s.cmd("gamerule fall_damage true");
         s.waitTicks(10);
         s.run("chain on", () -> {
             H.setting(MovementAssist.ID, "water_clutch", true);
@@ -868,7 +868,7 @@ final class CombatDepthScenario {
             H.setting(MovementAssist.ID, "clutch_fallback_chain", false);
             H.enable(MovementAssist.ID, false);
         });
-        s.cmd("gamerule fallDamage false");
+        s.cmd("gamerule fall_damage false");
         s.cmd(() -> Arena.fill(-11, 1, 8, -8, 3, 11, "air"));
     }
 

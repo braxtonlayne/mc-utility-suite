@@ -20,10 +20,10 @@ final class BootScenario {
             spawn = H.pos();
             s.note("spawn " + H.posStr() + " in " + H.mc().level.dimension().identifier());
         });
-        s.cmd("gamerule doDaylightCycle false");
-        s.cmd("gamerule doWeatherCycle false");
-        s.cmd("gamerule doMobSpawning false");
-        s.cmd("gamerule doInsomnia false");
+        s.cmd("gamerule advance_time false");
+        s.cmd("gamerule advance_weather false");
+        s.cmd("gamerule spawn_mobs false");
+        s.cmd("gamerule spawn_phantoms false");
         s.cmd("time set 6000");
         s.cmd("weather clear");
         s.cmd("effect give @s minecraft:saturation 5 10 true");

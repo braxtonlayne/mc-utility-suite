@@ -140,7 +140,7 @@ final class CombatExtraScenario {
     private static String zombie(double dx, double dz, boolean ai, int health) {
         return "summon minecraft:zombie " + (Arena.cx + dx) + " " + (Arena.FLOOR + 1) + " " + (Arena.cz + dz)
                 + " {PersistenceRequired:1b,NoAI:" + (ai ? "0b" : "1b") + ",Health:" + health + "f,"
-                + "attributes:[{id:\"minecraft:generic.max_health\",base:" + health + "d}],"
+                + "attributes:[{id:\"minecraft:max_health\",base:" + health + "d}],"
                 + "ArmorItems:[{},{},{},{id:\"minecraft:leather_helmet\",count:1}]}";
     }
 

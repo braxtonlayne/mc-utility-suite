@@ -156,8 +156,8 @@ final class CourseLive {
     }
 
     private void setup() {
-        for (String g : new String[] {"randomTickSpeed 0", "fallDamage false", "doDaylightCycle false", "doWeatherCycle false",
-                "doMobSpawning false", "keepInventory true", "doImmediateRespawn true", "announceAdvancements false"}) {
+        for (String g : new String[] {"random_tick_speed 0", "fall_damage false", "advance_time false", "advance_weather false",
+                "spawn_mobs false", "keep_inventory true", "immediate_respawn true", "show_advancement_messages false"}) {
             command("gamerule " + g);
         }
         command("time set 6000");

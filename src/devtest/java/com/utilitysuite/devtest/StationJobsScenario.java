@@ -678,7 +678,7 @@ final class StationJobsScenario {
                     "mirror " + snap.contents() + ", placed ender chest remembered " + placed);
         });
         s.cmd("give @s minecraft:ender_chest 1");
-        s.cmd("give @s minecraft:diamond_pickaxe[minecraft:enchantments={levels:{\"minecraft:silk_touch\":1}}]");
+        s.cmd("give @s minecraft:diamond_pickaxe[minecraft:enchantments={\"minecraft:silk_touch\":1}]");
         s.cmd(() -> "tp @s " + (ax(0) + 0.5) + " " + ay() + " " + (az(2) + 0.5) + " 0 0");
         s.waitTicks(5);
         long[] job = {-1};

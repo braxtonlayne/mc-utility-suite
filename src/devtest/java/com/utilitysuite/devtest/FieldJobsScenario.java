@@ -196,7 +196,7 @@ final class FieldJobsScenario {
         s.cmd(() -> Arena.fill(-12, 1, 5, 12, 6, 11, "air"));
         s.cmd(() -> Arena.fill(-9, 1, 6, 10, 4, 10, "stone"));
         s.cmd("clear @s");
-        s.cmd("give @s minecraft:diamond_pickaxe[enchantments={levels:{\"minecraft:efficiency\":5}}]");
+        s.cmd("give @s minecraft:diamond_pickaxe[enchantments={\"minecraft:efficiency\":5}]");
         s.cmd("give @s minecraft:netherrack 64");
         s.cmd("effect give @s minecraft:haste 300 1 true");
         s.cmd(() -> Arena.tp(-9.5, 8.5, -90f));
@@ -278,9 +278,9 @@ final class FieldJobsScenario {
 
     private static void highwayIce(Scenario s) {
         s.cmd(() -> Arena.fill(-12, 0, -1, 12, 0, 1, "minecraft:packed_ice"));
-        s.cmd(() -> "summon minecraft:boat " + (ax(-10) + 0.5) + " " + ay(1) + " " + (az(0) + 0.5));
+        s.cmd(() -> "summon minecraft:oak_boat " + (ax(-10) + 0.5) + " " + ay(1) + " " + (az(0) + 0.5));
         s.cmd(() -> Arena.tp(-9.5, 0.5, -90f));
-        s.cmd("ride @s mount @e[type=minecraft:boat,limit=1,sort=nearest]");
+        s.cmd("ride @s mount @e[type=minecraft:oak_boat,limit=1,sort=nearest]");
         s.waitUpTo("in the boat", 40, () -> H.p().getVehicle() != null);
         boolean[] sawBoat = new boolean[1];
         double[] startX = new double[1];
@@ -325,7 +325,7 @@ final class FieldJobsScenario {
             }
         });
         s.cmd("ride @s dismount");
-        s.cmd("kill @e[type=minecraft:boat]");
+        s.cmd("kill @e[type=minecraft:oak_boat]");
         s.cmd(() -> Arena.fill(-12, 0, -1, 12, 0, 1, "stone"));
         s.cmd(() -> Arena.fill(-12, 1, -2, 12, 3, 2, "air"));
         s.cmd(() -> Arena.tp(0.5, 0.5, 0f));
@@ -397,8 +397,8 @@ final class FieldJobsScenario {
         s.cmd("item replace entity @s hotbar.0 with minecraft:iron_sword");
         s.cmd(() -> Arena.tp(0.5, -9.5, 0f));
         s.cmd(() -> "summon minecraft:husk " + (ax(0) + 0.5) + " " + ay(1) + " " + (az(-7) + 0.5)
-                + " {NoAI:1b,PersistenceRequired:1b,Health:500f,attributes:[{id:\"minecraft:generic.max_health\","
-                + "base:500d},{id:\"minecraft:generic.knockback_resistance\",base:1d}]}");
+                + " {NoAI:1b,PersistenceRequired:1b,Health:500f,attributes:[{id:\"minecraft:max_health\","
+                + "base:500d},{id:\"minecraft:knockback_resistance\",base:1d}]}");
         s.waitTicks(10);
         List<int[]> swings = new ArrayList<>(); // tick, charge*100
         int[] clock = new int[1];
@@ -623,7 +623,7 @@ final class FieldJobsScenario {
         s.cmd("clear @s");
         s.cmd("weather rain");
         s.cmd("item replace entity @s armor.chest with minecraft:elytra");
-        s.cmd("item replace entity @s weapon.mainhand with minecraft:trident[enchantments={levels:{\"minecraft:riptide\":3}}]");
+        s.cmd("item replace entity @s weapon.mainhand with minecraft:trident[enchantments={\"minecraft:riptide\":3}]");
         s.cmd("give @s minecraft:firework_rocket 8");
         // stand in the arena pool (1 deep): wet and on the ground
         s.cmd(() -> "tp @s " + (ax(6) + 0.5) + " " + ay(0) + " " + (az(-6) + 0.5) + " 0 0");
@@ -682,7 +682,7 @@ final class FieldJobsScenario {
                 + (NZ + 8) + " minecraft:obsidian");
         s.cmd(NETHER + "fill " + (NX - 2) + " " + NY + " " + NZ + " " + NX + " " + (NY + 1) + " " + NZ + " air");
         s.cmd("clear @s");
-        s.cmd("give @s minecraft:diamond_pickaxe[enchantments={levels:{\"minecraft:efficiency\":5}}]");
+        s.cmd("give @s minecraft:diamond_pickaxe[enchantments={\"minecraft:efficiency\":5}]");
         s.cmd("give @s minecraft:netherrack 32");
         s.cmd("effect give @s minecraft:haste 300 1 true");
         s.cmd(NETHER + "tp @s " + NX + ".5 " + NY + " " + NZ + ".5 -90 0");
